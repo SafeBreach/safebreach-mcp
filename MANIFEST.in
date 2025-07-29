@@ -1,0 +1,7 @@
+include README.md
+include CLAUDE.md
+include DESIGN.md
+include requirements.txt
+include *.py
+recursive-include tests *.py
+recursive-include tests *.ini

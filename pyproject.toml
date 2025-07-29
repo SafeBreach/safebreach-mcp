@@ -1,0 +1,73 @@
+[project]
+name = "safebreach-mcp-server"
+version = "1.0.2"
+description = "SafeBreach MCP Server - Bridge AI agents with SafeBreach's Breach and Attack Simulation platform"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.26.0",
+    "requests>=2.25.0",
+    "mcp>=1.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+]
+external = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
+
+[project.scripts]
+# Multi-server architecture entry points
+safebreach-mcp-config-server = "safebreach_mcp_config.config_server:main"
+safebreach-mcp-data-server = "safebreach_mcp_data.data_server:main"
+safebreach-mcp-utilities-server = "safebreach_mcp_utilities.utilities_server:main"
+safebreach-mcp-playbook-server = "safebreach_mcp_playbook.playbook_server:main"
+
+# Multi-server launcher
+safebreach-mcp-all-servers = "start_all_servers:console_entry_point"
+safebreach-mcp-sequential = "start_servers_sequential:main"
+
+[tool.setuptools]
+py-modules = [
+    # Multi-server launcher scripts
+    "start_all_servers",
+    "start_servers_sequential",
+    # MCP hotfix module
+    "mcp_server_bug_423_hotfix"
+]
+
+[tool.setuptools.packages.find]
+include = [
+    "safebreach_mcp_core*",
+    "safebreach_mcp_config*",
+    "safebreach_mcp_data*",
+    "safebreach_mcp_utilities*",
+    "safebreach_mcp_playbook*"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "e2e: marks tests as end-to-end tests (may require external dependencies)",
+    "auth: marks tests as authentication and authorization tests",
+    "deployment: marks tests as deployment script tests",
+]

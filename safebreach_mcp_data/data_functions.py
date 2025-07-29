@@ -1,0 +1,1233 @@
+"""
+SafeBreach Data Functions
+
+This module provides functions for SafeBreach data operations,
+specifically for test and simulation data management.
+"""
+
+import requests
+import logging
+import time
+from typing import Dict, List, Optional, Any
+from safebreach_mcp_core.secret_utils import get_secret_for_console
+from safebreach_mcp_core.environments_metadata import safebreach_envs
+from .data_types import (
+    get_reduced_test_summary_mapping,
+    get_reduced_simulation_result_entity,
+    get_full_simulation_result_entity,
+    get_reduced_security_control_events_mapping,
+    get_full_security_control_events_mapping
+)
+
+logger = logging.getLogger(__name__)
+
+# Global caches
+tests_cache = {}
+simulations_cache = {}
+security_control_events_cache = {}
+
+# Configuration constants
+PAGE_SIZE = 10
+CACHE_TTL = 3600  # 1 hour in seconds
+
+
+
+def sb_get_tests_history(
+    console: str,
+    page_number: int = 0,
+    test_type: Optional[str] = None,
+    start_date: Optional[int] = None,
+    end_date: Optional[int] = None,
+    status_filter: Optional[str] = None,
+    name_filter: Optional[str] = None,
+    order_by: str = "endTime",
+    order_direction: str = "desc"
+) -> Dict[str, Any]:
+    """
+    Get filtered and paginated test history.
+    
+    Args:
+        console: SafeBreach console name
+        page_number: Page number (0-based)
+        test_type: Filter by test type ('validate', 'propagate')
+        start_date: Start date filter (Unix timestamp)
+        end_date: End date filter (Unix timestamp)
+        status_filter: Filter by status ('completed', 'canceled', 'failed')
+        name_filter: Filter by test name (partial match)
+        order_by: Field to order by ('endTime', 'startTime', 'name', 'duration')
+        order_direction: Order direction ('desc', 'asc')
+        
+    Returns:
+        Dict containing filtered tests, pagination info, and applied filters
+    """
+    # Validate order_by parameter
+    valid_order_by = ['endTime', 'startTime', 'name', 'duration']
+    if order_by not in valid_order_by:
+        raise ValueError(f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}")
+    
+    # Validate order_direction parameter
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(f"Invalid order_direction parameter '{order_direction}'. Valid values are: {', '.join(valid_order_direction)}")
+    
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    # Validate test_type parameter
+    if test_type is not None:
+        valid_test_types = ['validate', 'propagate']
+        if test_type.lower() not in valid_test_types:
+            raise ValueError(f"Invalid test_type parameter '{test_type}'. Valid values are: {', '.join(valid_test_types)}")
+    
+    try:
+        # Get all tests from cache or API
+        all_tests = _get_all_tests_from_cache_or_api(console)
+        
+        # Apply filters
+        filtered_tests = _apply_filters(
+            all_tests,
+            test_type=test_type,
+            start_date=start_date,
+            end_date=end_date,
+            status_filter=status_filter,
+            name_filter=name_filter
+        )
+        
+        # Apply ordering
+        ordered_tests = _apply_ordering(
+            filtered_tests,
+            order_by=order_by,
+            order_direction=order_direction
+        )
+        
+        # Calculate pagination info
+        total_tests = len(ordered_tests)
+        total_pages = (total_tests + PAGE_SIZE - 1) // PAGE_SIZE
+        
+        # Validate page overflow
+        if total_pages > 0 and page_number >= total_pages:
+            raise ValueError(f"Invalid page_number parameter '{page_number}'. Available pages range from 0 to {total_pages - 1} (total {total_pages} pages)")
+        
+        # Apply pagination
+        start_index = page_number * PAGE_SIZE
+        end_index = start_index + PAGE_SIZE
+        page_tests = ordered_tests[start_index:end_index]
+        
+        # Track applied filters
+        applied_filters = {}
+        if test_type:
+            applied_filters['test_type'] = test_type
+        if start_date:
+            applied_filters['start_date'] = start_date
+        if end_date:
+            applied_filters['end_date'] = end_date
+        if status_filter:
+            applied_filters['status_filter'] = status_filter
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if order_by != "endTime":
+            applied_filters['order_by'] = order_by
+        if order_direction != "desc":
+            applied_filters['order_direction'] = order_direction
+        
+        return {
+            "page_number": page_number,
+            "total_pages": total_pages,
+            "total_tests": total_tests,
+            "tests_in_page": page_tests,
+            "applied_filters": applied_filters,
+            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+        }
+        
+    except Exception as e:
+        logger.error("Error getting test history for console '%s': %s", console, str(e))
+        raise
+
+
+def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """
+    Get all tests from cache or API.
+    
+    Args:
+        console: SafeBreach console name
+        
+    Returns:
+        List of test dictionaries
+    """
+    cache_key = f"tests_{console}"
+    current_time = time.time()
+    
+    # Check cache first
+    if cache_key in tests_cache:
+        data, timestamp = tests_cache[cache_key]
+        if current_time - timestamp < CACHE_TTL:
+            logger.info("Retrieved %d tests from cache for console '%s'", len(data), console)
+            return data
+    
+    # Cache miss or expired - fetch from API using EXACT same pattern as original
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+        
+        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/testsummaries?size=1000&includeArchived=false&status=canceled%7Ccompleted"
+        
+        headers = {"Content-Type": "application/json",
+                    "x-apitoken": apitoken}
+        
+        logger.info("Fetching tests from API for console '%s'", console)
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+
+        try:
+            tests_summaries = response.json()
+        except ValueError as e:
+            logger.error("Failed to parse tests history response for console %s: %s", console, str(e))
+            tests_summaries = []
+        
+        # Map the raw API data to our standardized format - same pattern as original
+        tests = []
+        for test_summary in tests_summaries:
+            logger.info("Adding test %s to the return list", test_summary['planName'])
+            tests.append(get_reduced_test_summary_mapping(test_summary))
+        
+        # Cache the result
+        tests_cache[cache_key] = (tests, current_time)
+        
+        logger.info("Retrieved %d tests from API for console '%s'", len(tests), console)
+        return tests
+        
+    except Exception as e:
+        logger.error("Error fetching tests from API for console '%s': %s", console, str(e))
+        raise
+
+
+def _apply_filters(
+    tests: List[Dict[str, Any]],
+    test_type: Optional[str] = None,
+    start_date: Optional[int] = None,
+    end_date: Optional[int] = None,
+    status_filter: Optional[str] = None,
+    name_filter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Apply filters to test list.
+    
+    Args:
+        tests: List of test dictionaries
+        test_type: Filter by test type
+        start_date: Start date filter
+        end_date: End date filter
+        status_filter: Status filter
+        name_filter: Name filter
+        
+    Returns:
+        Filtered list of tests
+    """
+    filtered = tests
+    
+    # Apply test type filter
+    if test_type:
+        if test_type.lower() == 'validate':
+            # BAS tests - without "ALM" in systemTags
+            filtered = [t for t in filtered 
+                       if not any('ALM' in tag for tag in t.get('systemTags', []))]
+        elif test_type.lower() == 'propagate':
+            # ALM tests - with "ALM" in systemTags
+            filtered = [t for t in filtered 
+                       if any('ALM' in tag for tag in t.get('systemTags', []))]
+    
+    # Apply date filters
+    if start_date:
+        filtered = [t for t in filtered if t.get('endTime', 0) >= start_date]
+    if end_date:
+        filtered = [t for t in filtered if t.get('endTime', 0) <= end_date]
+    
+    # Apply status filter
+    if status_filter:
+        filtered = [t for t in filtered 
+                   if t.get('status', '').lower() == status_filter.lower()]
+    
+    # Apply name filter
+    if name_filter:
+        filtered = [t for t in filtered 
+                   if name_filter.lower() in t.get('name', '').lower()]
+    
+    return filtered
+
+
+def _apply_ordering(
+    tests: List[Dict[str, Any]],
+    order_by: str = "endTime",
+    order_direction: str = "desc"
+) -> List[Dict[str, Any]]:
+    """
+    Apply ordering to test list.
+    
+    Args:
+        tests: List of test dictionaries
+        order_by: Field to order by
+        order_direction: Order direction
+        
+    Returns:
+        Ordered list of tests
+    """
+    reverse = order_direction.lower() == 'desc'
+    
+    def get_sort_key(test):
+        if order_by == 'endTime':
+            return test.get('endTime', 0)
+        elif order_by == 'startTime':
+            return test.get('startTime', 0)
+        elif order_by == 'name':
+            return test.get('name', '').lower()
+        elif order_by == 'duration':
+            return test.get('duration', 0)
+        else:
+            return test.get('endTime', 0)  # Default to endTime
+    
+    return sorted(tests, key=get_sort_key, reverse=reverse)
+
+
+def sb_get_test_details(console: str, test_id: str, include_simulations_statistics: bool = False) -> Dict[str, Any]:
+    """
+    Returns the details of a specific test executed on a given SafeBreach management console.
+    """
+    # Validate required parameters
+    if not test_id or not test_id.strip():
+        raise ValueError("test_id parameter is required and cannot be empty")
+    
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+
+        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/testsummaries/{test_id}"
+
+        headers = {"Content-Type": "application/json",
+                    "x-apitoken": apitoken}
+
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+        
+        test_summary = response.json()
+        
+        # Validate that we got a meaningful test response
+        # Check for essential fields that should be present in a valid test
+        if not test_summary or not isinstance(test_summary, dict):
+            raise ValueError(f"Invalid test response for test_id '{test_id}': response is empty or not a dictionary")
+        
+        # Check for key identifiers that indicate this is a real test
+        # Only check for planRunId as the essential field - planName may be optional
+        if 'planRunId' not in test_summary:
+            raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
+        
+        return_details = get_reduced_test_summary_mapping(test_summary)
+        
+        # Get finalStatus safely, default to empty dict if not present
+        final_status = test_summary.get('finalStatus', {})
+        
+        if include_simulations_statistics:
+            return_details['simulations_statistics'] = [
+                        {
+                            "status": "missed",
+                            "explanation": (
+                                "Simulations that completed but were not detected by any deployed security control "
+                                "(No logs, no blocking, no alerting)"
+                            ),
+                            "count": final_status.get('missed', 0)
+                        },
+                        {
+                            "status": "stopped",
+                            "explanation": (
+                                "Simulations where the attack was stopped by a security control before completion"
+                            ),
+                            "count": final_status.get('stopped', 0)
+                        },
+                        {
+                            "status": "prevented",
+                            "explanation": (
+                                "Simulations where the attack was prevented by a security control"
+                            ),
+                            "count": final_status.get('prevented', 0)
+                        },
+                        {
+                            "status": "reported",
+                            "explanation": (
+                                "Simulations where the attack was detected and reported by a security control"
+                            ),
+                            "count": final_status.get('reported', 0)
+                        },
+                        {
+                            "status": "logged",
+                            "explanation": (
+                                "Simulations where the attack was logged by a security control"
+                            ),
+                            "count": final_status.get('logged', 0)
+                        },
+                        {
+                            "status": "no-result",
+                            "explanation": (
+                                "Simulations that could not be completed due to technical issues"
+                            ),
+                            "count": final_status.get('no-result', 0)
+                        }
+                    ]
+        return return_details
+        
+    except Exception as e:
+        logger.error("Error getting test details for test '%s' from console '%s': %s", test_id, console, str(e))
+        raise
+
+
+def _get_simulation_statistics(console: str, test_id: str) -> Dict[str, Any]:
+    """
+    Get simulation statistics for a test.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID
+        
+    Returns:
+        Dict containing simulation statistics
+    """
+    try:
+        # Get all simulations for the test
+        all_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        
+        # Count by status
+        status_counts = {}
+        for sim in all_simulations:
+            status = sim.get('status', 'unknown')
+            status_counts[status] = status_counts.get(status, 0) + 1
+        
+        return {
+            "total_simulations": len(all_simulations),
+            "by_status": status_counts
+        }
+        
+    except Exception as e:
+        logger.error("Error getting simulation statistics for test '%s': %s", test_id, str(e))
+        return {"error": f"Failed to get simulation statistics: {str(e)}"}
+
+
+def sb_get_test_simulations(
+    console: str,
+    test_id: str,
+    page_number: int = 0,
+    status_filter: Optional[str] = None,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    playbook_attack_id_filter: Optional[str] = None,
+    playbook_attack_name_filter: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get filtered and paginated simulations for a test.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID
+        page_number: Page number (0-based)
+        status_filter: Filter by simulation status
+        start_time: Start time filter (Unix timestamp)
+        end_time: End time filter (Unix timestamp)
+        playbook_attack_id_filter: Filter by playbook attack ID
+        playbook_attack_name_filter: Filter by playbook attack name
+        
+    Returns:
+        Dict containing filtered simulations, pagination info, and applied filters
+    """
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    try:
+        # Get all simulations from cache or API
+        all_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        
+        # Apply filters
+        filtered_simulations = _apply_simulation_filters(
+            all_simulations,
+            status_filter=status_filter,
+            start_time=start_time,
+            end_time=end_time,
+            playbook_attack_id_filter=playbook_attack_id_filter,
+            playbook_attack_name_filter=playbook_attack_name_filter
+        )
+        
+        # Apply pagination
+        start_index = page_number * PAGE_SIZE
+        end_index = start_index + PAGE_SIZE
+        page_simulations = filtered_simulations[start_index:end_index]
+        
+        # Calculate pagination info
+        total_simulations = len(filtered_simulations)
+        total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE
+        
+        # Track applied filters
+        applied_filters = {}
+        if status_filter:
+            applied_filters['status_filter'] = status_filter
+        if start_time:
+            applied_filters['start_time'] = start_time
+        if end_time:
+            applied_filters['end_time'] = end_time
+        if playbook_attack_id_filter:
+            applied_filters['playbook_attack_id_filter'] = playbook_attack_id_filter
+        if playbook_attack_name_filter:
+            applied_filters['playbook_attack_name_filter'] = playbook_attack_name_filter
+        
+        return {
+            "page_number": page_number,
+            "total_pages": total_pages,
+            "total_simulations": total_simulations,
+            "simulations_in_page": page_simulations,
+            "applied_filters": applied_filters,
+            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+        }
+        
+    except Exception as e:
+        logger.error("Error getting simulations for test '%s' from console '%s': %s", test_id, console, str(e))
+        raise
+
+
+def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all simulations from cache or API.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID
+        
+    Returns:
+        List of simulation dictionaries
+    """
+    cache_key = f"simulations_{console}_{test_id}"
+    current_time = time.time()
+    
+    # Check cache first
+    if cache_key in simulations_cache:
+        data, timestamp = simulations_cache[cache_key]
+        if current_time - timestamp < CACHE_TTL:
+            logger.info("Retrieved %d simulations from cache for test '%s'", len(data), test_id)
+            return data
+    
+    # Cache miss or expired - fetch from API using EXACT same pattern as original
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+        
+        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/executionsHistoryResults"
+        
+        headers = {"Content-Type": "application/json",
+                    "x-apitoken": apitoken}
+        
+        data = {
+            "runId": f"{test_id}",
+            "query": f"!labels:Ignore AND (!labels:Draft) AND (runId:{test_id})",
+            "page": 1,
+            "pageSize": 100,
+            "orderBy": "desc",
+            "sortBy": "executionTime"
+        }
+        
+        logger.info("Fetching simulations from API for test '%s' from console '%s'", test_id, console)
+        response = requests.post(api_url, headers=headers, json=data, timeout=120)
+        response.raise_for_status()
+        
+        try:
+            response_data = response.json()
+            simulations_results = response_data.get("simulations", [])
+        except ValueError as e:
+            logger.error("Failed to parse simulations response for test %s in console %s: %s", test_id, console, str(e))
+            simulations_results = []
+        
+        # Transform simulations using existing mapping - same pattern as original
+        simulations = []
+        for simulation_result in simulations_results:
+            logger.info("Adding simulation %s to the return list", simulation_result['id'])
+            simulations.append(get_reduced_simulation_result_entity(simulation_result))
+        
+        # Cache the result
+        simulations_cache[cache_key] = (simulations, current_time)
+        
+        logger.info("Retrieved %d simulations from API for test '%s'", len(simulations), test_id)
+        return simulations
+        
+    except Exception as e:
+        logger.error("Error fetching simulations from API for test '%s': %s", test_id, str(e))
+        raise
+
+
+def _apply_simulation_filters(
+    simulations: List[Dict[str, Any]],
+    status_filter: Optional[str] = None,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    playbook_attack_id_filter: Optional[str] = None,
+    playbook_attack_name_filter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Apply filters to simulation list.
+    
+    Args:
+        simulations: List of simulation dictionaries
+        status_filter: Status filter
+        start_time: Start time filter
+        end_time: End time filter
+        playbook_attack_id_filter: Playbook attack ID filter
+        playbook_attack_name_filter: Playbook attack name filter
+        
+    Returns:
+        Filtered list of simulations
+    """
+    filtered = simulations
+    
+    # Apply status filter
+    if status_filter:
+        filtered = [s for s in filtered 
+                   if s.get('status', '').lower() == status_filter.lower()]
+    
+    # Apply time filters with safe type conversion
+    if start_time:
+        filtered = [s for s in filtered 
+                   if _safe_time_compare(s, start_time, lambda x, y: x >= y)]
+    if end_time:
+        filtered = [s for s in filtered 
+                   if _safe_time_compare(s, end_time, lambda x, y: x <= y)]
+    
+    # Apply playbook attack ID filter
+    if playbook_attack_id_filter:
+        filtered = [s for s in filtered 
+                   if s.get('playbookAttackId') == playbook_attack_id_filter]
+    
+    # Apply playbook attack name filter
+    if playbook_attack_name_filter:
+        filtered = [s for s in filtered 
+                   if playbook_attack_name_filter.lower() in s.get('playbookAttackName', '').lower()]
+    
+    return filtered
+
+
+def _safe_time_compare(simulation: Dict[str, Any], compare_time: int, operator) -> bool:
+    """
+    Safely compare simulation time with safe type conversion.
+    
+    Args:
+        simulation: Simulation dictionary
+        compare_time: Time to compare against
+        operator: Comparison operator function
+        
+    Returns:
+        Boolean comparison result
+    """
+    end_time_val = simulation.get('endTime', 0)
+    if isinstance(end_time_val, str):
+        try:
+            end_time_val = int(end_time_val)
+        except (ValueError, TypeError):
+            end_time_val = 0
+    return operator(end_time_val, compare_time)
+
+
+def sb_get_test_simulation_details(
+    console: str,
+    test_id: str,
+    simulation_id: str,
+    include_mitre_techniques: bool = False,
+    include_full_attack_logs: bool = False,
+    include_simulation_logs: bool = False
+) -> Dict[str, Any]:
+    """
+    Get detailed information for a specific simulation.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID
+        simulation_id: Simulation ID
+        include_mitre_techniques: Include MITRE ATT&CK techniques
+        include_full_attack_logs: Include full attack logs
+        include_simulation_logs: Include simulation logs
+        
+    Returns:
+        Dict containing simulation details
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+        logger.info("Getting api key for console %s", console)
+        
+        api_url = f"https://{safebreach_env['url']}/api/data/v2/accounts/{safebreach_env['account']}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+        headers = {"Content-Type": "application/json",
+                    "x-apitoken": apitoken}
+        
+        logger.info("Fetching simulation details for ID '%s' from test '%s'", simulation_id, test_id)
+        response = requests.get(api_url, headers=headers, timeout=120)
+        if response.status_code != 200:
+            logger.error("Failed to fetch simulation details for simulation ID %s: %s", simulation_id, response.text)
+            return {"error": "Failed to fetch simulation details", "status_code": response.status_code}
+        
+        simulation_result = response.json()
+        return_details = get_full_simulation_result_entity(
+            simulation_result,
+            include_mitre_techniques=include_mitre_techniques,
+            include_full_attack_logs=include_full_attack_logs
+        )
+        
+        return return_details
+        
+    except Exception as e:
+        logger.error("Error getting simulation details for ID '%s': %s", simulation_id, str(e))
+        raise
+
+
+def _get_all_security_control_events_from_cache_or_api(console: str, test_id: str, simulation_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all security control events from cache or API.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)
+        simulation_id: Simulation ID
+        
+    Returns:
+        List of security control events
+    """
+    cache_key = f"{console}:{test_id}:{simulation_id}"
+    current_time = time.time()
+    
+    # Check cache first
+    if cache_key in security_control_events_cache:
+        cache_entry = security_control_events_cache[cache_key]
+        if current_time - cache_entry['timestamp'] < CACHE_TTL:
+            logger.info("Using cached security control events for %s:%s:%s", console, test_id, simulation_id)
+            return cache_entry['data']
+    
+    # Fetch from API
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+        
+        # Use the SIEM API endpoint for security control events
+        api_url = f"https://{safebreach_env['url']}/api/siem/v1/accounts/{safebreach_env['account']}/eventLogs?planRunId={test_id}&simulationId={simulation_id}"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        
+        logger.info("Fetching security control events from API for %s:%s:%s", console, test_id, simulation_id)
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+        
+        response_data = response.json()
+        
+        # Extract siemLogs from the response
+        security_events = []
+        if 'result' in response_data and 'siemLogs' in response_data['result']:
+            security_events = response_data['result']['siemLogs']
+        
+        # Cache the result
+        security_control_events_cache[cache_key] = {
+            'data': security_events,
+            'timestamp': current_time
+        }
+        
+        logger.info("Cached %d security control events for %s:%s:%s", len(security_events), console, test_id, simulation_id)
+        return security_events
+        
+    except Exception as e:
+        logger.error("Error fetching security control events from API for %s:%s:%s: %s", console, test_id, simulation_id, str(e))
+        raise
+
+
+def _apply_security_control_events_filters(
+    events: List[Dict[str, Any]],
+    product_name_filter: Optional[str] = None,
+    vendor_name_filter: Optional[str] = None,
+    security_action_filter: Optional[str] = None,
+    connector_name_filter: Optional[str] = None,
+    source_host_filter: Optional[str] = None,
+    destination_host_filter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Apply filters to security control events.
+    
+    Args:
+        events: List of security control events
+        product_name_filter: Filter by product name (partial match)
+        vendor_name_filter: Filter by vendor name (partial match)
+        security_action_filter: Filter by security action (partial match)
+        connector_name_filter: Filter by connector name (partial match)
+        source_host_filter: Filter by source host (partial match)
+        destination_host_filter: Filter by destination host (partial match)
+        
+    Returns:
+        List of filtered events
+    """
+    filtered_events = events
+    
+    # Apply product name filter
+    if product_name_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if product_name_filter.lower() in event.get('fields', {}).get('product', '').lower()
+        ]
+    
+    # Apply vendor name filter
+    if vendor_name_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if vendor_name_filter.lower() in event.get('fields', {}).get('vendor', '').lower()
+        ]
+    
+    # Apply security action filter
+    if security_action_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if any(security_action_filter.lower() in str(action).lower() 
+                   for action in (event.get('fields', {}).get('action', []) if isinstance(event.get('fields', {}).get('action'), list) 
+                                 else [event.get('fields', {}).get('action', '')]))
+        ]
+    
+    # Apply connector name filter
+    if connector_name_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if connector_name_filter.lower() in event.get('connectorName', '').lower()
+        ]
+    
+    # Apply source host filter
+    if source_host_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if any(source_host_filter.lower() in str(host).lower() 
+                   for host in event.get('fields', {}).get('sourceHosts', []))
+        ]
+    
+    # Apply destination host filter
+    if destination_host_filter:
+        filtered_events = [
+            event for event in filtered_events
+            if any(destination_host_filter.lower() in str(host).lower() 
+                   for host in event.get('fields', {}).get('destHosts', []))
+        ]
+    
+    return filtered_events
+
+
+def sb_get_security_controls_events(
+    console: str,
+    test_id: str,
+    simulation_id: str,
+    page_number: int = 0,
+    product_name_filter: Optional[str] = None,
+    vendor_name_filter: Optional[str] = None,
+    security_action_filter: Optional[str] = None,
+    connector_name_filter: Optional[str] = None,
+    source_host_filter: Optional[str] = None,
+    destination_host_filter: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get filtered and paginated security control events for a specific test and simulation.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)
+        simulation_id: Simulation ID
+        page_number: Page number (0-based)
+        product_name_filter: Filter by security control product name (partial match)
+        vendor_name_filter: Filter by vendor name (partial match)
+        security_action_filter: Filter by security action (partial match)
+        connector_name_filter: Filter by SafeBreach integration name (partial match)
+        source_host_filter: Filter by source host (partial match)
+        destination_host_filter: Filter by destination host (partial match)
+        
+    Returns:
+        Dict containing filtered events, pagination info, and applied filters
+    """
+    # Validate required parameters
+    if not test_id or not test_id.strip():
+        raise ValueError("test_id parameter is required and cannot be empty")
+    if not simulation_id or not simulation_id.strip():
+        raise ValueError("simulation_id parameter is required and cannot be empty")
+    
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    try:
+        # Get all security control events from cache or API
+        all_events = _get_all_security_control_events_from_cache_or_api(console, test_id, simulation_id)
+        
+        # Apply filters
+        filtered_events = _apply_security_control_events_filters(
+            all_events,
+            product_name_filter=product_name_filter,
+            vendor_name_filter=vendor_name_filter,
+            security_action_filter=security_action_filter,
+            connector_name_filter=connector_name_filter,
+            source_host_filter=source_host_filter,
+            destination_host_filter=destination_host_filter
+        )
+        
+        # Apply pagination
+        start_index = page_number * PAGE_SIZE
+        end_index = start_index + PAGE_SIZE
+        page_events = filtered_events[start_index:end_index]
+        
+        # Transform events to reduced format
+        reduced_events = []
+        for event in page_events:
+            reduced_event = get_reduced_security_control_events_mapping(event)
+            reduced_events.append(reduced_event)
+        
+        # Calculate pagination info
+        total_events = len(filtered_events)
+        total_pages = (total_events + PAGE_SIZE - 1) // PAGE_SIZE
+        
+        # Track applied filters
+        applied_filters = {}
+        if product_name_filter:
+            applied_filters['product_name_filter'] = product_name_filter
+        if vendor_name_filter:
+            applied_filters['vendor_name_filter'] = vendor_name_filter
+        if security_action_filter:
+            applied_filters['security_action_filter'] = security_action_filter
+        if connector_name_filter:
+            applied_filters['connector_name_filter'] = connector_name_filter
+        if source_host_filter:
+            applied_filters['source_host_filter'] = source_host_filter
+        if destination_host_filter:
+            applied_filters['destination_host_filter'] = destination_host_filter
+        
+        return {
+            "page_number": page_number,
+            "total_pages": total_pages,
+            "total_events": total_events,
+            "events_in_page": reduced_events,
+            "applied_filters": applied_filters,
+            "hint_to_agent": f"Retrieved {len(reduced_events)} security control events for test {test_id} and simulation {simulation_id}. " +
+                           (f"You can scan next page by calling with page_number={page_number + 1}" if page_number + 1 < total_pages else "This is the last page.")
+        }
+        
+    except Exception as e:
+        logger.error("Error getting security control events for %s:%s:%s: %s", console, test_id, simulation_id, str(e))
+        raise
+
+
+def sb_get_security_control_event_details(
+    console: str,
+    test_id: str,
+    simulation_id: str,
+    event_id: str,
+    verbosity_level: str = "standard"
+) -> Dict[str, Any]:
+    """
+    Get detailed information for a specific security control event.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)
+        simulation_id: Simulation ID
+        event_id: Security control event ID
+        verbosity_level: Level of detail ("minimal", "standard", "detailed", "full")
+        
+    Returns:
+        Dict containing detailed security control event information
+    """
+    try:
+        # Get all security control events from cache or API
+        all_events = _get_all_security_control_events_from_cache_or_api(console, test_id, simulation_id)
+        
+        # Find the specific event
+        target_event = None
+        for event in all_events:
+            if event.get('id') == event_id:
+                target_event = event
+                break
+        
+        if not target_event:
+            return {
+                "error": f"Security control event with ID '{event_id}' not found",
+                "console": console,
+                "test_id": test_id,
+                "simulation_id": simulation_id,
+                "event_id": event_id
+            }
+        
+        # Transform event based on verbosity level
+        detailed_event = get_full_security_control_events_mapping(target_event, verbosity_level)
+        
+        # Add metadata
+        detailed_event['_metadata'] = {
+            'console': console,
+            'test_id': test_id,
+            'simulation_id': simulation_id,
+            'event_id': event_id,
+            'verbosity_level': verbosity_level,
+            'retrieved_at': time.time()
+        }
+        
+        return detailed_event
+        
+    except Exception as e:
+        logger.error("Error getting security control event details for %s:%s:%s:%s: %s", console, test_id, simulation_id, event_id, str(e))
+        raise
+
+
+# Global cache for findings
+findings_cache = {}
+
+
+def _get_all_findings_from_cache_or_api(console: str, test_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all findings from cache or SafeBreach API.
+    
+    Findings are retrieved using the propagateSummary API endpoint which returns
+    ALL findings for the test across all simulations.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)
+        
+    Returns:
+        List of findings data for the entire test
+    """
+    cache_key = f"{console}:{test_id}"
+    current_time = time.time()
+    
+    # Check if we have valid cached data
+    if (cache_key in findings_cache and
+        current_time - findings_cache[cache_key]['timestamp'] < CACHE_TTL):
+        logger.info("Using cached findings data for %s", cache_key)
+        return findings_cache[cache_key]['data']
+    
+    try:
+        apitoken = get_secret_for_console(console)
+        safebreach_env = safebreach_envs[console]
+        
+        # Use the propagateSummary API endpoint for findings
+        api_url = f"https://{safebreach_env['url']}/api/data/v1/propagateSummary/{test_id}/findings/"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        
+        logger.info("Fetching findings from API for %s:%s", console, test_id)
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+        
+        data = response.json()
+        findings_data = data.get('findings', [])
+        
+        # Cache the data
+        findings_cache[cache_key] = {
+            'data': findings_data,
+            'timestamp': current_time
+        }
+        
+        logger.info("Cached %d findings for %s", len(findings_data), cache_key)
+        return findings_data
+        
+    except Exception as e:
+        logger.error("Error fetching findings data for %s:%s: %s", console, test_id, str(e))
+        raise
+
+
+def _apply_findings_filters(
+    findings: List[Dict[str, Any]],
+    attribute_filter: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Apply filters to findings list.
+    
+    Args:
+        findings: List of findings to filter
+        attribute_filter: Filter by any attribute (partial match, case-insensitive)
+        
+    Returns:
+        Filtered list of findings
+    """
+    filtered_findings = findings
+    
+    # Apply attribute filter - search across all attributes
+    if attribute_filter:
+        filter_lower = attribute_filter.lower()
+        filtered_findings = []
+        
+        for finding in findings:
+            # Search in direct attributes
+            match_found = False
+            
+            # Check top-level fields
+            for key, value in finding.items():
+                if key == 'attributes':  # Skip nested attributes for now
+                    continue
+                if str(value).lower().find(filter_lower) != -1:
+                    match_found = True
+                    break
+            
+            # Check nested attributes
+            if not match_found and 'attributes' in finding:
+                attributes = finding['attributes']
+                if isinstance(attributes, dict):
+                    for key, value in attributes.items():
+                        # Handle different value types
+                        if isinstance(value, list):
+                            # Search in list items (e.g., ports)
+                            for item in value:
+                                if str(item).lower().find(filter_lower) != -1:
+                                    match_found = True
+                                    break
+                        else:
+                            # Search in simple values
+                            if str(value).lower().find(filter_lower) != -1:
+                                match_found = True
+                                break
+                        
+                        if match_found:
+                            break
+            
+            if match_found:
+                filtered_findings.append(finding)
+    
+    return filtered_findings
+
+
+def sb_get_test_findings_counts(
+    console: str,
+    test_id: str,
+    attribute_filter: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get counts of findings by type for a specific test, with optional filtering.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)
+        attribute_filter: Filter by any attribute (partial match, case-insensitive)
+        
+    Returns:
+        Dict containing finding counts by type and metadata
+    """
+    try:
+        # Get all findings from cache or API
+        all_findings = _get_all_findings_from_cache_or_api(console, test_id)
+        
+        # Apply filters
+        filtered_findings = _apply_findings_filters(
+            all_findings,
+            attribute_filter=attribute_filter
+        )
+        
+        # Count findings by type
+        type_counts = {}
+        for finding in filtered_findings:
+            finding_type = finding.get('type', 'Unknown')
+            type_counts[finding_type] = type_counts.get(finding_type, 0) + 1
+        
+        # Sort by count (descending) then by type name
+        sorted_counts = sorted(
+            [{'type': t, 'count': c} for t, c in type_counts.items()],
+            key=lambda x: (-x['count'], x['type'])
+        )
+        
+        # Track applied filters
+        applied_filters = {}
+        if attribute_filter:
+            applied_filters['attribute_filter'] = attribute_filter
+        
+        result = {
+            'console': console,
+            'test_id': test_id,
+            'total_findings': len(filtered_findings),
+            'total_types': len(type_counts),
+            'finding_counts': sorted_counts,
+            'applied_filters': applied_filters,
+            'retrieved_at': time.time()
+        }
+        
+        logger.info("Retrieved %d findings of %d types for %s:%s", len(filtered_findings), len(type_counts), console, test_id)
+        return result
+        
+    except Exception as e:
+        logger.error("Error getting test findings counts for %s:%s: %s", console, test_id, str(e))
+        raise
+
+
+def sb_get_test_findings_details(
+    console: str,
+    test_id: str,
+    page_number: int = 0,
+    attribute_filter: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get detailed findings for a specific test with filtering and pagination.
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID (planRunId)  
+        page_number: Page number (0-based)
+        attribute_filter: Filter by any attribute (partial match, case-insensitive)
+        
+    Returns:
+        Dict containing filtered findings, pagination info, and applied filters
+    """
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    try:
+        # Get all findings from cache or API
+        all_findings = _get_all_findings_from_cache_or_api(console, test_id)
+        
+        # Apply filters
+        filtered_findings = _apply_findings_filters(
+            all_findings,
+            attribute_filter=attribute_filter
+        )
+        
+        # Sort by timestamp (most recent first) for consistent ordering
+        # Handle None/invalid timestamps by treating them as empty strings (which sort last)
+        def safe_timestamp_key(finding):
+            timestamp = finding.get('timestamp')
+            return timestamp if timestamp is not None else ''
+        
+        sorted_findings = sorted(
+            filtered_findings,
+            key=safe_timestamp_key,
+            reverse=True
+        )
+        
+        # Calculate pagination info
+        total_findings = len(sorted_findings)
+        total_pages = (total_findings + PAGE_SIZE - 1) // PAGE_SIZE
+        
+        # Validate page overflow
+        if total_pages > 0 and page_number >= total_pages:
+            raise ValueError(f"Invalid page_number parameter '{page_number}'. Available pages range from 0 to {total_pages - 1} (total {total_pages} pages)")
+        
+        # Apply pagination
+        start_index = page_number * PAGE_SIZE
+        end_index = start_index + PAGE_SIZE
+        page_findings = sorted_findings[start_index:end_index]
+        
+        # Track applied filters
+        applied_filters = {}
+        if attribute_filter:
+            applied_filters['attribute_filter'] = attribute_filter
+        
+        result = {
+            'console': console,
+            'test_id': test_id,
+            'page_number': page_number,
+            'total_pages': total_pages,
+            'total_findings': total_findings,
+            'findings_in_page': page_findings,
+            'applied_filters': applied_filters,
+            'retrieved_at': time.time()
+        }
+        
+        # Add hint for pagination
+        if page_number + 1 < total_pages:
+            result['hint_to_agent'] = f"You can scan next page by calling with page_number={page_number + 1}. There are {total_pages} total pages."
+        
+        logger.info("Retrieved page %d of %d (%d findings) for %s:%s", page_number, total_pages, len(page_findings), console, test_id)
+        return result
+        
+    except Exception as e:
+        logger.error("Error getting test findings details for %s:%s: %s", console, test_id, str(e))
+        raise
