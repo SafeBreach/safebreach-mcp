@@ -3,7 +3,29 @@ This is an experimental project intended to demonstrate SafeBreach capabilities 
 
 # SafeBreach MCP Server
 
-Model Context Protocol (MCP) server that bridges the gap between natural language queries and SafeBreach console operations. It provides seamless integration with SafeBreach's Breach and Attack Simulation (BAS) platform through a standardized API interface.
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+[![SafeBreach Platform](https://img.shields.io/badge/platform-SafeBreach-orange.svg)](https://safebreach.com)
+
+A Model Context Protocol (MCP) server that bridges AI agents with SafeBreach's Breach and Attack Simulation platform. Enables natural language queries and seamless integration through a multi-server architecture with specialized domains.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Installation](#installation)
+- [External Connection Support](#external-connection-support)
+- [Usage](#usage-)
+  - [Registering with Claude Desktop](#registering-with-claude-desktop-)
+  - [Windows Configuration](#windows-configuration)
+- [API Reference](#api-reference-)
+- [Testing](#testing-)
+- [Development](#development-)
+- [Troubleshooting](#troubleshooting-)
+- [Security Considerations](#security-considerations-)
+- [Contributing](#contributing-)
 
 ## Overview
 
@@ -17,17 +39,25 @@ This MCP server enables AI agents to interact with SafeBreach management console
 
 ## Features
 
-- **Multi-Server Architecture**: Specialized servers for different domains (config, data, utilities)
+### 🏗️ Architecture
+- **Multi-Server Architecture**: Specialized servers for different domains (config, data, utilities, playbook)
 - **Domain Separation**: Clear separation of concerns with independent scaling capabilities
+- **Horizontal Scaling**: Each server can be scaled independently based on demand
+
+### 🔒 Security & Connectivity
+- **Security-First Design**: Localhost-only default with Bearer token authentication for external access
 - **External Connection Support**: Optional external network access with HTTP Authorization security
+- **SSE Transport**: Server-Sent Events transport for real-time communication
+
+### 📊 Data Management
 - **Simulator Management**: Query SafeBreach simulators, their status, and detailed configurations
-- **Test History**: Retrieve paginated test execution history with filtering capabilities
+- **Test History**: Retrieve paginated test execution history with advanced filtering capabilities
 - **Simulation Analysis**: Access detailed simulation results including security control interactions
+- **Playbook Attacks**: Browse and analyze SafeBreach's comprehensive attack knowledge base
+
+### 🌐 Integration
 - **Multi-Environment Support**: Connect to multiple SafeBreach environments (staging, dev, production)
 - **Intelligent Caching**: Server-specific caching for improved performance and reduced API calls
-- **SSE Transport**: Server-Sent Events transport for real-time communication
-- **Security-First Design**: Localhost-only default with Bearer token authentication for external access
-- **Backward Compatibility**: Legacy server option for existing integrations
 
 ## Architecture
 
@@ -53,23 +83,93 @@ This MCP server enables AI agents to interact with SafeBreach management console
 **Additional Components:**
 - **`mcp_server_bug_423_hotfix.py`**: MCP initialization fix
 
-## Prerequisites
+## Configuration
+Configuration of the SafeBreach MCP Server consists of:
+- Specifying which SafeBreach consoles are in scope for the MCP. For each SafeBreach console, provide the 'url', 'account' and the provider (method) for fetching the API key
+- Making the API keys available to the MCP server through either environment variables, AWS SSM or AWS Secrets Manager
 
-- Python 3.12+
-- `uv` package manager
-- AWS credentials configured for SSM Parameter Store access
-- SafeBreach API tokens stored in AWS SSM Parameter Store
+### Prerequisites
+
+**For All Users (Running the MCP Server):**
+- `uv` package manager (automatically handles Python installation)
+- SafeBreach API tokens (see [API Tokens](#api-tokens) section for storage options)
+
+**For AWS-based Token Storage (Optional):**
+- AWS credentials configured for SSM Parameter Store or Secrets Manager access
+- *Note: You can also use environment variables for token storage without AWS*
+
+**For Local Development Only:**
+- Python 3.12+ (if not using `uv` for dependency management)
+- Git (for cloning the repository)
+
+### SafeBreach Environments
+**Specifying The SafeBreach Environments With An Environment Variable And File**
+Set the environment variable to point to a configuration JSON file anywhere on your disk that is available to the MCP server for read.
+```bash
+export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
+```
+
+The JSON file format should adhere to the following schema:
+```
+{
+    "console-friendly-name": {
+        "url": "my-console.safebreach.com",
+        "account": "1234567890",
+        "secret_config": {
+            "provider": "env_var",
+            "parameter_name": "my-console-apitoken"
+        }
+    }
+}
+```
+**Hardcoding The Environments**
+In some cases, you might prefer to clone the repo and hard code your environments to avoid the dependency on environmental settings. That can be achieved by editing `environments_metadata.py`:
+
+```python
+safebreach_envs = {
+    "console-name": {
+        "url": "console.safebreach.com", 
+        "account": "account_id",
+        "secret_config": {
+            "provider": "aws_ssm",  # or "aws_secrets_manager" or "env_var"
+            "parameter_name": "console-name-apitoken"
+        }
+    }
+}
+```
+
+### API Tokens
+
+SafeBreach API tokens can be stored using three different providers:
+
+**1. AWS SSM Parameter Store (default):**
+```bash
+aws ssm put-parameter --name "console-name-apitoken" --value "your-api-token" --type "SecureString"
+```
+
+**2. AWS Secrets Manager:**
+```bash
+aws secretsmanager create-secret --name "safebreach/console-name/api-token" --secret-string "your-api-token"
+```
+
+**3. Environment Variables:**
+```bash
+# For parameter_name "console-name-apitoken", set:
+export CONSOLE_NAME_APITOKEN="your-api-token"
+
+# Note: Dashes are automatically converted to underscores for environment variable lookup
+```
 
 ## Installation
 
-### Option 1: Direct Installation from Git (Recommended)
+### Option 1: Direct Installation from Git (Recommended) 🚀
 
 Install and run the MCP server directly from the repository:
 
-**Prerequisites for Remote Installation:**
+**Additional Requirements for Remote Installation:**
 - SSH key configured with GitHub (recommended), OR
 - GitHub Personal Access Token for HTTPS authentication
-- Check your uv version with `uv --version`. The `--from` flag requires uv 0.4.0+.
+- `uv` version 0.4.0+ (check with `uv --version`) for `--from` flag support
 
 **Setting up SSH access to GitHub:**
 1. Generate SSH key: `ssh-keygen -t ed25519 -C "your_email@example.com"`
@@ -108,7 +208,7 @@ safebreach-mcp-all-servers
 uv run --from git+ssh://git@github.com/SafeBreach/safebreach-mcp.git safebreach-mcp-all-servers
 ```
 
-### Option 2: Local Development Setup
+### Option 2: Local Development Setup 🛠️
 
 1. Clone the repository:
 ```bash
@@ -121,8 +221,9 @@ uv sync
 ```
 
 ## External Connection Support
+Commonly MCP servers are deployed locally on the same host running the AI client application (e.g. Claude Desktop). That is also the default running mode for the SafeBreach MCP Server. In addition, the SafeBreach MCP Server supports running the server on a remote host making it accessible to multiple clients with an authorization header simultaneously.
 
-⚠️ Important Security Notice: The following deployment mode should be used with extreme caution. The current authorization method is experimental and does not contain validated authentication flows for external MCP connections. External exposure significantly increases security risks and should only be implemented in controlled environments with appropriate security measures.
+> ⚠️ **Important Security Notice**: The following deployment mode should be used with extreme caution. The current authorization method is experimental and does not contain validated authentication flows for external MCP connections. External exposure significantly increases security risks and should only be implemented in controlled environments with appropriate security measures.
 
 ### Security Model
 
@@ -237,83 +338,24 @@ For external servers, update your Claude Desktop configuration:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://your-server-ip:8001/sse",
+        "http://100.117.2.202:8001/sse",
         "--transport",
         "http-first",
-        "--headers",
-        "{\"Authorization\": \"Bearer your-secure-token\"}"
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer your-secure-token"
       ]
     }
   }
 }
 ```
 
-## Configuration
 
-### SafeBreach Environments
-
-Configure your SafeBreach environments in `environments_metadata.py`:
-
-```python
-safebreach_envs = {
-    "console-name": {
-        "url": "console.safebreach.com", 
-        "account": "account_id",
-        "secret_config": {
-            "provider": "aws_ssm",  # or "aws_secrets_manager" or "env_var"
-            "parameter_name": "console-name-apitoken"
-        }
-    }
-}
-```
-
-**Dynamic Environment Loading:**
-You can also load additional environments from a JSON file without modifying the codebase:
-
-```bash
-# Set the environment variable to point to your JSON file
-export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
-
-# The JSON file format matches the Python configuration:
-{
-    "my-console": {
-        "url": "my-console.safebreach.com",
-        "account": "1234567890",
-        "secret_config": {
-            "provider": "env_var",
-            "parameter_name": "my-console-apitoken"
-        }
-    }
-}
-```
-
-### API Tokens
-
-SafeBreach API tokens can be stored using three different providers:
-
-**1. AWS SSM Parameter Store (default):**
-```bash
-aws ssm put-parameter --name "console-name-apitoken" --value "your-api-token" --type "SecureString"
-```
-
-**2. AWS Secrets Manager:**
-```bash
-aws secretsmanager create-secret --name "safebreach/console-name/api-token" --secret-string "your-api-token"
-```
-
-**3. Environment Variables:**
-```bash
-# For parameter_name "console-name-apitoken", set:
-export CONSOLE_NAME_APITOKEN="your-api-token"
-
-# Note: Dashes are automatically converted to underscores for environment variable lookup
-```
-
-## Usage
+## Usage 🎯
 
 ### Starting the MCP Server
 
-**Multi-Server Architecture (Recommended):**
+#### Multi-Server Architecture (Recommended)
 
 **Local Development (Default - Secure):**
 ```bash
@@ -344,17 +386,25 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 uv run start_all_servers.py --help
 ```
 
-**Troubleshooting Remote Installation:**
-- **"could not read Username"**: Use SSH method or set up GitHub Personal Access Token
-- **"Address already in use"**: Stop any existing servers with `lsof -ti:8000,8001,8002 | xargs kill`
-- **"command not found"**: Add uv tools to PATH: `export PATH="$HOME/.local/bin:$PATH"`
-- **SSH key issues**: Verify with `ssh -T git@github.com`
+#### Troubleshooting Remote Installation
+
+| Issue | Solution |
+|-------|----------|
+| "could not read Username" | Use SSH method or set up GitHub Personal Access Token |
+| "Address already in use" | Stop existing servers: `lsof -ti:8000,8001,8002 \| xargs kill` |
+| "command not found" | Add uv tools to PATH: `export PATH="$HOME/.local/bin:$PATH"` |
+| SSH key issues | Verify with `ssh -T git@github.com` |
 
 
-### Registering with Claude Desktop
+### Registering with Claude Desktop 🔗
 
 Claude Desktop reads the MCP server configurations from the file:
+
+**macOS/Linux:**
 `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+**Windows:**
+`%APPDATA%\Claude\claude_desktop_config.json`
 
 #### Local Development Configuration
 
@@ -402,54 +452,129 @@ Claude Desktop reads the MCP server configurations from the file:
 }
 ```
 
+#### Windows Configuration
+
+**Multi-Server Configuration (Windows with External Server):**
+```json
+{
+  "mcpServers": {
+    "safebreach-config-staging": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "mcp-remote",
+        "http://your-server-ip:8000/sse",
+        "--transport",
+        "http-first",
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer your-auth-token-here"
+      ]
+    },
+    "safebreach-data-staging": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "mcp-remote",
+        "http://your-server-ip:8001/sse",
+        "--transport",
+        "http-first",
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer your-auth-token-here"
+      ]
+    },
+    "safebreach-utilities": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "mcp-remote",
+        "http://your-server-ip:8002/sse",
+        "--transport",
+        "http-first",
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer your-auth-token-here"
+      ]
+    },
+    "safebreach-playbook": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "mcp-remote",
+        "http://your-server-ip:8003/sse",
+        "--transport",
+        "http-first",
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer your-auth-token-here"
+      ]
+    }
+  }
+}
+```
+
+> **Note for Windows Users**: 
+> - Use `"command": "cmd"` instead of `"npx"`
+> - Add `"/c"` as the first argument
+> - Add `--allow-http` flag for HTTP connections (if not using HTTPS)
+
 #### Remote Server Configuration
 
 **For External/Production Servers with Authentication:**
 ```json
 {
   "mcpServers": {
-    "safebreach-config-remote": {
+    "safebreach-data-staging": {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://your-server-ip:8000/sse",
+        "http://100.117.2.202:8001/sse",
         "--transport",
         "http-first",
-        "--headers",
-        "{\"Authorization\": \"Bearer your-auth-token-here\"}"
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
       ]
     },
-    "safebreach-data-remote": {
+    "safebreach-config-staging": {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://your-server-ip:8001/sse",
+        "http://100.117.2.202:8000/sse",
         "--transport",
         "http-first",
-        "--headers",
-        "{\"Authorization\": \"Bearer your-auth-token-here\"}"
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
       ]
     },
-    "safebreach-utilities-remote": {
+    "safebreach-utils-staging": {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://your-server-ip:8002/sse",
+        "http://100.117.2.202:8002/sse",
         "--transport",
         "http-first",
-        "--headers",
-        "{\"Authorization\": \"Bearer your-auth-token-here\"}"
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
       ]
     },
-    "safebreach-playbook-remote": {
+    "safebreach-playbook-staging": {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://your-server-ip:8003/sse",
+        "http://100.117.2.202:8003/sse",
         "--transport",
         "http-first",
-        "--headers",
-        "{\"Authorization\": \"Bearer your-auth-token-here\"}"
+        "--allow-http",
+        "--header",
+        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
       ]
     }
   }
@@ -494,32 +619,17 @@ ssh user@server "cat ~/.config/safebreach-mcp/environment | grep SAFEBREACH_MCP_
 
 #### Troubleshooting Claude Desktop Connection
 
-**Common Issues:**
-
-1. **Connection Failed**: Verify server is running and accessible
-   ```bash
-   curl http://your-server-ip:8001/sse
-   ```
-
-2. **Authentication Failed**: Check Bearer token is correct
-   ```bash
-   curl -H "Authorization: Bearer your-token" http://your-server-ip:8001/sse
-   ```
-
-3. **Tool Loading Failed**: Verify Claude Desktop configuration syntax
-   - Check JSON syntax is valid
-   - Ensure no extra commas or missing quotes
-   - Verify `npx` and `mcp-remote` are available in PATH
-
-4. **mcp-remote Not Found**: Install mcp-remote globally
-   ```bash
-   npm install -g @anthropic/mcp-remote
-   ```
+| Issue | Solution |
+|-------|----------|
+| **Connection Failed** | Verify server is running: `curl http://your-server-ip:8001/sse` |
+| **Authentication Failed** | Check Bearer token: `curl -H "Authorization: Bearer your-token" http://your-server-ip:8001/sse` |
+| **Tool Loading Failed** | Verify JSON syntax, check for extra commas, ensure `npx` is in PATH |
+| **mcp-remote Not Found** | Install globally: `npm install -g @anthropic/mcp-remote` |
 
 After updating the configuration file, restart Claude Desktop for changes to take effect.
 
 
-## API Reference
+## API Reference 📚
 
 The MCP server exposes the following tools for SafeBreach operations:
 
@@ -1054,7 +1164,7 @@ attack_with_fixes = get_playbook_attack_details(
 )
 ```
 
-## Testing
+## Testing 🧪
 
 The project includes a comprehensive test suite with 100% code coverage.
 
@@ -1091,7 +1201,7 @@ The project includes VS Code launch configurations for easy testing:
 
 Tests are auto-discovered in VS Code Test Explorer.
 
-## Development
+## Development 🔧
 
 ### Project Structure
 
@@ -1225,29 +1335,16 @@ aws ssm put-parameter --name "new-console-apitoken" --value "your-api-token" --t
 aws secretsmanager create-secret --name "safebreach/new-console/api-token" --secret-string "your-api-token"
 ```
 
-## Troubleshooting
+## Troubleshooting 🔍
 
 ### Common Issues
 
-**Server fails to start:**
-- Verify Python 3.12+ is installed
-- Ensure all dependencies are installed: `uv sync`
-- Check AWS credentials are configured
-
-**API authentication errors:**
-- Verify API tokens are stored in AWS SSM Parameter Store
-- Check token naming convention: `{console-name}-apitoken`
-- Ensure AWS credentials have SSM read permissions
-
-**Cache issues:**
-- Caches automatically expire after 1 hour
-- Restart server to clear all caches
-- Check console names match exactly between calls
-
-**Test failures:**
-- Ensure pytest and pytest-mock are installed
-- Run tests in project root directory
-- Check Python path includes project modules
+| Issue | Solution |
+|-------|----------|
+| **Server fails to start** | Verify Python 3.12+, run `uv sync`, check AWS credentials |
+| **API authentication errors** | Check tokens in AWS SSM, verify naming: `{console-name}-apitoken` |
+| **Cache issues** | Caches expire after 1 hour, restart server to clear |
+| **Test failures** | Install pytest/pytest-mock, run from project root |
 
 ### Remote MCP Server Issues
 
@@ -1264,7 +1361,7 @@ aws secretsmanager create-secret --name "safebreach/new-console/api-token" --sec
 3. **Result**: External connections with Bearer token authentication fully operational
 4. **Validation**: Authentication working (401 without token, passes with valid token)
 
-## Security Considerations
+## Security Considerations 🔒
 
 - **Default Security**: All servers bind to localhost (127.0.0.1) by default - no external access
 - **External Access Control**: Optional external connections require explicit configuration and Bearer token authentication
@@ -1276,7 +1373,7 @@ aws secretsmanager create-secret --name "safebreach/new-console/api-token" --sec
 - **Security Warnings**: Comprehensive logging when external access is enabled
 - **Token Validation**: Bearer token validation for all external requests with proper error responses
 
-## Package Information
+## Package Information 📦
 
 The project provides multiple installation options with various entry points:
 
@@ -1294,7 +1391,7 @@ The project provides multiple installation options with various entry points:
 - **Python Version**: 3.12+
 - **Distribution**: Available via git+ssh or git+https installation
 
-## Contributing
+## Contributing 🤝
 
 1. Create feature branch from `master`
 2. Write tests for new functionality (maintain 100% coverage)
