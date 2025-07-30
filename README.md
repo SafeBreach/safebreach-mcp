@@ -59,7 +59,6 @@ This MCP server enables AI agents to interact with SafeBreach management console
 - `uv` package manager
 - AWS credentials configured for SSM Parameter Store access
 - SafeBreach API tokens stored in AWS SSM Parameter Store
-- OpenAI API key (for running examples)
 
 ## Installation
 
@@ -121,14 +120,9 @@ git clone git@github.com:SafeBreach/safebreach-mcp.git
 uv sync
 ```
 
-3. Set up environment variables:
-```bash
-export OPENAI_API_KEY=your_openai_api_key
-```
-
 ## External Connection Support
 
-The SafeBreach MCP servers now support optional external connections for deployment scenarios requiring remote access. By default, all servers bind to `127.0.0.1` (localhost-only) for maximum security.
+⚠️ Important Security Notice: The following deployment mode should be used with extreme caution. The current authorization method is experimental and does not contain validated authentication flows for external MCP connections. External exposure significantly increases security risks and should only be implemented in controlled environments with appropriate security measures.
 
 ### Security Model
 
