@@ -1,3 +1,6 @@
+# Disclaimer
+This is an experimental project intended to demonstrate SafeBreach capabilities with MCP. It is not officially supported or verified by SafeBreach.
+
 # SafeBreach MCP Server
 
 Model Context Protocol (MCP) server that bridges the gap between natural language queries and SafeBreach console operations. It provides seamless integration with SafeBreach's Breach and Attack Simulation (BAS) platform through a standardized API interface.
