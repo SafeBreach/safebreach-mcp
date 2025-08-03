@@ -627,7 +627,7 @@ The project provides multiple installation options with various entry points:
 
 **Package Configuration:**
 - **Package Name**: safebreach-mcp-server
-- **Version**: 1.0.0
+- **Version**: 1.1.0
 - **Dependencies**: boto3, requests, mcp (see pyproject.toml)
 - **Installation**: Via git+ssh or git+https with subdirectory specification
 
