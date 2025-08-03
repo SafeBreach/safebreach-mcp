@@ -258,7 +258,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
   - `data_server.py`: FastMCP server for test and simulation data
   - `data_functions.py`: Business logic for test/simulation operations
   - `data_types.py`: Data transformations for test/simulation data
-  - **Tools**: `get_tests_history`, `get_test_details`, `get_test_simulations`, `get_test_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`
+  - **Tools**: `get_tests_history`, `get_test_details`, `get_test_simulations`, `get_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`
 
 - **`safebreach_mcp_utilities/`**: Utilities Server (Port 8002)
   - `utilities_server.py`: FastMCP server for utility functions
@@ -316,9 +316,9 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 
 **Data Server (Port 8001):**
 3. `get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
-4. `get_test_details` ✨ **Enhanced** - Full details for specific tests with optional simulation statistics
-5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering
-6. `get_test_simulation_details` - Detailed simulation results with optional MITRE techniques and attack logs
+4. `get_test_details` ✨ **Enhanced** - Full details for specific tests with optional simulation statistics including drift counts
+5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering, and drift analysis filtering
+6. `get_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques, attack logs, and drift analysis information
 7. `get_security_controls_events` - Security control events with filtering
 8. `get_security_control_event_details` - Detailed security event with verbosity levels
 9. `get_test_findings_counts` - Findings summary by type with filtering
@@ -350,26 +350,99 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 - **Time Windows**: Filter by start/end dates (Unix timestamps)
 - **Status**: Filter by "completed", "canceled", "failed"
 - **Name Patterns**: Case-insensitive partial matching on test names
-- **Custom Ordering**: Sort by endTime, startTime, name, or duration (ascending/descending)
+- **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 
 **Enhanced Test Details (`get_test_details`):**
 - **Basic Details**: Returns standard test information (name, ID, start/end times, duration, status)
-- **Optional Simulation Statistics**: Set `include_simulations_statistics=True` to get detailed breakdown of simulation results by status (missed, stopped, prevented, reported, logged, no-result)
+- **Optional Simulation Statistics**: Set `include_simulations_statistics=True` to get detailed breakdown of simulation results by status (missed, stopped, prevented, reported, logged, no-result) and drift counts
+- **Drift Analysis**: Statistics include count of simulations that completed with different results compared to previous executions with identical parameters
 - **Backward Compatibility**: Statistics are not included by default to maintain existing behavior
 
 **Enhanced Simulation Filtering (`get_test_simulations`):**
 - **Status**: Filter by simulation status ("missed", "stopped", "prevented", "reported", "logged", "no-result")
-- **Time Windows**: Filter by start/end times (Unix timestamps) with safe type conversion for endTime field
+- **Time Windows**: Filter by start/end times (Unix timestamps) with safe type conversion for end_time field
 - **Playbook Attack ID**: Filter by exact playbook attack ID match
 - **Playbook Attack Name**: Case-insensitive partial matching on playbook attack names (e.g., "file", "network", "credential")
+- **Drift Analysis**: Set `drifted_only=True` to filter only simulations that have drifted from previous results with identical parameters
 
-**Enhanced Simulation Details (`get_test_simulation_details`):**
+**Enhanced Simulation Details (`get_simulation_details`):**
 - **Basic Details**: Returns standard simulation information
 - **Optional MITRE Techniques**: Set `include_mitre_techniques=True` to get MITRE ATT&CK technique details
 - **Optional Attack Logs**: Set `include_full_attack_logs=True` to get detailed attack logs by host
+- **Optional Drift Analysis**: Set `include_drift_info=True` to get comprehensive drift analysis information including drift type, security impact, description, and tracking code for correlation
 - **Robust Error Handling**: Improved handling of different data structure formats
 
 All filters work in combination and include pagination support. The response includes metadata about applied filters and total result counts.
+
+## Drift Analysis Functionality
+
+The SafeBreach MCP Data Server includes comprehensive drift analysis capabilities to help identify changes in security posture between test executions.
+
+### Understanding Drift
+
+**Drift Definition**: A drift occurs when two simulations with identical parameters (same attack ID, attacker host, target host, protocol, etc.) produce different final results. Simulations with identical parameters share the same `drift_tracking_code` for correlation.
+
+**Common Causes**: 
+- Heuristic behavior of security controls
+- Timing issues and varying host loads
+- Environmental changes (e.g., user logged into target host)
+- Security control configuration modifications
+
+### Drift Types and Security Impact
+
+The system recognizes various drift types with their security implications:
+
+**Positive Security Impact Drifts:**
+- `success-fail`: Attack was blocked in later execution (security improvement)
+- `stopped-prevented`: Better security control reporting (stopped → prevented)
+- `logged-detected`: Enhanced detection capabilities (logged → detected)
+- `missed-logged`: Improved logging coverage (missed → logged)
+
+**Negative Security Impact Drifts:**
+- `fail-success`: Attack succeeded in later execution (security degradation)
+- `prevented-stopped`: Reduced security control effectiveness (prevented → stopped)
+- `detected-logged`: Reduced detection capabilities (detected → logged)
+- `logged-missed`: Loss of logging coverage (logged → missed)
+
+**Neutral Impact Drifts:**
+- `result_improvement`: Technical failure resolved in later execution
+- `fail-internal_fail`: Internal failures in both executions
+- `success-internal_fail`: Technical failure in later execution
+
+### Using Drift Analysis
+
+**Filter Drifted Simulations:**
+```bash
+# Get only simulations that have drifted from previous results
+get_test_simulations(console="demo", test_id="123", drifted_only=True)
+```
+
+**Get Detailed Drift Information:**
+```bash
+# Include comprehensive drift analysis in simulation details
+get_simulation_details(
+    console="demo", 
+    test_id="123", 
+    simulation_id="sim456",
+    include_drift_info=True
+)
+```
+
+**Track Drift Statistics:**
+```bash
+# Include drift counts in test statistics
+get_test_details(console="demo", test_id="123", include_simulations_statistics=True)
+```
+
+### Drift Information Structure
+
+When `include_drift_info=True`, the response includes:
+- `type_of_drift`: Classification of the drift pattern
+- `security_impact`: "positive", "negative", or "neutral"
+- `description`: Human-readable explanation of the drift
+- `hint_to_llm`: Guidance for further investigation
+- `drift_tracking_code`: Correlation ID to find related simulations
+- `last_drift_date`: When the most recent drift occurred (if available)
 
 ## External Connection Support
 
