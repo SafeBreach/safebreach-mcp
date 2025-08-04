@@ -5,7 +5,7 @@
 ## Implementation Analysis
 
 The `get_tests_history` function in the Data Server now includes:
-- ✅ Sorts by `endTime` in descending order (configurable)
+- ✅ Sorts by `end_time` in descending order (configurable)
 - ✅ Has caching mechanism (1-hour TTL)
 - ✅ Supports pagination
 - ✅ **NEW:** Comprehensive filtering capabilities
@@ -24,7 +24,7 @@ def sb_get_tests_history(
     end_date: Optional[int] = None,            # Unix timestamp
     status_filter: Optional[str] = None,       # "completed", "canceled", "failed", or None (all)
     name_filter: Optional[str] = None,         # Partial match on test name
-    order_by: str = "endTime",                 # "endTime", "startTime", "name", "duration"
+    order_by: str = "end_time",                 # "end_time", "start_time", "name", "duration"
     order_direction: str = "desc"              # "desc" or "asc"
 ) -> dict:
 ```
@@ -37,8 +37,8 @@ def sb_get_tests_history(
    - `None` → All tests
 
 2. **Time Window Filtering:**
-   - `start_date` → Tests with endTime >= start_date
-   - `end_date` → Tests with endTime <= end_date
+   - `start_date` → Tests with end_time >= start_date
+   - `end_date` → Tests with end_time <= end_date
    - Both support Unix timestamps for precision
 
 3. **Status Filtering:**
@@ -50,7 +50,7 @@ def sb_get_tests_history(
    - Useful for finding specific test campaigns
 
 5. **Ordering Options:**
-   - Multiple fields: endTime (default), startTime, name, duration
+   - Multiple fields: end_time (default), start_time, name, duration
    - Ascending/descending support
 
 ### Cache Strategy
@@ -150,8 +150,8 @@ def sb_get_test_simulations(
     test_id: str, 
     page_number: int = 0,
     status_filter: Optional[str] = None,           # Filter by simulation status
-    start_time: Optional[int] = None,              # Filter simulations with endTime >= start_time
-    end_time: Optional[int] = None,                # Filter simulations with endTime <= end_time
+    start_time: Optional[int] = None,              # Filter simulations with end_time >= start_time
+    end_time: Optional[int] = None,                # Filter simulations with end_time <= end_time
     playbook_attack_id_filter: Optional[str] = None,  # Filter by exact playbook attack ID
     playbook_attack_name_filter: Optional[str] = None  # Filter by partial playbook attack name
 ) -> dict:
@@ -165,10 +165,10 @@ def sb_get_test_simulations(
    - Case-insensitive exact match
 
 2. **Time Window Filtering:**
-   - `start_time` → Simulations with endTime >= start_time
-   - `end_time` → Simulations with endTime <= end_time
+   - `start_time` → Simulations with end_time >= start_time
+   - `end_time` → Simulations with end_time <= end_time
    - Unix timestamps for precision
-   - **Note:** endTime field may come as string from API, requiring safe type conversion
+   - **Note:** end_time field may come as string from API, requiring safe type conversion
 
 3. **Playbook Attack ID Filtering:**
    - Exact match on playbook attack ID
@@ -192,11 +192,11 @@ Similar to tests history approach:
 
 ### Data Type Handling
 
-**Critical Issue:** The `endTime` field may come as string from the SafeBreach API instead of integer. The filtering logic includes safe type conversion:
+**Critical Issue:** The `end_time` field may come as string from the SafeBreach API instead of integer. The filtering logic includes safe type conversion:
 
 ```python
 def safe_time_compare(s, compare_time, operator):
-    end_time_val = s.get('endTime', 0)
+    end_time_val = s.get('end_time', 0)
     if isinstance(end_time_val, str):
         try:
             end_time_val = int(end_time_val)
@@ -233,7 +233,7 @@ def safe_time_compare(s, compare_time, operator):
 ✅ **Completed in Data Server:**
 - Function signature updated with all 5 filtering parameters
 - Helper functions implemented (`_get_all_simulations_from_cache_or_api`, `_apply_simulation_filters`)
-- Safe type conversion for endTime field
+- Safe type conversion for end_time field
 - MCP Data Server tool definition updated
 - Comprehensive E2E tests added
 - Documentation updated for multi-server architecture
@@ -255,7 +255,7 @@ Beyond the filtering capabilities described in this design document, the followi
 - **Backward Compatibility**: Statistics not included by default
 - **Comprehensive Status Breakdown**: missed, stopped, prevented, reported, logged, no-result
 
-### Enhanced get_test_simulation_details (Data Server)
+### Enhanced get_simulation_details (Data Server)
 - **Optional MITRE Techniques**: Include MITRE ATT&CK technique details
 - **Optional Attack Logs**: Include detailed attack logs by host
 - **Robust Error Handling**: Improved handling for different API response formats

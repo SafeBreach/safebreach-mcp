@@ -1,6 +1,6 @@
 [project]
 name = "safebreach-mcp-server"
-version = "1.0.2"
+version = "1.1.0"
 description = "SafeBreach MCP Server - Bridge AI agents with SafeBreach's Breach and Attack Simulation platform"
 readme = "README.md"
 requires-python = ">=3.12"

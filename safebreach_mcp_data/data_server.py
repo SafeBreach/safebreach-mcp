@@ -17,7 +17,7 @@ from .data_functions import (
     sb_get_tests_history,
     sb_get_test_details,
     sb_get_test_simulations,
-    sb_get_test_simulation_details,
+    sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
@@ -46,7 +46,7 @@ class SafeBreachDataServer(SafeBreachMCPBase):
             description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console. 
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), start_date (Unix timestamp), end_date (Unix timestamp), 
-status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('endTime'/'startTime'/'name'/'duration'), order_direction ('desc'/'asc')"""
+status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc')"""
         )
         async def get_tests_history_tool(
             console: str,
@@ -85,9 +85,9 @@ status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name 
         @self.mcp.tool(
             name="get_test_simulations",
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
-Supports filtering by status, time windows, playbook attack ID, and playbook attack name patterns. Results are ordered by execution time (newest first) by default.
+Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
 Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp), end_time (Unix timestamp), 
-playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match)"""
+playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations)"""
         )
         async def get_test_simulations_tool(
             console: str,
@@ -97,7 +97,8 @@ playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial na
             start_time: Optional[int] = None,
             end_time: Optional[int] = None,
             playbook_attack_id_filter: Optional[str] = None,
-            playbook_attack_name_filter: Optional[str] = None
+            playbook_attack_name_filter: Optional[str] = None,
+            drifted_only: bool = False
         ) -> dict:
             return sb_get_test_simulations(
                 console=console,
@@ -107,31 +108,30 @@ playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial na
                 start_time=start_time,
                 end_time=end_time,
                 playbook_attack_id_filter=playbook_attack_id_filter,
-                playbook_attack_name_filter=playbook_attack_name_filter
+                playbook_attack_name_filter=playbook_attack_name_filter,
+                drifted_only=drifted_only
             )
         
         @self.mcp.tool(
             name="get_test_simulation_details",
-            description="""Returns the full details of a specific simulation by id in the context of a specific test by id on a given Safebreach management console.
-Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, full attack logs by host, and simulation execution logs.
-Parameters: console (required), test_id (required), simulation_id (required), include_mitre_techniques (bool, default False), 
-include_full_attack_logs (bool, default False), include_simulation_logs (bool, default False)"""
+            description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
+Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, full attack logs by host, and drift analysis information.
+Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False), 
+include_full_attack_logs (bool, default False), include_drift_info (bool, default False)"""
         )
         async def get_test_simulation_details_tool(
             console: str,
-            test_id: str,
             simulation_id: str,
             include_mitre_techniques: bool = False,
             include_full_attack_logs: bool = False,
-            include_simulation_logs: bool = False
+            include_drift_info: bool = False
         ) -> dict:
-            return sb_get_test_simulation_details(
+            return sb_get_simulation_details(
                 console,
-                test_id,
                 simulation_id,
                 include_mitre_techniques=include_mitre_techniques,
                 include_full_attack_logs=include_full_attack_logs,
-                include_simulation_logs=include_simulation_logs
+                include_drift_info=include_drift_info
             )
         
         @self.mcp.tool(

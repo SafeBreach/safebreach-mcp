@@ -12,7 +12,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
     sb_get_test_simulations,
-    sb_get_test_simulation_details,
+    sb_get_simulation_details,
     security_control_events_cache,
     simulations_cache
 )
@@ -123,29 +123,31 @@ class TestSecurityControlEventsIntegration:
     
     @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_full_workflow_simulation_to_security_events(self, mock_get, mock_secret, mock_security_control_events_response, mock_simulation_response):
+    def test_full_workflow_simulation_to_security_events(self, mock_get, mock_post, mock_secret, mock_security_control_events_response, mock_simulation_response):
         """Test complete workflow from simulation to security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
         
-        # Mock simulation API response
+        # Mock simulation API response (for POST requests to executionsHistoryResults)
         simulation_response = Mock()
-        simulation_response.json.return_value = mock_simulation_response[0]  # Use first simulation object
+        simulation_response.json.return_value = {"simulations": [mock_simulation_response[0]]}  # Wrap in simulations array
         simulation_response.status_code = 200
         simulation_response.raise_for_status.return_value = None
         
-        # Mock security control events API response
+        # Mock security control events API response (for GET requests to eventLogs)
         security_events_response = Mock()
         security_events_response.json.return_value = mock_security_control_events_response
         security_events_response.status_code = 200
         security_events_response.raise_for_status.return_value = None
         
+        # Configure mock_post for simulation details requests
+        mock_post.return_value = simulation_response
+        
         # Configure mock_get to return different responses based on URL
         def mock_get_side_effect(url, **kwargs):
-            if 'executionsHistoryResults' in url:
-                return simulation_response
-            elif 'eventLogs' in url:
+            if 'eventLogs' in url:
                 return security_events_response
             else:
                 return Mock()
@@ -153,9 +155,8 @@ class TestSecurityControlEventsIntegration:
         mock_get.side_effect = mock_get_side_effect
         
         # Step 1: Get simulation details
-        simulation_details = sb_get_test_simulation_details(
+        simulation_details = sb_get_simulation_details(
             "test-console", 
-            "1752744254468.59", 
             "sim-001"
         )
         
@@ -183,7 +184,8 @@ class TestSecurityControlEventsIntegration:
         assert event_details["product"] == "CrowdStrike FDR"
         
         # Verify API calls
-        assert mock_get.call_count == 2  # One for simulation, one for security events (event details uses cache)
+        assert mock_post.call_count == 1  # One for simulation details
+        assert mock_get.call_count == 1  # One for security events (event details uses cache)
         mock_secret.assert_called_with("test-console")
     
     @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
@@ -599,11 +601,11 @@ class TestFindingsIntegration:
         assert counts_result["total_types"] == 4
         
         # Check specific counts
-        finding_counts = {fc["type"]: fc["count"] for fc in counts_result["finding_counts"]}
-        assert finding_counts["CredentialHarvestingMemory"] == 2
-        assert finding_counts["openPorts"] == 1
-        assert finding_counts["UsersCollection"] == 1
-        assert finding_counts["ConnectedAgents"] == 1
+        findings_counts = {fc["type"]: fc["count"] for fc in counts_result["findings_counts"]}
+        assert findings_counts["CredentialHarvestingMemory"] == 2
+        assert findings_counts["openPorts"] == 1
+        assert findings_counts["UsersCollection"] == 1
+        assert findings_counts["ConnectedAgents"] == 1
         
         # Step 2: Get findings details
         details_result = sb_get_test_findings_details("test-console", "1752050602228.12")
@@ -831,7 +833,7 @@ class TestFindingsIntegration:
         counts_result = sb_get_test_findings_counts("test-console", "test-id")
         assert counts_result["total_findings"] == 0
         assert counts_result["total_types"] == 0
-        assert len(counts_result["finding_counts"]) == 0
+        assert len(counts_result["findings_counts"]) == 0
         assert counts_result["applied_filters"] == {}
         
         # Test empty response in details

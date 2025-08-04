@@ -5,10 +5,11 @@ This module provides functions for SafeBreach data operations,
 specifically for test and simulation data management.
 """
 
-import requests
 import logging
 import time
 from typing import Dict, List, Optional, Any
+
+import requests
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import safebreach_envs
 from .data_types import (
@@ -40,7 +41,7 @@ def sb_get_tests_history(
     end_date: Optional[int] = None,
     status_filter: Optional[str] = None,
     name_filter: Optional[str] = None,
-    order_by: str = "endTime",
+    order_by: str = "end_time",
     order_direction: str = "desc"
 ) -> Dict[str, Any]:
     """
@@ -54,14 +55,14 @@ def sb_get_tests_history(
         end_date: End date filter (Unix timestamp)
         status_filter: Filter by status ('completed', 'canceled', 'failed')
         name_filter: Filter by test name (partial match)
-        order_by: Field to order by ('endTime', 'startTime', 'name', 'duration')
+        order_by: Field to order by ('end_time', 'start_time', 'name', 'duration')
         order_direction: Order direction ('desc', 'asc')
         
     Returns:
         Dict containing filtered tests, pagination info, and applied filters
     """
     # Validate order_by parameter
-    valid_order_by = ['endTime', 'startTime', 'name', 'duration']
+    valid_order_by = ['end_time', 'start_time', 'name', 'duration']
     if order_by not in valid_order_by:
         raise ValueError(f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}")
     
@@ -126,7 +127,7 @@ def sb_get_tests_history(
             applied_filters['status_filter'] = status_filter
         if name_filter:
             applied_filters['name_filter'] = name_filter
-        if order_by != "endTime":
+        if order_by != "end_time":
             applied_filters['order_by'] = order_by
         if order_direction != "desc":
             applied_filters['order_direction'] = order_direction
@@ -230,18 +231,16 @@ def _apply_filters(
     if test_type:
         if test_type.lower() == 'validate':
             # BAS tests - without "ALM" in systemTags
-            filtered = [t for t in filtered 
-                       if not any('ALM' in tag for tag in t.get('systemTags', []))]
+            filtered = [t for t in filtered if 'ALM' not in t['test_type']]
         elif test_type.lower() == 'propagate':
             # ALM tests - with "ALM" in systemTags
-            filtered = [t for t in filtered 
-                       if any('ALM' in tag for tag in t.get('systemTags', []))]
+            filtered = [t for t in filtered if 'ALM' in t['test_type']]
     
     # Apply date filters
     if start_date:
-        filtered = [t for t in filtered if t.get('endTime', 0) >= start_date]
+        filtered = [t for t in filtered if t.get('end_time', 0) >= start_date]
     if end_date:
-        filtered = [t for t in filtered if t.get('endTime', 0) <= end_date]
+        filtered = [t for t in filtered if t.get('end_time', 0) <= end_date]
     
     # Apply status filter
     if status_filter:
@@ -258,7 +257,7 @@ def _apply_filters(
 
 def _apply_ordering(
     tests: List[Dict[str, Any]],
-    order_by: str = "endTime",
+    order_by: str = "end_time",
     order_direction: str = "desc"
 ) -> List[Dict[str, Any]]:
     """
@@ -275,16 +274,16 @@ def _apply_ordering(
     reverse = order_direction.lower() == 'desc'
     
     def get_sort_key(test):
-        if order_by == 'endTime':
-            return test.get('endTime', 0)
-        elif order_by == 'startTime':
-            return test.get('startTime', 0)
+        if order_by == 'end_time':
+            return test.get('end_time', 0)
+        elif order_by == 'start_time':
+            return test.get('start_time', 0)
         elif order_by == 'name':
             return test.get('name', '').lower()
         elif order_by == 'duration':
             return test.get('duration', 0)
         else:
-            return test.get('endTime', 0)  # Default to endTime
+            return test.get('end_time', 0)  # Default to end_time
     
     return sorted(tests, key=get_sort_key, reverse=reverse)
 
@@ -322,56 +321,10 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
             raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
         
         return_details = get_reduced_test_summary_mapping(test_summary)
-        
-        # Get finalStatus safely, default to empty dict if not present
-        final_status = test_summary.get('finalStatus', {})
-        
+               
         if include_simulations_statistics:
-            return_details['simulations_statistics'] = [
-                        {
-                            "status": "missed",
-                            "explanation": (
-                                "Simulations that completed but were not detected by any deployed security control "
-                                "(No logs, no blocking, no alerting)"
-                            ),
-                            "count": final_status.get('missed', 0)
-                        },
-                        {
-                            "status": "stopped",
-                            "explanation": (
-                                "Simulations where the attack was stopped by a security control before completion"
-                            ),
-                            "count": final_status.get('stopped', 0)
-                        },
-                        {
-                            "status": "prevented",
-                            "explanation": (
-                                "Simulations where the attack was prevented by a security control"
-                            ),
-                            "count": final_status.get('prevented', 0)
-                        },
-                        {
-                            "status": "reported",
-                            "explanation": (
-                                "Simulations where the attack was detected and reported by a security control"
-                            ),
-                            "count": final_status.get('reported', 0)
-                        },
-                        {
-                            "status": "logged",
-                            "explanation": (
-                                "Simulations where the attack was logged by a security control"
-                            ),
-                            "count": final_status.get('logged', 0)
-                        },
-                        {
-                            "status": "no-result",
-                            "explanation": (
-                                "Simulations that could not be completed due to technical issues"
-                            ),
-                            "count": final_status.get('no-result', 0)
-                        }
-                    ]
+            return_details['simulations_statistics'] = _get_simulation_statistics(console, test_id, test_summary)
+
         return return_details
         
     except Exception as e:
@@ -379,35 +332,90 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
         raise
 
 
-def _get_simulation_statistics(console: str, test_id: str) -> Dict[str, Any]:
+def _get_simulation_statistics(console: str, test_id: str, test_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Get simulation statistics for a test.
     
     Args:
         console: SafeBreach console name
         test_id: Test ID
-        
+        test_summary: Test summary information
+
     Returns:
         Dict containing simulation statistics
     """
     try:
-        # Get all simulations for the test
+        # To coung drifts - get all simulations for the test
         all_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
-        
-        # Count by status
-        status_counts = {}
+        drifts = 0
         for sim in all_simulations:
-            status = sim.get('status', 'unknown')
-            status_counts[status] = status_counts.get(status, 0) + 1
+            is_drift = sim.get('is_drifted', False)
+            if is_drift:
+                if isinstance(is_drift, str):
+                    # this is for debugging purposes, this should never happen
+                    logging.error("Simulation %s has unexpected drift type: %s", sim.get('id', 'unknown'), is_drift)
+                    continue
+
+                drifts += 1
+
+        # Get finalStatus safely, default to empty dict if not present
+        final_status = test_summary.get('finalStatus', {})
+        stats = [{
+                    "status": "missed",
+                    "explanation": (
+                        "Simulations that were not stopped and were also not detected by any deployed security control "
+                        "(No logs, no blocking, no alerting)"
+                    ),
+                    "count": final_status.get('missed', 0)
+                },
+                {
+                    "status": "stopped",
+                    "explanation": (
+                        "Simulations where the attack was not successful but not logged nor detected by a security control"
+                    ),
+                    "count": final_status.get('stopped', 0)
+                },
+                {
+                    "status": "prevented",
+                    "explanation": (
+                        "Simulations where the attack was evidently prevented as well as reportedby a security control"
+                    ),
+                    "count": final_status.get('prevented', 0)
+                },
+                {
+                    "status": "reported",
+                    "explanation": (
+                        "Simulations where the attack was not stopped but detected and reported by a security control"
+                    ),
+                    "count": final_status.get('reported', 0)
+                },
+                {
+                    "status": "logged",
+                    "explanation": (
+                        "Simulations where the attack was not stopped yet logged by a security control"
+                    ),
+                    "count": final_status.get('logged', 0)
+                },
+                {
+                    "status": "no-result",
+                    "explanation": (
+                        "Simulations that could not be completed due to technical issues"
+                    ),
+                    "count": final_status.get('no-result', 0)
+                },
+                {
+                    "explanation": (
+                        "Simulations that completed with different results compared to previous executions with exact same parameters"
+                    ),
+                    "drifted_count": drifts
+                }
+            ]
         
-        return {
-            "total_simulations": len(all_simulations),
-            "by_status": status_counts
-        }
+        return stats
         
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Graceful error handling for statistics
         logger.error("Error getting simulation statistics for test '%s': %s", test_id, str(e))
-        return {"error": f"Failed to get simulation statistics: {str(e)}"}
+        return [{"error": f"Failed to get simulation statistics: {str(e)}"}]
 
 
 def sb_get_test_simulations(
@@ -418,7 +426,8 @@ def sb_get_test_simulations(
     start_time: Optional[int] = None,
     end_time: Optional[int] = None,
     playbook_attack_id_filter: Optional[str] = None,
-    playbook_attack_name_filter: Optional[str] = None
+    playbook_attack_name_filter: Optional[str] = None,
+    drifted_only: bool = False
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated simulations for a test.
@@ -432,6 +441,7 @@ def sb_get_test_simulations(
         end_time: End time filter (Unix timestamp)
         playbook_attack_id_filter: Filter by playbook attack ID
         playbook_attack_name_filter: Filter by playbook attack name
+        drifted_only: Filter to include only drifted simulations
         
     Returns:
         Dict containing filtered simulations, pagination info, and applied filters
@@ -451,7 +461,8 @@ def sb_get_test_simulations(
             start_time=start_time,
             end_time=end_time,
             playbook_attack_id_filter=playbook_attack_id_filter,
-            playbook_attack_name_filter=playbook_attack_name_filter
+            playbook_attack_name_filter=playbook_attack_name_filter,
+            drifted_only=drifted_only
         )
         
         # Apply pagination
@@ -475,6 +486,8 @@ def sb_get_test_simulations(
             applied_filters['playbook_attack_id_filter'] = playbook_attack_id_filter
         if playbook_attack_name_filter:
             applied_filters['playbook_attack_name_filter'] = playbook_attack_name_filter
+        if drifted_only:
+            applied_filters['drifted_only'] = drifted_only
         
         return {
             "page_number": page_number,
@@ -564,7 +577,8 @@ def _apply_simulation_filters(
     start_time: Optional[int] = None,
     end_time: Optional[int] = None,
     playbook_attack_id_filter: Optional[str] = None,
-    playbook_attack_name_filter: Optional[str] = None
+    playbook_attack_name_filter: Optional[str] = None,
+    drifted_only: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Apply filters to simulation list.
@@ -576,6 +590,7 @@ def _apply_simulation_filters(
         end_time: End time filter
         playbook_attack_id_filter: Playbook attack ID filter
         playbook_attack_name_filter: Playbook attack name filter
+        drifted_only: Filter to include only drifted simulations
         
     Returns:
         Filtered list of simulations
@@ -605,6 +620,11 @@ def _apply_simulation_filters(
         filtered = [s for s in filtered 
                    if playbook_attack_name_filter.lower() in s.get('playbookAttackName', '').lower()]
     
+    # Apply drift filter
+    if drifted_only:
+        filtered = [s for s in filtered 
+                   if s.get('is_drifted', False) is True]
+    
     return filtered
 
 
@@ -620,7 +640,7 @@ def _safe_time_compare(simulation: Dict[str, Any], compare_time: int, operator) 
     Returns:
         Boolean comparison result
     """
-    end_time_val = simulation.get('endTime', 0)
+    end_time_val = simulation.get('end_time', 0)
     if isinstance(end_time_val, str):
         try:
             end_time_val = int(end_time_val)
@@ -629,24 +649,22 @@ def _safe_time_compare(simulation: Dict[str, Any], compare_time: int, operator) 
     return operator(end_time_val, compare_time)
 
 
-def sb_get_test_simulation_details(
+def sb_get_simulation_details(
     console: str,
-    test_id: str,
     simulation_id: str,
     include_mitre_techniques: bool = False,
     include_full_attack_logs: bool = False,
-    include_simulation_logs: bool = False
+    include_drift_info: bool = False
 ) -> Dict[str, Any]:
     """
     Get detailed information for a specific simulation.
     
     Args:
         console: SafeBreach console name
-        test_id: Test ID
         simulation_id: Simulation ID
         include_mitre_techniques: Include MITRE ATT&CK techniques
         include_full_attack_logs: Include full attack logs
-        include_simulation_logs: Include simulation logs
+        include_drift_info: Include drift analysis information
         
     Returns:
         Dict containing simulation details
@@ -655,24 +673,64 @@ def sb_get_test_simulation_details(
         apitoken = get_secret_for_console(console)
         safebreach_env = safebreach_envs[console]
         logger.info("Getting api key for console %s", console)
+
+        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/executionsHistoryResults"
         
-        api_url = f"https://{safebreach_env['url']}/api/data/v2/accounts/{safebreach_env['account']}/executionsHistoryResults/{simulation_id}?runId={test_id}"
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
         
-        logger.info("Fetching simulation details for ID '%s' from test '%s'", simulation_id, test_id)
-        response = requests.get(api_url, headers=headers, timeout=120)
+        data = {
+            "runId": "*",
+            "query": f"id:{simulation_id}",
+            "page": 1,
+            "pageSize": 100,
+            "orderBy": "desc",
+            "sortBy": "executionTime"
+        }
+        
+        logger.info("Fetching simulation '%s' from console '%s'", simulation_id, console)
+        response = requests.post(api_url, headers=headers, json=data, timeout=120)
         if response.status_code != 200:
             logger.error("Failed to fetch simulation details for simulation ID %s: %s", simulation_id, response.text)
             return {"error": "Failed to fetch simulation details", "status_code": response.status_code}
         
         simulation_result = response.json()
         return_details = get_full_simulation_result_entity(
-            simulation_result,
+            simulation_result['simulations'][0],
             include_mitre_techniques=include_mitre_techniques,
-            include_full_attack_logs=include_full_attack_logs
+            include_full_attack_logs=include_full_attack_logs,
+            include_drift_info=include_drift_info
         )
         
+        if include_drift_info and return_details.get('is_drifted', False):
+            # Get the previous run ID of the most recent simulation with the same parameters such attack_playbook_id, simulators etc
+            drift_code = return_details['drift_info']['drift_tracking_code']
+            data = {
+                "runId": "*",
+                "query": f'originalExecutionId:("{drift_code}") AND !id:{simulation_id}',
+                "page": 1,
+                "pageSize": 200,
+                "orderBy": "desc",
+                "sortBy": "executionTime"
+            }
+            logger.info("Searching for simulations with drift_tracking_code = '%s' from console = '%s'", drift_code, console)
+            response = requests.post(api_url, headers=headers, json=data, timeout=120)
+            if response.status_code != 200:
+                logger.error("Failed to fetch previous simulations with drift_tracking_code = %s: %s", drift_code, response.text)
+                return_details['drift_info']['previous_simulation_id'] = "Failed to fetch previous simulations with same drift_tracking_code"
+            else:
+                previous_simulations = response.json().get('simulations', [])
+                if previous_simulations:
+                    for sim in previous_simulations:
+                        if sim['executionTime'] < return_details['end_time']:
+                            # We found the most recent previous simulation with the same drift_tracking_code
+                            logger.info("Found previous simulation with ID %s for drift_tracking_code %s", sim.get('id', 'Unknown'), drift_code)
+                            return_details['drift_info']['previous_simulation_id'] = sim.get('id', 'Unknown')
+                            return_details['drift_info']['previous_test_id'] = sim.get('planRunId', 'Unknown')
+                            break
+                else:
+                    return_details['drift_info']['previous_simulation_id'] = "No previous simulation found with same drift_tracking_code"
+
         return return_details
         
     except Exception as e:
@@ -1135,7 +1193,7 @@ def sb_get_test_findings_counts(
             'test_id': test_id,
             'total_findings': len(filtered_findings),
             'total_types': len(type_counts),
-            'finding_counts': sorted_counts,
+            'findings_counts': sorted_counts,
             'applied_filters': applied_filters,
             'retrieved_at': time.time()
         }

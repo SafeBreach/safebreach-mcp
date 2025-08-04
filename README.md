@@ -645,7 +645,7 @@ The MCP server exposes the following tools for SafeBreach operations:
 3. **`get_tests_history`** ✨ **Enhanced with Filtering**
 4. **`get_test_details`** ✨ **Enhanced with Optional Statistics**
 5. **`get_test_simulations`** ✨ **Enhanced with Filtering**
-6. **`get_test_simulation_details`** ✨ **Enhanced with Optional Extensions**
+6. **`get_simulation_details`** ✨ **Enhanced with Optional Extensions**
 7. **`get_security_controls_events`** ✨ **NEW** - Security control events with filtering
 8. **`get_security_control_event_details`** ✨ **NEW** - Detailed security event with verbosity levels
 9. **`get_test_findings_counts`** ✨ **NEW** - Findings summary by type with filtering
@@ -685,11 +685,11 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `console` (string, required) - SafeBreach console name
      - `page_number` (int, default 0) - Page number (0-based)
      - `test_type` (string, optional) - Filter by "validate" (BAS), "propagate" (ALM), or None for all
-     - `start_date` (int, optional) - Filter tests with endTime >= start_date (Unix timestamp)
-     - `end_date` (int, optional) - Filter tests with endTime <= end_date (Unix timestamp)
+     - `start_date` (int, optional) - Filter tests with end_time >= start_date (Unix timestamp)
+     - `end_date` (int, optional) - Filter tests with end_time <= end_date (Unix timestamp)
      - `status_filter` (string, optional) - Filter by "completed", "canceled", "failed", or None for all
      - `name_filter` (string, optional) - Case-insensitive partial match on test name
-     - `order_by` (string, default "endTime") - Sort field: "endTime", "startTime", "name", "duration"
+     - `order_by` (string, default "end_time") - Sort field: "end_time", "start_time", "name", "duration"
      - `order_direction` (string, default "desc") - Sort direction: "desc" or "asc"
    - Returns: Enhanced response with `total_tests`, `applied_filters`, and filtered results
 
@@ -708,17 +708,16 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `test_id` (string, required) - Test ID to get simulations for
      - `page_number` (int, default 0) - Page number (0-based)
      - `status_filter` (string, optional) - Filter by simulation status (e.g., "missed", "stopped", "prevented", "reported", "logged")
-     - `start_time` (int, optional) - Filter simulations with endTime >= start_time (Unix timestamp)
-     - `end_time` (int, optional) - Filter simulations with endTime <= end_time (Unix timestamp)
+     - `start_time` (int, optional) - Filter simulations with end_time >= start_time (Unix timestamp)
+     - `end_time` (int, optional) - Filter simulations with end_time <= end_time (Unix timestamp)
      - `playbook_attack_id_filter` (string, optional) - Filter by exact playbook attack ID match
      - `playbook_attack_name_filter` (string, optional) - Filter by partial playbook attack name match (case-insensitive)
    - Returns: Enhanced response with `total_simulations`, `applied_filters`, and filtered results
 
-6. **`get_test_simulation_details`** ✨ **Enhanced with Optional Extensions**
+6. **`get_simulation_details`** ✨ **Enhanced with Optional Extensions**
    - Gets detailed results for a specific simulation
    - Parameters: 
      - `console` (string, required) - SafeBreach console name
-     - `test_id` (string, required) - Test ID containing the simulation
      - `simulation_id` (string, required) - Simulation ID to get details for
      - `include_mitre_techniques` (bool, optional, default False) - Include MITRE ATT&CK technique details
      - `include_full_attack_logs` (bool, optional, default False) - Include detailed attack logs by host
@@ -1386,7 +1385,7 @@ The project provides multiple installation options with various entry points:
 
 **Package Details:**
 - **Package Name**: safebreach-mcp-server
-- **Version**: 1.0.0
+- **Version**: 1.1.0
 - **Dependencies**: boto3, requests, mcp (see pyproject.toml)
 - **Python Version**: 3.12+
 - **Distribution**: Available via git+ssh or git+https installation

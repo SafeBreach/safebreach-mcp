@@ -73,7 +73,7 @@ The test suite covers:
 3. `sb_get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options
 4. `sb_get_test_details` ✨ **Enhanced** - Full details for specific tests with optional simulation statistics
 5. `sb_get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within tests
-6. `sb_get_test_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques and attack logs
+6. `sb_get_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques and attack logs
 7. `sb_get_security_controls_events` ✨ **New** - Filtered security control events with comprehensive filtering
 8. `sb_get_security_control_event_details` ✨ **New** - Detailed security control event information with verbosity levels
 9. `sb_get_test_findings_counts` ✨ **New** - Aggregated findings counts with filtering

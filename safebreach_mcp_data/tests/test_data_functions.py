@@ -12,7 +12,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_tests_history,
     sb_get_test_details,
     sb_get_test_simulations,
-    sb_get_test_simulation_details,
+    sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
@@ -217,12 +217,14 @@ class TestDataFunctions:
             {
                 "name": "Test Plan 1",
                 "test_id": "test1",
-                "systemTags": ["BAS"]
+                "systemTags": ["BAS"],
+                "test_type": "Breach And Attack Simulation (aka BAS aks Validate)"
             },
             {
                 "name": "Test Plan 2", 
                 "test_id": "test2",
-                "systemTags": ["ALM"]
+                "systemTags": ["ALM"],
+                "test_type": "Automated Lateral Movement (aka ALM aka Propagate)"
             }
         ]
         
@@ -239,9 +241,9 @@ class TestDataFunctions:
     def test_apply_filters_date_range(self):
         """Test date range filtering."""
         test_data = [
-            {"name": "Test 1", "endTime": 1640995200},
-            {"name": "Test 2", "endTime": 1640995800},
-            {"name": "Test 3", "endTime": 1640996400}
+            {"name": "Test 1", "end_time": 1640995200},
+            {"name": "Test 2", "end_time": 1640995800},
+            {"name": "Test 3", "end_time": 1640996400}
         ]
         
         # Test start date filter
@@ -275,13 +277,13 @@ class TestDataFunctions:
     def test_apply_ordering(self):
         """Test test ordering."""
         test_data = [
-            {"name": "B Test", "endTime": 1640995800, "startTime": 1640995200, "duration": 600},
-            {"name": "A Test", "endTime": 1640995200, "startTime": 1640995100, "duration": 100},
-            {"name": "C Test", "endTime": 1640996400, "startTime": 1640995300, "duration": 1100}
+            {"name": "B Test", "end_time": 1640995800, "start_time": 1640995200, "duration": 600},
+            {"name": "A Test", "end_time": 1640995200, "start_time": 1640995100, "duration": 100},
+            {"name": "C Test", "end_time": 1640996400, "start_time": 1640995300, "duration": 1100}
         ]
         
-        # Test endTime descending (default)
-        ordered = _apply_ordering(test_data, order_by="endTime", order_direction="desc")
+        # Test end_time descending (default)
+        ordered = _apply_ordering(test_data, order_by="end_time", order_direction="desc")
         assert ordered[0]["name"] == "C Test"
         assert ordered[1]["name"] == "B Test"
         assert ordered[2]["name"] == "A Test"
@@ -437,9 +439,9 @@ class TestDataFunctions:
     def test_apply_simulation_filters_time(self):
         """Test simulation time filtering."""
         sim_data = [
-            {"simulation_id": "sim1", "endTime": 1640995200},
-            {"simulation_id": "sim2", "endTime": "1640995800"},  # Test string conversion
-            {"simulation_id": "sim3", "endTime": 1640996400}
+            {"simulation_id": "sim1", "end_time": 1640995200},
+            {"simulation_id": "sim2", "end_time": "1640995800"},  # Test string conversion
+            {"simulation_id": "sim3", "end_time": 1640996400}
         ]
         
         # Test start_time filter
@@ -472,21 +474,21 @@ class TestDataFunctions:
     
     def test_safe_time_compare(self):
         """Test safe time comparison with type conversion."""
-        # Test integer endTime
-        sim_int = {"endTime": 1640995200}
+        # Test integer end_time
+        sim_int = {"end_time": 1640995200}
         assert _safe_time_compare(sim_int, 1640995000, lambda x, y: x > y) is True
         assert _safe_time_compare(sim_int, 1640995500, lambda x, y: x < y) is True
         
-        # Test string endTime
-        sim_str = {"endTime": "1640995200"}
+        # Test string end_time
+        sim_str = {"end_time": "1640995200"}
         assert _safe_time_compare(sim_str, 1640995000, lambda x, y: x > y) is True
         assert _safe_time_compare(sim_str, 1640995500, lambda x, y: x < y) is True
         
-        # Test invalid string endTime
-        sim_invalid = {"endTime": "invalid"}
+        # Test invalid string end_time
+        sim_invalid = {"end_time": "invalid"}
         assert _safe_time_compare(sim_invalid, 1640995000, lambda x, y: x > y) is False
         
-        # Test missing endTime
+        # Test missing end_time
         sim_missing = {}
         assert _safe_time_compare(sim_missing, 1640995000, lambda x, y: x > y) is False
     
@@ -518,49 +520,49 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
-    @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_simulation_details_success(self, mock_get, mock_secret):
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_success(self, mock_post, mock_secret):
         """Test successful simulation details retrieval."""
         # Setup mocks
         mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {
-            "id": "sim1",
-            "moveName": "Test Move",
-            "mitreTechniques": [{"value": "T1234", "displayName": "Test Technique"}],
-            "attackLogs": [{"log": "test log"}],
-            "simulationLogs": [{"log": "sim log"}]
+            "simulations": [{
+                "id": "sim1",
+                "moveName": "Test Move",
+                "mitreTechniques": [{"value": "T1234", "displayName": "Test Technique"}],
+                "attackLogs": [{"log": "test log"}],
+                "simulationLogs": [{"log": "sim log"}]
+            }]
         }
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
-        mock_get.return_value = mock_response
+        mock_post.return_value = mock_response
         
-        result = sb_get_test_simulation_details(
+        result = sb_get_simulation_details(
             "test-console", 
-            "test1", 
             "sim1",
             include_mitre_techniques=True,
-            include_full_attack_logs=True,
-            include_simulation_logs=True
+            include_full_attack_logs=True
         )
         
         assert "simulation_id" in result
         assert "mitre_techniques" in result
         assert "full_attack_logs_by_hosts" in result
-        mock_get.assert_called_once()
+        mock_post.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
-    @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_simulation_details_error(self, mock_get, mock_secret):
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_error(self, mock_post, mock_secret):
         """Test error handling in simulation details retrieval."""
         mock_secret.return_value = "test-token"
-        mock_get.side_effect = Exception("API Error")
+        mock_post.side_effect = Exception("API Error")
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_test_simulation_details("test-console", "test1", "sim1")
+            sb_get_simulation_details("test-console", "sim1")
         
         assert "API Error" in str(exc_info.value)
     
@@ -1216,10 +1218,10 @@ class TestDataFunctions:
         assert result["test_id"] == "test-id"
         assert result["total_findings"] == 4
         assert result["total_types"] == 4
-        assert len(result["finding_counts"]) == 4
+        assert len(result["findings_counts"]) == 4
         
         # Check the counts are properly ordered (by count desc, then by type name)
-        counts = result["finding_counts"]
+        counts = result["findings_counts"]
         assert all("type" in c and "count" in c for c in counts)
         assert all(c["count"] == 1 for c in counts)  # All unique types in test data
         
@@ -1240,8 +1242,8 @@ class TestDataFunctions:
         # Assertions
         assert result["total_findings"] == 1
         assert result["total_types"] == 1
-        assert result["finding_counts"][0]["type"] == "CredentialHarvestingMemory"
-        assert result["finding_counts"][0]["count"] == 1
+        assert result["findings_counts"][0]["type"] == "CredentialHarvestingMemory"
+        assert result["findings_counts"][0]["count"] == 1
         assert result["applied_filters"]["attribute_filter"] == "credential"
     
     @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
@@ -1423,9 +1425,9 @@ class TestDataFunctions:
             sb_get_test_simulations(console="unknown_console", test_id="test123")
         assert "not found" in str(exc_info.value)
         
-        # Test sb_get_test_simulation_details - should now raise ValueError
+        # Test sb_get_simulation_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_simulation_details(console="unknown_console", test_id="test123", simulation_id="sim123")
+            sb_get_simulation_details(console="unknown_console", simulation_id="sim123")
         assert "not found" in str(exc_info.value)
         
         # Test sb_get_security_controls_events - should now raise ValueError
@@ -1485,7 +1487,7 @@ class TestDataFunctions:
         with pytest.raises(ValueError) as exc_info:
             sb_get_tests_history("test-console", order_by="invalid_field")
         assert "Invalid order_by parameter 'invalid_field'" in str(exc_info.value)
-        assert "endTime, startTime, name, duration" in str(exc_info.value)
+        assert "end_time, start_time, name, duration" in str(exc_info.value)
     
     def test_sb_get_tests_history_invalid_order_direction(self):
         """Test validation for invalid order_direction parameter."""
@@ -1620,3 +1622,220 @@ class TestDataFunctions:
         result = sb_get_test_details("test-console", "test123")
         assert "test_id" in result
         assert result["test_id"] == "test123"
+
+    # ===== DRIFT ANALYSIS TESTS =====
+    
+    def test_apply_simulation_filters_drifted_only_true(self):
+        """Test drifted_only filter when set to True - should include only drifted simulations."""
+        simulations = [
+            {"id": "sim1", "is_drifted": True, "status": "reported"},
+            {"id": "sim2", "is_drifted": False, "status": "prevented"},
+            {"id": "sim3", "is_drifted": True, "status": "logged"},
+            {"id": "sim4", "status": "missed"},  # No drift info - treated as not drifted
+        ]
+        
+        result = _apply_simulation_filters(simulations, drifted_only=True)
+        
+        assert len(result) == 2
+        assert result[0]["id"] == "sim1"
+        assert result[1]["id"] == "sim3"
+        # Verify all returned simulations are drifted
+        for sim in result:
+            assert sim.get("is_drifted") is True
+
+    def test_apply_simulation_filters_drifted_only_false(self):
+        """Test drifted_only filter when set to False - should include all simulations."""
+        simulations = [
+            {"id": "sim1", "is_drifted": True, "status": "reported"},
+            {"id": "sim2", "is_drifted": False, "status": "prevented"},
+            {"id": "sim3", "status": "missed"},  # No drift info
+        ]
+        
+        result = _apply_simulation_filters(simulations, drifted_only=False)
+        
+        assert len(result) == 3
+        assert [sim["id"] for sim in result] == ["sim1", "sim2", "sim3"]
+
+    def test_apply_simulation_filters_drifted_only_combined_with_other_filters(self):
+        """Test drifted_only filter combined with other filters."""
+        simulations = [
+            {"id": "sim1", "is_drifted": True, "status": "reported", "playbookAttackName": "File Transfer"},
+            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbookAttackName": "Network Scan"},
+            {"id": "sim3", "is_drifted": False, "status": "reported", "playbookAttackName": "File Transfer"},
+            {"id": "sim4", "is_drifted": True, "status": "logged", "playbookAttackName": "File Transfer"},
+        ]
+        
+        # Test drifted_only + status filter
+        result = _apply_simulation_filters(
+            simulations, 
+            drifted_only=True, 
+            status_filter="reported"
+        )
+        assert len(result) == 1
+        assert result[0]["id"] == "sim1"
+        
+        # Test drifted_only + playbook attack name filter
+        result = _apply_simulation_filters(
+            simulations, 
+            drifted_only=True, 
+            playbook_attack_name_filter="File"
+        )
+        assert len(result) == 2
+        assert result[0]["id"] == "sim1"
+        assert result[1]["id"] == "sim4"
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_simulations_with_drifted_only_filter(self, mock_get_all_simulations):
+        """Test get_test_simulations with drifted_only filter."""
+        # _get_all_simulations_from_cache_or_api returns transformed data (via get_reduced_simulation_result_entity)
+        # So we need to mock it with the transformed format
+        mock_simulations = [
+            {"simulation_id": "sim1", "is_drifted": True, "status": "reported", "endTime": 1640995200},
+            {"simulation_id": "sim2", "is_drifted": False, "status": "prevented", "endTime": 1640995300},
+            {"simulation_id": "sim3", "is_drifted": True, "status": "logged", "endTime": 1640995400},
+            {"simulation_id": "sim4", "status": "missed", "endTime": 1640995500},  # No drift info
+        ]
+        mock_get_all_simulations.return_value = mock_simulations
+        
+        # Test with drifted_only=True
+        result = sb_get_test_simulations("test-console", "test1", drifted_only=True)
+        
+        assert "simulations_in_page" in result
+        assert len(result["simulations_in_page"]) == 2
+        assert result["simulations_in_page"][0]["simulation_id"] == "sim1"
+        assert result["simulations_in_page"][1]["simulation_id"] == "sim3"
+        assert result["total_simulations"] == 2
+        assert result["applied_filters"]["drifted_only"] is True
+
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_with_drift_info(self, mock_post, mock_secret):
+        """Test get_test_simulation_details with include_drift_info parameter."""
+        mock_secret.return_value = "test-token"
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "simulations": [{
+                "id": "sim123",
+                "status": "reported",
+                "driftType": "success-fail",
+                "originalExecutionId": "track123",
+                "executionTime": "1640995200000",
+                "lastStatusChangeDate": "1640995100000",
+                "MITRE_Technique": []
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        # Test with include_drift_info=True
+        result = sb_get_simulation_details(
+            "test-console", 
+            "sim123", 
+            include_drift_info=True
+        )
+        
+        # Verify drift information is included
+        assert "drift_info" in result
+        assert result["drift_info"]["type_of_drift"] == "from_not_blocked_to_blocked"
+        assert result["drift_info"]["security_impact"] == "positive"
+        assert result["drift_info"]["drift_tracking_code"] == "track123"
+        assert "description" in result["drift_info"]
+        assert "hint_to_llm" in result["drift_info"]
+
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_no_drift_info(self, mock_post, mock_secret):
+        """Test get_test_simulation_details when simulation has no drift."""
+        mock_secret.return_value = "test-token"
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "simulations": [{
+                "id": "sim123",
+                "status": "reported",
+                "executionTime": "1640995200000",
+                "lastStatusChangeDate": "1640995200000",  # Same as execution time
+                "MITRE_Technique": []
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        # Test with include_drift_info=True but no drift present
+        result = sb_get_simulation_details(
+            "test-console", 
+            "sim123", 
+            include_drift_info=True
+        )
+        
+        # Should not have drift_info since no drift occurred
+        assert "drift_info" not in result or not result.get("drift_info", {}).get("type_of_drift")
+
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_unknown_drift_type(self, mock_post, mock_secret):
+        """Test get_test_simulation_details with unknown drift type."""
+        mock_secret.return_value = "test-token"
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "simulations": [{
+                "id": "sim123",
+                "status": "reported",
+                "driftType": "unknown-drift-type",
+                "originalExecutionId": "track123",
+                "executionTime": "1640995200000",
+                "MITRE_Technique": []
+            }]
+        }
+        mock_post.return_value = mock_response
+        
+        # Test with unknown drift type
+        result = sb_get_simulation_details(
+            "test-console", 
+            "sim123", 
+            include_drift_info=True
+        )
+        
+        # Should handle unknown drift type gracefully
+        assert "drift_info" in result
+        assert result["drift_info"]["type_of_drift"] == "unknown"
+        assert result["drift_info"]["security_impact"] == "unknown"
+        assert "No description available for unknown-drift-type" in result["drift_info"]["description"]
+        assert result["drift_info"]["drift_tracking_code"] == "track123"
+
+    def test_drift_statistics_counting(self):
+        """Test that drift statistics are properly counted in simulation statistics."""
+        from safebreach_mcp_data.data_functions import _get_simulation_statistics
+        
+        # Mock simulation data with drifts
+        mock_simulations = [
+            {"id": "sim1", "is_drifted": True},
+            {"id": "sim2", "is_drifted": False},
+            {"id": "sim3", "is_drifted": True},
+            {"id": "sim4"},  # No drift info - should not count
+        ]
+        
+        test_summary = {
+            "finalStatus": {
+                "missed": 1,
+                "stopped": 1,
+                "prevented": 1,
+                "reported": 1,
+                "logged": 0,
+                "no-result": 0
+            }
+        }
+        
+        with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
+            mock_get_sims.return_value = mock_simulations
+            
+            stats = _get_simulation_statistics("test-console", "test1", test_summary)
+            
+            # Find the drift statistics entry
+            drift_stat = next((stat for stat in stats if "drifted_count" in stat), None)
+            assert drift_stat is not None
+            assert drift_stat["drifted_count"] == 2  # Only sim1 and sim3 are drifted
+            assert "different results compared to previous executions" in drift_stat["explanation"]

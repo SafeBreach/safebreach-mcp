@@ -6,13 +6,14 @@ specifically for test and simulation entities.
 """
 
 from typing import Dict, Any, List
+from safebreach_mcp_data.drifts_metadata import drift_types_mapping
 
 # Test summary mapping
 reduced_test_summary_mapping = {
     'name': 'planName',
     'test_id': 'planRunId',
-    'startTime': 'startTime',
-    'endTime': 'endTime',
+    'start_time': 'startTime',
+    'end_time': 'endTime',
     'duration': 'duration',
     'status': 'status'
 }
@@ -22,8 +23,8 @@ reduced_simulation_results_mapping = {
     'simulation_id': 'id',
     'test_name': 'planName',
     'test_id': 'planRunId',
-    'startTime': 'attackerSimulatorStartTime',
-    'endTime': 'executionTime',
+    'start_time': 'attackerSimulatorStartTime',
+    'end_time': 'executionTime',
     'status': 'status',
     'playbook_attack_id': 'moveId',
     'playbook_attack_name': 'moveName',
@@ -34,20 +35,20 @@ full_simulation_results_mapping = {
     'prevented_by_security_control': 'preventedBy',
     'reported_by_security_control': 'reportedBy',
     'logged_by_security_control': 'loggedBy',
-    'attackerHostName': 'attackerNodeName',
-    'attackerOSType': 'attackerOSType',
-    'securityControlAction': 'securityAction',
-    'attackBypassedSecurityControl': 'finalStatus',
-    'resultDetails': 'resultDetails',
-    'attackPlan': 'moveDesc',
-    'attackerNodeId': 'attackerNodeId',
-    'attackerNodeName': 'attackerNodeName',
-    'attackerNodeOSBuild': 'attackerNodeOSBuild',
-    'attackerOSPrettyName': 'attackerOSPrettyName',
-    'targetNodeId': 'targetNodeId',
-    'targetNodeName': 'targetNodeName',
-    'targetNodeOSBuild': 'targetNodeOSBuild',
-    'targetOSPrettyName': 'targetOSPrettyName',
+    'attacker_host_name': 'attackerNodeName',
+    'attacker_OS_type': 'attackerOSType',
+    'security_control_action': 'securityAction',
+    'attack_bypassed_security_control': 'finalStatus',
+    'result_details': 'resultDetails',
+    'attack_plan': 'moveDesc',
+    'attacker_node_id': 'attackerNodeId',
+    'attacker_node_name': 'attackerNodeName',
+    'attacker_node_os_build': 'attackerNodeOSBuild',
+    'attacker_os_pretty_name': 'attackerOSPrettyName',
+    'target_node_id': 'targetNodeId',
+    'target_node_name': 'targetNodeName',
+    'target_node_os_build': 'targetNodeOSBuild',
+    'target_os_pretty_name': 'targetOSPrettyName',
 }
 
 
@@ -88,10 +89,16 @@ def get_reduced_simulation_result_entity(simulation_result_entity):
     Returns a reduced simulation result entity with only the relevant fields.
     EXACT copy from original safebreach_types.py
     """
-    return map_reduced_entity(simulation_result_entity, reduced_simulation_results_mapping)
+    reduced_entity_to_return = map_reduced_entity(simulation_result_entity, reduced_simulation_results_mapping)
+    reduced_entity_to_return['is_drifted'] = 'driftType' in simulation_result_entity
+
+    if reduced_entity_to_return['is_drifted'] and simulation_result_entity['driftType'] == 'no_drift':
+        reduced_entity_to_return['is_drifted'] = False
+
+    return reduced_entity_to_return
 
 
-def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_full_attack_logs=False):
+def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_full_attack_logs=False, include_drift_info=False):
     """
     Returns a full simulation result entity with optional extensions.
     
@@ -106,6 +113,32 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
     # Use map_reduced_entity with full mapping to get all fields
     full_simulation_result_entity = map_reduced_entity(simulation_result_entity, full_simulation_results_mapping)
     
+    if include_drift_info:
+        # We're seeing cases where the simulation result entity does not have the 'driftType' key
+        # and other cases where it has the 'driftType' key but its value is 'no_drift'.
+        full_simulation_result_entity['is_drifted'] = 'driftType' in simulation_result_entity
+        if full_simulation_result_entity['is_drifted'] and simulation_result_entity['driftType'] == 'no_drift':
+            full_simulation_result_entity['is_drifted'] = False
+
+        if full_simulation_result_entity['is_drifted']:
+            # If the simulation result entity has a drift, we add drift info
+            # to the full simulation result entity. 
+            drift_info = drift_types_mapping.get(simulation_result_entity['driftType'].lower(),
+                                                 {
+                                                     'type_of_drift': 'unknown',
+                                                     'security_impact': 'unknown',
+                                                     'description': f'No description available for {simulation_result_entity['driftType']}',
+                                                     'hint_to_llm': 'consider using the drift_tracking_code to correlate with other simulation results to understand the drift'})     
+            drift_info['drift_tracking_code'] = simulation_result_entity['originalExecutionId']
+            full_simulation_result_entity['drift_info'] = drift_info
+
+    else:
+        if simulation_result_entity.get('lastStatusChangeDate', '') != simulation_result_entity.get('executionTime', ''):
+            # This simulation did not drift, but it had a status change in the past.
+            full_simulation_result_entity['drift_info'] = {
+                'last_drift_date': simulation_result_entity.get('lastStatusChangeDate'),      # Most recent drift date
+            }
+
     if include_mitre_techniques:
         mitre_techniques = []
         for technique in simulation_result_entity.get('MITRE_Technique', []):
