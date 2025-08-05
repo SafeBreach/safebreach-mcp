@@ -545,7 +545,7 @@ def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[D
             logger.info("Retrieved %d simulations from cache for test '%s'", len(data), test_id)
             return data
     
-    # Cache miss or expired - fetch from API with proper pagination
+    # Cache miss or expired - proceed to fetch from API with proper pagination
     try:
         apitoken = get_secret_for_console(console)
         safebreach_env = safebreach_envs[console]

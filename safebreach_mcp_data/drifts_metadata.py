@@ -125,7 +125,7 @@ drift_types_mapping = {
         "security_impact": "positive", 
         "description": "Former simulation had no result due to execution failure. Latter simulation was stopped by security control",
         "hint_to_llm": "Check the former simulation logs and security events to understand what caused the execution failure. The latter simulation shows the actual security posture"
-    },
+    }, # fail == stopped
     "no_result-fail": {
         "type_of_drift": "from_no_result_to_stopped",
         "security_impact": "positive", 
@@ -150,7 +150,7 @@ drift_types_mapping = {
         "security_impact": "negative",
         "description": "Former simulation had no result due to execution failure. Latter simulation was missed by security controls",
         "hint_to_llm": "Check the former simulation logs and security events to understand what caused the execution failure. The latter simulation reveals a security gap"
-    },
+    }, # success == missed
       "no_result-success": {
         "type_of_drift": "from_no_result_to_missed",
         "security_impact": "negative",
