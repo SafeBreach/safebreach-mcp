@@ -226,7 +226,7 @@ def _apply_simulator_filters(
     # Apply OS type filter
     if os_type_filter:
         filtered = [s for s in filtered 
-                   if s.get('osType', '').lower() == os_type_filter.lower()]
+                   if s.get('OS', {}).get('type', '').lower() == os_type_filter.lower()]
     
     # Apply critical filter
     if critical_only is not None:

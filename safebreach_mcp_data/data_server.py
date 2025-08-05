@@ -57,7 +57,7 @@ status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name 
             end_date: Optional[int] = None,
             status_filter: Optional[str] = None,
             name_filter: Optional[str] = None,
-            order_by: str = "endTime",
+            order_by: str = "end_time",
             order_direction: str = "desc"
         ) -> dict:
             return sb_get_tests_history(

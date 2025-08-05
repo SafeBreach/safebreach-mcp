@@ -127,6 +127,83 @@ class TestDateTimeUtils:
             assert "epoch_timestamp" in result
             assert isinstance(result["epoch_timestamp"], int)
     
+    def test_timezone_conversion_america_new_york(self):
+        """Test timezone conversion with America/New_York timezone."""
+        # Test January (EST) - should be UTC-5
+        timestamp_jan = 1640995200  # 2022-01-01 00:00:00 UTC
+        result = convert_epoch_to_datetime(timestamp_jan, "America/New_York")
+        
+        assert result["timezone"] == "America/New_York"
+        assert result["timezone_abbreviation"] == "EST"
+        assert result["timezone_offset"] == "-05:00"
+        assert "2021-12-31T19:00:00-05:00" == result["iso_datetime"]
+        assert "EST" in result["human_readable"]
+        assert "2021-12-31 19:00:00 EST" == result["human_readable"]
+        
+        # Test July (EDT) - should be UTC-4
+        timestamp_july = 1657584000  # 2022-07-12 00:00:00 UTC 
+        result = convert_epoch_to_datetime(timestamp_july, "America/New_York")
+        
+        assert result["timezone"] == "America/New_York"
+        assert result["timezone_abbreviation"] == "EDT"
+        assert result["timezone_offset"] == "-04:00"
+        assert "2022-07-11T20:00:00-04:00" == result["iso_datetime"]
+        assert "EDT" in result["human_readable"]
+    
+    def test_timezone_conversion_europe_london(self):
+        """Test timezone conversion with Europe/London timezone."""
+        # Test January (GMT) - should be UTC+0
+        timestamp_jan = 1640995200  # 2022-01-01 00:00:00 UTC
+        result = convert_epoch_to_datetime(timestamp_jan, "Europe/London")
+        
+        assert result["timezone"] == "Europe/London"
+        assert result["timezone_abbreviation"] == "GMT"
+        assert result["timezone_offset"] == "+00:00"
+        assert "2022-01-01T00:00:00+00:00" == result["iso_datetime"]
+        
+        # Test July (BST) - should be UTC+1
+        timestamp_july = 1657584000  # 2022-07-12 00:00:00 UTC
+        result = convert_epoch_to_datetime(timestamp_july, "Europe/London")
+        
+        assert result["timezone"] == "Europe/London"
+        assert result["timezone_abbreviation"] == "BST"
+        assert result["timezone_offset"] == "+01:00"
+        assert "2022-07-12T01:00:00+01:00" == result["iso_datetime"]
+    
+    def test_timezone_conversion_invalid_timezone(self):
+        """Test timezone conversion with invalid timezone names."""
+        timestamp = 1640995200  # 2022-01-01 00:00:00 UTC
+        
+        # Test various invalid timezone names
+        invalid_timezones = [
+            "Invalid/Timezone",
+            "BadTimeZone", 
+            "America/InvalidCity",
+            "NonExistent/Zone",
+            "FakeZone/Fake"  # This should definitely be invalid
+        ]
+        
+        for invalid_tz in invalid_timezones:
+            result = convert_epoch_to_datetime(timestamp, invalid_tz)
+            assert "error" in result
+            assert f"Invalid timezone '{invalid_tz}'" in result["error"]
+            assert "provided_timezone" in result
+            assert result["provided_timezone"] == invalid_tz
+            assert "examples" in result
+            assert "America/New_York" in result["examples"]
+    
+    def test_timezone_conversion_utc_special_case(self):
+        """Test that UTC timezone works correctly."""
+        timestamp = 1640995200  # 2022-01-01 00:00:00 UTC
+        result = convert_epoch_to_datetime(timestamp, "UTC")
+        
+        assert result["timezone"] == "UTC"
+        assert result["timezone_abbreviation"] == "UTC"
+        assert result["timezone_offset"] == "+00:00"
+        assert result["iso_datetime"].endswith("Z")
+        assert "2022-01-01T00:00:00Z" == result["iso_datetime"]
+        assert "UTC" in result["human_readable"]
+    
     def test_epoch_conversion_precision(self):
         """Test epoch conversion precision."""
         # Test with a known timestamp for consistency

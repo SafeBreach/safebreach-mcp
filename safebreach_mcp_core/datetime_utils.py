@@ -4,8 +4,9 @@ DateTime Utilities for SafeBreach MCP
 Provides datetime conversion utilities shared across all MCP servers.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any
+import zoneinfo
 
 def convert_datetime_to_epoch(datetime_str: str) -> Dict[str, Any]:
     """
@@ -54,32 +55,59 @@ def convert_epoch_to_datetime(epoch_timestamp: int, timezone: str = "UTC") -> Di
     
     Args:
         epoch_timestamp: Unix timestamp as integer
-        timezone: Timezone for output (default: 'UTC')
+        timezone: Timezone for output (default: 'UTC'). 
+                 Supports IANA timezone names (e.g., 'America/New_York', 'Europe/London')
+                 or 'UTC' for UTC timezone.
     
     Returns:
         Dict containing the ISO datetime string and formatted information
     """
     try:
-        # Convert epoch to datetime
-        dt = datetime.fromtimestamp(epoch_timestamp, tz=datetime.now().astimezone().tzinfo if timezone != "UTC" else None)
-        
-        # If UTC is requested, convert to UTC
+        # Validate timezone parameter first
         if timezone == "UTC":
-            from datetime import timezone as tz
-            dt = datetime.fromtimestamp(epoch_timestamp, tz.utc)
+            tz = dt_timezone.utc
+        else:
+            try:
+                # Try to get the timezone using zoneinfo (IANA timezone database)
+                tz = zoneinfo.ZoneInfo(timezone)
+            except zoneinfo.ZoneInfoNotFoundError:
+                # Invalid timezone name
+                return {
+                    "error": f"Invalid timezone '{timezone}'. Please use IANA timezone names like 'America/New_York', 'Europe/London', or 'UTC'.",
+                    "provided_timezone": timezone,
+                    "provided_timestamp": epoch_timestamp,
+                    "examples": ["UTC", "America/New_York", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"]
+                }
         
+        # Convert epoch to datetime with proper timezone
+        dt = datetime.fromtimestamp(epoch_timestamp, tz=tz)
+        
+        # Format ISO datetime string
         iso_datetime = dt.isoformat()
-        # Replace timezone info with Z for UTC
+        
+        # Replace timezone info with Z for UTC for consistency
         if timezone == "UTC":
             iso_datetime = iso_datetime.replace('+00:00', 'Z')
             if not iso_datetime.endswith('Z'):
                 iso_datetime += 'Z'
+        
+        # Get timezone abbreviation and offset information
+        timezone_abbr = dt.strftime('%Z')  # e.g., 'EST', 'PDT', 'UTC'
+        timezone_offset = dt.strftime('%z')  # e.g., '-0500', '+0000'
+        
+        # Format offset for human readability (e.g., '-05:00')
+        if len(timezone_offset) == 5:
+            formatted_offset = f"{timezone_offset[:3]}:{timezone_offset[3:]}"
+        else:
+            formatted_offset = timezone_offset
         
         return {
             "iso_datetime": iso_datetime,
             "human_readable": dt.strftime("%Y-%m-%d %H:%M:%S %Z") if timezone != "UTC" else dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "epoch_timestamp": epoch_timestamp,
             "timezone": timezone,
+            "timezone_abbreviation": timezone_abbr,
+            "timezone_offset": formatted_offset,
             "date_only": dt.strftime("%Y-%m-%d"),
             "time_only": dt.strftime("%H:%M:%S")
         }

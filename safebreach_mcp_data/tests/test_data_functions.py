@@ -999,6 +999,136 @@ class TestDataFunctions:
         
         assert "API Error" in str(exc_info.value)
 
+    def test_sb_get_security_control_event_details_parameter_validation(self):
+        """Test parameter validation for security control event details function."""
+        
+        # Test empty console parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("", "test1", "sim1", "event1")
+        assert "Invalid console parameter" in str(exc_info.value)
+        
+        # Test None console parameter  
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details(None, "test1", "sim1", "event1")
+        assert "Invalid console parameter" in str(exc_info.value)
+        
+        # Test empty test_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "", "sim1", "event1")
+        assert "Invalid test_id parameter" in str(exc_info.value)
+        
+        # Test None test_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", None, "sim1", "event1")
+        assert "Invalid test_id parameter" in str(exc_info.value)
+        
+        # Test empty simulation_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "test1", "", "event1")
+        assert "Invalid simulation_id parameter" in str(exc_info.value)
+        
+        # Test None simulation_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "test1", None, "event1")
+        assert "Invalid simulation_id parameter" in str(exc_info.value)
+        
+        # Test empty event_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "test1", "sim1", "")
+        assert "Invalid event_id parameter" in str(exc_info.value)
+        
+        # Test None event_id parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "test1", "sim1", None)
+        assert "Invalid event_id parameter" in str(exc_info.value)
+        
+        # Test invalid verbosity_level parameter
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_event_details("console", "test1", "sim1", "event1", verbosity_level="invalid")
+        assert "Invalid verbosity_level parameter" in str(exc_info.value)
+        
+        # Test None verbosity_level (should default to "standard")
+        with patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api') as mock_get_events:
+            mock_get_events.return_value = []
+            result = sb_get_security_control_event_details("console", "test1", "sim1", "event1", verbosity_level=None)
+            # Should handle None gracefully by defaulting to "standard"
+            assert "error" in result  # Event not found, but validation passed
+
+    # Test QA bug fixes
+    
+    def test_sb_get_tests_history_date_range_validation(self):
+        """Test date range validation in get_tests_history (Bug #9)."""
+        
+        # Test valid range (should not raise exception)
+        with patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api') as mock_get_tests:
+            mock_get_tests.return_value = []
+            try:
+                result = sb_get_tests_history("demo-console", start_date=1000, end_date=2000)
+                # Should succeed - no exception expected
+            except ValueError:
+                pytest.fail("Valid date range should not raise ValueError")
+        
+        # Test invalid range (start > end)
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_tests_history("demo-console", start_date=2000, end_date=1000)
+        assert "Invalid date range" in str(exc_info.value)
+        assert "start_date (2000) must be before or equal to end_date (1000)" in str(exc_info.value)
+    
+    def test_sb_get_test_simulations_time_range_validation(self):
+        """Test time range validation in get_test_simulations (Bug #9)."""
+        
+        # Test valid range (should not raise exception)
+        with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
+            mock_get_sims.return_value = []
+            try:
+                result = sb_get_test_simulations("demo-console", "test123", start_time=1000, end_time=2000)
+                # Should succeed - no exception expected
+            except ValueError:
+                pytest.fail("Valid time range should not raise ValueError")
+        
+        # Test invalid range (start > end)
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_test_simulations("demo-console", "test123", start_time=2000, end_time=1000)
+        assert "Invalid time range" in str(exc_info.value)
+        assert "start_time (2000) must be before or equal to end_time (1000)" in str(exc_info.value)
+    
+    def test_sb_get_test_simulations_boolean_parameter_validation(self):
+        """Test boolean parameter validation in get_test_simulations (Bug #8)."""
+        
+        with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
+            mock_get_sims.return_value = []
+            
+            # Test None (should be handled gracefully by defaulting to False)
+            result = sb_get_test_simulations("demo-console", "test123", drifted_only=None)
+            # Should succeed without error
+            
+            # Test invalid type (should raise error)
+            with pytest.raises(ValueError) as exc_info:
+                sb_get_test_simulations("demo-console", "test123", drifted_only="invalid")
+            assert "Invalid drifted_only parameter" in str(exc_info.value)
+            assert "Must be a boolean value" in str(exc_info.value)
+    
+    def test_sb_get_test_details_boolean_parameter_validation(self):
+        """Test boolean parameter validation in get_test_details (Bug #8)."""
+        
+        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret, \
+             patch('requests.get') as mock_get:
+            
+            mock_secret.return_value = "fake-token"
+            mock_response = mock_get.return_value
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"planRunId": "test123", "name": "Test"}
+            
+            # Test None (should be handled gracefully by defaulting to False)
+            result = sb_get_test_details("demo-console", "test123", include_simulations_statistics=None)
+            # Should succeed without error
+            
+            # Test invalid type (should raise error)
+            with pytest.raises(ValueError) as exc_info:
+                sb_get_test_details("demo-console", "test123", include_simulations_statistics="invalid")
+            assert "Invalid include_simulations_statistics parameter" in str(exc_info.value)
+            assert "Must be a boolean value" in str(exc_info.value)
+
     # Test findings functions
     
     @pytest.fixture
@@ -1503,6 +1633,18 @@ class TestDataFunctions:
             sb_get_tests_history("test-console", page_number=-1)
         assert "Invalid page_number parameter '-1'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
+    
+    def test_sb_get_tests_history_parameter_validation_order(self):
+        """Test that parameter validation happens in correct order - page_number should be checked before order_by."""
+        # This test ensures that page_number errors are reported before order_by errors
+        # Previously this would report order_by error instead of page_number error
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_tests_history("test-console", page_number=-5)
+        # Should report page_number error, not order_by error
+        assert "Invalid page_number parameter '-5'" in str(exc_info.value)
+        assert "Page number must be non-negative" in str(exc_info.value)
+        # Should NOT mention order_by in the error message
+        assert "order_by" not in str(exc_info.value)
     
     def test_sb_get_test_simulations_negative_page_number(self):
         """Test validation for negative page_number parameter."""

@@ -62,6 +62,16 @@ def sb_get_tests_history(
     Returns:
         Dict containing filtered tests, pagination info, and applied filters
     """
+    # Validate critical parameters first (page_number should be checked before optional sorting parameters)
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    # Validate test_type parameter
+    if test_type is not None:
+        valid_test_types = ['validate', 'propagate']
+        if test_type.lower() not in valid_test_types:
+            raise ValueError(f"Invalid test_type parameter '{test_type}'. Valid values are: {', '.join(valid_test_types)}")
+    
     # Validate order_by parameter
     valid_order_by = ['end_time', 'start_time', 'name', 'duration']
     if order_by not in valid_order_by:
@@ -72,15 +82,9 @@ def sb_get_tests_history(
     if order_direction not in valid_order_direction:
         raise ValueError(f"Invalid order_direction parameter '{order_direction}'. Valid values are: {', '.join(valid_order_direction)}")
     
-    # Validate page_number parameter
-    if page_number < 0:
-        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
-    
-    # Validate test_type parameter
-    if test_type is not None:
-        valid_test_types = ['validate', 'propagate']
-        if test_type.lower() not in valid_test_types:
-            raise ValueError(f"Invalid test_type parameter '{test_type}'. Valid values are: {', '.join(valid_test_types)}")
+    # Validate date range - start_date should be before end_date
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise ValueError(f"Invalid date range: start_date ({start_date}) must be before or equal to end_date ({end_date})")
     
     try:
         # Get all tests from cache or API
@@ -297,6 +301,12 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
     if not test_id or not test_id.strip():
         raise ValueError("test_id parameter is required and cannot be empty")
     
+    # Validate boolean parameter - handle None gracefully
+    if include_simulations_statistics is None:
+        include_simulations_statistics = False
+    elif not isinstance(include_simulations_statistics, bool):
+        raise ValueError(f"Invalid include_simulations_statistics parameter '{include_simulations_statistics}'. Must be a boolean value (True/False)")
+    
     try:
         apitoken = get_secret_for_console(console)
         safebreach_env = safebreach_envs[console]
@@ -450,6 +460,16 @@ def sb_get_test_simulations(
     # Validate page_number parameter
     if page_number < 0:
         raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    # Validate time range - start_time should be before end_time
+    if start_time is not None and end_time is not None and start_time > end_time:
+        raise ValueError(f"Invalid time range: start_time ({start_time}) must be before or equal to end_time ({end_time})")
+    
+    # Validate boolean parameter - handle None gracefully
+    if drifted_only is None:
+        drifted_only = False
+    elif not isinstance(drifted_only, bool):
+        raise ValueError(f"Invalid drifted_only parameter '{drifted_only}'. Must be a boolean value (True/False)")
     
     try:
         # Get all simulations from cache or API
@@ -1015,6 +1035,27 @@ def sb_get_security_control_event_details(
     Returns:
         Dict containing detailed security control event information
     """
+    # Validate required parameters first
+    if not console or not console.strip():
+        raise ValueError("Invalid console parameter '{}'. Console name is required and cannot be empty".format(console))
+    
+    if not test_id or not test_id.strip():
+        raise ValueError("Invalid test_id parameter '{}'. Test ID is required and cannot be empty".format(test_id))
+    
+    if not simulation_id or not simulation_id.strip():
+        raise ValueError("Invalid simulation_id parameter '{}'. Simulation ID is required and cannot be empty".format(simulation_id))
+    
+    if not event_id or not event_id.strip():
+        raise ValueError("Invalid event_id parameter '{}'. Event ID is required and cannot be empty".format(event_id))
+    
+    # Validate verbosity_level parameter
+    if verbosity_level is None:
+        verbosity_level = "standard"  # Default to standard if None is passed
+    
+    valid_verbosity_levels = ['minimal', 'standard', 'detailed', 'full']
+    if verbosity_level not in valid_verbosity_levels:
+        raise ValueError(f"Invalid verbosity_level parameter '{verbosity_level}'. Valid values are: {', '.join(valid_verbosity_levels)}")
+    
     try:
         # Get all security control events from cache or API
         all_events = _get_all_security_control_events_from_cache_or_api(console, test_id, simulation_id)

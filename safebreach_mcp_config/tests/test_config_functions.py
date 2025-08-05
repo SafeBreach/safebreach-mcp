@@ -199,8 +199,8 @@ class TestConfigFunctions:
         """Test OS type filtering."""
         # Transform data to match what the filter expects
         transformed_data = [
-            {"id": "sim1", "osType": "Linux"},
-            {"id": "sim2", "osType": "Windows"}
+            {"id": "sim1", "OS": {"type": "Linux"}},
+            {"id": "sim2", "OS": {"type": "Windows"}}
         ]
         
         filtered = _apply_simulator_filters(transformed_data, os_type_filter="Linux")
