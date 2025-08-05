@@ -25,9 +25,10 @@ reduced_simulation_results_mapping = {
     'test_id': 'planRunId',
     'start_time': 'attackerSimulatorStartTime',
     'end_time': 'executionTime',
-    'status': 'status',
+    'status': 'finalStatus',
     'playbook_attack_id': 'moveId',
     'playbook_attack_name': 'moveName',
+    'drift_tracking_code': 'originalExecutionId',
 }
 
 full_simulation_results_mapping = {

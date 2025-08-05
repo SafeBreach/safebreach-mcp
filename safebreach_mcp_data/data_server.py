@@ -21,7 +21,8 @@ from .data_functions import (
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
-    sb_get_test_findings_details
+    sb_get_test_findings_details,
+    sb_get_test_drifts
 )
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,23 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
                 test_id=test_id,
                 page_number=page_number,
                 attribute_filter=attribute_filter
+            )
+        
+        @self.mcp.tool(
+            name="get_test_drifts",
+            description="""Analyzes drift between the given test and the most recent previous test with the same name.
+            Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test, 
+            (3) simulations with matching drift_tracking_code but different status values.
+            Returns comprehensive drift analysis with security impact classification and detailed metadata for further investigation.
+            Parameters: console (required), test_id (required - the test to analyze for drifts)"""
+        )
+        async def get_test_drifts_tool(
+            console: str,
+            test_id: str
+        ) -> dict:
+            return sb_get_test_drifts(
+                console=console,
+                test_id=test_id
             )
 
 def parse_external_config(server_type: str) -> bool:

@@ -258,7 +258,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
   - `data_server.py`: FastMCP server for test and simulation data
   - `data_functions.py`: Business logic for test/simulation operations
   - `data_types.py`: Data transformations for test/simulation data
-  - **Tools**: `get_tests_history`, `get_test_details`, `get_test_simulations`, `get_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`
+  - **Tools**: `get_tests_history`, `get_test_details`, `get_test_simulations`, `get_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`, `get_test_findings_counts`, `get_test_findings_details`, `get_test_drifts`
 
 - **`safebreach_mcp_utilities/`**: Utilities Server (Port 8002)
   - `utilities_server.py`: FastMCP server for utility functions
@@ -323,14 +323,15 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 8. `get_security_control_event_details` - Detailed security event with verbosity levels
 9. `get_test_findings_counts` - Findings summary by type with filtering
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
+11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
 
 **Playbook Server (Port 8003):**
-11. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
-12. `get_playbook_attack_details` ✨ **NEW** - Detailed attack information with verbosity options (fix suggestions, tags, parameters) for specific attack techniques
+12. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
+13. `get_playbook_attack_details` ✨ **NEW** - Detailed attack information with verbosity options (fix suggestions, tags, parameters) for specific attack techniques
 
 **Utilities Server (Port 8002):**
-13. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
-14. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
+14. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
+15. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 
 ## Filtering and Search Capabilities
@@ -443,6 +444,75 @@ When `include_drift_info=True`, the response includes:
 - `hint_to_llm`: Guidance for further investigation
 - `drift_tracking_code`: Correlation ID to find related simulations
 - `last_drift_date`: When the most recent drift occurred (if available)
+
+### Comprehensive Test Drift Analysis
+
+The `get_test_drifts` tool provides advanced drift analysis between two test runs, comparing a current test with the most recent previous test that has the same name.
+
+**Usage:**
+```bash
+# Analyze drift between current test and previous test with same name
+get_test_drifts(console="demo", test_id="current-test-123")
+```
+
+**Enhanced Response Structure:**
+```json
+{
+  "total_drifts": 15,  // Total count of all drift types found
+  
+  "drifts": {
+    // Grouped by drift type for organized analysis
+    "missed-reported": {
+      "drift_type": "missed-reported",
+      "security_impact": "negative", 
+      "description": "Attack missed in baseline but reported in current test - potential security degradation",
+      "drifted_simulations": [
+        {
+          "drift_tracking_code": "attack_123_hostA_hostB",
+          "former_simulation_id": "baseline_sim_001",
+          "current_simulation_id": "current_sim_001"
+        }
+        // ... more simulations with this drift pattern
+      ]
+    },
+    "prevented-stopped": {
+      "drift_type": "prevented-stopped", 
+      "security_impact": "positive",
+      "description": "Attack prevented in baseline but stopped in current - improved blocking",
+      "drifted_simulations": [ /* ... */ ]
+    }
+    // ... additional drift types found
+  },
+  
+  "_metadata": {
+    "console": "demo",
+    "current_test_id": "current-test-123",
+    "baseline_test_id": "baseline-test-456", 
+    "test_name": "Weekly Security Assessment",
+    "baseline_simulations_count": 150,
+    "current_simulations_count": 148,
+    "shared_drift_codes": 145,
+    "simulations_exclusive_to_baseline": ["baseline_sim_099"],  // Only in baseline
+    "simulations_exclusive_to_current": ["current_sim_147", "current_sim_148"],  // Only in current 
+    "status_drifts": 12,  // Count of simulations with status changes
+    "analyzed_at": 1703891234.56
+  }
+}
+```
+
+**Key Features:**
+- **Automatic Baseline Detection**: Finds the most recent previous test with the same name
+- **Three-Category Analysis**: Identifies simulations exclusive to baseline, exclusive to current, and shared with status changes
+- **Drift Type Classification**: Groups similar drift patterns using the comprehensive `drift_types_mapping`
+- **Security Impact Assessment**: Categorizes each drift type as positive, negative, or neutral security impact
+- **Comprehensive Metadata**: Provides complete context about the analysis including simulation counts and exclusions
+- **Organized Output**: Groups drifts by type for efficient analysis and reporting
+
+**Error Handling:**
+The tool provides detailed error messages for common scenarios:
+- No previous test found with the same name
+- Test details unavailable or missing required attributes  
+- API connectivity issues during simulation retrieval
 
 ## External Connection Support
 

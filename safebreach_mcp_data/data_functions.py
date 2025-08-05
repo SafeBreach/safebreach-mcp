@@ -19,6 +19,7 @@ from .data_types import (
     get_reduced_security_control_events_mapping,
     get_full_security_control_events_mapping
 )
+from .drifts_metadata import drift_types_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -524,7 +525,7 @@ def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[D
             logger.info("Retrieved %d simulations from cache for test '%s'", len(data), test_id)
             return data
     
-    # Cache miss or expired - fetch from API using EXACT same pattern as original
+    # Cache miss or expired - fetch from API with proper pagination
     try:
         apitoken = get_secret_for_console(console)
         safebreach_env = safebreach_envs[console]
@@ -534,36 +535,61 @@ def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[D
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
         
-        data = {
-            "runId": f"{test_id}",
-            "query": f"!labels:Ignore AND (!labels:Draft) AND (runId:{test_id})",
-            "page": 1,
-            "pageSize": 100,
-            "orderBy": "desc",
-            "sortBy": "executionTime"
-        }
+        # Fetch all pages of simulations
+        all_simulations_results = []
+        page = 1
+        page_size = 100
         
         logger.info("Fetching simulations from API for test '%s' from console '%s'", test_id, console)
-        response = requests.post(api_url, headers=headers, json=data, timeout=120)
-        response.raise_for_status()
         
-        try:
-            response_data = response.json()
-            simulations_results = response_data.get("simulations", [])
-        except ValueError as e:
-            logger.error("Failed to parse simulations response for test %s in console %s: %s", test_id, console, str(e))
-            simulations_results = []
+        while True:
+            data = {
+                "runId": f"{test_id}",
+                "query": f"!labels:Ignore AND (!labels:Draft) AND (runId:{test_id})",
+                "page": page,
+                "pageSize": page_size,
+                "orderBy": "desc",
+                "sortBy": "executionTime"
+            }
+            
+            logger.info("Fetching page %d for test '%s' from console '%s'", page, test_id, console)
+            response = requests.post(api_url, headers=headers, json=data, timeout=120)
+            response.raise_for_status()
+            
+            try:
+                response_data = response.json()
+                page_simulations = response_data.get("simulations", [])
+            except ValueError as e:
+                logger.error("Failed to parse simulations response for test %s in console %s on page %d: %s", test_id, console, page, str(e))
+                break
+            
+            # If no simulations returned, we've reached the end
+            if not page_simulations:
+                logger.info("No more simulations found on page %d for test '%s'", page, test_id)
+                break
+            
+            # Add simulations from this page
+            all_simulations_results.extend(page_simulations)
+            logger.info("Added %d simulations from page %d for test '%s'", len(page_simulations), page, test_id)
+            
+            # If we got fewer simulations than page_size, we've reached the end
+            if len(page_simulations) < page_size:
+                logger.info("Reached last page %d for test '%s' (got %d < %d simulations)", page, test_id, len(page_simulations), page_size)
+                break
+            
+            # Move to next page
+            page += 1
         
         # Transform simulations using existing mapping - same pattern as original
         simulations = []
-        for simulation_result in simulations_results:
+        for simulation_result in all_simulations_results:
             logger.info("Adding simulation %s to the return list", simulation_result['id'])
             simulations.append(get_reduced_simulation_result_entity(simulation_result))
         
         # Cache the result
         simulations_cache[cache_key] = (simulations, current_time)
         
-        logger.info("Retrieved %d simulations from API for test '%s'", len(simulations), test_id)
+        logger.info("Retrieved %d simulations total from %d pages for test '%s'", len(simulations), page - 1, test_id)
         return simulations
         
     except Exception as e:
@@ -1288,4 +1314,182 @@ def sb_get_test_findings_details(
         
     except Exception as e:
         logger.error("Error getting test findings details for %s:%s: %s", console, test_id, str(e))
+        raise
+
+
+def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
+    """
+    Analyze drift between the given test and the most recent previous test with the same name.
+    
+    This function compares simulations between two test runs to identify:
+    1. Simulations that exist only in the first test (baseline)
+    2. Simulations that exist only in the second test (current)
+    3. Simulations that exist in both tests but have different status values (drifted)
+    
+    Args:
+        console: SafeBreach console name
+        test_id: Test ID to analyze for drifts
+        
+    Returns:
+        Dict containing drift analysis results with the following structure:
+        {
+            "total_drifts": int,  # Total number of drifts found
+            "baseline_test_id": ["sim_id1", ...],  # Simulations exclusive to baseline test
+            "current_test_id": ["sim_id2", ...],   # Simulations exclusive to current test
+            "drifts": [  # Simulations with matching drift_tracking_code but different status
+                {
+                    "drift_tracking_code": str,
+                    "drift_from": {"simulation_id": str, "status": str},
+                    "drift_to": {"simulation_id": str, "status": str},
+                    "drift_type": str,  # Key from drift_types_mapping
+                    "security_impact": str,  # "positive", "negative", or "neutral"
+                    "description": str
+                }
+            ]
+        }
+    """
+    # Validate required parameters
+    if not test_id or not test_id.strip():
+        raise ValueError("test_id parameter is required and cannot be empty")
+    
+    try:
+        # Step 1: Get details of the current test to find its name and start_time
+        logger.info("Getting test details for test '%s' on console '%s'", test_id, console)
+        current_test = sb_get_test_details(console, test_id)
+        
+        if not current_test or 'name' not in current_test:
+            return {
+                "error": f"Could not retrieve test details for test_id '{test_id}' or test lacks a name attribute",
+                "console": console,
+                "test_id": test_id
+            }
+        
+        test_name = current_test['name']
+        current_start_time = current_test.get('start_time')
+        
+        if not current_start_time:
+            return {
+                "error": f"Test '{test_id}' does not have a start_time attribute",
+                "console": console,
+                "test_id": test_id,
+                "test_name": test_name
+            }
+        
+        # Step 2: Find the most recent previous test with the same name
+        logger.info("Searching for baseline test with name '%s' before start_time %s", test_name, current_start_time)
+        baseline_tests = sb_get_tests_history(
+            console=console,
+            page_number=0,
+            name_filter=test_name,
+            end_date=current_start_time - 1,  # end_time must be before current test's start_time
+            order_by="end_time",
+            order_direction="desc"
+        )
+        
+        if not baseline_tests.get('tests_in_page'):
+            return {
+                "error": f"No previous test found with name '{test_name}' before the current test execution",
+                "console": console,
+                "test_id": test_id,
+                "test_name": test_name,
+                "current_start_time": current_start_time
+            }
+        
+        baseline_test_id = baseline_tests['tests_in_page'][0]['test_id']
+        logger.info("Found baseline test: '%s'", baseline_test_id)
+        
+        # Step 3: Get all simulations for both tests
+        logger.info("Fetching all simulations for baseline test '%s'", baseline_test_id)
+        baseline_simulations = _get_all_simulations_from_cache_or_api(console, baseline_test_id)
+        
+        logger.info("Fetching all simulations for current test '%s'", test_id)
+        current_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        
+        # Step 4: Group simulations by drift_tracking_code
+        baseline_by_drift_code = {}
+        for sim in baseline_simulations:
+            drift_code = sim.get('drift_tracking_code')
+            if drift_code:
+                baseline_by_drift_code[drift_code] = sim
+        
+        current_by_drift_code = {}
+        for sim in current_simulations:
+            drift_code = sim.get('drift_tracking_code')
+            if drift_code:
+                current_by_drift_code[drift_code] = sim
+        
+        # Step 5: Analyze drift patterns
+        baseline_only_codes = set(baseline_by_drift_code.keys()) - set(current_by_drift_code.keys())
+        current_only_codes = set(current_by_drift_code.keys()) - set(baseline_by_drift_code.keys())
+        shared_codes = set(baseline_by_drift_code.keys()) & set(current_by_drift_code.keys())
+        
+        # Simulations exclusive to baseline test
+        baseline_only_sims = [baseline_by_drift_code[code]['simulation_id'] for code in baseline_only_codes]
+        
+        # Simulations exclusive to current test
+        current_only_sims = [current_by_drift_code[code]['simulation_id'] for code in current_only_codes]
+        
+        # Analyze shared simulations for status drifts
+        drifts_by_types = {}
+        for drift_code in shared_codes:
+            baseline_sim = baseline_by_drift_code[drift_code]
+            current_sim = current_by_drift_code[drift_code]
+            baseline_status = baseline_sim['status'].replace("-", "_").lower()
+            current_status = current_sim['status'].replace("-", "_").lower()
+            
+            if baseline_status != current_status:
+                # Found a drift - look up drift type
+                drift_key = f"{baseline_status}-{current_status}"
+                drift_info = drift_types_mapping.get(drift_key, {
+                    "type_of_drift": f"from_{baseline_status}_to_{current_status}",
+                    "security_impact": "unknown", 
+                    "description": f"Status changed from {baseline_status} to {current_status}",
+                    "hint_to_llm": "Review simulation logs and security control events for this drift pattern"
+                })
+
+                if drift_key not in drifts_by_types:
+                    drifts_by_types[drift_key] = {
+                        "drift_type": drift_key,
+                        "security_impact": drift_info.get("security_impact", "unknown"),
+                        "description": drift_info.get("description", f"Status changed from {baseline_status} to {current_status}"),
+                        "drifted_simulations": []
+                    }
+
+                drifts_by_types[drift_key]["drifted_simulations"].append({
+                    "drift_tracking_code": drift_code,
+                    "former_simulation_id": baseline_sim['simulation_id'],
+                    "current_simulation_id": current_sim['simulation_id'],
+                })
+        
+        # Calculate total drifts
+        status_drifts = 0
+        for _, list_of_drifts in drifts_by_types.items():
+            status_drifts += len(list_of_drifts["drifted_simulations"])
+
+        total_drifts = len(baseline_only_sims) + len(current_only_sims) + status_drifts
+        
+        # Prepare result
+        result = {
+            "total_drifts": total_drifts,
+            "drifts": drifts_by_types if drifts_by_types else {},
+            "_metadata": {
+                "console": console,
+                "current_test_id": test_id,
+                "baseline_test_id": baseline_test_id,
+                "test_name": test_name,
+                "baseline_simulations_count": len(baseline_simulations),
+                "current_simulations_count": len(current_simulations),
+                "shared_drift_codes": len(shared_codes),
+                "simulations_exclusive_to_baseline": baseline_only_sims,
+                "simulations_exclusive_to_current": current_only_sims,
+                "status_drifts": status_drifts,
+                "analyzed_at": time.time()
+            }
+        }
+        
+        logger.info("Drift analysis complete for test '%s': %d total drifts found", test_id, total_drifts)
+        return result
+        
+    except Exception as e:
+        logger.error("Error analyzing test drifts for %s:%s: %s", console, test_id, str(e))
         raise

@@ -17,6 +17,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
+    sb_get_test_drifts,
     _get_all_tests_from_cache_or_api,
     _apply_filters,
     _apply_ordering,
@@ -1839,3 +1840,368 @@ class TestDataFunctions:
             assert drift_stat is not None
             assert drift_stat["drifted_count"] == 2  # Only sim1 and sim3 are drifted
             assert "different results compared to previous executions" in drift_stat["explanation"]
+
+    # Test cases for sb_get_test_drifts function
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_success(self, mock_get_sims, mock_get_tests, mock_get_details):
+        """Test successful drift analysis between two tests."""
+        # Mock current test details
+        mock_get_details.return_value = {
+            'name': 'Weekly Security Test',
+            'start_time': 1640998800,  # Jan 1, 2022 12:00 PM
+            'test_id': 'test-current-123'
+        }
+        
+        # Mock baseline test search results
+        mock_get_tests.return_value = {
+            'tests_in_page': [
+                {
+                    'test_id': 'test-baseline-456',
+                    'name': 'Weekly Security Test',
+                    'end_time': 1640995200  # Jan 1, 2022 11:00 AM (before current start)
+                }
+            ]
+        }
+        
+        # Mock simulation data - simulate various drift scenarios
+        baseline_simulations = [
+            {
+                'simulation_id': 'sim-baseline-1',
+                'status': 'missed',
+                'drift_tracking_code': 'track-001'
+            },
+            {
+                'simulation_id': 'sim-baseline-2', 
+                'status': 'prevented',
+                'drift_tracking_code': 'track-002'
+            },
+            {
+                'simulation_id': 'sim-baseline-3',
+                'status': 'logged',
+                'drift_tracking_code': 'track-003'  # Only in baseline
+            }
+        ]
+        
+        current_simulations = [
+            {
+                'simulation_id': 'sim-current-1',
+                'status': 'logged',  # Different from baseline (missed -> logged)
+                'drift_tracking_code': 'track-001'
+            },
+            {
+                'simulation_id': 'sim-current-2',
+                'status': 'prevented',  # Same as baseline (no drift)
+                'drift_tracking_code': 'track-002'
+            },
+            {
+                'simulation_id': 'sim-current-4',
+                'status': 'stopped',
+                'drift_tracking_code': 'track-004'  # Only in current
+            }
+        ]
+        
+        # Configure mock to return different data based on test_id
+        def mock_simulations_side_effect(console, test_id):
+            if test_id == 'test-baseline-456':
+                return baseline_simulations
+            elif test_id == 'test-current-123':
+                return current_simulations
+            return []
+        
+        mock_get_sims.side_effect = mock_simulations_side_effect
+        
+        # Execute the function
+        result = sb_get_test_drifts('test-console', 'test-current-123')
+        
+        # Verify the result structure
+        assert isinstance(result, dict)
+        assert 'total_drifts' in result
+        assert 'drifts' in result
+        assert '_metadata' in result
+        
+        # Verify drift counts
+        assert result['total_drifts'] == 3  # 1 status drift + 1 baseline-only + 1 current-only
+        
+        # Verify exclusive simulations (now in metadata)
+        metadata = result['_metadata']
+        assert metadata['simulations_exclusive_to_baseline'] == ['sim-baseline-3']  # Only in baseline
+        assert metadata['simulations_exclusive_to_current'] == ['sim-current-4']    # Only in current
+        
+        # Verify status drifts - drifts is a dictionary organized by drift type
+        assert len(result['drifts']) == 1
+        assert 'missed-logged' in result['drifts']
+        
+        drift_info = result['drifts']['missed-logged']
+        assert drift_info['drift_type'] == 'missed-logged'
+        assert drift_info['security_impact'] == 'positive'
+        assert len(drift_info['drifted_simulations']) == 1
+        
+        drifted_sim = drift_info['drifted_simulations'][0]
+        assert drifted_sim['drift_tracking_code'] == 'track-001'
+        assert drifted_sim['former_simulation_id'] == 'sim-baseline-1'
+        assert drifted_sim['current_simulation_id'] == 'sim-current-1'
+        
+        # Verify metadata
+        metadata = result['_metadata']
+        assert metadata['console'] == 'test-console'
+        assert metadata['current_test_id'] == 'test-current-123'
+        assert metadata['baseline_test_id'] == 'test-baseline-456'
+        assert metadata['test_name'] == 'Weekly Security Test'
+        assert metadata['baseline_simulations_count'] == 3
+        assert metadata['current_simulations_count'] == 3
+        assert metadata['shared_drift_codes'] == 2
+        assert len(metadata['simulations_exclusive_to_baseline']) == 1
+        assert len(metadata['simulations_exclusive_to_current']) == 1
+        assert metadata['status_drifts'] == 1
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    def test_sb_get_test_drifts_invalid_test_id(self, mock_get_details):
+        """Test drift analysis with invalid test_id."""
+        # Test empty test_id
+        with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
+            sb_get_test_drifts('test-console', '')
+        
+        # Test whitespace-only test_id
+        with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
+            sb_get_test_drifts('test-console', '   ')
+        
+        # Test None test_id
+        with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
+            sb_get_test_drifts('test-console', None)
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    def test_sb_get_test_drifts_test_not_found(self, mock_get_details):
+        """Test drift analysis when test details cannot be retrieved."""
+        mock_get_details.return_value = None
+        
+        result = sb_get_test_drifts('test-console', 'non-existent-test')
+        
+        assert 'error' in result
+        assert 'Could not retrieve test details' in result['error']
+        assert result['console'] == 'test-console'
+        assert result['test_id'] == 'non-existent-test'
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    def test_sb_get_test_drifts_test_missing_name(self, mock_get_details):
+        """Test drift analysis when test lacks name attribute."""
+        mock_get_details.return_value = {
+            'test_id': 'test-123',
+            'start_time': 1640998800
+            # Missing 'name' attribute
+        }
+        
+        result = sb_get_test_drifts('test-console', 'test-123')
+        
+        assert 'error' in result
+        assert 'test lacks a name attribute' in result['error']
+        assert result['console'] == 'test-console'
+        assert result['test_id'] == 'test-123'
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    def test_sb_get_test_drifts_test_missing_start_time(self, mock_get_details):
+        """Test drift analysis when test lacks start_time attribute."""
+        mock_get_details.return_value = {
+            'name': 'Test Without Start Time',
+            'test_id': 'test-123'
+            # Missing 'start_time' attribute
+        }
+        
+        result = sb_get_test_drifts('test-console', 'test-123')
+        
+        assert 'error' in result
+        assert 'does not have a start_time attribute' in result['error']
+        assert result['console'] == 'test-console'
+        assert result['test_id'] == 'test-123'
+        assert result['test_name'] == 'Test Without Start Time'
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    def test_sb_get_test_drifts_no_baseline_test(self, mock_get_tests, mock_get_details):
+        """Test drift analysis when no baseline test is found."""
+        mock_get_details.return_value = {
+            'name': 'First Ever Test',
+            'start_time': 1640998800,
+            'test_id': 'test-first-123'
+        }
+        
+        # No previous tests found
+        mock_get_tests.return_value = {
+            'tests_in_page': []
+        }
+        
+        result = sb_get_test_drifts('test-console', 'test-first-123')
+        
+        assert 'error' in result
+        assert 'No previous test found with name' in result['error']
+        assert result['console'] == 'test-console'
+        assert result['test_id'] == 'test-first-123'
+        assert result['test_name'] == 'First Ever Test'
+        assert result['current_start_time'] == 1640998800
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_no_drifts(self, mock_get_sims, mock_get_tests, mock_get_details):
+        """Test drift analysis when no drifts are found."""
+        # Mock current test details
+        mock_get_details.return_value = {
+            'name': 'Stable Test',
+            'start_time': 1640998800,
+            'test_id': 'test-current-123'
+        }
+        
+        # Mock baseline test search results
+        mock_get_tests.return_value = {
+            'tests_in_page': [
+                {'test_id': 'test-baseline-456'}
+            ]
+        }
+        
+        # Identical simulations - no drifts
+        identical_simulations = [
+            {
+                'simulation_id': 'sim-1',
+                'status': 'prevented',
+                'drift_tracking_code': 'track-001'
+            },
+            {
+                'simulation_id': 'sim-2',
+                'status': 'logged',
+                'drift_tracking_code': 'track-002'
+            }
+        ]
+        
+        # Both tests have identical simulations (different sim IDs but same drift codes and status)
+        def mock_simulations_side_effect(console, test_id):
+            if test_id == 'test-baseline-456':
+                return [
+                    {'simulation_id': 'sim-baseline-1', 'status': 'prevented', 'drift_tracking_code': 'track-001'},
+                    {'simulation_id': 'sim-baseline-2', 'status': 'logged', 'drift_tracking_code': 'track-002'}
+                ]
+            elif test_id == 'test-current-123':
+                return [
+                    {'simulation_id': 'sim-current-1', 'status': 'prevented', 'drift_tracking_code': 'track-001'},
+                    {'simulation_id': 'sim-current-2', 'status': 'logged', 'drift_tracking_code': 'track-002'}
+                ]
+            return []
+        
+        mock_get_sims.side_effect = mock_simulations_side_effect
+        
+        result = sb_get_test_drifts('test-console', 'test-current-123')
+        
+        # Should find no drifts
+        assert result['total_drifts'] == 0
+        assert result['drifts'] == {}             # No status drifts
+        
+        # Verify metadata shows analysis was performed
+        metadata = result['_metadata']
+        assert metadata['shared_drift_codes'] == 2
+        assert len(metadata['simulations_exclusive_to_baseline']) == 0
+        assert len(metadata['simulations_exclusive_to_current']) == 0
+        assert metadata['status_drifts'] == 0
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_unknown_drift_type(self, mock_get_sims, mock_get_tests, mock_get_details):
+        """Test drift analysis with unknown drift type not in mapping."""
+        # Mock current test details
+        mock_get_details.return_value = {
+            'name': 'Test With Unknown Drift',
+            'start_time': 1640998800,
+            'test_id': 'test-current-123'
+        }
+        
+        # Mock baseline test search results
+        mock_get_tests.return_value = {
+            'tests_in_page': [
+                {'test_id': 'test-baseline-456'}
+            ]
+        }
+        
+        # Simulations with unknown status transition
+        def mock_simulations_side_effect(console, test_id):
+            if test_id == 'test-baseline-456':
+                return [
+                    {'simulation_id': 'sim-baseline-1', 'status': 'custom_status_1', 'drift_tracking_code': 'track-001'}
+                ]
+            elif test_id == 'test-current-123':
+                return [
+                    {'simulation_id': 'sim-current-1', 'status': 'custom_status_2', 'drift_tracking_code': 'track-001'}
+                ]
+            return []
+        
+        mock_get_sims.side_effect = mock_simulations_side_effect
+        
+        result = sb_get_test_drifts('test-console', 'test-current-123')
+        
+        # Should detect the drift but with unknown type
+        assert result['total_drifts'] == 1
+        assert len(result['drifts']) == 1
+        
+        # Get the drift type key (should be custom_status_1-custom_status_2)
+        drift_type = list(result['drifts'].keys())[0]
+        assert drift_type == 'custom_status_1-custom_status_2'
+        
+        drift = result['drifts'][drift_type]
+        assert drift['drift_type'] == 'custom_status_1-custom_status_2'
+        assert drift['security_impact'] == 'unknown'
+        assert 'Status changed from custom_status_1 to custom_status_2' in drift['description']
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_simulations_without_drift_codes(self, mock_get_sims, mock_get_tests, mock_get_details):
+        """Test drift analysis with simulations missing drift_tracking_code."""
+        # Mock current test details
+        mock_get_details.return_value = {
+            'name': 'Test With Missing Drift Codes',
+            'start_time': 1640998800,
+            'test_id': 'test-current-123'
+        }
+        
+        # Mock baseline test search results
+        mock_get_tests.return_value = {
+            'tests_in_page': [
+                {'test_id': 'test-baseline-456'}
+            ]
+        }
+        
+        # Simulations without drift_tracking_code (should be ignored)
+        def mock_simulations_side_effect(console, test_id):
+            if test_id == 'test-baseline-456':
+                return [
+                    {'simulation_id': 'sim-baseline-1', 'status': 'prevented'},  # Missing drift_tracking_code
+                    {'simulation_id': 'sim-baseline-2', 'status': 'logged', 'drift_tracking_code': 'track-001'}
+                ]
+            elif test_id == 'test-current-123':
+                return [
+                    {'simulation_id': 'sim-current-1', 'status': 'prevented'},  # Missing drift_tracking_code
+                    {'simulation_id': 'sim-current-2', 'status': 'logged', 'drift_tracking_code': 'track-001'}
+                ]
+            return []
+        
+        mock_get_sims.side_effect = mock_simulations_side_effect
+        
+        result = sb_get_test_drifts('test-console', 'test-current-123')
+        
+        # Should only analyze simulations with drift_tracking_code
+        assert result['total_drifts'] == 0  # Same status for track-001
+        assert result['drifts'] == {}
+        
+        # Verify metadata counts only simulations with drift codes
+        metadata = result['_metadata']
+        assert metadata['baseline_simulations_count'] == 2  # Total simulations
+        assert metadata['current_simulations_count'] == 2   # Total simulations
+        assert metadata['shared_drift_codes'] == 1          # Only track-001
+    
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    def test_sb_get_test_drifts_api_error(self, mock_get_details):
+        """Test drift analysis when API calls fail."""
+        # Simulate API error
+        mock_get_details.side_effect = Exception("API connection failed")
+        
+        with pytest.raises(Exception, match="API connection failed"):
+            sb_get_test_drifts('test-console', 'test-123')

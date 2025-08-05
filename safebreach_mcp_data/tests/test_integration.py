@@ -13,6 +13,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_security_control_event_details,
     sb_get_test_simulations,
     sb_get_simulation_details,
+    sb_get_test_drifts,
     security_control_events_cache,
     simulations_cache
 )
@@ -935,3 +936,350 @@ class TestFindingsIntegration:
         
         # The timestamp sorting is tested in the unit tests
         # This integration test focuses on overall data compatibility
+
+
+class TestDriftAnalysisIntegration:
+    """Integration tests for drift analysis functionality."""
+    
+    def setup_method(self):
+        """Setup for each test method."""
+        # Clear caches before each test
+        from safebreach_mcp_data.data_functions import tests_cache
+        security_control_events_cache.clear()
+        simulations_cache.clear()
+        tests_cache.clear()
+    
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs')
+    def test_drift_analysis_complete_workflow(self, mock_envs, mock_post, mock_get, mock_secret):
+        """Test complete drift analysis workflow with realistic data."""
+        # Mock secret retrieval and environment configuration
+        mock_secret.return_value = "test-api-token"
+        mock_envs.__getitem__.return_value = {
+            'url': 'integration-console.safebreach.com',
+            'account': '1234567890'
+        }
+        
+        # Mock test details API call (for current test)
+        current_test_response = Mock()
+        current_test_response.json.return_value = {
+            "planRunId": "test-current-123",
+            "planName": "Weekly Security Assessment",
+            "startTime": 1640998800000,  # API returns milliseconds
+            "endTime": 1641003600000,
+            "status": "completed"
+        }
+        current_test_response.raise_for_status.return_value = None
+        
+        # Mock tests history API call (to find baseline test)
+        history_response = Mock()
+        history_response.json.return_value = {
+            "error": 0,
+            "result": {
+                "testsInPage": [
+                    {
+                        "planRunId": "test-baseline-456",
+                        "planName": "Weekly Security Assessment",
+                        "startTime": 1640908800,  # Start time in seconds
+                        "endTime": 1640912400,    # End time in seconds
+                        "status": "completed"
+                    }
+                ],
+                "totalTests": 1
+            }
+        }
+        history_response.raise_for_status.return_value = None
+        
+        # Mock simulations API calls (baseline simulations)
+        # The _get_all_simulations_from_cache_or_api function expects response_data.get("simulations", [])
+        baseline_simulations_response = Mock()
+        baseline_simulations_response.json.return_value = {
+            "simulations": [
+                {
+                    "id": "sim-baseline-001",
+                    "finalStatus": "missed",
+                    "originalExecutionId": "track-001",
+                    "moveId": "attack-001",
+                    "executionTime": 1640909000
+                },
+                {
+                    "id": "sim-baseline-002", 
+                    "finalStatus": "prevented",
+                    "originalExecutionId": "track-002",
+                    "moveId": "attack-002",
+                    "executionTime": 1640909100
+                },
+                {
+                    "id": "sim-baseline-003",
+                    "finalStatus": "logged",
+                    "originalExecutionId": "track-003",
+                    "moveId": "attack-003",
+                    "executionTime": 1640909200
+                }
+            ]
+        }
+        baseline_simulations_response.raise_for_status.return_value = None
+        
+        # Mock simulations API calls (current simulations)
+        current_simulations_response = Mock()
+        current_simulations_response.json.return_value = {
+            "simulations": [
+                {
+                    "id": "sim-current-001",
+                    "finalStatus": "logged",  # Changed from missed -> positive drift
+                    "originalExecutionId": "track-001",
+                    "moveId": "attack-001",
+                    "executionTime": 1640999000
+                },
+                {
+                    "id": "sim-current-002",
+                    "finalStatus": "prevented",  # Same status -> no drift
+                    "originalExecutionId": "track-002",
+                    "moveId": "attack-002",
+                    "executionTime": 1640999100
+                },
+                {
+                    "id": "sim-current-004",
+                    "finalStatus": "stopped",  # New simulation -> exclusive to current
+                    "originalExecutionId": "track-004",
+                    "moveId": "attack-004",
+                    "executionTime": 1640999300
+                }
+                # track-003 missing -> exclusive to baseline
+            ]
+        }
+        current_simulations_response.raise_for_status.return_value = None
+        
+        # Configure mock responses based on URL
+        def mock_response_selector(*args, **kwargs):
+            url = args[0]
+            if 'testsummaries' in url and 'test-current-123' in url:
+                return current_test_response
+            elif 'testsummaries' in url:  # for tests history call
+                # Return raw array for tests history API
+                tests_list_response = Mock()
+                tests_list_response.json.return_value = [
+                    {
+                        "planRunId": "test-baseline-456",
+                        "planName": "Weekly Security Assessment",
+                        "startTime": 1640908800000,  # API returns milliseconds
+                        "endTime": 1640912400000,
+                        "status": "completed"
+                    }
+                ]
+                tests_list_response.raise_for_status.return_value = None
+                return tests_list_response
+            return Mock()
+        
+        def mock_post_response_selector(*args, **kwargs):
+            request_data = kwargs.get('json', {})
+            run_id = request_data.get('runId', '')
+            if run_id == 'test-baseline-456':
+                return baseline_simulations_response
+            elif run_id == 'test-current-123':
+                return current_simulations_response
+            # Fallback check with string matching if runId not found
+            if 'test-baseline-456' in str(request_data):
+                return baseline_simulations_response
+            elif 'test-current-123' in str(request_data):
+                return current_simulations_response
+            return Mock()
+        
+        mock_get.side_effect = mock_response_selector
+        mock_post.side_effect = mock_post_response_selector
+        
+        # Execute drift analysis
+        result = sb_get_test_drifts('integration-console', 'test-current-123')
+        
+        # Verify comprehensive results
+        assert isinstance(result, dict)
+        assert 'total_drifts' in result
+        assert result['total_drifts'] == 3  # 1 status drift + 1 exclusive baseline + 1 exclusive current
+        
+        # Verify exclusive simulations (now in metadata)
+        metadata = result['_metadata'] 
+        assert len(metadata['simulations_exclusive_to_baseline']) == 1  # sim-baseline-003 only in baseline
+        assert len(metadata['simulations_exclusive_to_current']) == 1   # sim-current-004 only in current
+        
+        # Verify status drifts (now grouped by drift type)
+        assert 'drifts' in result
+        assert len(result['drifts']) == 1
+        assert 'missed-logged' in result['drifts']
+        
+        drift_group = result['drifts']['missed-logged']
+        assert drift_group['drift_type'] == 'missed-logged'
+        assert drift_group['security_impact'] == 'positive'
+        assert len(drift_group['drifted_simulations']) == 1
+        
+        drifted_sim = drift_group['drifted_simulations'][0]
+        assert drifted_sim['drift_tracking_code'] == 'track-001'
+        assert drifted_sim['former_simulation_id'] == 'sim-baseline-001'
+        assert drifted_sim['current_simulation_id'] == 'sim-current-001'
+        
+        # Verify metadata completeness
+        metadata = result['_metadata']
+        assert metadata['console'] == 'integration-console'
+        assert metadata['test_name'] == 'Weekly Security Assessment'
+        assert metadata['baseline_simulations_count'] == 3
+        assert metadata['current_simulations_count'] == 3
+        assert 'analyzed_at' in metadata
+        
+        # Verify API calls were made correctly
+        assert mock_get.call_count >= 2  # test details + tests history
+        assert mock_post.call_count >= 2  # baseline + current simulations
+    
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs')
+    def test_drift_analysis_caching_behavior(self, mock_envs, mock_post, mock_get, mock_secret):
+        """Test that drift analysis properly utilizes caching."""
+        # Mock secret retrieval and environment configuration
+        mock_secret.return_value = "test-api-token"
+        mock_envs.__getitem__.return_value = {
+            'url': 'cache-console.safebreach.com',
+            'account': '1234567890'
+        }
+        
+        # Mock test details
+        test_details_response = Mock()
+        test_details_response.json.return_value = {
+            "planRunId": "test-cache-123",
+            "planName": "Cache Test",
+            "startTime": 1640998800000,
+            "endTime": 1641003600000,
+            "status": "completed"
+        }
+        test_details_response.raise_for_status.return_value = None
+        
+        # Mock tests history
+        history_response = Mock()
+        history_response.json.return_value = {
+            "error": 0,
+            "result": {
+                "testsInPage": [
+                    {
+                        "planRunId": "test-baseline-cache-456",
+                        "planName": "Cache Test",
+                        "endTime": 1640912400,
+                        "status": "completed"
+                    }
+                ],
+                "totalTests": 1
+            }
+        }
+        history_response.raise_for_status.return_value = None
+        
+        # Mock simulations (minimal for caching test) - fix response format
+        simulations_response = Mock()
+        simulations_response.json.return_value = {
+            "simulations": [
+                {
+                    "id": "sim-001",
+                    "finalStatus": "prevented",
+                    "originalExecutionId": "track-001"
+                }
+            ]
+        }
+        simulations_response.raise_for_status.return_value = None
+        
+        # Fix tests history mock response format
+        def mock_get_response_selector(*args, **kwargs):
+            url = args[0]
+            if 'testsummaries' in url and 'test-cache-123' in url:
+                return test_details_response
+            elif 'testsummaries' in url:  # for tests history call
+                # Return raw array for tests history API
+                tests_list_response = Mock()
+                tests_list_response.json.return_value = [
+                    {
+                        "planRunId": "test-baseline-cache-456",
+                        "planName": "Cache Test",
+                        "startTime": 1640908800000,
+                        "endTime": 1640912400000,
+                        "status": "completed"
+                    }
+                ]
+                tests_list_response.raise_for_status.return_value = None
+                return tests_list_response
+            return Mock()
+        
+        mock_get.side_effect = mock_get_response_selector
+        mock_post.return_value = simulations_response
+        
+        # First call - should hit API
+        result1 = sb_get_test_drifts('cache-console', 'test-cache-123')
+        initial_post_calls = mock_post.call_count
+        
+        # Second call immediately - should use cache for simulations
+        result2 = sb_get_test_drifts('cache-console', 'test-cache-123')
+        
+        # Verify results are identical (excluding timestamp which will differ)
+        result1_copy = result1.copy()
+        result2_copy = result2.copy()
+        result1_copy['_metadata'] = {k: v for k, v in result1_copy['_metadata'].items() if k != 'analyzed_at'}
+        result2_copy['_metadata'] = {k: v for k, v in result2_copy['_metadata'].items() if k != 'analyzed_at'}
+        assert result1_copy == result2_copy
+        
+        # Verify simulations were cached (no additional POST calls for simulations)
+        assert mock_post.call_count == initial_post_calls
+        
+        # Test details and history might be called again as they're not heavily cached
+        # but simulations should be cached
+    
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console') 
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    @patch('safebreach_mcp_data.data_functions.safebreach_envs')
+    def test_drift_analysis_error_handling_integration(self, mock_envs, mock_post, mock_get, mock_secret):
+        """Test drift analysis error handling in realistic scenarios."""
+        # Mock secret retrieval and environment configuration
+        mock_secret.return_value = "test-api-token"
+        mock_envs.__getitem__.return_value = {
+            'url': 'error-console.safebreach.com',
+            'account': '1234567890'
+        }
+        
+        # Test API error during simulations retrieval
+        test_details_response = Mock()
+        test_details_response.json.return_value = {
+            "planRunId": "test-error-123",
+            "planName": "Error Test",
+            "startTime": 1640998800000,
+            "status": "completed"
+        }
+        test_details_response.raise_for_status.return_value = None
+        
+        # Fix tests history mock response format
+        def mock_get_error_response_selector(*args, **kwargs):
+            url = args[0]
+            if 'testsummaries' in url and 'test-error-123' in url:
+                return test_details_response
+            elif 'testsummaries' in url:  # for tests history call
+                # Return raw array for tests history API
+                tests_list_response = Mock()
+                tests_list_response.json.return_value = [
+                    {
+                        "planRunId": "test-baseline-error-456", 
+                        "planName": "Error Test", 
+                        "startTime": 1640908800000,
+                        "endTime": 1640912400000,
+                        "status": "completed"
+                    }
+                ]
+                tests_list_response.raise_for_status.return_value = None
+                return tests_list_response
+            return Mock()
+        
+        # Simulate API error for simulations
+        simulations_error_response = Mock()
+        simulations_error_response.raise_for_status.side_effect = Exception("Simulations API timeout")
+        
+        mock_get.side_effect = mock_get_error_response_selector
+        mock_post.return_value = simulations_error_response
+        
+        # Should propagate the exception
+        with pytest.raises(Exception, match="Simulations API timeout"):
+            sb_get_test_drifts('error-console', 'test-error-123')
