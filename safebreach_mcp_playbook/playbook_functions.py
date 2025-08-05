@@ -135,6 +135,21 @@ def sb_get_playbook_attacks(
     Raises:
         ValueError: If console is not found or parameters are invalid
     """
+    # Validate ID range - id_min should be less than or equal to id_max
+    if id_min is not None and id_max is not None and id_min > id_max:
+        raise ValueError(f"Invalid ID range: id_min ({id_min}) must be less than or equal to id_max ({id_max})")
+    
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+    
+    # Validate date ranges - start dates should be before end dates
+    if modified_date_start is not None and modified_date_end is not None and modified_date_start > modified_date_end:
+        raise ValueError(f"Invalid modified date range: modified_date_start ({modified_date_start}) must be before or equal to modified_date_end ({modified_date_end})")
+    
+    if published_date_start is not None and published_date_end is not None and published_date_start > published_date_end:
+        raise ValueError(f"Invalid published date range: published_date_start ({published_date_start}) must be before or equal to published_date_end ({published_date_end})")
+    
     try:
         # Get all attacks from cache or API
         all_attacks = _get_all_attacks_from_cache_or_api(console)

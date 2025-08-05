@@ -19,7 +19,8 @@ from safebreach_mcp_data.data_functions import (
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
-    sb_get_test_findings_details
+    sb_get_test_findings_details,
+    sb_get_test_drifts
 )
 
 
@@ -237,3 +238,105 @@ class TestDataServerE2E:
         assert 'findings_in_page' in result
         assert 'total_findings' in result
         assert isinstance(result['findings_in_page'], list)
+
+    @pytest.mark.e2e
+    def test_get_test_drifts_e2e(self, e2e_console):
+        """Test getting real test drift analysis using known pentest01 test data.
+        
+        This test uses test ID 1753948800489.42 from pentest01 which has documented
+        drift patterns when compared to its previous test with the same name:
+        - 32 simulations: no_result → prevented
+        - 10 simulations: no_result → detected
+        - 6 simulations: no_result → missed
+        - 4 simulations: logged → detected
+        - 2 simulations: no_result → stopped
+        - 1 simulation: missed → logged
+        - 1 simulation: detected → logged
+        Total: ~56 expected drifts
+        """
+        # Use specific test ID from pentest01 that has known drift patterns
+        test_id = "1753948800489.42"
+        
+        result = sb_get_test_drifts(e2e_console, test_id)
+        
+        # Verify response structure
+        assert isinstance(result, dict)
+        assert 'total_drifts' in result
+        assert 'drifts' in result
+        assert '_metadata' in result
+        assert isinstance(result['drifts'], dict)
+        
+        # Verify metadata contains expected fields
+        metadata = result['_metadata']
+        assert metadata['console'] == e2e_console
+        assert metadata['current_test_id'] == test_id
+        assert 'baseline_test_id' in metadata
+        assert 'test_name' in metadata
+        assert 'baseline_simulations_count' in metadata
+        assert 'current_simulations_count' in metadata
+        assert 'analyzed_at' in metadata
+        
+        # Expected drift patterns based on provided data:
+        # - 32 simulations: no_result → prevented  
+        # - 10 simulations: no_result → detected
+        # - 6 simulations: no_result → missed
+        # - 4 simulations: logged → detected  
+        # - 2 simulations: no_result → stopped
+        # - 1 simulation: missed → logged
+        # - 1 simulation: detected → logged
+        # Total expected: 56 drifts
+        
+        # Verify we have the expected number of drifts (approximately)
+        # Allow some flexibility as real data may vary slightly
+        total_drifts = result['total_drifts']
+        assert total_drifts >= 50, f"Expected at least 50 drifts, got {total_drifts}"
+        assert total_drifts <= 65, f"Expected at most 65 drifts, got {total_drifts}"
+        
+        # Count drift types to verify expected patterns
+        drift_type_counts = {}
+        for drift_type, drift_info in result['drifts'].items():
+            assert 'drift_type' in drift_info
+            assert 'security_impact' in drift_info
+            assert 'drifted_simulations' in drift_info
+            
+            # Count simulations for this drift type
+            drift_type_counts[drift_type] = len(drift_info['drifted_simulations'])
+            
+            # Verify each drifted simulation has required fields
+            for drifted_sim in drift_info['drifted_simulations']:
+                assert 'drift_tracking_code' in drifted_sim
+                assert 'former_simulation_id' in drifted_sim
+                assert 'current_simulation_id' in drifted_sim
+        
+        # Verify some of the major expected drift patterns exist
+        # Note: Exact counts may vary due to data changes over time
+        # Drift types are formatted as "{from_status}-{to_status}" with underscores replacing hyphens
+        expected_patterns = [
+            'no_result-prevented',  # Expected: ~32
+            'no_result-detected',   # Expected: ~10
+            'no_result-missed',     # Expected: ~6
+            'logged-detected',      # Expected: ~4
+            'no_result-stopped',    # Expected: ~2
+            'missed-logged',        # Expected: ~1
+            'detected-logged'       # Expected: ~1
+        ]
+        
+        # Verify at least some expected patterns are present
+        found_patterns = set(drift_type_counts.keys())
+        expected_patterns_set = set(expected_patterns)
+        overlap = found_patterns.intersection(expected_patterns_set)
+        assert len(overlap) >= 4, f"Expected at least 4 matching patterns, found overlap: {overlap}"
+        
+        # Verify security impact classification exists and is valid
+        security_impacts = {drift['security_impact'] for drift in result['drifts'].values()}
+        valid_impacts = {'positive', 'negative', 'neutral', 'unknown'}
+        assert security_impacts.issubset(valid_impacts), f"Invalid security impacts found: {security_impacts - valid_impacts}"
+        
+        # Log results for debugging
+        print(f"\n=== E2E Drift Analysis Results ===")
+        print(f"Total drifts found: {total_drifts}")
+        print(f"Drift type counts: {drift_type_counts}")
+        print(f"Security impacts: {security_impacts}")
+        print(f"Baseline test: {metadata.get('baseline_test_id', 'Unknown')}")
+        print(f"Test name: {metadata.get('test_name', 'Unknown')}")
+        print(f"==================================\n")
