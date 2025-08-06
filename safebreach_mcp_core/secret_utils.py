@@ -7,6 +7,7 @@ Supports multiple secret storage backends through the SecretProvider interface.
 
 import logging
 from typing import Optional, Dict, Any
+import os
 from .secret_providers import SecretProviderFactory, SecretProvider
 from .environments_metadata import safebreach_envs
 
@@ -18,6 +19,8 @@ _provider_cache: Dict[str, SecretProvider] = {}
 def get_secret_for_console(console: str) -> str:
     """
     Get the API token for a specific SafeBreach console using the configured secret provider.
+    If the environment variable mcp_in_console is set, the function returns the value of that variable.
+    When the MCP server is hosted in a console the API token is not validated.
     
     Args:
         console: The console name (e.g., 'pentest-demo', 'zircon-piculet')
@@ -29,6 +32,12 @@ def get_secret_for_console(console: str) -> str:
         ValueError: If the console is not found in environments metadata
         Exception: If the secret cannot be retrieved
     """
+    # Check if the MCP server is running in a console environment
+    mcp_in_console = os.getenv('mcp_in_console')
+    if mcp_in_console:
+        logger.info("Running in console environment, returning mcp_in_console value")
+        return mcp_in_console
+    
     if console not in safebreach_envs:
         raise ValueError(f"Console '{console}' not found in environments metadata. "
                         f"Available consoles: {list(safebreach_envs.keys())}")

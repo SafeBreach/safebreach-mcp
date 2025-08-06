@@ -88,26 +88,24 @@ class TestGetAllAttacksFromCacheOrApi:
         """Clear cache after each test."""
         clear_playbook_cache()
     
-    @patch('safebreach_mcp_playbook.playbook_functions.safebreach_envs')
-    def test_invalid_console(self, mock_envs):
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
+    def test_invalid_console(self, mock_base_url):
         """Test error handling for invalid console name."""
-        mock_envs.__contains__ = Mock(return_value=False)
-        mock_envs.keys.return_value = ['valid-console1', 'valid-console2']
+        mock_base_url.side_effect = ValueError("Environment 'invalid-console' not found. Available environments: ['valid-console1', 'valid-console2']")
         
         with pytest.raises(ValueError) as exc_info:
             _get_all_attacks_from_cache_or_api('invalid-console')
         
-        assert "Console 'invalid-console' not found" in str(exc_info.value)
-        assert "Available: ['valid-console1', 'valid-console2']" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)
+        assert "invalid-console" in str(exc_info.value)
     
     @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
     @patch('safebreach_mcp_playbook.playbook_functions.get_secret_for_console')
-    @patch('safebreach_mcp_playbook.playbook_functions.safebreach_envs')
-    def test_api_call_success(self, mock_envs, mock_get_secret, mock_requests_get, sample_attack_data):
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
+    def test_api_call_success(self, mock_base_url, mock_get_secret, mock_requests_get, sample_attack_data):
         """Test successful API call."""
         # Setup mocks
-        mock_envs.__contains__ = Mock(return_value=True)
-        mock_envs.__getitem__ = Mock(return_value={'url': 'test-console.safebreach.com'})
+        mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = 'test-api-token'
         
         mock_response = Mock()
@@ -133,12 +131,11 @@ class TestGetAllAttacksFromCacheOrApi:
     
     @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
     @patch('safebreach_mcp_playbook.playbook_functions.get_secret_for_console')
-    @patch('safebreach_mcp_playbook.playbook_functions.safebreach_envs')
-    def test_api_call_error(self, mock_envs, mock_get_secret, mock_requests_get):
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
+    def test_api_call_error(self, mock_base_url, mock_get_secret, mock_requests_get):
         """Test API call error handling."""
         # Setup mocks
-        mock_envs.__contains__ = Mock(return_value=True)
-        mock_envs.__getitem__ = Mock(return_value={'url': 'test-console.safebreach.com'})
+        mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = 'test-api-token'
         
         mock_response = Mock()
@@ -154,15 +151,12 @@ class TestGetAllAttacksFromCacheOrApi:
     
     @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
     @patch('safebreach_mcp_playbook.playbook_functions.get_secret_for_console')
-    @patch('safebreach_mcp_playbook.playbook_functions.safebreach_envs')
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
     @patch('safebreach_mcp_playbook.playbook_functions.playbook_cache')
-    def test_cache_hit(self, mock_cache, mock_envs, mock_get_secret, mock_requests_get, sample_attack_data):
+    def test_cache_hit(self, mock_cache, mock_base_url, mock_get_secret, mock_requests_get, sample_attack_data):
         """Test cache hit scenario."""
-        # Setup environment mocks properly
-        mock_envs.__contains__ = Mock(return_value=True)
-        mock_envs.__getitem__ = Mock(return_value={'url': 'test-console.safebreach.com'})
-        
         # Setup mocks - these shouldn't be called due to cache hit
+        mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = "test-token"
         
         # Setup cache mock to simulate cache hit
@@ -192,12 +186,11 @@ class TestGetAllAttacksFromCacheOrApi:
     
     @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
     @patch('safebreach_mcp_playbook.playbook_functions.get_secret_for_console')
-    @patch('safebreach_mcp_playbook.playbook_functions.safebreach_envs')
-    def test_cache_expired(self, mock_envs, mock_get_secret, mock_requests_get, sample_attack_data):
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
+    def test_cache_expired(self, mock_base_url, mock_get_secret, mock_requests_get, sample_attack_data):
         """Test expired cache scenario."""
         # Setup mocks
-        mock_envs.__contains__ = Mock(return_value=True)
-        mock_envs.__getitem__ = Mock(return_value={'url': 'test-console.safebreach.com'})
+        mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = 'test-api-token'
         
         mock_response = Mock()
