@@ -83,10 +83,11 @@ class TestConfigFunctions:
         """Mock API response for simulators."""
         return {"data": mock_simulator_data}
     
-    @patch('safebreach_mcp_config.config_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_secret, mock_api_response):
+    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_api_response):
         """Test successful retrieval of simulators from API."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -128,10 +129,11 @@ class TestConfigFunctions:
         mock_get.assert_not_called()
         mock_secret.assert_not_called()
     
-    @patch('safebreach_mcp_config.config_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_cache_expired(self, mock_get, mock_secret, mock_simulator_data, mock_api_response):
+    def test_get_all_simulators_cache_expired(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_simulator_data, mock_api_response):
         """Test cache expiration and API fallback."""
         # Setup expired cache
         cache_key = "simulators_test-console"
@@ -280,10 +282,11 @@ class TestConfigFunctions:
         assert "API Error" in result["error"]
         assert result["console"] == "test-console"
     
-    @patch('safebreach_mcp_config.config_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_sb_get_simulator_details_success(self, mock_get, mock_secret):
+    def test_sb_get_simulator_details_success(self, mock_get, mock_secret, mock_account_id, mock_base_url):
         """Test successful simulator details retrieval."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -324,10 +327,11 @@ class TestConfigFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
-    @patch('safebreach_mcp_config.config_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_sb_get_simulator_details_error(self, mock_get, mock_secret):
+    def test_sb_get_simulator_details_error(self, mock_get, mock_secret, mock_account_id, mock_base_url):
         """Test error handling in simulator details retrieval."""
         mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
@@ -356,22 +360,11 @@ class TestConfigFunctions:
             sb_get_simulator_details(console="unknown_console", simulator_id="sim123")
         assert "not found" in str(exc_info.value)
     
-    @patch('safebreach_mcp_config.config_functions.safebreach_envs')
-    def test_secret_provider_failure_validation(self, mock_envs):
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
+    def test_secret_provider_failure_validation(self, mock_account_id, mock_base_url):
         """Test that secret provider failures return proper error messages."""
         from botocore.exceptions import ClientError
-        
-        # Mock environment with non-existent parameter
-        mock_envs.__getitem__.return_value = {
-            "url": "test.com",
-            "account": "123", 
-            "secret_config": {
-                "provider": "aws_ssm",
-                "parameter_name": "non-existent-config-param"
-            }
-        }
-        mock_envs.__contains__.return_value = True
-        mock_envs.keys.return_value = ["test-console"]
         
         # Mock ClientError for parameter not found
         with patch('safebreach_mcp_config.config_functions.get_secret_for_console') as mock_secret:

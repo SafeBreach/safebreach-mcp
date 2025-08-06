@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Any
 from safebreach_mcp_core.secret_utils import get_secret_for_console
-from safebreach_mcp_core.environments_metadata import safebreach_envs
+from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .config_types import get_minimal_simulator_mapping, get_full_simulator_mapping
 
 logger = logging.getLogger(__name__)
@@ -140,10 +140,11 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
-        
-        api_url = f"https://{safebreach_env['url']}/api/config/v1/accounts/{safebreach_env['account']}/nodes?details=true&deleted=false&assets=false&impersonatedUsers=false&includeProxies=false&deployments=false"
-        
+        base_url = get_api_base_url(console, 'config')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes?details=true&deleted=false&assets=false&impersonatedUsers=false&includeProxies=false&deployments=false"
+
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
         
@@ -168,7 +169,7 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         simulators_cache[cache_key] = (simulators, current_time)
         
         if len(simulators) == 0:
-            logger.warning("Zero simulators found on the environment %s", safebreach_env)
+            logger.warning("Zero simulators found on the environment %s", console)
         
         logger.info(f"Retrieved {len(simulators)} simulators from API for console '{console}'")
         return simulators
@@ -281,11 +282,13 @@ def sb_get_simulator_details(console: str, simulator_id: str) -> Dict[str, Any]:
         raise ValueError("simulator_id parameter is required and cannot be empty")
     
     try:
-        apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
         logger.info("Getting api key for console %s", console)
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'config')
+        account_id = get_api_account_id(console)
 
-        api_url = f"https://{safebreach_env['url']}/api/config/v1/accounts/{safebreach_env['account']}/nodes/{simulator_id}"
+
+        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes/{simulator_id}"
 
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}

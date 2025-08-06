@@ -18,6 +18,14 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 
 # Get help with all external connection options
 uv run start_all_servers.py --help
+
+# Single-tenant deployment (SafeBreach internal use)
+export DATA_URL="http://localhost:3400"
+export CONFIG_URL="http://localhost:3401" 
+export SIEM_URL="http://localhost:3402"
+export ACCOUNT_ID="your-account-id"
+export console_name_apitoken="your-api-token"
+uv run start_all_servers.py
 ```
 
 **Running Individual Servers:**

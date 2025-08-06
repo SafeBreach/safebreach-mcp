@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 
 import requests
 from safebreach_mcp_core.secret_utils import get_secret_for_console
-from safebreach_mcp_core.environments_metadata import safebreach_envs
+from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .data_types import (
     get_reduced_test_summary_mapping,
     get_reduced_simulation_result_entity,
@@ -174,9 +174,10 @@ def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
         
-        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/testsummaries?size=1000&includeArchived=false&status=canceled%7Ccompleted"
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries?size=1000&includeArchived=false&status=canceled%7Ccompleted"
         
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -309,9 +310,10 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
     
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
 
-        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/testsummaries/{test_id}"
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
 
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -548,9 +550,10 @@ def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[D
     # Cache miss or expired - proceed to fetch from API with proper pagination
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
         
-        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/executionsHistoryResults"
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
         
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -716,11 +719,12 @@ def sb_get_simulation_details(
         Dict containing simulation details
     """
     try:
-        apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
         logger.info("Getting api key for console %s", console)
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
 
-        api_url = f"https://{safebreach_env['url']}/api/data/v1/accounts/{safebreach_env['account']}/executionsHistoryResults"
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
         
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -809,10 +813,11 @@ def _get_all_security_control_events_from_cache_or_api(console: str, test_id: st
     # Fetch from API
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
+        base_url = get_api_base_url(console, 'siem')
+        account_id = get_api_account_id(console)
         
         # Use the SIEM API endpoint for security control events
-        api_url = f"https://{safebreach_env['url']}/api/siem/v1/accounts/{safebreach_env['account']}/eventLogs?planRunId={test_id}&simulationId={simulation_id}"
+        api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/eventLogs?planRunId={test_id}&simulationId={simulation_id}"
         headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
         
         logger.info("Fetching security control events from API for %s:%s:%s", console, test_id, simulation_id)
@@ -1125,10 +1130,10 @@ def _get_all_findings_from_cache_or_api(console: str, test_id: str) -> List[Dict
     
     try:
         apitoken = get_secret_for_console(console)
-        safebreach_env = safebreach_envs[console]
+        base_url = get_api_base_url(console, 'data')
         
         # Use the propagateSummary API endpoint for findings
-        api_url = f"https://{safebreach_env['url']}/api/data/v1/propagateSummary/{test_id}/findings/"
+        api_url = f"{base_url}/api/data/v1/propagateSummary/{test_id}/findings/"
         headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
         
         logger.info("Fetching findings from API for %s:%s", console, test_id)
