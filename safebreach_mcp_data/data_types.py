@@ -151,23 +151,30 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
         full_simulation_result_entity['mitre_techniques'] = mitre_techniques
 
     if include_full_attack_logs:
-        raw_simulation_logs = simulation_result_entity.get('dataObj', {})
-        # Handle both dict and list cases for raw_simulation_logs
-        if isinstance(raw_simulation_logs, dict):
-            raw_simulation_logs = raw_simulation_logs.get('data', [])
-        elif not isinstance(raw_simulation_logs, list):
-            raw_simulation_logs = []
+        # Attack logs are actually stored in the simulationEvents field, not dataObj
+        simulation_events = simulation_result_entity.get('simulationEvents', [])
         
+        # Group events by nodeId (host)
+        events_by_host = {}
+        for event in simulation_events:
+            if isinstance(event, dict):
+                node_id = event.get('nodeId', 'unknown')
+                if node_id not in events_by_host:
+                    events_by_host[node_id] = []
+                events_by_host[node_id].append(event)
+        
+        # Transform grouped events into the expected format
         logs_by_host = []
-        for simulator in raw_simulation_logs:
-            # Ensure simulator is a dict before using .get()
-            if isinstance(simulator, dict):
-                host_object = {'host_info': simulator.get('details', {}).get('METADATA', {})}
-                host_object['host_logs'] = []
-                for log in simulator.get('details', {}).get('SIMULATION_STEPS', []):
-                    if isinstance(log, dict) and log.get('level') == "INFO":
-                        host_object['host_logs'].append(log)
-                logs_by_host.append(host_object)
+        for node_id, host_events in events_by_host.items():
+            host_object = {
+                'host_info': {
+                    'node_id': node_id,
+                    'event_count': len(host_events)
+                },
+                'host_logs': host_events  # Include all simulation events for this host
+            }
+            logs_by_host.append(host_object)
+        
         full_simulation_result_entity['full_attack_logs_by_hosts'] = logs_by_host
 
     return full_simulation_result_entity

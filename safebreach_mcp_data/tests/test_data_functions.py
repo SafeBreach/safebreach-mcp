@@ -531,9 +531,12 @@ class TestDataFunctions:
             "simulations": [{
                 "id": "sim1",
                 "moveName": "Test Move",
-                "mitreTechniques": [{"value": "T1234", "displayName": "Test Technique"}],
-                "attackLogs": [{"log": "test log"}],
-                "simulationLogs": [{"log": "sim log"}]
+                "MITRE_Technique": [{"value": "T1234", "displayName": "Test Technique", "url": "https://attack.mitre.org/techniques/T1234/"}],
+                "simulationEvents": [
+                    {"nodeId": "node1", "type": "PROCESS", "action": "START", "timestamp": "2025-01-01T10:00:00Z"},
+                    {"nodeId": "node1", "type": "FILE", "action": "CREATE", "timestamp": "2025-01-01T10:01:00Z"},
+                    {"nodeId": "node2", "type": "DIRECTORY", "action": "CREATE", "timestamp": "2025-01-01T10:02:00Z"}
+                ]
             }]
         }
         mock_response.status_code = 200
@@ -550,6 +553,35 @@ class TestDataFunctions:
         assert "simulation_id" in result
         assert "mitre_techniques" in result
         assert "full_attack_logs_by_hosts" in result
+        
+        # Verify attack logs structure
+        attack_logs = result["full_attack_logs_by_hosts"]
+        assert isinstance(attack_logs, list)
+        assert len(attack_logs) == 2  # Two hosts (node1 and node2)
+        
+        # Check each host log structure
+        for host_log in attack_logs:
+            assert "host_info" in host_log
+            assert "host_logs" in host_log
+            assert "node_id" in host_log["host_info"]
+            assert "event_count" in host_log["host_info"]
+            assert isinstance(host_log["host_logs"], list)
+            
+        # Verify specific host data
+        host_nodes = [log["host_info"]["node_id"] for log in attack_logs]
+        assert "node1" in host_nodes
+        assert "node2" in host_nodes
+        
+        # Find node1 and verify it has 2 events
+        node1_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node1")
+        assert node1_log["host_info"]["event_count"] == 2
+        assert len(node1_log["host_logs"]) == 2
+        
+        # Find node2 and verify it has 1 event
+        node2_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node2")
+        assert node2_log["host_info"]["event_count"] == 1
+        assert len(node2_log["host_logs"]) == 1
+        
         mock_post.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
