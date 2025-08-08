@@ -1,0 +1,29 @@
+# GitLeaks configuration to detect secrets
+[extend]
+useDefault = true
+
+[rules.safebreach-api-token]
+description = "SafeBreach API Token"
+id = "safebreach-api-token"
+regex = '''[a-zA-Z0-9_-]{43}'''
+tags = ["key", "SafeBreach"]
+
+[rules.bearer-token]
+description = "Bearer Token"
+id = "bearer-token"
+regex = '''(?i)bearer\s+[a-zA-Z0-9_\-\.=]+'''
+tags = ["key", "token"]
+
+[allowlist]
+description = "Global allowlist"
+commits = []
+paths = [
+    '''\.secrets\.baseline''',
+    '''\.pre-commit-config\.yaml''',
+]
+regexes = [
+    '''your-secure-token-here''',
+    '''your-auth-token-here''',
+    '''REPLACE_WITH_ACTUAL_TOKEN''',
+    '''<your-token-here>''',
+]
