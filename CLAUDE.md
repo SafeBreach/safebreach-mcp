@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 SECURITY FIRST - CRITICAL FOR CLAUDE
+
+**IMPORTANT**: Claude should always be launched using the secure launcher to ensure full project context and security awareness:
+
+```bash
+# ALWAYS use this command to launch Claude:
+./claude-launcher.sh
+```
+
+**This ensures Claude has:**
+- ✅ Complete project architecture and best practices knowledge
+- ✅ Security context and awareness of token handling rules
+- ✅ Current git status and environment configuration
+- ✅ Pre-validated secure working environment
+
+**NEVER commit real secrets:**
+- Use placeholders like `your-token-here`, `REPLACE_WITH_ACTUAL_TOKEN`
+- Use environment variables: `${API_TOKEN}`, `$SAFEBREACH_TOKEN`
+- Pre-commit hooks will automatically scan for and block real secrets
+
+📚 **See TEAM_WORKFLOW.md for complete security practices and development workflow.**
+
 ## Development Commands
 
 **Running the Multi-Server Architecture (Recommended):**

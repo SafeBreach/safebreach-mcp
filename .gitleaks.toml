@@ -20,10 +20,16 @@ commits = []
 paths = [
     '''\.secrets\.baseline''',
     '''\.pre-commit-config\.yaml''',
+    '''\.vscode/set_env\.sh''',  # Allow dev environment file
+    '''safebreach_mcp_server\.egg-info/.*''',  # Allow package info
 ]
 regexes = [
     '''your-secure-token-here''',
     '''your-auth-token-here''',
+    '''your-secure-token''',
+    '''your-token-here''',
+    '''your-token''',
     '''REPLACE_WITH_ACTUAL_TOKEN''',
     '''<your-token-here>''',
+    '''<your-api-key>''',
 ]

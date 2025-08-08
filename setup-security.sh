@@ -50,11 +50,28 @@ fi
 echo "Scanning repository for existing secrets..."
 gitleaks detect --config .gitleaks.toml --verbose
 
+# Make Claude launcher executable
+chmod +x claude-launcher.sh
+
 echo "✅ Security setup complete!"
 echo ""
+echo "🤖 CLAUDE INTEGRATION READY!"
+echo "From now on, ALWAYS launch Claude using:"
+echo "   ./claude-launcher.sh"
+echo ""
+echo "This ensures Claude has:"
+echo "✅ Full project knowledge and best practices"
+echo "✅ Security context and token handling awareness"
+echo "✅ Current git status and environment info"
+echo "✅ Pre-validated secure environment"
+echo ""
 echo "Next steps:"
-echo "1. Edit .env file with your actual tokens"
-echo "2. Never commit the .env file"
-echo "3. Use placeholders in documentation"
-echo "4. Run 'pre-commit run --all-files' before commits"
-echo "5. Review SECURITY_GUIDELINES.md"
+echo "1. Edit .env file with your actual tokens (template created)"
+echo "2. Never commit the .env file or any real secrets"
+echo "3. Use placeholders in documentation (your-token-here)"
+echo "4. Always launch Claude with: ./claude-launcher.sh"
+echo "5. Run 'pre-commit run --all-files' before commits"
+echo "6. Review SECURITY_GUIDELINES.md for full security practices"
+echo ""
+echo "🚀 Ready to launch Claude securely:"
+echo "   ./claude-launcher.sh"
