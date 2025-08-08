@@ -538,7 +538,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-config-staging": {
@@ -550,7 +550,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-utils-staging": {
@@ -562,7 +562,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-playbook-staging": {
@@ -574,7 +574,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     }
   }
