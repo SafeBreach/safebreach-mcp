@@ -161,6 +161,18 @@ cython_debug/
 
 # VS Code
 .vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# SECURITY: Private development files (NEVER commit)
+.vscode/set_env.sh
+.vscode/*_env.sh
+!.vscode/set_env.sh.template
+**/set_env.sh
+!**/set_env.sh.template
+**/*_apitoken*
+local_env.sh
 
 # Mac
 .DS_Store

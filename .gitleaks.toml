@@ -14,14 +14,20 @@ id = "bearer-token"
 regex = '''(?i)bearer\s+[a-zA-Z0-9_\-\.=]+'''
 tags = ["key", "token"]
 
+[rules.safebreach-internal-env]
+description = "SafeBreach Internal Environment Names"
+id = "safebreach-internal-env"
+regex = '''(?i)(flat-carp|zircon-piculet|pentest-demo|pentest01)'''
+tags = ["internal", "environment", "SafeBreach"]
+
 [allowlist]
 description = "Global allowlist"
 commits = []
 paths = [
     '''\.secrets\.baseline''',
     '''\.pre-commit-config\.yaml''',
-    '''\.vscode/set_env\.sh''',  # Allow dev environment file
     '''safebreach_mcp_server\.egg-info/.*''',  # Allow package info
+    '''\.vscode/set_env\.sh''',  # Allow private development file (git-ignored)
 ]
 regexes = [
     '''your-secure-token-here''',

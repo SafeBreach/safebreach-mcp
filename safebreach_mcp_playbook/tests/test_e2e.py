@@ -2,7 +2,13 @@
 End-to-End Tests for SafeBreach Playbook Server
 
 This module tests the complete functionality using real API calls.
-These tests require valid AWS credentials and SafeBreach API tokens.
+These tests require:
+- Real SafeBreach console access with valid API tokens
+- Environment variables configured via private .vscode/set_env.sh file
+- Network access to SafeBreach consoles
+
+Setup: See E2E_TESTING.md for complete setup instructions.
+Security: All real environment details must be in private local files only.
 """
 
 import pytest
@@ -16,7 +22,7 @@ from safebreach_mcp_playbook.playbook_functions import (
 
 
 # Skip E2E tests if not in proper environment
-E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'pentest-demo')
+E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'demo-console')
 SKIP_E2E_TESTS = os.environ.get('SKIP_E2E_TESTS', 'false').lower() == 'true'
 
 skip_e2e = pytest.mark.skipif(

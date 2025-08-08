@@ -105,6 +105,9 @@ uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach
 # Run only unit/integration tests (skip end-to-end tests that require real SafeBreach environments)
 uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ -m "not e2e"
 
+# Run E2E tests (requires private environment setup - see E2E_TESTING.md)
+source .vscode/set_env.sh && uv run pytest -m "e2e"
+
 # Run quick authentication test suite
 uv run python tests/run_auth_tests.py --quick --verbose
 ```

@@ -20,7 +20,7 @@ def get_secret_for_console(console: str) -> str:
     Get the API token for a specific SafeBreach console using the configured secret provider.
     
     Args:
-        console: The console name (e.g., 'pentest-demo', 'zircon-piculet')
+        console: The console name (e.g., 'demo-console', 'prod-console')
         
     Returns:
         The API token for the console

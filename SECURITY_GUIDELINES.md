@@ -10,6 +10,8 @@
 - JWT tokens
 - Bearer tokens
 - Any production credentials
+- **Internal environment names** (e.g., specific console names, internal hostnames)
+- Private development environment files
 
 ### Safe Placeholder Patterns:
 - `your-token-here`
@@ -17,6 +19,8 @@
 - `<your-api-key>`
 - `${API_TOKEN}`
 - `[TOKEN_PLACEHOLDER]`
+- `demo-console`, `prod-console`, `console-a` (for environment names)
+- `your-hostname`, `example-server` (for internal systems)
 
 ## Pre-commit Setup
 

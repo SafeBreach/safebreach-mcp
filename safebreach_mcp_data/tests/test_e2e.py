@@ -2,9 +2,13 @@
 SafeBreach MCP Data Server End-to-End Tests
 
 These tests run against real SafeBreach APIs and require:
-- Valid SafeBreach console access
-- API tokens configured in environment/AWS
+- Valid SafeBreach console access with real environment details
+- API tokens and console info configured via environment variables
+- Private .vscode/set_env.sh file with real credentials (never commit!)
 - Network access to SafeBreach consoles
+
+Setup: See E2E_TESTING.md for complete setup instructions.
+Security: All real environment details must be in private local files only.
 """
 
 import pytest
@@ -27,7 +31,7 @@ from safebreach_mcp_data.data_functions import (
 @pytest.fixture
 def e2e_console():
     """Get console name for E2E tests from environment."""
-    console = os.environ.get('E2E_CONSOLE', 'pentest01')
+    console = os.environ.get('E2E_CONSOLE', 'demo-console')
     if not console:
         pytest.skip("E2E_CONSOLE environment variable not set")
     return console
@@ -384,9 +388,9 @@ class TestDataServerE2E:
 
     @pytest.mark.e2e
     def test_get_test_drifts_e2e(self, e2e_console):
-        """Test getting real test drift analysis using known pentest01 test data.
+        """Test getting real test drift analysis using known test data.
         
-        This test uses test ID 1753948800489.42 from pentest01 which has documented
+        This test uses test ID 1753948800489.42 which has documented
         drift patterns when compared to its previous test with the same name:
         - 32 simulations: no_result → prevented
         - 10 simulations: no_result → detected
@@ -397,7 +401,7 @@ class TestDataServerE2E:
         - 1 simulation: detected → logged
         Total: ~56 expected drifts
         """
-        # Use specific test ID from pentest01 that has known drift patterns
+        # Use specific test ID that has known drift patterns
         test_id = "1753948800489.42"
         
         result = sb_get_test_drifts(e2e_console, test_id)
