@@ -1717,14 +1717,14 @@ class TestDataFunctions:
         """Test validation for invalid test_type parameter."""
         # Test parameter validation occurs before console validation by using a real console
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("pentest-demo", test_type="invalid_type")
+            sb_get_tests_history("demo-console", test_type="invalid_type")
         assert "Invalid test_type parameter 'invalid_type'" in str(exc_info.value)
         assert "validate, propagate" in str(exc_info.value)
         
         # Test that valid values work with case insensitivity
         # This should NOT raise an error since validation is case-insensitive
         try:
-            result = sb_get_tests_history("pentest-demo", test_type="VALIDATE", page_number=0)
+            result = sb_get_tests_history("demo-console", test_type="VALIDATE", page_number=0)
             # If we get here without an exception, the case-insensitive validation is working
         except Exception as e:
             # Only acceptable exceptions are AWS/network related, not validation errors

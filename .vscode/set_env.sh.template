@@ -1,0 +1,30 @@
+#!/bin/bash
+# SafeBreach MCP Private Environment Variables Template
+# 
+# IMPORTANT: This file contains REAL credentials and environment info
+# - Copy this to .vscode/set_env.sh and fill with your actual values
+# - NEVER commit the actual .vscode/set_env.sh file to git
+# - This template shows the structure without real values
+
+# SafeBreach Console API Tokens (REAL tokens - never commit!)
+export console_a_apitoken="your-real-api-token-here"
+export console_b_apitoken="your-real-api-token-here"  
+export console_c_apitoken="your-real-api-token-here"
+
+# E2E Testing Configuration
+export E2E_CONSOLE="your-test-console-name"
+export E2E_CONSOLE_URL="your-console.safebreach.com"
+export E2E_CONSOLE_ACCOUNT="1234567890"
+
+# Optional: Specific test data for E2E tests (if you have known working test IDs)
+# export E2E_TEST_ID="1234567890.123"
+# export E2E_SIMULATION_ID="12345"
+
+# MCP Server Authentication (for external access testing)
+export SAFEBREACH_MCP_AUTH_TOKEN="your-mcp-auth-token"
+
+# Environment file for additional console configurations
+export SAFEBREACH_ENVS_FILE="/path/to/your/private/environments.json"
+
+echo "✅ Private SafeBreach environment variables loaded"
+echo "⚠️  Remember: NEVER commit .vscode/set_env.sh to git!"

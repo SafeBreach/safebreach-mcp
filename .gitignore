@@ -161,6 +161,18 @@ cython_debug/
 
 # VS Code
 .vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# SECURITY: Private development files (NEVER commit)
+.vscode/set_env.sh
+.vscode/*_env.sh
+!.vscode/set_env.sh.template
+**/set_env.sh
+!**/set_env.sh.template
+**/*_apitoken*
+local_env.sh
 
 # Mac
 .DS_Store
@@ -176,3 +188,45 @@ cython_debug/
 
 # Mission documents
 .docs/.missions/
+
+# SECURITY: Sensitive files that should NEVER be committed
+*.key
+*.pem
+*.p12
+*.keystore
+*.jks
+.env.*
+!.env.template
+!.env.example
+secrets.yaml
+secrets.yml
+secrets.json
+config/secrets/
+auth/
+tokens/
+api_keys/
+credentials/
+.secrets/
+*.secret
+*_secret
+*_token
+*_apikey
+*.credentials
+
+# Claude Desktop Config (may contain tokens)
+claude_desktop_config.json
+
+# AWS credentials
+.aws/credentials
+.aws/config
+
+# SSH keys
+id_rsa
+id_ed25519
+*.pkey
+known_hosts
+
+# Database files that might contain sensitive data
+*.db
+*.sqlite
+*.sqlite3

@@ -1,0 +1,11 @@
+# Pre-commit hooks to prevent secret leaks
+# Using local hooks to avoid SSL certificate issues
+repos:
+  - repo: local
+    hooks:
+      - id: check-added-large-files
+        name: Check for added large files
+        entry: /opt/homebrew/bin/gitleaks
+        args: ['detect', '--config', '.gitleaks.toml', '--no-git']
+        language: system
+        pass_filenames: false

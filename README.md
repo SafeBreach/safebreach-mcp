@@ -9,6 +9,32 @@ This is an experimental project intended to demonstrate SafeBreach capabilities 
 
 A Model Context Protocol (MCP) server that bridges AI agents with SafeBreach's Breach and Attack Simulation platform. Enables natural language queries and seamless integration through a multi-server architecture with specialized domains.
 
+## 🚀 Quick Start
+
+### New Team Members
+```bash
+# 1. Clone and setup security tools (one-time setup)
+git clone <repository-url>
+cd safebreach-mcp
+./setup-security.sh
+
+# 2. Configure your environment
+cp .env.template .env
+# Edit .env with your actual API tokens
+
+# 3. ALWAYS launch Claude with security context
+./claude-launcher.sh
+```
+
+### 🔒 Security-First Development
+This project implements comprehensive security measures to prevent API token leaks:
+- **Automated secret scanning** with pre-commit hooks
+- **Claude security context** ensuring AI awareness of best practices  
+- **Template-based configuration** preventing accidental commits
+- **Multi-layer validation** in CI/CD pipelines
+
+📚 **See [TEAM_WORKFLOW.md](TEAM_WORKFLOW.md) for complete development guidelines.**
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -538,7 +564,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-config-staging": {
@@ -550,7 +576,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-utils-staging": {
@@ -562,7 +588,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     },
     "safebreach-playbook-staging": {
@@ -574,7 +600,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "http-first",
         "--allow-http",
         "--header",
-        "Authorization: Bearer 2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
+        "Authorization: Bearer your-secure-token-here"
       ]
     }
   }
