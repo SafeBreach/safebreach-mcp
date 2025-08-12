@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 
 import requests
 from safebreach_mcp_core.secret_utils import get_secret_for_console
-from safebreach_mcp_core.environments_metadata import safebreach_envs
+from safebreach_mcp_core.environments_metadata import get_api_base_url
 from .playbook_types import (
     transform_reduced_playbook_attack,
     transform_full_playbook_attack,
@@ -42,10 +42,6 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     Raises:
         ValueError: If console is not found or API call fails
     """
-    # Check if console exists
-    if console not in safebreach_envs:
-        available_consoles = list(safebreach_envs.keys())
-        raise ValueError(f"Console '{console}' not found. Available: {available_consoles}")
 
     # Check cache first
     cache_key = f"attacks_{console}"
@@ -61,18 +57,17 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
     try:
         # Get API token and environment info
-        api_token = get_secret_for_console(console)
-        env_info = safebreach_envs[console]
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
 
         # Make API call
         headers = {
-            "x-apitoken": api_token,
+            "x-apitoken": apitoken,
             "Content-Type": "application/json"
         }
 
-        url = f"https://{env_info['url']}/api/kb/vLatest/moves?details=true"
+        url = f"{base_url}/api/kb/vLatest/moves?details=true"
         logger.info(f"Making API call to {url}")
-
         response = requests.get(url, headers=headers, timeout=120)
 
         if response.status_code != 200:

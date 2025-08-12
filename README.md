@@ -94,7 +94,7 @@ This MCP server enables AI agents to interact with SafeBreach management console
   - `safebreach_auth.py`: Centralized authentication
   - `safebreach_base.py`: Base class for all MCP servers
   - `datetime_utils.py`: Shared datetime utilities
-  - `environments_metadata.py`: Configuration for supported SafeBreach environments
+  - `environments_metadata.py`: Configuration for supported SafeBreach environments (supports single-tenant mode via environment variables)
   - `secret_utils.py`: AWS SSM Parameter Store and Secrets Manager integration
 
 **Specialized Servers:**
@@ -148,6 +148,28 @@ The JSON file format should adhere to the following schema:
     }
 }
 ```
+
+### Single-Tenant Configuration (SafeBreach Internal Use)
+
+For deployment within SafeBreach management consoles, the MCP server supports single-tenant mode using environment variables. This allows the server to connect to local SafeBreach APIs without requiring external environment metadata configuration.
+
+**Environment Variables:**
+```bash
+# API endpoints for single-tenant deployment
+export DATA_URL="http://localhost:3400"          # Data API endpoint
+export CONFIG_URL="http://localhost:3401"        # Config API endpoint  
+export SIEM_URL="http://localhost:3402"          # SIEM API endpoint
+export ACCOUNT_ID="your-account-id"              # SafeBreach account ID
+
+# API authentication
+export console_name_apitoken="your-api-token"    # API token for the console
+```
+
+**How it works:**
+- When environment variables are set, the server uses local API endpoints
+- When environment variables are not set, the server falls back to multi-tenant mode using environments metadata
+- This enables seamless deployment within SafeBreach management consoles
+
 **Hardcoding The Environments**
 In some cases, you might prefer to clone the repo and hard code your environments to avoid the dependency on environmental settings. That can be achieved by editing `environments_metadata.py`:
 
@@ -410,6 +432,19 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 
 # Get help with all external connection options
 uv run start_all_servers.py --help
+```
+
+**Single-Tenant Deployment (SafeBreach Internal):**
+```bash
+# Set single-tenant environment variables
+export DATA_URL="http://localhost:3400"
+export CONFIG_URL="http://localhost:3401"
+export SIEM_URL="http://localhost:3402" 
+export ACCOUNT_ID="your-account-id"
+export console_name_apitoken="your-api-token"
+
+# Start all servers (will use local APIs)
+uv run start_all_servers.py
 ```
 
 #### Troubleshooting Remote Installation

@@ -167,10 +167,11 @@ class TestDataFunctions:
             }
         ]
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_secret, mock_test_data):
+    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_test_data):
         """Test successful retrieval of tests from API."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -350,10 +351,11 @@ class TestDataFunctions:
         
         assert "API Error" in str(exc_info.value)
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_success(self, mock_get, mock_secret):
+    def test_sb_get_test_details_success(self, mock_get, mock_secret, mock_base_url, mock_account_id):
         """Test successful test details retrieval."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -380,10 +382,11 @@ class TestDataFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_error(self, mock_get, mock_secret):
+    def test_sb_get_test_details_error(self, mock_get, mock_secret, mock_base_url, mock_account_id):
         """Test error handling in test details retrieval."""
         mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
@@ -394,10 +397,11 @@ class TestDataFunctions:
         
         assert "API Error" in str(exc_info.value)
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_get_all_simulations_from_cache_or_api_success(self, mock_post, mock_secret, mock_simulation_data):
+    def test_get_all_simulations_from_cache_or_api_success(self, mock_post, mock_secret, mock_base_url, mock_account_id, mock_simulation_data):
         """Test successful retrieval of simulations from API."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -519,10 +523,11 @@ class TestDataFunctions:
         
         assert "API Error" in str(exc_info.value)
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_success(self, mock_post, mock_secret):
+    def test_sb_get_simulation_details_success(self, mock_post, mock_secret, mock_base_url, mock_account_id):
         """Test successful simulation details retrieval."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -585,10 +590,11 @@ class TestDataFunctions:
         mock_post.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_error(self, mock_post, mock_secret):
+    def test_sb_get_simulation_details_error(self, mock_post, mock_secret, mock_base_url, mock_account_id):
         """Test error handling in simulation details retrieval."""
         mock_secret.return_value = "test-token"
         mock_post.side_effect = Exception("API Error")
@@ -600,10 +606,11 @@ class TestDataFunctions:
         assert "API Error" in str(exc_info.value)
     
     # Security Control Events Tests
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_from_cache_or_api_success(self, mock_get, mock_secret, mock_security_control_events_data):
+    def test_get_all_security_control_events_from_cache_or_api_success(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
         """Test successful retrieval of security control events from API."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -622,10 +629,11 @@ class TestDataFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_security_control_events_data):
+    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
         """Test cache behavior for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -646,10 +654,11 @@ class TestDataFunctions:
         assert result1 == result2
         mock_get.assert_called_once()  # Should only be called once due to cache
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_secret, mock_security_control_events_data):
+    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
         """Test cache expiration for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -673,10 +682,11 @@ class TestDataFunctions:
         assert len(result2) == 2
         assert mock_get.call_count == 2  # Should be called twice due to cache expiration
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_api_error(self, mock_get, mock_secret):
+    def test_get_all_security_control_events_api_error(self, mock_get, mock_secret, mock_base_url, mock_account_id):
         """Test API error handling for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -1143,7 +1153,9 @@ class TestDataFunctions:
     def test_sb_get_test_details_boolean_parameter_validation(self):
         """Test boolean parameter validation in get_test_details (Bug #8)."""
         
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret, \
+        with patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123') as mock_account_id, \
+             patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com') as mock_base_url, \
+             patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret, \
              patch('requests.get') as mock_get:
             
             mock_secret.return_value = "fake-token"
@@ -1152,12 +1164,12 @@ class TestDataFunctions:
             mock_response.json.return_value = {"planRunId": "test123", "name": "Test"}
             
             # Test None (should be handled gracefully by defaulting to False)
-            result = sb_get_test_details("demo-console", "test123", include_simulations_statistics=None)
+            result = sb_get_test_details("test-console", "test123", include_simulations_statistics=None)
             # Should succeed without error
             
             # Test invalid type (should raise error)
             with pytest.raises(ValueError) as exc_info:
-                sb_get_test_details("demo-console", "test123", include_simulations_statistics="invalid")
+                sb_get_test_details("test-console", "test123", include_simulations_statistics="invalid")
             assert "Invalid include_simulations_statistics parameter" in str(exc_info.value)
             assert "Must be a boolean value" in str(exc_info.value)
 
@@ -1215,8 +1227,9 @@ class TestDataFunctions:
             }
         ]
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
-    def test_get_all_findings_from_cache_or_api_success(self):
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    def test_get_all_findings_from_cache_or_api_success(self, mock_base_url, mock_account_id):
         """Test successful findings retrieval from API."""
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
              patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
@@ -1236,8 +1249,9 @@ class TestDataFunctions:
             assert result[0]["type"] == "test"
             mock_requests.get.assert_called_once()
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
-    def test_get_all_findings_cache_behavior(self):
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    def test_get_all_findings_cache_behavior(self, mock_base_url, mock_account_id):
         """Test findings cache behavior."""
         # First call should hit the API
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
@@ -1259,8 +1273,9 @@ class TestDataFunctions:
             mock_requests.get.assert_called_once()
             assert result1 == result2
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
-    def test_get_all_findings_cache_expired(self):
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    def test_get_all_findings_cache_expired(self, mock_base_url, mock_account_id):
         """Test findings cache expiration."""
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
              patch('safebreach_mcp_data.data_functions.requests') as mock_requests, \
@@ -1283,8 +1298,9 @@ class TestDataFunctions:
             # API should be called twice
             assert mock_requests.get.call_count == 2
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
-    def test_get_all_findings_api_error(self):
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    def test_get_all_findings_api_error(self, mock_base_url, mock_account_id):
         """Test findings API error handling."""
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
              patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
@@ -1598,22 +1614,11 @@ class TestDataFunctions:
             sb_get_security_controls_events(console="unknown_console", test_id="test123", simulation_id="sim123")
         assert "not found" in str(exc_info.value)
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs')
-    def test_secret_provider_failure_validation(self, mock_envs):
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id):
         """Test that secret provider failures return proper error messages."""
         from botocore.exceptions import ClientError
-        
-        # Mock environment with non-existent parameter
-        mock_envs.__getitem__.return_value = {
-            "url": "test.com",
-            "account": "123",
-            "secret_config": {
-                "provider": "aws_ssm",
-                "parameter_name": "non-existent-param"
-            }
-        }
-        mock_envs.__contains__.return_value = True
-        mock_envs.keys.return_value = ["test-console"]
         
         # Mock ClientError for parameter not found
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret:
@@ -1767,10 +1772,11 @@ class TestDataFunctions:
         assert "Invalid page_number parameter '3'" in str(exc_info.value)
         assert "Available pages range from 0 to 2 (total 3 pages)" in str(exc_info.value)
     
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_invalid_response_validation(self, mock_get, mock_secret):
+    def test_sb_get_test_details_invalid_response_validation(self, mock_get, mock_secret, mock_base_url, mock_account_id):
         """Test validation for invalid test response in get_test_details."""
         mock_secret.return_value = "test-token"
         mock_response = Mock()
@@ -1882,10 +1888,11 @@ class TestDataFunctions:
         assert result["total_simulations"] == 2
         assert result["applied_filters"]["drifted_only"] is True
 
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_with_drift_info(self, mock_post, mock_secret):
+    def test_sb_get_simulation_details_with_drift_info(self, mock_post, mock_secret, mock_base_url, mock_account_id):
         """Test get_test_simulation_details with include_drift_info parameter."""
         mock_secret.return_value = "test-token"
         mock_response = Mock()
@@ -1918,10 +1925,11 @@ class TestDataFunctions:
         assert "description" in result["drift_info"]
         assert "hint_to_llm" in result["drift_info"]
 
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_no_drift_info(self, mock_post, mock_secret):
+    def test_sb_get_simulation_details_no_drift_info(self, mock_post, mock_secret, mock_base_url, mock_account_id):
         """Test get_test_simulation_details when simulation has no drift."""
         mock_secret.return_value = "test-token"
         mock_response = Mock()
@@ -1947,10 +1955,11 @@ class TestDataFunctions:
         # Should not have drift_info since no drift occurred
         assert "drift_info" not in result or not result.get("drift_info", {}).get("type_of_drift")
 
-    @patch('safebreach_mcp_data.data_functions.safebreach_envs', {'test-console': {'url': 'test.com', 'account': '123'}})
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_unknown_drift_type(self, mock_post, mock_secret):
+    def test_sb_get_simulation_details_unknown_drift_type(self, mock_post, mock_secret, mock_base_url, mock_account_id):
         """Test get_test_simulation_details with unknown drift type."""
         mock_secret.return_value = "test-token"
         mock_response = Mock()
