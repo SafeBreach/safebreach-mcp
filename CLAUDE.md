@@ -28,9 +28,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Running the Multi-Server Architecture (Recommended):**
 ```bash
-# Run all servers concurrently on ports 8000, 8001, 8002 (localhost-only, secure default)
+# Run all servers concurrently on ports 8000, 8001, 8002, 8003 (localhost-only, secure default)
 uv run start_all_servers.py
-
 
 # External connection support (requires authentication token)
 SAFEBREACH_MCP_AUTH_TOKEN="your-secure-token" uv run start_all_servers.py --external
@@ -40,6 +39,12 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 
 # Get help with all external connection options
 uv run start_all_servers.py --help
+
+# Custom base URL for reverse proxy deployment
+SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
+
+# Combined configuration with external access and custom base URL
+SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py --external
 ```
 
 **Running Individual Servers:**

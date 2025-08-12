@@ -62,6 +62,10 @@ External Connection Support:
   Custom Binding:
     Set SAFEBREACH_MCP_BIND_HOST environment variable to customize bind address.
   
+  Base URL Configuration:
+    Use --base-url to set custom base URL path for MCP endpoints.
+    Set SAFEBREACH_MCP_BASE_URL environment variable as an alternative.
+  
 Examples:
   # Local connections only (default)
   python start_all_servers.py
@@ -71,6 +75,12 @@ Examples:
   
   # Enable external connections for specific servers only
   SAFEBREACH_MCP_AUTH_TOKEN="your-token" python start_all_servers.py --external-data --external-utilities --external-playbook
+  
+  # Custom base URL path for reverse proxy deployment
+  python start_all_servers.py --base-url /api/mcp
+  
+  # Combined configuration with external access and custom base URL
+  SAFEBREACH_MCP_AUTH_TOKEN="your-token" python start_all_servers.py --external --base-url /api/mcp
         """
     )
     
@@ -89,6 +99,8 @@ Examples:
     # Binding configuration
     parser.add_argument('--host', default='127.0.0.1',
                       help='Host to bind servers to (default: 127.0.0.1)')
+    parser.add_argument('--base-url', 
+                      help='Base URL path for MCP endpoints (e.g., /api/mcp). Overrides SAFEBREACH_MCP_BASE_URL environment variable.')
     
     return parser.parse_args()
 
@@ -100,6 +112,10 @@ class MultiServerLauncher:
         self.running = False
         self.tasks = []
         self.args = args or argparse.Namespace()
+        
+        # Set base URL environment variable if provided via command line
+        if hasattr(self.args, 'base_url') and self.args.base_url:
+            os.environ['SAFEBREACH_MCP_BASE_URL'] = self.args.base_url
         
         # Parse external configuration from environment variables and command-line args
         self.external_config = self._determine_external_config()
@@ -235,6 +251,13 @@ class MultiServerLauncher:
         logger.info("All servers started successfully!")
         logger.info("Server endpoints:")
         
+        # Get base URL from environment variable
+        base_url = os.environ.get('SAFEBREACH_MCP_BASE_URL', '/').rstrip('/')
+        base_path = base_url if base_url != '/' else ''
+        
+        if base_path:
+            logger.info(f"🔗 Base URL configured: {base_url}")
+        
         # Display endpoints with appropriate host information
         for config in server_configs:
             server_type = config['type']
@@ -242,13 +265,13 @@ class MultiServerLauncher:
             
             if allow_external:
                 # Show both local and external access options
-                logger.info(f"  {config['name']}: http://localhost:{config['port']}/sse (local)")
+                logger.info(f"  {config['name']}: http://localhost:{config['port']}{base_path}/sse (local)")
                 if bind_host != '127.0.0.1':
-                    logger.info(f"  {config['name']}: http://{bind_host}:{config['port']}/sse (external)")
+                    logger.info(f"  {config['name']}: http://{bind_host}:{config['port']}{base_path}/sse (external)")
                 else:
-                    logger.info(f"  {config['name']}: http://0.0.0.0:{config['port']}/sse (external - all interfaces)")
+                    logger.info(f"  {config['name']}: http://0.0.0.0:{config['port']}{base_path}/sse (external - all interfaces)")
             else:
-                logger.info(f"  {config['name']}: http://localhost:{config['port']}/sse")
+                logger.info(f"  {config['name']}: http://localhost:{config['port']}{base_path}/sse")
         
         logger.info("Press Ctrl+C to stop all servers")
         
