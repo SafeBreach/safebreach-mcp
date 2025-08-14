@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Dict, Any
 import os
 from .secret_providers import SecretProviderFactory, SecretProvider
-from .environments_metadata import safebreach_envs
+from .environments_metadata import safebreach_envs, get_environment_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +38,11 @@ def get_secret_for_console(console: str) -> str:
         logger.info("Running in console environment, returning mcp_in_console value")
         return mcp_in_console
     
-    if console not in safebreach_envs:
+    try:
+        env_config = get_environment_by_name(console)
+    except ValueError:
         raise ValueError(f"Console '{console}' not found in environments metadata. "
                         f"Available consoles: {list(safebreach_envs.keys())}")
-    
-    env_config = safebreach_envs[console]
     
     # Get secret configuration, with fallback to default AWS SSM pattern
     secret_config = env_config.get('secret_config', {

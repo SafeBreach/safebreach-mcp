@@ -32,9 +32,21 @@ if os.environ.get('SAFEBREACH_ENVS_FILE'):
     with open(os.environ['SAFEBREACH_ENVS_FILE']) as f:
         safebreach_envs.update(json.load(f))
 
+def get_console_name() -> str:
+    """
+    Get the console name for single-tenant deployment.
+    In single-tenant mode, the console name is provided via SAFEBREACH_CONSOLE_NAME environment variable.
+    
+    Returns:
+        Console name from SAFEBREACH_CONSOLE_NAME environment variable, or 'default' if not set
+    """
+    return os.getenv('SAFEBREACH_CONSOLE_NAME', 'default')
+
 def get_environment_by_name(name: str) -> dict:
     """
     Get environment configuration by name.
+    In single-tenant mode, when no environments are configured and SAFEBREACH_CONSOLE_NAME is set,
+    returns a dynamic configuration for the console.
     
     Args:
         name: Environment name
@@ -46,6 +58,19 @@ def get_environment_by_name(name: str) -> dict:
         ValueError: If environment not found
     """
     if name not in safebreach_envs:
+        # Check if we're in single-tenant mode (no hardcoded environments)
+        if not safebreach_envs:
+            # In single-tenant mode, return dynamic configuration for any requested console
+            # Use the requested console name for token lookup
+            token_name = name.replace('-', '_')
+            return {
+                "url": "single-tenant-mode",
+                "account": os.getenv('ACCOUNT_ID', 'single-tenant-account'),
+                "secret_config": {
+                    "provider": "env_var",
+                    "parameter_name": f"{token_name}_apitoken"
+                }
+            }
         raise ValueError(f"Environment '{name}' not found. Available environments: {list(safebreach_envs.keys())}")
     return safebreach_envs[name]
 

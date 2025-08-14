@@ -43,6 +43,12 @@ class SafeBreachMCPBase:
         """
         self.server_name = server_name
         self.description = description
+        
+        # Get base URL from environment variable, default to "/"
+        self.base_url = os.environ.get('SAFEBREACH_MCP_BASE_URL', '/').rstrip('/')
+        if self.base_url == '':
+            self.base_url = '/'
+        
         self.mcp = FastMCP(server_name)
         self.auth = SafeBreachAuth()
         self._cache = {}
@@ -102,8 +108,24 @@ class SafeBreachMCPBase:
         # Determine bind address based on configuration
         bind_host = self._determine_bind_host(host, allow_external)
         
-        # Get the Starlette app from FastMCP and run it with uvicorn on the specified port  
-        app = self.mcp.sse_app()
+        # Get the Starlette app from FastMCP
+        mcp_app = self.mcp.sse_app()
+        
+        # Create the main app and mount the MCP app at the base URL
+        if self.base_url != '/':
+            from starlette.applications import Starlette
+            from starlette.responses import JSONResponse
+            from starlette.routing import Mount
+            
+            app = Starlette()
+            app.mount(self.base_url, mcp_app)
+            
+            logger.info(f"🔗 MCP server mounted at base URL: {self.base_url}")
+            logger.info(f"📡 SSE endpoint will be available at: {self.base_url}/sse")
+        else:
+            app = mcp_app
+            logger.info("🔗 MCP server running at root URL: /")
+            logger.info("📡 SSE endpoint available at: /sse")
         
         # Wrap with authentication for external connections
         if allow_external:
@@ -146,21 +168,25 @@ class SafeBreachMCPBase:
             
             # Handle OAuth discovery and registration endpoints for mcp-remote compatibility
             # These endpoints must be publicly accessible for OAuth flow to work
-            if path in ["/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/sse"]:
+            oauth_discovery_paths = ["/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/sse"]
+            if path in oauth_discovery_paths:
                 logger.info(f"🔍 OAuth discovery request: {path} from {client_host}")
                 
                 # Get server info from ASGI scope
                 server_name = scope.get("server", ["1.1.1.1", 8001])[0]
                 server_port = scope.get("server", ["1.1.1.1", 8001])[1]
                 
+                # Use base URL for endpoints when configured
+                base_path = self.base_url if self.base_url != '/' else ''
+                
                 # Provide complete OAuth metadata for mcp-remote compatibility
                 # Note: OAuth discovery endpoints are publicly accessible by design
                 oauth_response = {
-                    "issuer": f"http://{server_name}:{server_port}",
-                    "authorization_endpoint": f"http://{server_name}:{server_port}/auth",
-                    "token_endpoint": f"http://{server_name}:{server_port}/token",
-                    "registration_endpoint": f"http://{server_name}:{server_port}/register",
-                    "resource": f"http://{server_name}:{server_port}/sse",
+                    "issuer": f"http://{server_name}:{server_port}{base_path}",
+                    "authorization_endpoint": f"http://{server_name}:{server_port}{base_path}/auth",
+                    "token_endpoint": f"http://{server_name}:{server_port}{base_path}/token",
+                    "registration_endpoint": f"http://{server_name}:{server_port}{base_path}/register",
+                    "resource": f"http://{server_name}:{server_port}{base_path}/sse",
                     "response_types_supported": ["code"],
                     "grant_types_supported": ["authorization_code"],
                     "scopes_supported": ["mcp"],
@@ -185,9 +211,18 @@ class SafeBreachMCPBase:
                 })
                 return
             
-            # Handle OAuth client registration endpoint
-            if path == "/register" and method == "POST":
+            # Handle OAuth client registration endpoint - check both root and base URL paths
+            register_paths = ["/register"]
+            if self.base_url != '/':
+                register_paths.append(f"{self.base_url}/register")
+            
+            if path in register_paths and method == "POST":
                 logger.info(f"🔧 OAuth client registration request from {client_host}")
+                
+                # Get server info
+                server_name = scope.get("server", ["1.1.1.1", 8001])[0]
+                server_port = scope.get("server", ["1.1.1.1", 8001])[1] 
+                base_path = self.base_url if self.base_url != '/' else ''
                 
                 # Generate a complete client registration response
                 # For mcp-remote, we need to provide all required OAuth 2.0 fields
@@ -195,7 +230,7 @@ class SafeBreachMCPBase:
                     "client_id": "mcp-remote-client",
                     "client_secret": "not-required-for-pkce",
                     "registration_access_token": "not-used",
-                    "registration_client_uri": f"http://{scope.get('server', ['1.1.1.1', 8001])[0]}:{scope.get('server', ['1.1.1.1', 8001])[1]}/register/mcp-remote-client",
+                    "registration_client_uri": f"http://{server_name}:{server_port}{base_path}/register/mcp-remote-client",
                     "client_id_issued_at": int(time.time()),
                     "client_secret_expires_at": 0,  # Never expires
                     "response_types": ["code"],
@@ -222,7 +257,12 @@ class SafeBreachMCPBase:
                 return
             
             # Handle OAuth authorization endpoint (secure authorization code flow)
-            if path.startswith("/auth"):
+            auth_paths = ["/auth"]
+            if self.base_url != '/':
+                auth_paths.append(f"{self.base_url}/auth")
+            
+            auth_path_match = any(path.startswith(auth_path) for auth_path in auth_paths)
+            if auth_path_match:
                 logger.info(f"🔐 OAuth authorization request from {client_host}")
                 
                 # SECURITY: For OAuth authorization, we require the correct Bearer token
@@ -304,7 +344,11 @@ class SafeBreachMCPBase:
                     return
             
             # Handle OAuth token endpoint  
-            if path == "/token" and method == "POST":
+            token_paths = ["/token"]
+            if self.base_url != '/':
+                token_paths.append(f"{self.base_url}/token")
+                
+            if path in token_paths and method == "POST":
                 logger.info(f"🎟️ OAuth token request from {client_host}")
                 
                 # SECURITY: For OAuth token exchange, we require the correct Bearer token

@@ -41,6 +41,12 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 # Get help with all external connection options
 uv run start_all_servers.py --help
 
+# Custom base URL for reverse proxy deployment
+SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
+
+# Combined configuration with external access and custom base URL
+SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py --external
+
 # Single-tenant deployment (SafeBreach internal use)
 export DATA_URL="http://localhost:3400"
 export CONFIG_URL="http://localhost:3401" 

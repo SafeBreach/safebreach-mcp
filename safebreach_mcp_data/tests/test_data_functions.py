@@ -1589,30 +1589,31 @@ class TestDataFunctions:
         with pytest.raises(ValueError) as exc_info:
             sb_get_tests_history(console="unknown_console", test_type="validate", page_number=0)
         
-        assert "not found" in str(exc_info.value)
-        assert "Available consoles:" in str(exc_info.value)
+        # In single-tenant mode, the error message is about missing environment variable
+        # In multi-tenant mode, it would be about console not found
+        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
         
     def test_unknown_console_validation_other_functions(self):
         """Test unknown console validation in other main functions."""
         # Test sb_get_test_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_test_details(console="unknown_console", test_id="test123")
-        assert "not found" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
         
         # Test sb_get_test_simulations - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_test_simulations(console="unknown_console", test_id="test123")
-        assert "not found" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
         
         # Test sb_get_simulation_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_simulation_details(console="unknown_console", simulation_id="sim123")
-        assert "not found" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
         
         # Test sb_get_security_controls_events - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_security_controls_events(console="unknown_console", test_id="test123", simulation_id="sim123")
-        assert "not found" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
