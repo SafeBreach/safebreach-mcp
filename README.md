@@ -129,14 +129,28 @@ Configuration of the SafeBreach MCP Server consists of:
 - Git (for cloning the repository)
 
 ### SafeBreach Environments
-**Specifying The SafeBreach Environments With An Environment Variable And File**
-Set the environment variable to point to a configuration JSON file anywhere on your disk that is available to the MCP server for read.
+
+The MCP server supports multiple methods for specifying SafeBreach environment configurations:
+
+**Method 1: JSON File (SAFEBREACH_ENVS_FILE)**
+Set the environment variable to point to a configuration JSON file:
 ```bash
 export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
 ```
 
-The JSON file format should adhere to the following schema:
+**Method 2: JSON String (SAFEBREACH_LOCAL_ENV) ✨ NEW**
+Provide configuration directly as a JSON string in an environment variable:
+```bash
+export SAFEBREACH_LOCAL_ENV='{"my-console": {"url": "my-console.safebreach.com", "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "my_console_apitoken"}}}'
 ```
+
+**Configuration Priority:**
+1. Hardcoded environments (base)
+2. `SAFEBREACH_ENVS_FILE` (extends base)
+3. `SAFEBREACH_LOCAL_ENV` (extends and overrides)
+
+**Basic JSON Configuration:**
+```json
 {
     "console-friendly-name": {
         "url": "my-console.safebreach.com",
@@ -148,6 +162,31 @@ The JSON file format should adhere to the following schema:
     }
 }
 ```
+
+**Enhanced Configuration with Per-Service URLs ✨ NEW:**
+```json
+{
+    "microservices-console": {
+        "url": "default.safebreach.com",
+        "urls": {
+            "config": "config-api.safebreach.com",
+            "data": "data-api.safebreach.com",
+            "playbook": "playbook-api.safebreach.com",
+            "siem": "siem-api.safebreach.com"
+        },
+        "account": "1234567890",
+        "secret_config": {
+            "provider": "env_var",
+            "parameter_name": "microservices_console_apitoken"
+        }
+    }
+}
+```
+
+**URL Resolution:**
+- Service-specific URLs in `urls` override the default `url`
+- Services without specific URLs fallback to the default `url`
+- Supports both HTTP and HTTPS with automatic `https://` prefixing
 
 ### Single-Tenant Configuration (SafeBreach Internal Use)
 
@@ -1365,7 +1404,7 @@ safebreach_envs["new-console"] = {
 }
 ```
 
-**Method 2: Use JSON file for dynamic loading (recommended)**
+**Method 2: Use JSON file for dynamic loading**
 1. Create a JSON file (e.g., `my_consoles.json`):
 ```json
 {
@@ -1386,7 +1425,16 @@ export SAFEBREACH_ENVS_FILE=/path/to/my_consoles.json
 export NEW_CONSOLE_APITOKEN="your-api-token"
 ```
 
-**Method 3: Store token in AWS (for aws_ssm or aws_secrets_manager providers)**
+**Method 3: Use JSON string in environment variable (recommended for containers) ✨ NEW**
+```bash
+# Set configuration directly as JSON string
+export SAFEBREACH_LOCAL_ENV='{"new-console": {"url": "new-console.safebreach.com", "account": "account_id", "secret_config": {"provider": "env_var", "parameter_name": "new_console_apitoken"}}}'
+
+# Set the API token
+export new_console_apitoken="your-api-token"
+```
+
+**Method 4: Store token in AWS (for aws_ssm or aws_secrets_manager providers)**
 ```bash
 # For AWS SSM
 aws ssm put-parameter --name "new-console-apitoken" --value "your-api-token" --type "SecureString"

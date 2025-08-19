@@ -379,16 +379,31 @@ class EnvVarSecretProvider(SecretProvider):
 
 ## Dynamic Environment Loading
 
-The system now supports loading additional SafeBreach environments from JSON files at runtime without modifying the codebase.
+The system supports loading additional SafeBreach environments dynamically at runtime using two methods:
 
 ### Implementation
 
-**Environment Variable Trigger:**
+**Method 1: JSON File (SAFEBREACH_ENVS_FILE)**
 ```python
 if os.environ.get('SAFEBREACH_ENVS_FILE'):
     with open(os.environ['SAFEBREACH_ENVS_FILE']) as f:
         safebreach_envs.update(json.load(f))
 ```
+
+**Method 2: JSON String (SAFEBREACH_LOCAL_ENV) ✨ NEW**
+```python
+if os.environ.get('SAFEBREACH_LOCAL_ENV'):
+    try:
+        local_envs = json.loads(os.environ['SAFEBREACH_LOCAL_ENV'])
+        safebreach_envs.update(local_envs)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in SAFEBREACH_LOCAL_ENV environment variable: {e}")
+```
+
+**Loading Priority:**
+1. Hardcoded environments in `environments_metadata.py` (base)
+2. `SAFEBREACH_ENVS_FILE` extends the base
+3. `SAFEBREACH_LOCAL_ENV` extends and overrides all previous
 
 **JSON File Format:**
 ```json
@@ -408,8 +423,11 @@ if os.environ.get('SAFEBREACH_ENVS_FILE'):
 
 1. **No Code Changes**: Add new environments without modifying `environments_metadata.py`
 2. **Flexible Deployment**: Different JSON files for different environments (dev, staging, prod)
-3. **Secret Provider Choice**: Can use any of the three providers per environment
-4. **Runtime Configuration**: Environments loaded when server starts
+3. **No File Dependencies**: `SAFEBREACH_LOCAL_ENV` eliminates need for file system access
+4. **Container-Friendly**: JSON string method perfect for Docker and Kubernetes deployments
+5. **Secret Provider Choice**: Can use any of the three providers per environment
+6. **Runtime Configuration**: Environments loaded when server starts
+7. **Override Capability**: Local environments can override file-based configurations
 
 ### Usage Examples
 
@@ -434,6 +452,33 @@ export SAFEBREACH_ENVS_FILE=/path/to/my_envs.json
 export MY_CONSOLE_TOKEN="your-api-token-here"
 
 # Start server - will load custom environments
+uv run start_all_servers.py
+```
+
+**JSON String Setup (Container-Friendly):**
+```bash
+# Set configuration directly as JSON string
+export SAFEBREACH_LOCAL_ENV='{"my-console": {"url": "my-console.safebreach.com", "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "my_console_token"}}}'
+
+# Set API token
+export my_console_token="your-api-token-here"
+
+# Start server - will load environments from JSON string
+uv run start_all_servers.py
+```
+
+**Combined Usage (File + Override):**
+```bash
+# Load base environments from file
+export SAFEBREACH_ENVS_FILE=/etc/safebreach/base_envs.json
+
+# Override specific environments via JSON string
+export SAFEBREACH_LOCAL_ENV='{"dev-console": {"url": "dev-override.safebreach.com", "account": "9999999999", "secret_config": {"provider": "env_var", "parameter_name": "dev_console_token"}}}'
+
+# Set tokens
+export dev_console_token="dev-token-override"
+
+# Start server - dev-console will use override configuration
 uv run start_all_servers.py
 ```
 

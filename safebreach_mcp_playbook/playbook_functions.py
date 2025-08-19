@@ -58,7 +58,7 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     try:
         # Get API token and environment info
         apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'data')
+        base_url = get_api_base_url(console, 'playbook')
 
         # Make API call
         headers = {

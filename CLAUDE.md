@@ -659,9 +659,12 @@ Each SafeBreach environment in `environments_metadata.py` now includes a `secret
 
 ## Dynamic Environment Loading
 
-The MCP server supports loading additional SafeBreach environments from a JSON file at runtime. This allows you to add more consoles without modifying the codebase.
+The MCP server supports loading additional SafeBreach environments dynamically at runtime using two methods:
 
-**Usage:**
+### Method 1: JSON File (SAFEBREACH_ENVS_FILE)
+
+Load environments from a JSON file on disk:
+
 ```bash
 # Set the environment variable to point to your JSON file
 export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
@@ -670,7 +673,24 @@ export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
 uv run start_all_servers.py
 ```
 
-**JSON File Format (`more_envs.json`):**
+### Method 2: JSON String (SAFEBREACH_LOCAL_ENV) ✨ **NEW**
+
+Load environments directly from a JSON string in an environment variable (useful for containers and cloud deployments):
+
+```bash
+# Set the environment variable with JSON configuration directly
+export SAFEBREACH_LOCAL_ENV='{"my-console": {"url": "my-console.safebreach.com", "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "my_console_apitoken"}}}'
+
+# Set the API token
+export my_console_apitoken="your-api-token-here"
+
+# Start the server - it will automatically load environments from the JSON string
+uv run start_all_servers.py
+```
+
+**JSON Configuration Format:**
+
+**Basic Configuration (backward compatible):**
 ```json
 {
     "example-console": {
@@ -680,17 +700,52 @@ uv run start_all_servers.py
             "provider": "env_var",
             "parameter_name": "example-console-apitoken"
         }
-    },
-    "my-custom-console": {
-        "url": "my-console.safebreach.com",
+    }
+}
+```
+
+**Enhanced Configuration with Per-Service URLs ✨ NEW:**
+```json
+{
+    "microservices-console": {
+        "url": "default.safebreach.com",
+        "urls": {
+            "config": "config-api.safebreach.com",
+            "data": "data-api.safebreach.com",
+            "playbook": "playbook-api.safebreach.com",
+            "siem": "siem-api.safebreach.com"
+        },
         "account": "1234567890",
         "secret_config": {
+            "provider": "env_var",
+            "parameter_name": "microservices_console_apitoken"
+        }
+    },
+    "mixed-console": {
+        "url": "mixed-console.safebreach.com",
+        "urls": {
+            "data": "https://data-cluster.safebreach.com:8443",
+            "playbook": "playbook-service.safebreach.com"
+        },
+        "account": "9876543210",
+        "secret_config": {
             "provider": "aws_ssm",
-            "parameter_name": "my-custom-console-token"
+            "parameter_name": "mixed-console-token"
         }
     }
 }
 ```
+
+**URL Resolution Priority:**
+1. **Single-tenant mode**: Environment variables (`DATA_URL`, `CONFIG_URL`, etc.)
+2. **Service-specific URLs**: `urls[service]` from configuration
+3. **Default fallback**: `url` from configuration
+
+**Benefits of Per-Service URLs:**
+- **Microservices Architecture**: Different services on different hosts/ports
+- **Load Balancing**: Dedicated endpoints for heavy services (data, playbook)
+- **Security Isolation**: Separate network zones for different service types
+- **Flexible Deployment**: Mix of shared and dedicated infrastructure
 
 **Environment Variable Naming:**
 When using the `env_var` provider, dashes in the `parameter_name` are converted to underscores but **remain lowercase**:
@@ -704,6 +759,51 @@ When using the `env_var` provider, dashes in the `parameter_name` are converted 
 export example_console_apitoken="your-api-token-here"
 export console1_apitoken="another-api-token"
 ```
+
+### Combined Usage and Priority Order
+
+Both methods can be used simultaneously. The loading priority is:
+
+1. **Base**: Hardcoded environments in `environments_metadata.py`
+2. **File Extension**: `SAFEBREACH_ENVS_FILE` extends the base environments
+3. **Override**: `SAFEBREACH_LOCAL_ENV` extends and can override all previous environments
+
+**Example of Combined Usage:**
+```bash
+# Load base environments from file
+export SAFEBREACH_ENVS_FILE=/etc/safebreach/base_envs.json
+
+# Override or add specific environments via JSON string  
+export SAFEBREACH_LOCAL_ENV='{"dev-console": {"url": "dev.safebreach.com", "account": "9999999999", "secret_config": {"provider": "env_var", "parameter_name": "dev_console_apitoken"}}}'
+
+# Set tokens for all environments
+export dev_console_apitoken="dev-token-here"
+
+# Start server with combined configuration
+uv run start_all_servers.py
+```
+
+**Example with Per-Service URLs:**
+```bash
+# Configure microservices environment with dedicated service endpoints
+export SAFEBREACH_LOCAL_ENV='{"microservices-env": {"url": "default.safebreach.com", "urls": {"config": "config-api.safebreach.com", "data": "data-api.safebreach.com", "playbook": "playbook-api.safebreach.com"}, "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "microservices_env_apitoken"}}}'
+
+# Set API token
+export microservices_env_apitoken="your-token-here"
+
+# Start server - services will use dedicated URLs:
+# - Config operations: https://config-api.safebreach.com
+# - Data operations: https://data-api.safebreach.com  
+# - Playbook operations: https://playbook-api.safebreach.com
+# - SIEM operations: https://default.safebreach.com (fallback)
+uv run start_all_servers.py
+```
+
+**Benefits of SAFEBREACH_LOCAL_ENV:**
+- **No File System Dependencies**: Perfect for containerized deployments
+- **Environment-Specific Overrides**: Override production settings in staging/dev
+- **CI/CD Friendly**: Easy to inject configuration in deployment pipelines
+- **Kubernetes Compatible**: Works seamlessly with ConfigMaps and Secrets
 
 ## Installation Options
 

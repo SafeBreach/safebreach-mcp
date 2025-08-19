@@ -7,23 +7,23 @@ in the scope of impact for SafeBreach MCP Servergi.
 import json, os
 
 safebreach_envs = {
-    # Example configurations (uncomment and modify as needed):
-    # "demo-console": {
-    #     "url": "demo.safebreach.com", 
-    #     "account": "1234567890",
-    #     "secret_config": {
-    #         "provider": "env_var",
-    #         "parameter_name": "demo-console-apitoken"
-    #     }
-    # },
-    # "example-console": {
-    #     "url": "example.safebreach.com", 
-    #     "account": "0987654321",
-    #     "secret_config": {
-    #         "provider": "env_var",
-    #         "parameter_name": "example-console-apitoken"
-    #     }
-    # }
+    # Default example configurations:
+    "demo-console": {
+        "url": "demo.safebreach.com", 
+        "account": "1234567890",
+        "secret_config": {
+            "provider": "env_var",
+            "parameter_name": "demo-console-apitoken"
+        }
+    },
+    "example-console": {
+        "url": "example.safebreach.com", 
+        "account": "0987654321",
+        "secret_config": {
+            "provider": "env_var",
+            "parameter_name": "example-console-apitoken"
+        }
+    }
 }
 
 if os.environ.get('SAFEBREACH_ENVS_FILE'):
@@ -31,6 +31,16 @@ if os.environ.get('SAFEBREACH_ENVS_FILE'):
     # This allows for dynamic loading of environments without hardcoding them
     with open(os.environ['SAFEBREACH_ENVS_FILE']) as f:
         safebreach_envs.update(json.load(f))
+
+if os.environ.get('SAFEBREACH_LOCAL_ENV'):
+    # Load environments metadata from a JSON string in environment variable
+    # This allows for direct configuration without requiring a file
+    # SAFEBREACH_LOCAL_ENV can extend and override environments from other sources
+    try:
+        local_envs = json.loads(os.environ['SAFEBREACH_LOCAL_ENV'])
+        safebreach_envs.update(local_envs)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in SAFEBREACH_LOCAL_ENV environment variable: {e}")
 
 def get_console_name() -> str:
     """
@@ -77,27 +87,38 @@ def get_environment_by_name(name: str) -> dict:
 def get_api_base_url(console:str, endpoint:str) -> str:
     """
     Get the base URL for SafeBreach API for a given console and endpoint.
-    If the MCP Server is hosted in a console then it is a single-tenant environment so the function returns a local URL and port number for the internal endpoint
-    like http://127.0.1:3400 . Otherwise, the MCP Server is hosted in a multi-tenant environment so the function returns the URL from the environments metadata.
+    
+    Priority order:
+    1. Single-tenant mode: Environment variables (DATA_URL, CONFIG_URL, etc.)
+    2. Multi-tenant mode with service-specific URLs: console config 'urls[endpoint]'
+    3. Multi-tenant mode fallback: console config 'url' (default)
     
     Args:
         console: Console name (e.g., 'demo-console', 'example-console')
-        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem'
+        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook'
 
     Returns:
-        Internal base URL as a string
+        Base URL as a string
     """
-
+    # Priority 1: Single-tenant mode (environment variables)
     env_var_name = f'{endpoint.upper()}_URL'
-    url = os.getenv(env_var_name)
+    env_url = os.getenv(env_var_name)
 
-    if url:
-        # Returning a URL for accessing the SafeBreach API from within the console
-        return url
+    if env_url:
+        return env_url
     
-    # Returning a URL for accessing the SafeBreach API from outside the console
-    url = f"https://{get_environment_by_name(console)['url']}"
-    return url
+    # Priority 2 & 3: Multi-tenant mode - get console configuration
+    console_config = get_environment_by_name(console)
+    
+    # Priority 2: Service-specific URL (new feature)
+    if 'urls' in console_config and endpoint in console_config['urls']:
+        service_url = console_config['urls'][endpoint]
+        full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
+        return full_url
+    
+    # Priority 3: Default fallback URL (backward compatibility)
+    default_url = f"https://{console_config['url']}"
+    return default_url
 
 def get_api_account_id(console: str) -> str:
     """
