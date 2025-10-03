@@ -5,6 +5,7 @@ This file contains metadata and configurations for Safebreach labs and AWS resou
 in the scope of impact for SafeBreach MCP Servergi.
 '''
 import json, os
+from dotenv import load_dotenv
 
 safebreach_envs = {
     # Example configurations (uncomment and modify as needed):
@@ -26,6 +27,7 @@ safebreach_envs = {
     # }
 }
 
+load_dotenv()
 if os.environ.get('SAFEBREACH_ENVS_FILE'):
     # Load environments metadata from a JSON file if specified in environment variable
     # This allows for dynamic loading of environments without hardcoding them

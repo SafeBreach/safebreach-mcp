@@ -28,6 +28,7 @@ paths = [
     '''\.pre-commit-config\.yaml''',
     '''safebreach_mcp_server\.egg-info/.*''',  # Allow package info
     '''\.vscode/set_env\.sh''',  # Allow private development file (git-ignored)
+    '''\.env''',  # Allow .env files (should be git-ignored)
 ]
 regexes = [
     '''your-secure-token-here''',
