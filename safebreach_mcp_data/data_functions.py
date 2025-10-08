@@ -7,7 +7,7 @@ specifically for test and simulation data management.
 
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Iterable
 
 import requests
 from safebreach_mcp_core.secret_utils import get_secret_for_console
@@ -33,6 +33,33 @@ PAGE_SIZE = 10
 CACHE_TTL = 3600  # 1 hour in seconds
 
 
+def _normalize_numeric(value: Any) -> Optional[float]:
+    """
+    Normalize numeric values that may arrive as strings or other types.
+    Returns None when the value cannot be interpreted as a number.
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _get_timestamp_from_keys(test: Dict[str, Any], keys: Iterable[str], default: Optional[float] = None) -> Optional[float]:
+    """
+    Try to extract a numeric timestamp from the test entity using the provided keys.
+    Returns the first successfully parsed value, or the supplied default.
+    """
+    for key in keys:
+        value = _normalize_numeric(test.get(key))
+        if value is not None:
+            return value
+    return default
+
+
 
 def sb_get_tests_history(
     console: str,
@@ -54,7 +81,7 @@ def sb_get_tests_history(
         test_type: Filter by test type ('validate', 'propagate')
         start_date: Start date filter (Unix timestamp)
         end_date: End date filter (Unix timestamp)
-        status_filter: Filter by status ('completed', 'canceled', 'failed')
+        status_filter: Filter by status ('completed', 'canceled', 'failed', 'running')
         name_filter: Filter by test name (partial match)
         order_by: Field to order by ('end_time', 'start_time', 'name', 'duration')
         order_direction: Order direction ('desc', 'asc')
@@ -88,7 +115,9 @@ def sb_get_tests_history(
     
     try:
         # Get all tests from cache or API
-        all_tests = _get_all_tests_from_cache_or_api(console)
+        normalized_status = status_filter.lower() if isinstance(status_filter, str) else None
+        use_cache = normalized_status != 'running'  # Don't use cache when running tests are requested
+        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache)
         
         # Apply filters
         filtered_tests = _apply_filters(
@@ -151,12 +180,13 @@ def sb_get_tests_history(
         raise
 
 
-def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+def _get_all_tests_from_cache_or_api(console: str, use_cache: bool = True) -> List[Dict[str, Any]]:
     """
     Get all tests from cache or API.
     
     Args:
         console: SafeBreach console name
+        use_cache: Whether to use cached results when available
         
     Returns:
         List of test dictionaries
@@ -165,7 +195,7 @@ def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     current_time = time.time()
     
     # Check cache first
-    if cache_key in tests_cache:
+    if use_cache and cache_key in tests_cache:
         data, timestamp = tests_cache[cache_key]
         if current_time - timestamp < CACHE_TTL:
             logger.info("Retrieved %d tests from cache for console '%s'", len(data), console)
@@ -177,7 +207,7 @@ def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
         
-        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries?size=1000&includeArchived=false&status=canceled%7Ccompleted"
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries?size=1000&includeArchived=false"
         
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -198,7 +228,7 @@ def _get_all_tests_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
             logger.info("Adding test %s to the return list", test_summary['planName'])
             tests.append(get_reduced_test_summary_mapping(test_summary))
         
-        # Cache the result
+        # Cache the result so subsequent calls can reuse it
         tests_cache[cache_key] = (tests, current_time)
         
         logger.info("Retrieved %d tests from API for console '%s'", len(tests), console)
@@ -244,9 +274,21 @@ def _apply_filters(
     
     # Apply date filters
     if start_date:
-        filtered = [t for t in filtered if t.get('end_time', 0) >= start_date]
+        filtered = [
+            t for t in filtered
+            if (
+                (timestamp := _get_timestamp_from_keys(t, ('end_time', 'start_time'))) is not None
+                and timestamp >= start_date
+            )
+        ]
     if end_date:
-        filtered = [t for t in filtered if t.get('end_time', 0) <= end_date]
+        filtered = [
+            t for t in filtered
+            if (
+                (timestamp := _get_timestamp_from_keys(t, ('end_time', 'start_time'))) is not None
+                and timestamp <= end_date
+            )
+        ]
     
     # Apply status filter
     if status_filter:
@@ -278,20 +320,62 @@ def _apply_ordering(
         Ordered list of tests
     """
     reverse = order_direction.lower() == 'desc'
-    
+
     def get_sort_key(test):
         if order_by == 'end_time':
-            return test.get('end_time', 0)
+            value = _get_timestamp_from_keys(test, ('end_time', 'start_time'), default=float('-inf'))
+            return value
         elif order_by == 'start_time':
-            return test.get('start_time', 0)
+            value = _get_timestamp_from_keys(test, ('start_time', 'end_time'), default=float('-inf'))
+            return value
         elif order_by == 'name':
             return test.get('name', '').lower()
         elif order_by == 'duration':
-            return test.get('duration', 0)
+            numeric_value = _normalize_numeric(test.get('duration'))
+            return numeric_value if numeric_value is not None else float('-inf')
         else:
-            return test.get('end_time', 0)  # Default to end_time
+            value = _get_timestamp_from_keys(test, ('end_time', 'start_time'), default=float('-inf'))
+            return value  # Default to end_time
     
     return sorted(tests, key=get_sort_key, reverse=reverse)
+
+
+def _find_previous_test_by_name(
+    console: str,
+    test_name: str,
+    before_start_time: float
+) -> Optional[Dict[str, Any]]:
+    """
+    Fallback helper to locate the most recent test matching ``test_name`` that ended before ``before_start_time``.
+    This bypasses pagination constraints of ``sb_get_tests_history``.
+    """
+    try:
+        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=False)
+    except Exception as exc:
+        logger.error("Failed to fetch tests for fallback baseline search on %s: %s", console, exc)
+        return None
+
+    matching_tests: List[Dict[str, Any]] = []
+    for test in all_tests:
+        if not isinstance(test.get('name'), str):
+            continue
+        if test_name.lower() not in test['name'].lower():
+            continue
+
+        timestamp = _get_timestamp_from_keys(test, ('end_time', 'start_time'))
+        if timestamp is None or timestamp > before_start_time:
+            continue
+
+        matching_tests.append(test)
+
+    if not matching_tests:
+        return None
+
+    matching_tests.sort(
+        key=lambda t: _get_timestamp_from_keys(t, ('end_time', 'start_time'), default=float('-inf')),
+        reverse=True
+    )
+    return matching_tests[0]
 
 
 def sb_get_test_details(console: str, test_id: str, include_simulations_statistics: bool = False) -> Dict[str, Any]:
@@ -1427,12 +1511,22 @@ def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
             console=console,
             page_number=0,
             name_filter=test_name,
-            end_date=current_start_time - 1,  # end_time must be before current test's start_time
+            end_date=current_start_time,  # include tests that ended exactly at the current start_time
             order_by="end_time",
             order_direction="desc"
         )
         
-        if not baseline_tests.get('tests_in_page'):
+        baseline_entry = baseline_tests.get('tests_in_page', [])
+        if baseline_entry:
+            baseline_candidate = baseline_entry[0]
+        else:
+            baseline_candidate = _find_previous_test_by_name(
+                console=console,
+                test_name=test_name,
+                before_start_time=current_start_time
+            )
+
+        if not baseline_candidate:
             return {
                 "error": f"No previous test found with name '{test_name}' before the current test execution",
                 "console": console,
@@ -1441,7 +1535,7 @@ def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
                 "current_start_time": current_start_time
             }
         
-        baseline_test_id = baseline_tests['tests_in_page'][0]['test_id']
+        baseline_test_id = baseline_candidate['test_id']
         logger.info("Found baseline test: '%s'", baseline_test_id)
         
         # Step 3: Get all simulations for both tests
