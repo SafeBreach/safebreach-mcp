@@ -390,19 +390,17 @@ class TestDataServerE2E:
     def test_get_test_drifts_e2e(self, e2e_console):
         """Test getting real test drift analysis using known test data.
         
-        This test uses test ID 1753948800489.42 which has documented
+        This test uses test ID 1754035200179.2 which has documented
         drift patterns when compared to its previous test with the same name:
-        - 32 simulations: no_result → prevented
-        - 10 simulations: no_result → detected
-        - 6 simulations: no_result → missed
-        - 4 simulations: logged → detected
-        - 2 simulations: no_result → stopped
-        - 1 simulation: missed → logged
-        - 1 simulation: detected → logged
-        Total: ~56 expected drifts
+        - 32 simulations: prevented → no_result
+        - 10 simulations: detected → no_result
+        - 6 simulations: missed → no_result
+        - 2 simulations: stopped → no_result
+        - Plus simulations present only in the baseline (≈14) or only in the current run (≈7)
+        Total: ~71 expected drifts (status changes + exclusives)
         """
         # Use specific test ID that has known drift patterns
-        test_id = "1753948800489.42"
+        test_id = "1754035200179.2"
         
         result = sb_get_test_drifts(e2e_console, test_id)
         
@@ -424,20 +422,18 @@ class TestDataServerE2E:
         assert 'analyzed_at' in metadata
         
         # Expected drift patterns based on provided data:
-        # - 32 simulations: no_result → prevented  
-        # - 10 simulations: no_result → detected
-        # - 6 simulations: no_result → missed
-        # - 4 simulations: logged → detected  
-        # - 2 simulations: no_result → stopped
-        # - 1 simulation: missed → logged
-        # - 1 simulation: detected → logged
-        # Total expected: 56 drifts
+        # - 32 simulations: prevented → no_result  
+        # - 10 simulations: detected → no_result
+        # - 6 simulations: missed → no_result
+        # - 2 simulations: stopped → no_result
+        # - Additional simulations appear/disappear between runs
+        # Total expected: roughly 71 drifts (including exclusives)
         
         # Verify we have the expected number of drifts (approximately)
         # Allow some flexibility as real data may vary slightly
         total_drifts = result['total_drifts']
-        assert total_drifts >= 50, f"Expected at least 50 drifts, got {total_drifts}"
-        assert total_drifts <= 65, f"Expected at most 65 drifts, got {total_drifts}"
+        assert total_drifts >= 60, f"Expected at least 60 drifts, got {total_drifts}"
+        assert total_drifts <= 85, f"Expected at most 85 drifts, got {total_drifts}"
         
         # Count drift types to verify expected patterns
         drift_type_counts = {}
@@ -459,13 +455,10 @@ class TestDataServerE2E:
         # Note: Exact counts may vary due to data changes over time
         # Drift types are formatted as "{from_status}-{to_status}" with underscores replacing hyphens
         expected_patterns = [
-            'no_result-prevented',  # Expected: ~32
-            'no_result-detected',   # Expected: ~10
-            'no_result-missed',     # Expected: ~6
-            'logged-detected',      # Expected: ~4
-            'no_result-stopped',    # Expected: ~2
-            'missed-logged',        # Expected: ~1
-            'detected-logged'       # Expected: ~1
+            'prevented-no_result',  # Expected: ~32
+            'detected-no_result',   # Expected: ~10
+            'missed-no_result',     # Expected: ~6
+            'stopped-no_result',    # Expected: ~2
         ]
         
         # Verify at least some expected patterns are present
