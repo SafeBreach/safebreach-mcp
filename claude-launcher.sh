@@ -45,7 +45,7 @@ run_security_scan() {
     echo "🔍 Running security scan..."
     
     # Quick gitleaks scan
-    if gitleaks detect --config .gitleaks.toml --no-git --quiet; then
+    if gitleaks detect --config .gitleaks.toml --no-git 2>/dev/null; then
         echo "✅ No secrets detected in current working directory"
     else
         echo "🚨 WARNING: Potential secrets detected!"
@@ -204,20 +204,26 @@ EOF
     # Launch Claude with context
     if command -v claude &> /dev/null; then
         echo "🚀 Launching Claude with security context..."
-        claude --context-file=.claude_context.md
+        echo "   Context available in: .claude_context.md"
+        echo ""
+        exec claude
+    elif command -v claude-code &> /dev/null; then
+        echo "🚀 Launching Claude Code with security context..."
+        echo "   Context available in: .claude_context.md"
+        echo ""
+        exec claude-code
     else
-        echo "🌐 Opening Claude Desktop..."
-        echo "   Context file created: .claude_context.md"
-        echo "   Please reference this file in your Claude session."
-        
-        # Try to open Claude Desktop on different platforms
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            open -a "Claude" 2>/dev/null || echo "   Please open Claude Desktop manually."
-        elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            claude-desktop 2>/dev/null || echo "   Please open Claude Desktop manually."
-        else
-            echo "   Please open Claude Desktop manually."
-        fi
+        echo "❌ Claude not found!"
+        echo ""
+        echo "Please install Claude first:"
+        echo "  brew install claude (for Claude Desktop)"
+        echo "  npm install -g @anthropic-ai/claude-code (for Claude Code CLI)"
+        echo ""
+        echo "Or if already installed, make sure it's in your PATH."
+        echo ""
+        echo "Context file created: .claude_context.md"
+        echo "You can reference this file when Claude Code is available."
+        exit 1
     fi
     
     echo ""

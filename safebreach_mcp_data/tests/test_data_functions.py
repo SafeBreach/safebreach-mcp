@@ -28,6 +28,7 @@ from safebreach_mcp_data.data_functions import (
     _apply_security_control_events_filters,
     _get_all_findings_from_cache_or_api,
     _apply_findings_filters,
+    _find_previous_test_by_name,
     tests_cache,
     simulations_cache,
     security_control_events_cache,
@@ -301,7 +302,61 @@ class TestDataFunctions:
         assert ordered[0]["name"] == "C Test"
         assert ordered[1]["name"] == "B Test"
         assert ordered[2]["name"] == "A Test"
-    
+
+    def test_apply_ordering_handles_missing_timestamps(self):
+        """Ordering should tolerate tests without numeric timestamps."""
+        test_data = [
+            {"name": "Has End", "end_time": 1640995800, "start_time": 1640995200, "duration": 600},
+            {"name": "No End", "end_time": None, "start_time": None, "duration": None},
+        ]
+
+        ordered_desc = _apply_ordering(test_data, order_by="end_time", order_direction="desc")
+        assert ordered_desc[-1]["name"] == "No End"
+
+        ordered_asc = _apply_ordering(test_data, order_by="start_time", order_direction="asc")
+        assert ordered_asc[0]["name"] == "No End"
+
+    def test_apply_filters_skips_missing_end_time_for_date_ranges(self):
+        """Date range filters should ignore entries without end_time."""
+        test_data = [
+            {"name": "Completed", "end_time": 1640995800},
+            {"name": "Running", "end_time": None},
+        ]
+
+        filtered_start = _apply_filters(test_data, start_date=1640990000)
+        assert len(filtered_start) == 1
+        assert filtered_start[0]["name"] == "Completed"
+
+        filtered_end = _apply_filters(test_data, end_date=1640999999)
+        assert len(filtered_end) == 1
+        assert filtered_end[0]["name"] == "Completed"
+
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_find_previous_test_by_name(self, mock_get_all):
+        """Fallback baseline search should return the latest matching test before a cutoff."""
+        mock_get_all.return_value = [
+            {"name": "Weekly Security Test", "test_id": "too-late", "end_time": 2000},
+            {"name": "Weekly Security Test", "test_id": "just-right", "end_time": 1500},
+            {"name": "Weekly Security Test", "test_id": "too-early", "end_time": 500},
+            {"name": "Different Test", "test_id": "ignored", "end_time": 1400},
+            {"name": "Weekly Security Test", "test_id": "string-time", "end_time": "1400"},
+        ]
+
+        result = _find_previous_test_by_name("test-console", "Weekly Security Test", before_start_time=1800)
+
+        mock_get_all.assert_called_once_with("test-console", use_cache=False)
+        assert result is not None
+        assert result["test_id"] == "just-right"
+
+        mock_get_all.reset_mock()
+        mock_get_all.return_value = [
+            {"name": "Weekly Security Test", "test_id": "future", "end_time": 2500},
+        ]
+
+        no_match = _find_previous_test_by_name("test-console", "Weekly Security Test", before_start_time=2000)
+        mock_get_all.assert_called_once_with("test-console", use_cache=False)
+        assert no_match is None
+
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
     def test_sb_get_tests_history_success(self, mock_get_all, mock_test_data):
         """Test successful tests history retrieval."""
@@ -2139,6 +2194,42 @@ class TestDataFunctions:
         assert len(metadata['simulations_exclusive_to_baseline']) == 1
         assert len(metadata['simulations_exclusive_to_current']) == 1
         assert metadata['status_drifts'] == 1
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions._find_previous_test_by_name')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_fallback_baseline(self, mock_get_sims, mock_fallback, mock_get_tests, mock_get_details):
+        """Baseline lookup should fall back to direct search when paginated history returns empty."""
+        mock_get_details.return_value = {
+            'name': 'Weekly Security Test',
+            'start_time': 1640998800,
+            'test_id': 'test-current-123'
+        }
+
+        mock_get_tests.return_value = {'tests_in_page': []}
+        mock_fallback.return_value = {
+            'test_id': 'fallback-baseline-456',
+            'name': 'Weekly Security Test',
+            'end_time': 1640995200
+        }
+
+        baseline_simulations = [{'simulation_id': 'sim-baseline-1', 'status': 'missed', 'drift_tracking_code': 'track-001'}]
+        current_simulations = [{'simulation_id': 'sim-current-1', 'status': 'logged', 'drift_tracking_code': 'track-001'}]
+
+        def mock_simulations_side_effect(console, test_id):
+            if test_id == 'fallback-baseline-456':
+                return baseline_simulations
+            if test_id == 'test-current-123':
+                return current_simulations
+            return []
+
+        mock_get_sims.side_effect = mock_simulations_side_effect
+
+        result = sb_get_test_drifts('test-console', 'test-current-123')
+
+        assert result['_metadata']['baseline_test_id'] == 'fallback-baseline-456'
+        assert result['total_drifts'] == 1
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     def test_sb_get_test_drifts_invalid_test_id(self, mock_get_details):
@@ -2202,7 +2293,8 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
-    def test_sb_get_test_drifts_no_baseline_test(self, mock_get_tests, mock_get_details):
+    @patch('safebreach_mcp_data.data_functions._find_previous_test_by_name')
+    def test_sb_get_test_drifts_no_baseline_test(self, mock_fallback, mock_get_tests, mock_get_details):
         """Test drift analysis when no baseline test is found."""
         mock_get_details.return_value = {
             'name': 'First Ever Test',
@@ -2214,6 +2306,7 @@ class TestDataFunctions:
         mock_get_tests.return_value = {
             'tests_in_page': []
         }
+        mock_fallback.return_value = None
         
         result = sb_get_test_drifts('test-console', 'test-first-123')
         
