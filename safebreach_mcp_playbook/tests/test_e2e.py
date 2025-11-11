@@ -43,7 +43,7 @@ class TestPlaybookE2E:
     def test_get_playbook_attacks_real_api(self):
         """Test getting playbook attacks from real SafeBreach API."""
         try:
-            result = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             
             # Verify response structure
             assert 'page_number' in result
@@ -76,14 +76,14 @@ class TestPlaybookE2E:
         """Test getting attack details from real SafeBreach API."""
         try:
             # First get list of attacks to get a valid ID
-            attacks_result = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            attacks_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             assert len(attacks_result['attacks_in_page']) > 0
             
             # Get details for first attack
             first_attack_id = attacks_result['attacks_in_page'][0]['id']
             
             # Test basic details
-            basic_details = sb_get_playbook_attack_details(E2E_CONSOLE, first_attack_id)
+            basic_details = sb_get_playbook_attack_details(first_attack_id, console=E2E_CONSOLE)
             
             # Verify response structure
             required_fields = ['id', 'name', 'description', 'modifiedDate', 'publishedDate']
@@ -95,8 +95,8 @@ class TestPlaybookE2E:
             
             # Test with all verbosity options
             full_details = sb_get_playbook_attack_details(
-                E2E_CONSOLE,
                 first_attack_id,
+                console=E2E_CONSOLE,
                 include_fix_suggestions=True,
                 include_tags=True,
                 include_parameters=True
@@ -128,7 +128,7 @@ class TestPlaybookE2E:
             found_filtered = False
             
             for term in common_terms:
-                filtered_result = sb_get_playbook_attacks(E2E_CONSOLE, name_filter=term)
+                filtered_result = sb_get_playbook_attacks(console=E2E_CONSOLE, name_filter=term)
                 
                 # Should have applied the filter
                 assert filtered_result['applied_filters'].get('name_filter') == term
@@ -155,7 +155,7 @@ class TestPlaybookE2E:
         """Test ID range filtering with real API data."""
         try:
             # Get first page to see ID range
-            first_page = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            first_page = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             
             if len(first_page['attacks_in_page']) >= 2:
                 # Get min and max IDs from first few attacks
@@ -168,7 +168,7 @@ class TestPlaybookE2E:
                 mid_range_max = min_id + ((max_id - min_id) // 2) if max_id > min_id else max_id
                 
                 filtered_result = sb_get_playbook_attacks(
-                    E2E_CONSOLE,
+                    console=E2E_CONSOLE,
                     id_min=mid_range_min,
                     id_max=mid_range_max
                 )
@@ -190,11 +190,11 @@ class TestPlaybookE2E:
         """Test pagination with real API data."""
         try:
             # Get first page
-            page0 = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            page0 = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             
             if page0['total_pages'] > 1:
                 # Get second page
-                page1 = sb_get_playbook_attacks(E2E_CONSOLE, page_number=1)
+                page1 = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=1)
                 
                 # Should have different attacks
                 page0_ids = {attack['id'] for attack in page0['attacks_in_page']}
@@ -252,12 +252,12 @@ class TestPlaybookE2E:
             
             # Test invalid attack ID
             with pytest.raises(ValueError) as exc_info:
-                sb_get_playbook_attack_details(E2E_CONSOLE, 999999999)
+                sb_get_playbook_attack_details(999999999, console=E2E_CONSOLE)
             
             assert "not found" in str(exc_info.value).lower()
             
             # Test invalid page number
-            invalid_page_result = sb_get_playbook_attacks(E2E_CONSOLE, page_number=999)
+            invalid_page_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=999)
             assert 'error' in invalid_page_result
             assert 'Invalid page_number' in invalid_page_result['error']
             
@@ -269,7 +269,7 @@ class TestPlaybookE2E:
     def test_data_quality_real_api(self):
         """Test data quality from real API."""
         try:
-            result = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             
             # Check data quality
             for attack in result['attacks_in_page'][:5]:  # Check first 5 attacks
@@ -301,7 +301,7 @@ class TestPlaybookE2E:
         """Test different verbosity levels with real API data."""
         try:
             # Get an attack ID
-            attacks_result = sb_get_playbook_attacks(E2E_CONSOLE, page_number=0)
+            attacks_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             attack_id = attacks_result['attacks_in_page'][0]['id']
             
             # Test different verbosity combinations
@@ -313,7 +313,7 @@ class TestPlaybookE2E:
             ]
             
             for verbosity_options in verbosity_tests:
-                details = sb_get_playbook_attack_details(E2E_CONSOLE, attack_id, **verbosity_options)
+                details = sb_get_playbook_attack_details(attack_id, console=E2E_CONSOLE, **verbosity_options)
                 
                 # Basic fields should always be present
                 basic_fields = ['id', 'name', 'description', 'modifiedDate', 'publishedDate']

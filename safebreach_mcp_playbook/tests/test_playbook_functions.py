@@ -253,7 +253,7 @@ class TestGetPlaybookAttacks:
         """Test name filtering."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attacks('test-console', name_filter='DNS')
+        result = sb_get_playbook_attacks(console='test-console', name_filter='DNS')
         
         # Should only return the DNS attack
         assert result['total_attacks'] == 1
@@ -266,7 +266,7 @@ class TestGetPlaybookAttacks:
         """Test description filtering."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attacks('test-console', description_filter='HTTP')
+        result = sb_get_playbook_attacks(console='test-console', description_filter='HTTP')
         
         # Should only return the HTTP attack
         assert result['total_attacks'] == 1
@@ -279,7 +279,7 @@ class TestGetPlaybookAttacks:
         """Test ID range filtering."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attacks('test-console', id_min=2000, id_max=3000)
+        result = sb_get_playbook_attacks(console='test-console', id_min=2000, id_max=3000)
         
         # Should only return attack with ID 2048
         assert result['total_attacks'] == 1
@@ -321,7 +321,7 @@ class TestGetPlaybookAttacks:
         mock_get_all_attacks.return_value = large_attack_list
         
         # Test first page
-        result = sb_get_playbook_attacks('test-console', page_number=0)
+        result = sb_get_playbook_attacks(console='test-console', page_number=0)
         assert result['page_number'] == 0
         assert result['total_pages'] == 3  # 25 attacks / 10 per page = 3 pages
         assert result['total_attacks'] == 25
@@ -330,14 +330,14 @@ class TestGetPlaybookAttacks:
         assert result['attacks_in_page'][9]['id'] == 10
         
         # Test second page
-        result = sb_get_playbook_attacks('test-console', page_number=1)
+        result = sb_get_playbook_attacks(console='test-console', page_number=1)
         assert result['page_number'] == 1
         assert len(result['attacks_in_page']) == 10
         assert result['attacks_in_page'][0]['id'] == 11
         assert result['attacks_in_page'][9]['id'] == 20
         
         # Test last page
-        result = sb_get_playbook_attacks('test-console', page_number=2)
+        result = sb_get_playbook_attacks(console='test-console', page_number=2)
         assert result['page_number'] == 2
         assert len(result['attacks_in_page']) == 5  # Last page has only 5 items
         assert result['attacks_in_page'][0]['id'] == 21
@@ -348,7 +348,7 @@ class TestGetPlaybookAttacks:
         """Test invalid page number handling."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attacks('test-console', page_number=10)
+        result = sb_get_playbook_attacks(console='test-console', page_number=10)
         
         # Should return error information
         assert 'error' in result
@@ -380,7 +380,7 @@ class TestGetPlaybookAttacks:
         """Test when filters return no matches."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attacks('test-console', name_filter='NonExistentAttack')
+        result = sb_get_playbook_attacks(console='test-console', name_filter='NonExistentAttack')
         
         # Should return empty results
         assert result['total_attacks'] == 0
@@ -404,7 +404,7 @@ class TestGetPlaybookAttackDetails:
         """Test basic successful call."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attack_details('test-console', 1027)
+        result = sb_get_playbook_attack_details(1027, 'test-console')
         
         # Verify basic fields
         assert result['id'] == 1027
@@ -423,7 +423,7 @@ class TestGetPlaybookAttackDetails:
         """Test including fix suggestions."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attack_details('test-console', 1027, include_fix_suggestions=True)
+        result = sb_get_playbook_attack_details(1027, 'test-console', include_fix_suggestions=True)
         
         # Verify fix suggestions are included
         assert result['fix_suggestions'] is not None
@@ -435,7 +435,7 @@ class TestGetPlaybookAttackDetails:
         """Test including tags."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attack_details('test-console', 1027, include_tags=True)
+        result = sb_get_playbook_attack_details(1027, 'test-console', include_tags=True)
         
         # Verify tags are included
         assert result['tags'] == ['network', 'dns']
@@ -445,7 +445,7 @@ class TestGetPlaybookAttackDetails:
         """Test including parameters."""
         mock_get_all_attacks.return_value = sample_attack_data
         
-        result = sb_get_playbook_attack_details('test-console', 1027, include_parameters=True)
+        result = sb_get_playbook_attack_details(1027, 'test-console', include_parameters=True)
         
         # Verify parameters are included
         assert result['params'] is not None
@@ -458,8 +458,8 @@ class TestGetPlaybookAttackDetails:
         mock_get_all_attacks.return_value = sample_attack_data
         
         result = sb_get_playbook_attack_details(
-            'test-console', 
             1027, 
+            'test-console', 
             include_fix_suggestions=True,
             include_tags=True,
             include_parameters=True
@@ -476,7 +476,7 @@ class TestGetPlaybookAttackDetails:
         mock_get_all_attacks.return_value = sample_attack_data
         
         with pytest.raises(ValueError) as exc_info:
-            sb_get_playbook_attack_details('test-console', 9999)
+            sb_get_playbook_attack_details(9999, 'test-console')
         
         assert "Attack with ID 9999 not found" in str(exc_info.value)
         assert "Available IDs include:" in str(exc_info.value)

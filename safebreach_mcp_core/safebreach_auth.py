@@ -36,7 +36,7 @@ class SafeBreachAuth:
         env = get_environment_by_name(console)
         return f"https://{env['url']}/api"
     
-    def make_request(self, console: str, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+    def make_request(self, endpoint: str, console: str = "default", params: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Make authenticated API request to SafeBreach.
         

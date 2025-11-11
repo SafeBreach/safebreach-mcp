@@ -342,7 +342,7 @@ class TestDataFunctions:
             {"name": "Weekly Security Test", "test_id": "string-time", "end_time": "1400"},
         ]
 
-        result = _find_previous_test_by_name("test-console", "Weekly Security Test", before_start_time=1800)
+        result = _find_previous_test_by_name("Weekly Security Test", before_start_time=1800, console="test-console")
 
         mock_get_all.assert_called_once_with("test-console", use_cache=False)
         assert result is not None
@@ -353,7 +353,7 @@ class TestDataFunctions:
             {"name": "Weekly Security Test", "test_id": "future", "end_time": 2500},
         ]
 
-        no_match = _find_previous_test_by_name("test-console", "Weekly Security Test", before_start_time=2000)
+        no_match = _find_previous_test_by_name("Weekly Security Test", before_start_time=2000, console="test-console")
         mock_get_all.assert_called_once_with("test-console", use_cache=False)
         assert no_match is None
 
@@ -362,7 +362,7 @@ class TestDataFunctions:
         """Test successful tests history retrieval."""
         mock_get_all.return_value = mock_test_data
         
-        result = sb_get_tests_history("test-console")
+        result = sb_get_tests_history(console="test-console")
         
         assert "tests_in_page" in result
         assert "total_tests" in result
@@ -384,14 +384,14 @@ class TestDataFunctions:
         mock_get_all.return_value = large_test_data
         
         # Test first page
-        result = sb_get_tests_history("test-console", page_number=0)
+        result = sb_get_tests_history(console="test-console", page_number=0)
         assert len(result["tests_in_page"]) == PAGE_SIZE
         assert result["total_tests"] == 25
         assert result["total_pages"] == 3
         assert result["page_number"] == 0
         
         # Test second page
-        result = sb_get_tests_history("test-console", page_number=1)
+        result = sb_get_tests_history(console="test-console", page_number=1)
         assert len(result["tests_in_page"]) == PAGE_SIZE
         assert result["page_number"] == 1
     
@@ -402,7 +402,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_tests_history("test-console")
+            sb_get_tests_history(console="test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -428,7 +428,7 @@ class TestDataFunctions:
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
         
-        result = sb_get_test_details("test-console", "test1")
+        result = sb_get_test_details("test1", "test-console")
         
         assert "test_id" in result
         assert result["test_id"] == "test1"
@@ -448,7 +448,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_test_details("test-console", "test1")
+            sb_get_test_details("test1", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -467,7 +467,7 @@ class TestDataFunctions:
         mock_post.return_value = mock_response
         
         # Test
-        result = _get_all_simulations_from_cache_or_api("test-console", "test1")
+        result = _get_all_simulations_from_cache_or_api("test1", "test-console")
         
         # Assertions
         assert len(result) == 2
@@ -557,7 +557,7 @@ class TestDataFunctions:
         """Test successful test simulations retrieval."""
         mock_get_all.return_value = mock_simulation_data["simulations"]
         
-        result = sb_get_test_simulations("test-console", "test1")
+        result = sb_get_test_simulations("test1", console="test-console")
         
         assert "simulations_in_page" in result
         assert "total_simulations" in result
@@ -574,7 +574,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_test_simulations("test-console", "test1")
+            sb_get_test_simulations("test1", console="test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -604,8 +604,8 @@ class TestDataFunctions:
         mock_post.return_value = mock_response
         
         result = sb_get_simulation_details(
-            "test-console", 
-            "sim1",
+            "sim1", 
+            "test-console",
             include_mitre_techniques=True,
             include_full_attack_logs=True
         )
@@ -656,7 +656,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_simulation_details("test-console", "sim1")
+            sb_get_simulation_details("sim1", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -675,7 +675,7 @@ class TestDataFunctions:
         mock_get.return_value = mock_response
         
         # Test
-        result = _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+        result = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Assertions
         assert len(result) == 2
@@ -698,10 +698,10 @@ class TestDataFunctions:
         mock_get.return_value = mock_response
         
         # First call - should hit API
-        result1 = _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+        result1 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Second call - should use cache
-        result2 = _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+        result2 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Assertions
         assert len(result1) == 2
@@ -723,14 +723,14 @@ class TestDataFunctions:
         mock_get.return_value = mock_response
         
         # First call - should hit API
-        result1 = _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+        result1 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Manually expire cache
         cache_key = "test-console:test1:sim1"
         security_control_events_cache[cache_key]['timestamp'] = time.time() - CACHE_TTL - 1
         
         # Second call - should hit API again due to expired cache
-        result2 = _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+        result2 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Assertions
         assert len(result1) == 2
@@ -749,7 +749,7 @@ class TestDataFunctions:
         
         # Test - should now raise exception
         with pytest.raises(Exception) as exc_info:
-            _get_all_security_control_events_from_cache_or_api("test-console", "test1", "sim1")
+            _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Assertions
         assert "API Error" in str(exc_info.value)
@@ -906,7 +906,7 @@ class TestDataFunctions:
         """Test successful security control events retrieval."""
         mock_get_events.return_value = mock_security_control_events_data
         
-        result = sb_get_security_controls_events("test-console", "test1", "sim1")
+        result = sb_get_security_controls_events("test1", "sim1", console="test-console")
         
         assert "page_number" in result
         assert "total_pages" in result
@@ -917,7 +917,7 @@ class TestDataFunctions:
         assert result["page_number"] == 0
         assert result["total_events"] == 2
         assert len(result["events_in_page"]) == 2
-        mock_get_events.assert_called_once_with("test-console", "test1", "sim1")
+        mock_get_events.assert_called_once_with("test1", "sim1", "test-console")
     
     @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
     def test_sb_get_security_controls_events_with_filters(self, mock_get_events, mock_security_control_events_data):
@@ -925,9 +925,9 @@ class TestDataFunctions:
         mock_get_events.return_value = mock_security_control_events_data
         
         result = sb_get_security_controls_events(
-            "test-console", 
             "test1", 
-            "sim1",
+            "sim1", 
+            "test-console",
             product_name_filter="FDR",
             vendor_name_filter="CrowdStrike"
         )
@@ -964,19 +964,19 @@ class TestDataFunctions:
         mock_get_events.return_value = large_dataset
         
         # Test first page
-        result = sb_get_security_controls_events("test-console", "test1", "sim1", page_number=0)
+        result = sb_get_security_controls_events("test1", "sim1", console="test-console", page_number=0)
         assert result["page_number"] == 0
         assert result["total_events"] == 25
         assert result["total_pages"] == 3  # 25 / 10 = 2.5, ceil = 3
         assert len(result["events_in_page"]) == 10
         
         # Test second page
-        result = sb_get_security_controls_events("test-console", "test1", "sim1", page_number=1)
+        result = sb_get_security_controls_events("test1", "sim1", console="test-console", page_number=1)
         assert result["page_number"] == 1
         assert len(result["events_in_page"]) == 10
         
         # Test last page
-        result = sb_get_security_controls_events("test-console", "test1", "sim1", page_number=2)
+        result = sb_get_security_controls_events("test1", "sim1", console="test-console", page_number=2)
         assert result["page_number"] == 2
         assert len(result["events_in_page"]) == 5
     
@@ -987,7 +987,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_security_controls_events("test-console", "test1", "sim1")
+            sb_get_security_controls_events("test1", "sim1", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -997,10 +997,10 @@ class TestDataFunctions:
         mock_get_events.return_value = mock_security_control_events_data
         
         result = sb_get_security_control_event_details(
-            "test-console", 
             "test1", 
             "sim1", 
-            "8207d61e-d14b-5e1d-adcb-8ea461249001"
+            "8207d61e-d14b-5e1d-adcb-8ea461249001",
+            "test-console"
         )
         
         assert "event_id" in result
@@ -1011,7 +1011,7 @@ class TestDataFunctions:
         assert result["vendor"] == "CrowdStrike"
         assert result["_metadata"]["console"] == "test-console"
         assert result["_metadata"]["verbosity_level"] == "standard"
-        mock_get_events.assert_called_once_with("test-console", "test1", "sim1")
+        mock_get_events.assert_called_once_with("test1", "sim1", "test-console")
     
     @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
     def test_sb_get_security_control_event_details_verbosity_minimal(self, mock_get_events, mock_security_control_events_data):
@@ -1019,10 +1019,10 @@ class TestDataFunctions:
         mock_get_events.return_value = mock_security_control_events_data
         
         result = sb_get_security_control_event_details(
-            "test-console", 
             "test1", 
             "sim1", 
             "8207d61e-d14b-5e1d-adcb-8ea461249001",
+            "test-console",
             verbosity_level="minimal"
         )
         
@@ -1045,10 +1045,10 @@ class TestDataFunctions:
         mock_get_events.return_value = mock_security_control_events_data
         
         result = sb_get_security_control_event_details(
-            "test-console", 
             "test1", 
             "sim1", 
             "8207d61e-d14b-5e1d-adcb-8ea461249001",
+            "test-console",
             verbosity_level="full"
         )
         
@@ -1067,10 +1067,10 @@ class TestDataFunctions:
         mock_get_events.return_value = mock_security_control_events_data
         
         result = sb_get_security_control_event_details(
-            "test-console", 
             "test1", 
             "sim1", 
-            "non-existent-event-id"
+            "non-existent-event-id",
+            "test-console"
         )
         
         assert "error" in result
@@ -1088,10 +1088,10 @@ class TestDataFunctions:
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
             sb_get_security_control_event_details(
-                "test-console", 
                 "test1", 
                 "sim1", 
-                "event-id"
+                "event-id",
+                "test-console"
             )
         
         assert "API Error" in str(exc_info.value)
@@ -1101,53 +1101,53 @@ class TestDataFunctions:
         
         # Test empty console parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("", "test1", "sim1", "event1")
+            sb_get_security_control_event_details("test1", "sim1", "event1", "")
         assert "Invalid console parameter" in str(exc_info.value)
         
         # Test None console parameter  
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details(None, "test1", "sim1", "event1")
+            sb_get_security_control_event_details("test1", "sim1", "event1", None)
         assert "Invalid console parameter" in str(exc_info.value)
         
         # Test empty test_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "", "sim1", "event1")
+            sb_get_security_control_event_details("", "sim1", "event1", "console")
         assert "Invalid test_id parameter" in str(exc_info.value)
         
         # Test None test_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", None, "sim1", "event1")
+            sb_get_security_control_event_details(None, "sim1", "event1", "console")
         assert "Invalid test_id parameter" in str(exc_info.value)
         
         # Test empty simulation_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "test1", "", "event1")
+            sb_get_security_control_event_details("test1", "", "event1", "console")
         assert "Invalid simulation_id parameter" in str(exc_info.value)
         
         # Test None simulation_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "test1", None, "event1")
+            sb_get_security_control_event_details("test1", None, "event1", "console")
         assert "Invalid simulation_id parameter" in str(exc_info.value)
         
         # Test empty event_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "test1", "sim1", "")
+            sb_get_security_control_event_details("test1", "sim1", "", "console")
         assert "Invalid event_id parameter" in str(exc_info.value)
         
         # Test None event_id parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "test1", "sim1", None)
+            sb_get_security_control_event_details("test1", "sim1", None, "console")
         assert "Invalid event_id parameter" in str(exc_info.value)
         
         # Test invalid verbosity_level parameter
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_event_details("console", "test1", "sim1", "event1", verbosity_level="invalid")
+            sb_get_security_control_event_details("test1", "sim1", "event1", "console", verbosity_level="invalid")
         assert "Invalid verbosity_level parameter" in str(exc_info.value)
         
         # Test None verbosity_level (should default to "standard")
         with patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api') as mock_get_events:
             mock_get_events.return_value = []
-            result = sb_get_security_control_event_details("console", "test1", "sim1", "event1", verbosity_level=None)
+            result = sb_get_security_control_event_details("test1", "sim1", "event1", "console", verbosity_level=None)
             # Should handle None gracefully by defaulting to "standard"
             assert "error" in result  # Event not found, but validation passed
 
@@ -1219,12 +1219,12 @@ class TestDataFunctions:
             mock_response.json.return_value = {"planRunId": "test123", "name": "Test"}
             
             # Test None (should be handled gracefully by defaulting to False)
-            result = sb_get_test_details("test-console", "test123", include_simulations_statistics=None)
+            result = sb_get_test_details("test123", include_simulations_statistics=None)
             # Should succeed without error
             
             # Test invalid type (should raise error)
             with pytest.raises(ValueError) as exc_info:
-                sb_get_test_details("test-console", "test123", include_simulations_statistics="invalid")
+                sb_get_test_details("test123", include_simulations_statistics="invalid")
             assert "Invalid include_simulations_statistics parameter" in str(exc_info.value)
             assert "Must be a boolean value" in str(exc_info.value)
 
@@ -1297,7 +1297,7 @@ class TestDataFunctions:
             mock_requests.get.return_value = mock_response
             
             # Test the function
-            result = _get_all_findings_from_cache_or_api("test-console", "test-id")
+            result = _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             # Assertions
             assert len(result) == 1
@@ -1319,10 +1319,10 @@ class TestDataFunctions:
             mock_requests.get.return_value = mock_response
             
             # First call
-            result1 = _get_all_findings_from_cache_or_api("test-console", "test-id")
+            result1 = _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             # Second call should use cache
-            result2 = _get_all_findings_from_cache_or_api("test-console", "test-id")
+            result2 = _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             # API should only be called once
             mock_requests.get.assert_called_once()
@@ -1344,11 +1344,11 @@ class TestDataFunctions:
             
             # First call at time 0
             mock_time.return_value = 0
-            _get_all_findings_from_cache_or_api("test-console", "test-id")
+            _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             # Second call after cache expiry
             mock_time.return_value = CACHE_TTL + 1
-            _get_all_findings_from_cache_or_api("test-console", "test-id")
+            _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             # API should be called twice
             assert mock_requests.get.call_count == 2
@@ -1365,7 +1365,7 @@ class TestDataFunctions:
             
             # Should now raise exception
             with pytest.raises(Exception) as exc_info:
-                _get_all_findings_from_cache_or_api("test-console", "test-id")
+                _get_all_findings_from_cache_or_api("test-id", "test-console")
             
             assert "API Error" in str(exc_info.value)
     
@@ -1445,7 +1445,7 @@ class TestDataFunctions:
         """Test successful findings counts retrieval."""
         mock_get_findings.return_value = mock_findings_data
         
-        result = sb_get_test_findings_counts("test-console", "test-id")
+        result = sb_get_test_findings_counts("test-id", "test-console")
         
         # Assertions
         assert result["console"] == "test-console"
@@ -1468,8 +1468,8 @@ class TestDataFunctions:
         mock_get_findings.return_value = mock_findings_data
         
         result = sb_get_test_findings_counts(
-            "test-console", 
             "test-id", 
+            "test-console", 
             attribute_filter="credential"
         )
         
@@ -1487,7 +1487,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_test_findings_counts("test-console", "test-id")
+            sb_get_test_findings_counts("test-id", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -1496,7 +1496,7 @@ class TestDataFunctions:
         """Test successful findings details retrieval."""
         mock_get_findings.return_value = mock_findings_data
         
-        result = sb_get_test_findings_details("test-console", "test-id")
+        result = sb_get_test_findings_details("test-id", "test-console")
         
         # Assertions
         assert result["console"] == "test-console"
@@ -1518,8 +1518,8 @@ class TestDataFunctions:
         mock_get_findings.return_value = mock_findings_data
         
         result = sb_get_test_findings_details(
-            "test-console", 
             "test-id", 
+            "test-console", 
             attribute_filter="openports"
         )
         
@@ -1547,7 +1547,7 @@ class TestDataFunctions:
         mock_get_findings.return_value = large_findings
         
         # Test first page
-        result_page_0 = sb_get_test_findings_details("test-console", "test-id", page_number=0)
+        result_page_0 = sb_get_test_findings_details("test-id", "test-console", page_number=0)
         assert result_page_0["page_number"] == 0
         assert result_page_0["total_pages"] == 3
         assert result_page_0["total_findings"] == 25
@@ -1555,12 +1555,12 @@ class TestDataFunctions:
         assert "hint_to_agent" in result_page_0
         
         # Test second page
-        result_page_1 = sb_get_test_findings_details("test-console", "test-id", page_number=1)
+        result_page_1 = sb_get_test_findings_details("test-id", "test-console", page_number=1)
         assert result_page_1["page_number"] == 1
         assert len(result_page_1["findings_in_page"]) == PAGE_SIZE
         
         # Test last page
-        result_page_2 = sb_get_test_findings_details("test-console", "test-id", page_number=2)
+        result_page_2 = sb_get_test_findings_details("test-id", "test-console", page_number=2)
         assert result_page_2["page_number"] == 2
         assert len(result_page_2["findings_in_page"]) == 5  # Remaining findings
         assert "hint_to_agent" not in result_page_2  # No next page
@@ -1570,7 +1570,7 @@ class TestDataFunctions:
         """Test findings details with empty result."""
         mock_get_findings.return_value = []
         
-        result = sb_get_test_findings_details("test-console", "test-id")
+        result = sb_get_test_findings_details("test-id", "test-console")
         
         assert result["total_findings"] == 0
         assert result["total_pages"] == 0
@@ -1583,7 +1583,7 @@ class TestDataFunctions:
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_test_findings_details("test-console", "test-id")
+            sb_get_test_findings_details("test-id", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -1621,7 +1621,7 @@ class TestDataFunctions:
         mock_get_findings.return_value = findings_with_none_timestamps
         
         # This should not raise an exception
-        result = sb_get_test_findings_details("test-console", "test-id")
+        result = sb_get_test_findings_details("test-id", "test-console")
         
         # Verify the function handles None timestamps gracefully
         assert result["total_findings"] == 3
@@ -1662,12 +1662,12 @@ class TestDataFunctions:
         
         # Test sb_get_simulation_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            sb_get_simulation_details(console="unknown_console", simulation_id="sim123")
+            sb_get_simulation_details("sim123", console="unknown_console")
         assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
         
         # Test sb_get_security_controls_events - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events(console="unknown_console", test_id="test123", simulation_id="sim123")
+            sb_get_security_controls_events("test123", "sim123", console="unknown_console")
         assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
@@ -1698,12 +1698,12 @@ class TestDataFunctions:
         """Test validation for empty test_id parameter."""
         # Test empty string
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_details("test-console", "")
+            sb_get_test_details("")
         assert "test_id parameter is required and cannot be empty" in str(exc_info.value)
         
         # Test whitespace-only string
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_details("test-console", "   ")
+            sb_get_test_details("   ")
         assert "test_id parameter is required and cannot be empty" in str(exc_info.value)
     
     def test_sb_get_tests_history_invalid_order_by(self):
@@ -1750,27 +1750,27 @@ class TestDataFunctions:
         """Test validation for empty required parameters."""
         # Test empty test_id
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events("test-console", "", "sim123")
+            sb_get_security_controls_events("", "sim123", "test-console")
         assert "test_id parameter is required and cannot be empty" in str(exc_info.value)
         
         # Test empty simulation_id
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events("test-console", "test123", "")
+            sb_get_security_controls_events("test123", "", "test-console")
         assert "simulation_id parameter is required and cannot be empty" in str(exc_info.value)
         
         # Test whitespace-only parameters
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events("test-console", "   ", "sim123")
+            sb_get_security_controls_events("   ", "sim123", "test-console")
         assert "test_id parameter is required and cannot be empty" in str(exc_info.value)
         
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events("test-console", "test123", "   ")
+            sb_get_security_controls_events("test123", "   ", "test-console")
         assert "simulation_id parameter is required and cannot be empty" in str(exc_info.value)
     
     def test_sb_get_security_controls_events_negative_page_number(self):
         """Test validation for negative page_number parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_security_controls_events("test-console", "test123", "sim123", page_number=-10)
+            sb_get_security_controls_events("test123", "sim123", "test-console", page_number=-10)
         assert "Invalid page_number parameter '-10'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
     
@@ -1800,7 +1800,7 @@ class TestDataFunctions:
         mock_get_all_tests.return_value = mock_tests
         
         # Test requesting page 2 (which should exist)
-        result = sb_get_tests_history("test-console", page_number=1)
+        result = sb_get_tests_history(console="test-console", page_number=1)
         assert "tests_in_page" in result
         assert len(result["tests_in_page"]) == 5  # Last page has 5 items
         
@@ -1818,13 +1818,13 @@ class TestDataFunctions:
         mock_get_all_findings.return_value = mock_findings
         
         # Test requesting page 2 (which should exist)
-        result = sb_get_test_findings_details("test-console", "test123", page_number=2)
+        result = sb_get_test_findings_details("test123", "test-console", page_number=2)
         assert "findings_in_page" in result
         assert len(result["findings_in_page"]) == 5  # Last page has 5 items
         
         # Test requesting page 3 (which should not exist)
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_findings_details("test-console", "test123", page_number=3)
+            sb_get_test_findings_details("test123", "test-console", page_number=3)
         assert "Invalid page_number parameter '3'" in str(exc_info.value)
         assert "Available pages range from 0 to 2 (total 3 pages)" in str(exc_info.value)
     
@@ -1843,20 +1843,20 @@ class TestDataFunctions:
         # Test empty response
         mock_response.json.return_value = {}
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_details("test-console", "invalid-test-id")
+            sb_get_test_details("invalid-test-id")
         assert "Invalid test response for test_id 'invalid-test-id'" in str(exc_info.value)
         assert "response is empty or not a dictionary" in str(exc_info.value)
         
         # Test response missing essential 'planRunId' field
         mock_response.json.return_value = {"planName": "Test Name"}
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_details("test-console", "invalid-test-id")
+            sb_get_test_details("invalid-test-id")
         assert "Invalid test_id 'invalid-test-id'" in str(exc_info.value)
         assert "missing essential identifier (planRunId)" in str(exc_info.value)
         
         # Test response with planRunId but missing planName (should succeed)
         mock_response.json.return_value = {"planRunId": "test123", "systemTags": []}
-        result = sb_get_test_details("test-console", "test123")
+        result = sb_get_test_details("test123")
         assert "test_id" in result
         assert result["test_id"] == "test123"
 
@@ -1968,8 +1968,8 @@ class TestDataFunctions:
         
         # Test with include_drift_info=True
         result = sb_get_simulation_details(
-            "test-console", 
             "sim123", 
+            "test-console", 
             include_drift_info=True
         )
         
@@ -2003,8 +2003,8 @@ class TestDataFunctions:
         
         # Test with include_drift_info=True but no drift present
         result = sb_get_simulation_details(
-            "test-console", 
             "sim123", 
+            "test-console", 
             include_drift_info=True
         )
         
@@ -2034,8 +2034,8 @@ class TestDataFunctions:
         
         # Test with unknown drift type
         result = sb_get_simulation_details(
-            "test-console", 
             "sim123", 
+            "test-console", 
             include_drift_info=True
         )
         
@@ -2072,7 +2072,7 @@ class TestDataFunctions:
         with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
             mock_get_sims.return_value = mock_simulations
             
-            stats = _get_simulation_statistics("test-console", "test1", test_summary)
+            stats = _get_simulation_statistics("test1", test_summary, "test-console")
             
             # Find the drift statistics entry
             drift_stat = next((stat for stat in stats if "drifted_count" in stat), None)
@@ -2142,7 +2142,7 @@ class TestDataFunctions:
         ]
         
         # Configure mock to return different data based on test_id
-        def mock_simulations_side_effect(console, test_id):
+        def mock_simulations_side_effect(test_id, console):
             if test_id == 'test-baseline-456':
                 return baseline_simulations
             elif test_id == 'test-current-123':
@@ -2152,7 +2152,7 @@ class TestDataFunctions:
         mock_get_sims.side_effect = mock_simulations_side_effect
         
         # Execute the function
-        result = sb_get_test_drifts('test-console', 'test-current-123')
+        result = sb_get_test_drifts('test-current-123', 'test-console')
         
         # Verify the result structure
         assert isinstance(result, dict)
@@ -2217,7 +2217,7 @@ class TestDataFunctions:
         baseline_simulations = [{'simulation_id': 'sim-baseline-1', 'status': 'missed', 'drift_tracking_code': 'track-001'}]
         current_simulations = [{'simulation_id': 'sim-current-1', 'status': 'logged', 'drift_tracking_code': 'track-001'}]
 
-        def mock_simulations_side_effect(console, test_id):
+        def mock_simulations_side_effect(test_id, console):
             if test_id == 'fallback-baseline-456':
                 return baseline_simulations
             if test_id == 'test-current-123':
@@ -2226,7 +2226,7 @@ class TestDataFunctions:
 
         mock_get_sims.side_effect = mock_simulations_side_effect
 
-        result = sb_get_test_drifts('test-console', 'test-current-123')
+        result = sb_get_test_drifts('test-current-123', 'test-console')
 
         assert result['_metadata']['baseline_test_id'] == 'fallback-baseline-456'
         assert result['total_drifts'] == 1
@@ -2236,22 +2236,22 @@ class TestDataFunctions:
         """Test drift analysis with invalid test_id."""
         # Test empty test_id
         with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
-            sb_get_test_drifts('test-console', '')
+            sb_get_test_drifts('', 'test-console')
         
         # Test whitespace-only test_id
         with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
-            sb_get_test_drifts('test-console', '   ')
+            sb_get_test_drifts('   ', 'test-console')
         
         # Test None test_id
         with pytest.raises(ValueError, match="test_id parameter is required and cannot be empty"):
-            sb_get_test_drifts('test-console', None)
+            sb_get_test_drifts(None, 'test-console')
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     def test_sb_get_test_drifts_test_not_found(self, mock_get_details):
         """Test drift analysis when test details cannot be retrieved."""
         mock_get_details.return_value = None
         
-        result = sb_get_test_drifts('test-console', 'non-existent-test')
+        result = sb_get_test_drifts('non-existent-test', 'test-console')
         
         assert 'error' in result
         assert 'Could not retrieve test details' in result['error']
@@ -2267,7 +2267,7 @@ class TestDataFunctions:
             # Missing 'name' attribute
         }
         
-        result = sb_get_test_drifts('test-console', 'test-123')
+        result = sb_get_test_drifts('test-123', 'test-console')
         
         assert 'error' in result
         assert 'test lacks a name attribute' in result['error']
@@ -2283,7 +2283,7 @@ class TestDataFunctions:
             # Missing 'start_time' attribute
         }
         
-        result = sb_get_test_drifts('test-console', 'test-123')
+        result = sb_get_test_drifts('test-123', 'test-console')
         
         assert 'error' in result
         assert 'does not have a start_time attribute' in result['error']
@@ -2308,7 +2308,7 @@ class TestDataFunctions:
         }
         mock_fallback.return_value = None
         
-        result = sb_get_test_drifts('test-console', 'test-first-123')
+        result = sb_get_test_drifts('test-first-123', 'test-console')
         
         assert 'error' in result
         assert 'No previous test found with name' in result['error']
@@ -2351,7 +2351,7 @@ class TestDataFunctions:
         ]
         
         # Both tests have identical simulations (different sim IDs but same drift codes and status)
-        def mock_simulations_side_effect(console, test_id):
+        def mock_simulations_side_effect(test_id, console):
             if test_id == 'test-baseline-456':
                 return [
                     {'simulation_id': 'sim-baseline-1', 'status': 'prevented', 'drift_tracking_code': 'track-001'},
@@ -2366,7 +2366,7 @@ class TestDataFunctions:
         
         mock_get_sims.side_effect = mock_simulations_side_effect
         
-        result = sb_get_test_drifts('test-console', 'test-current-123')
+        result = sb_get_test_drifts('test-current-123', 'test-console')
         
         # Should find no drifts
         assert result['total_drifts'] == 0
@@ -2399,7 +2399,7 @@ class TestDataFunctions:
         }
         
         # Simulations with unknown status transition
-        def mock_simulations_side_effect(console, test_id):
+        def mock_simulations_side_effect(test_id, console):
             if test_id == 'test-baseline-456':
                 return [
                     {'simulation_id': 'sim-baseline-1', 'status': 'custom_status_1', 'drift_tracking_code': 'track-001'}
@@ -2412,7 +2412,7 @@ class TestDataFunctions:
         
         mock_get_sims.side_effect = mock_simulations_side_effect
         
-        result = sb_get_test_drifts('test-console', 'test-current-123')
+        result = sb_get_test_drifts('test-current-123', 'test-console')
         
         # Should detect the drift but with unknown type
         assert result['total_drifts'] == 1
@@ -2447,7 +2447,7 @@ class TestDataFunctions:
         }
         
         # Simulations without drift_tracking_code (should be ignored)
-        def mock_simulations_side_effect(console, test_id):
+        def mock_simulations_side_effect(test_id, console):
             if test_id == 'test-baseline-456':
                 return [
                     {'simulation_id': 'sim-baseline-1', 'status': 'prevented'},  # Missing drift_tracking_code
@@ -2462,7 +2462,7 @@ class TestDataFunctions:
         
         mock_get_sims.side_effect = mock_simulations_side_effect
         
-        result = sb_get_test_drifts('test-console', 'test-current-123')
+        result = sb_get_test_drifts('test-current-123', 'test-console')
         
         # Should only analyze simulations with drift_tracking_code
         assert result['total_drifts'] == 0  # Same status for track-001
@@ -2481,4 +2481,4 @@ class TestDataFunctions:
         mock_get_details.side_effect = Exception("API connection failed")
         
         with pytest.raises(Exception, match="API connection failed"):
-            sb_get_test_drifts('test-console', 'test-123')
+            sb_get_test_drifts('test-123', 'test-console')

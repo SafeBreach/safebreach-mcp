@@ -98,7 +98,7 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
 
 def sb_get_playbook_attacks(
-    console: str,
+    console: str = "default",
     page_number: int = 0,
     name_filter: Optional[str] = None,
     description_filter: Optional[str] = None,
@@ -202,8 +202,8 @@ def sb_get_playbook_attacks(
 
 
 def sb_get_playbook_attack_details(
-    console: str,
     attack_id: int,
+    console: str = "default",
     include_fix_suggestions: bool = False,
     include_tags: bool = False,
     include_parameters: bool = False

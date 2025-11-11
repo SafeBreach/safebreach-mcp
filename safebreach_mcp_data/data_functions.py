@@ -62,7 +62,7 @@ def _get_timestamp_from_keys(test: Dict[str, Any], keys: Iterable[str], default:
 
 
 def sb_get_tests_history(
-    console: str,
+    console: str = "default",
     page_number: int = 0,
     test_type: Optional[str] = None,
     start_date: Optional[int] = None,
@@ -180,7 +180,7 @@ def sb_get_tests_history(
         raise
 
 
-def _get_all_tests_from_cache_or_api(console: str, use_cache: bool = True) -> List[Dict[str, Any]]:
+def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool = True) -> List[Dict[str, Any]]:
     """
     Get all tests from cache or API.
     
@@ -341,9 +341,9 @@ def _apply_ordering(
 
 
 def _find_previous_test_by_name(
-    console: str,
     test_name: str,
-    before_start_time: float
+    before_start_time: float,
+    console: str = "default"
 ) -> Optional[Dict[str, Any]]:
     """
     Fallback helper to locate the most recent test matching ``test_name`` that ended before ``before_start_time``.
@@ -378,7 +378,7 @@ def _find_previous_test_by_name(
     return matching_tests[0]
 
 
-def sb_get_test_details(console: str, test_id: str, include_simulations_statistics: bool = False) -> Dict[str, Any]:
+def sb_get_test_details(test_id: str, console: str = "default", include_simulations_statistics: bool = False) -> Dict[str, Any]:
     """
     Returns the details of a specific test executed on a given SafeBreach management console.
     """
@@ -420,7 +420,7 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
         return_details = get_reduced_test_summary_mapping(test_summary)
                
         if include_simulations_statistics:
-            return_details['simulations_statistics'] = _get_simulation_statistics(console, test_id, test_summary)
+            return_details['simulations_statistics'] = _get_simulation_statistics(test_id, test_summary, console)
 
         return return_details
         
@@ -429,7 +429,7 @@ def sb_get_test_details(console: str, test_id: str, include_simulations_statisti
         raise
 
 
-def _get_simulation_statistics(console: str, test_id: str, test_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _get_simulation_statistics(test_id: str, test_summary: Dict[str, Any], console: str = "default") -> List[Dict[str, Any]]:
     """
     Get simulation statistics for a test.
     
@@ -443,7 +443,7 @@ def _get_simulation_statistics(console: str, test_id: str, test_summary: Dict[st
     """
     try:
         # To coung drifts - get all simulations for the test
-        all_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        all_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
         drifts = 0
         for sim in all_simulations:
             is_drift = sim.get('is_drifted', False)
@@ -516,8 +516,8 @@ def _get_simulation_statistics(console: str, test_id: str, test_summary: Dict[st
 
 
 def sb_get_test_simulations(
-    console: str,
     test_id: str,
+    console: str = "default",
     page_number: int = 0,
     status_filter: Optional[str] = None,
     start_time: Optional[int] = None,
@@ -559,7 +559,7 @@ def sb_get_test_simulations(
     
     try:
         # Get all simulations from cache or API
-        all_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        all_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
         
         # Apply filters
         filtered_simulations = _apply_simulation_filters(
@@ -610,7 +610,7 @@ def sb_get_test_simulations(
         raise
 
 
-def _get_all_simulations_from_cache_or_api(console: str, test_id: str) -> List[Dict[str, Any]]:
+def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default") -> List[Dict[str, Any]]:
     """
     Get all simulations from cache or API.
     
@@ -783,8 +783,8 @@ def _safe_time_compare(simulation: Dict[str, Any], compare_time: int, operator) 
 
 
 def sb_get_simulation_details(
-    console: str,
     simulation_id: str,
+    console: str = "default",
     include_mitre_techniques: bool = False,
     include_full_attack_logs: bool = False,
     include_drift_info: bool = False
@@ -872,7 +872,7 @@ def sb_get_simulation_details(
         raise
 
 
-def _get_all_security_control_events_from_cache_or_api(console: str, test_id: str, simulation_id: str) -> List[Dict[str, Any]]:
+def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_id: str, console: str = "default") -> List[Dict[str, Any]]:
     """
     Get all security control events from cache or API.
     
@@ -1005,9 +1005,9 @@ def _apply_security_control_events_filters(
 
 
 def sb_get_security_controls_events(
-    console: str,
     test_id: str,
     simulation_id: str,
+    console: str = "default",
     page_number: int = 0,
     product_name_filter: Optional[str] = None,
     vendor_name_filter: Optional[str] = None,
@@ -1046,7 +1046,7 @@ def sb_get_security_controls_events(
     
     try:
         # Get all security control events from cache or API
-        all_events = _get_all_security_control_events_from_cache_or_api(console, test_id, simulation_id)
+        all_events = _get_all_security_control_events_from_cache_or_api(test_id, simulation_id, console)
         
         # Apply filters
         filtered_events = _apply_security_control_events_filters(
@@ -1105,10 +1105,10 @@ def sb_get_security_controls_events(
 
 
 def sb_get_security_control_event_details(
-    console: str,
     test_id: str,
     simulation_id: str,
     event_id: str,
+    console: str = "default",
     verbosity_level: str = "standard"
 ) -> Dict[str, Any]:
     """
@@ -1147,7 +1147,7 @@ def sb_get_security_control_event_details(
     
     try:
         # Get all security control events from cache or API
-        all_events = _get_all_security_control_events_from_cache_or_api(console, test_id, simulation_id)
+        all_events = _get_all_security_control_events_from_cache_or_api(test_id, simulation_id, console)
         
         # Find the specific event
         target_event = None
@@ -1189,7 +1189,7 @@ def sb_get_security_control_event_details(
 findings_cache = {}
 
 
-def _get_all_findings_from_cache_or_api(console: str, test_id: str) -> List[Dict[str, Any]]:
+def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") -> List[Dict[str, Any]]:
     """
     Get all findings from cache or SafeBreach API.
     
@@ -1302,8 +1302,8 @@ def _apply_findings_filters(
 
 
 def sb_get_test_findings_counts(
-    console: str,
     test_id: str,
+    console: str = "default",
     attribute_filter: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -1319,7 +1319,7 @@ def sb_get_test_findings_counts(
     """
     try:
         # Get all findings from cache or API
-        all_findings = _get_all_findings_from_cache_or_api(console, test_id)
+        all_findings = _get_all_findings_from_cache_or_api(test_id, console)
         
         # Apply filters
         filtered_findings = _apply_findings_filters(
@@ -1363,8 +1363,8 @@ def sb_get_test_findings_counts(
 
 
 def sb_get_test_findings_details(
-    console: str,
     test_id: str,
+    console: str = "default",
     page_number: int = 0,
     attribute_filter: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -1386,7 +1386,7 @@ def sb_get_test_findings_details(
     
     try:
         # Get all findings from cache or API
-        all_findings = _get_all_findings_from_cache_or_api(console, test_id)
+        all_findings = _get_all_findings_from_cache_or_api(test_id, console)
         
         # Apply filters
         filtered_findings = _apply_findings_filters(
@@ -1447,7 +1447,7 @@ def sb_get_test_findings_details(
         raise
 
 
-def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
+def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]:
     """
     Analyze drift between the given test and the most recent previous test with the same name.
     
@@ -1485,7 +1485,7 @@ def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
     try:
         # Step 1: Get details of the current test to find its name and start_time
         logger.info("Getting test details for test '%s' on console '%s'", test_id, console)
-        current_test = sb_get_test_details(console, test_id)
+        current_test = sb_get_test_details(test_id, console)
         
         if not current_test or 'name' not in current_test:
             return {
@@ -1521,9 +1521,9 @@ def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
             baseline_candidate = baseline_entry[0]
         else:
             baseline_candidate = _find_previous_test_by_name(
-                console=console,
                 test_name=test_name,
-                before_start_time=current_start_time
+                before_start_time=current_start_time,
+                console=console
             )
 
         if not baseline_candidate:
@@ -1540,10 +1540,10 @@ def sb_get_test_drifts(console: str, test_id: str) -> Dict[str, Any]:
         
         # Step 3: Get all simulations for both tests
         logger.info("Fetching all simulations for baseline test '%s'", baseline_test_id)
-        baseline_simulations = _get_all_simulations_from_cache_or_api(console, baseline_test_id)
+        baseline_simulations = _get_all_simulations_from_cache_or_api(baseline_test_id, console)
         
         logger.info("Fetching all simulations for current test '%s'", test_id)
-        current_simulations = _get_all_simulations_from_cache_or_api(console, test_id)
+        current_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
         
         # Step 4: Group simulations by drift_tracking_code
         baseline_by_drift_code = {}

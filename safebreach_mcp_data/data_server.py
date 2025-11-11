@@ -50,7 +50,7 @@ Parameters: console (required), page_number (default 0), test_type ('validate'/'
 status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc')"""
         )
         async def get_tests_history_tool(
-            console: str,
+            console: str = "default",
             page_number: int = 0,
             test_type: Optional[str] = None,
             start_date: Optional[int] = None,
@@ -77,11 +77,11 @@ status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name 
             description="Returns the full details for a specific test by id executed on a given Safebreach management console. Optionally includes detailed simulation statistics."
         )
         async def get_test_details_tool(
-            console: str,
             test_id: str,
+            console: str = "default",
             include_simulations_statistics: bool = False
         ) -> dict:
-            return sb_get_test_details(console, test_id, include_simulations_statistics)
+            return sb_get_test_details(test_id, console, include_simulations_statistics)
         
         @self.mcp.tool(
             name="get_test_simulations",
@@ -91,8 +91,8 @@ Parameters: console (required), test_id (required), page_number (default 0), sta
 playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations)"""
         )
         async def get_test_simulations_tool(
-            console: str,
             test_id: str,
+            console: str = "default",
             page_number: int = 0,
             status_filter: Optional[str] = None,
             start_time: Optional[int] = None,
@@ -102,8 +102,8 @@ playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial na
             drifted_only: bool = False
         ) -> dict:
             return sb_get_test_simulations(
-                console=console,
                 test_id=test_id,
+                console=console,
                 page_number=page_number,
                 status_filter=status_filter,
                 start_time=start_time,
@@ -121,15 +121,15 @@ Parameters: console (required), simulation_id (required), include_mitre_techniqu
 include_full_attack_logs (bool, default False), include_drift_info (bool, default False)"""
         )
         async def get_test_simulation_details_tool(
-            console: str,
             simulation_id: str,
+            console: str = "default",
             include_mitre_techniques: bool = False,
             include_full_attack_logs: bool = False,
             include_drift_info: bool = False
         ) -> dict:
             return sb_get_simulation_details(
-                console,
                 simulation_id,
+                console,
                 include_mitre_techniques=include_mitre_techniques,
                 include_full_attack_logs=include_full_attack_logs,
                 include_drift_info=include_drift_info
@@ -145,9 +145,9 @@ product_name_filter (partial match), vendor_name_filter (partial match), securit
 connector_name_filter (partial match), source_host_filter (partial match), destination_host_filter (partial match)"""
         )
         async def get_security_controls_events_tool(
-            console: str,
             test_id: str,
             simulation_id: str,
+            console: str = "default",
             page_number: int = 0,
             product_name_filter: Optional[str] = None,
             vendor_name_filter: Optional[str] = None,
@@ -157,9 +157,9 @@ connector_name_filter (partial match), source_host_filter (partial match), desti
             destination_host_filter: Optional[str] = None
         ) -> dict:
             return sb_get_security_controls_events(
-                console=console,
                 test_id=test_id,
                 simulation_id=simulation_id,
+                console=console,
                 page_number=page_number,
                 product_name_filter=product_name_filter,
                 vendor_name_filter=vendor_name_filter,
@@ -178,17 +178,17 @@ Parameters: console (required), test_id (required), simulation_id (required), ev
 verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed', 'full')"""
         )
         async def get_security_control_event_details_tool(
-            console: str,
             test_id: str,
             simulation_id: str,
             event_id: str,
+            console: str = "default",
             verbosity_level: str = "standard"
         ) -> dict:
             return sb_get_security_control_event_details(
-                console=console,
                 test_id=test_id,
                 simulation_id=simulation_id,
                 event_id=event_id,
+                console=console,
                 verbosity_level=verbosity_level
             )
         
@@ -200,13 +200,13 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             Parameters: console (required), test_id (required), attribute_filter (optional - filter by any finding attribute with partial match)"""
         )
         async def get_test_findings_counts_tool(
-            console: str,
             test_id: str,
+            console: str = "default",
             attribute_filter: Optional[str] = None
         ) -> dict:
             return sb_get_test_findings_counts(
-                console=console,
                 test_id=test_id,
+                console=console,
                 attribute_filter=attribute_filter
             )
         
@@ -218,14 +218,14 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             Parameters: console (required), test_id (required), page_number (default 0), attribute_filter (optional - filter by any finding attribute with partial match)"""
         )
         async def get_test_findings_details_tool(
-            console: str,
             test_id: str,
+            console: str = "default",
             page_number: int = 0,
             attribute_filter: Optional[str] = None
         ) -> dict:
             return sb_get_test_findings_details(
-                console=console,
                 test_id=test_id,
+                console=console,
                 page_number=page_number,
                 attribute_filter=attribute_filter
             )
@@ -239,12 +239,12 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             Parameters: console (required), test_id (required - the test to analyze for drifts)"""
         )
         async def get_test_drifts_tool(
-            console: str,
-            test_id: str
+            test_id: str,
+            console: str = "default"
         ) -> dict:
             return sb_get_test_drifts(
-                console=console,
-                test_id=test_id
+                test_id=test_id,
+                console=console
             )
 
 def parse_external_config(server_type: str) -> bool:

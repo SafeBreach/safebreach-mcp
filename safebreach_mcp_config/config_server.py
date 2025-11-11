@@ -41,7 +41,7 @@ Parameters: console (required), status_filter ('connected'/'disconnected'/'enabl
 label_filter (partial label match), os_type_filter (OS type match), critical_only (True/False/None), order_by ('name'/'id'/'version'/'isConnected'/'isEnabled'), order_direction ('asc'/'desc')"""
         )
         async def get_console_simulators_tool(
-            console: str,
+            console: str = "default",
             status_filter: Optional[str] = None,
             name_filter: Optional[str] = None,
             label_filter: Optional[str] = None,
@@ -71,14 +71,14 @@ label_filter (partial label match), os_type_filter (OS type match), critical_onl
             name="get_simulator_details",
             description="Gets the full details of a specific Safebreach simulator and the host on which it is running"
         )
-        async def get_simulator_details_tool(console: str, simulator_id: str) -> dict:
+        async def get_simulator_details_tool(simulator_id: str, console: str = "default") -> dict:
             # In single-tenant mode, auto-resolve any unknown console name to SAFEBREACH_CONSOLE_NAME
             from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
             if not safebreach_envs:  # Single-tenant mode (no hardcoded environments)
                 console_name = get_console_name()
                 if console_name != 'default' and console not in safebreach_envs:
                     console = console_name
-            return sb_get_simulator_details(console, simulator_id)
+            return sb_get_simulator_details(simulator_id, console)
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""

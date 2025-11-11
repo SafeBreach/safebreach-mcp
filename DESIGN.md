@@ -16,9 +16,9 @@ The `get_tests_history` function in the Data Server now includes:
 
 ### Function Signature (Data Server)
 ```python
-def sb_get_tests_history(
-    console: str, 
+def sb_get_tests_history( 
     page_number: int = 0,
+    console: Optional[str] = "default",
     test_type: Optional[str] = None,           # "validate", "propagate", or None (all)
     start_date: Optional[int] = None,          # Unix timestamp
     end_date: Optional[int] = None,            # Unix timestamp
@@ -146,9 +146,9 @@ The `get_test_simulations` function in the Data Server now includes:
 ### Function Signature (Data Server)
 ```python
 def sb_get_test_simulations(
-    console: str, 
     test_id: str, 
     page_number: int = 0,
+    console: Optional[str] = "default",
     status_filter: Optional[str] = None,           # Filter by simulation status
     start_time: Optional[int] = None,              # Filter simulations with end_time >= start_time
     end_time: Optional[int] = None,                # Filter simulations with end_time <= end_time

@@ -149,7 +149,7 @@ class TestPlaybookIntegration:
         
         # Step 1: Get list of attacks with filtering
         attacks_result = sb_get_playbook_attacks(
-            console='test-console',
+            'test-console',
             page_number=0,
             name_filter='DNS'
         )
@@ -163,8 +163,8 @@ class TestPlaybookIntegration:
         
         # Step 2: Get detailed information for the found attack
         attack_details = sb_get_playbook_attack_details(
-            console='test-console',
-            attack_id=1027,
+            attack_id=1027, console='test-console',
+            
             include_fix_suggestions=True,
             include_tags=True,
             include_parameters=True
@@ -189,7 +189,7 @@ class TestPlaybookIntegration:
         
         # Scenario 1: Filter by description and date range
         result1 = sb_get_playbook_attacks(
-            console='test-console',
+            
             description_filter='HTTP',
             modified_date_start='2024-01-01T00:00:00.000Z',
             modified_date_end='2024-12-31T23:59:59.999Z'
@@ -200,7 +200,7 @@ class TestPlaybookIntegration:
         
         # Scenario 2: Filter by ID range and tag-related name
         result2 = sb_get_playbook_attacks(
-            console='test-console',
+            
             id_min=3000,
             id_max=5000,
             name_filter='Windows'
@@ -211,7 +211,7 @@ class TestPlaybookIntegration:
         
         # Scenario 3: Complex date and name filtering
         result3 = sb_get_playbook_attacks(
-            console='test-console',
+            
             published_date_start='2018-01-01T00:00:00.000Z',
             published_date_end='2019-12-31T23:59:59.999Z',
             name_filter='SSH'
@@ -229,7 +229,7 @@ class TestPlaybookIntegration:
         # The comprehensive dataset has 2 attacks with 'attack' in name: SSH brute force attack, Windows registry manipulation
         # But let's be more specific to avoid test brittleness
         all_results = sb_get_playbook_attacks(
-            console='test-console',
+            
             name_filter='SSH'  # More specific filter
         )
         assert all_results['total_attacks'] == 1  # Only SSH attack should match
@@ -241,7 +241,7 @@ class TestPlaybookIntegration:
         
         # Page 0: first 10 attacks
         page0_result = sb_get_playbook_attacks(
-            console='test-console',
+            
             page_number=0
         )
         assert page0_result['page_number'] == 0
@@ -251,7 +251,7 @@ class TestPlaybookIntegration:
         
         # Page 1: remaining 2 attacks
         page1_result = sb_get_playbook_attacks(
-            console='test-console',
+            
             page_number=1
         )
         assert page1_result['page_number'] == 1
@@ -266,7 +266,7 @@ class TestPlaybookIntegration:
         
         # Test minimal verbosity (default)
         minimal_details = sb_get_playbook_attack_details(
-            console='test-console',
+            
             attack_id=attack_id
         )
         
@@ -277,7 +277,7 @@ class TestPlaybookIntegration:
         
         # Test with fix suggestions only
         with_fixes = sb_get_playbook_attack_details(
-            console='test-console',
+            
             attack_id=attack_id,
             include_fix_suggestions=True
         )
@@ -287,7 +287,7 @@ class TestPlaybookIntegration:
         
         # Test with all verbosity options
         full_details = sb_get_playbook_attack_details(
-            console='test-console',
+            
             attack_id=attack_id,
             include_fix_suggestions=True,
             include_tags=True,
@@ -306,7 +306,7 @@ class TestPlaybookIntegration:
         
         # Test filtering that returns no results
         no_results = sb_get_playbook_attacks(
-            console='test-console',
+            
             name_filter='NonExistentAttack'
         )
         
@@ -317,7 +317,7 @@ class TestPlaybookIntegration:
         # Test getting details for non-existent attack
         with pytest.raises(ValueError) as exc_info:
             sb_get_playbook_attack_details(
-                console='test-console',
+                
                 attack_id=9999
             )
         
@@ -326,7 +326,7 @@ class TestPlaybookIntegration:
         
         # Test invalid page number
         invalid_page = sb_get_playbook_attacks(
-            console='test-console',
+            
             page_number=100
         )
         
@@ -343,12 +343,12 @@ class TestPlaybookIntegration:
         assert mock_get_all_attacks.call_count == 1
         
         # Second call should use cache
-        second_call = sb_get_playbook_attacks('test-console', name_filter='DNS')
+        second_call = sb_get_playbook_attacks(console='test-console', name_filter='DNS')
         # Allow for some cache setup calls, but shouldn't significantly increase
         initial_call_count = mock_get_all_attacks.call_count
         
         # Get attack details should also use cache
-        details_call = sb_get_playbook_attack_details('test-console', 1027)
+        details_call = sb_get_playbook_attack_details(1027, 'test-console')
         # Should not have significantly more calls due to caching
         assert mock_get_all_attacks.call_count <= initial_call_count + 1
         
@@ -370,7 +370,7 @@ class TestPlaybookIntegration:
         
         # Test error propagation in get_playbook_attack_details
         with pytest.raises(ValueError) as exc_info:
-            sb_get_playbook_attack_details('invalid-console', 1027)
+            sb_get_playbook_attack_details(1027, 'invalid-console')
         assert "Console not found" in str(exc_info.value)
     
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
@@ -384,8 +384,8 @@ class TestPlaybookIntegration:
         
         # Get same attack details
         attack_details = sb_get_playbook_attack_details(
-            'test-console',
-            first_attack_in_list['id']
+            first_attack_in_list['id'],
+            'test-console'
         )
         
         # Verify consistency of basic fields

@@ -41,7 +41,7 @@ def e2e_console():
 def sample_test_id(e2e_console):
     """Get a real test ID from the console for E2E testing."""
     # Get the first test from history to use for detailed testing
-    tests_response = sb_get_tests_history(e2e_console, page_number=0, test_type="propagate")
+    tests_response = sb_get_tests_history(console=e2e_console, page_number=0, test_type="propagate")
     
     if 'tests_in_page' not in tests_response or not tests_response['tests_in_page']:
         pytest.skip(f"No tests found in console {e2e_console} for E2E testing")
@@ -55,7 +55,7 @@ def sample_test_id(e2e_console):
 def sample_simulation_id(e2e_console, sample_test_id):
     """Get a real simulation ID from the console for E2E testing."""
     # Get simulations from the sample test
-    simulations_response = sb_get_test_simulations(e2e_console, sample_test_id, page_number=0)
+    simulations_response = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
     
     if 'simulations_in_page' not in simulations_response or not simulations_response['simulations_in_page']:
         pytest.skip(f"No simulations found in test {sample_test_id} for E2E testing")
@@ -71,7 +71,7 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_tests_history_e2e(self, e2e_console):
         """Test getting real test history from SafeBreach console."""
-        result = sb_get_tests_history(e2e_console, page_number=0)
+        result = sb_get_tests_history(console=e2e_console, page_number=0)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -90,7 +90,7 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_test_details_e2e(self, e2e_console, sample_test_id):
         """Test getting real test details from SafeBreach console."""
-        result = sb_get_test_details(e2e_console, sample_test_id)
+        result = sb_get_test_details(sample_test_id, console=e2e_console)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -103,8 +103,8 @@ class TestDataServerE2E:
     def test_get_test_details_with_statistics_e2e(self, e2e_console, sample_test_id):
         """Test getting real test details with simulation statistics."""
         result = sb_get_test_details(
-            e2e_console, 
-            sample_test_id, 
+            sample_test_id,
+            console=e2e_console,
             include_simulations_statistics=True
         )
         
@@ -117,7 +117,7 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_test_simulations_e2e(self, e2e_console, sample_test_id):
         """Test getting real test simulations from SafeBreach console."""
-        result = sb_get_test_simulations(e2e_console, sample_test_id, page_number=0)
+        result = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -136,8 +136,8 @@ class TestDataServerE2E:
     def test_get_test_simulation_details_basic_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
         """Test getting basic simulation details from SafeBreach console."""
         result = sb_get_simulation_details(
-            e2e_console, 
-            sample_simulation_id
+            sample_simulation_id,
+            console=e2e_console
         )
         
         # Verify response structure
@@ -149,8 +149,8 @@ class TestDataServerE2E:
     def test_get_test_simulation_details_with_mitre_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
         """Test getting simulation details with MITRE techniques - THIS SHOULD HIT YOUR BREAKPOINT!"""
         result = sb_get_simulation_details(
-            e2e_console, 
             sample_simulation_id,
+            console=e2e_console,
             include_mitre_techniques=True
         )
         
@@ -167,8 +167,8 @@ class TestDataServerE2E:
     def test_get_test_simulation_details_with_attack_logs_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
         """Test getting simulation details with attack logs - comprehensive validation."""
         result = sb_get_simulation_details(
-            e2e_console,
-            sample_simulation_id, 
+            sample_simulation_id,
+            console=e2e_console,
             include_full_attack_logs=True
         )
         
@@ -238,8 +238,8 @@ class TestDataServerE2E:
     def test_get_test_simulation_details_full_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
         """Test getting simulation details with all extensions - THIS WILL DEFINITELY HIT YOUR BREAKPOINT!"""
         result = sb_get_simulation_details(
-            e2e_console,
             sample_simulation_id,
+            console=e2e_console,
             include_mitre_techniques=True,
             include_full_attack_logs=True
         )
@@ -260,8 +260,8 @@ class TestDataServerE2E:
         """Test attack logs functionality across multiple simulations to ensure broad compatibility."""
         # Get simulations from the test
         simulations_result = sb_get_test_simulations(
-            e2e_console,
-            sample_test_id, 
+            sample_test_id,
+            console=e2e_console,
             page_number=0
         )
         
@@ -281,8 +281,8 @@ class TestDataServerE2E:
             
             try:
                 result = sb_get_simulation_details(
-                    e2e_console,
                     simulation_id,
+                    console=e2e_console,
                     include_full_attack_logs=True
                 )
                 
@@ -349,9 +349,9 @@ class TestDataServerE2E:
     def test_get_security_controls_events_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
         """Test getting real security control events."""
         result = sb_get_security_controls_events(
-            e2e_console,
             sample_test_id,
             sample_simulation_id,
+            console=e2e_console,
             page_number=0
         )
         
@@ -364,7 +364,7 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_test_findings_counts_e2e(self, e2e_console, sample_test_id):
         """Test getting real test findings counts."""
-        result = sb_get_test_findings_counts(e2e_console, sample_test_id)
+        result = sb_get_test_findings_counts(sample_test_id, console=e2e_console)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -375,8 +375,8 @@ class TestDataServerE2E:
     def test_get_test_findings_details_e2e(self, e2e_console, sample_test_id):
         """Test getting real test findings details."""
         result = sb_get_test_findings_details(
-            e2e_console, 
             sample_test_id,
+            console=e2e_console,
             page_number=0
         )
         
@@ -390,19 +390,25 @@ class TestDataServerE2E:
     def test_get_test_drifts_e2e(self, e2e_console):
         """Test getting real test drift analysis using known test data.
         
-        This test uses test ID 1754035200179.2 which has documented
-        drift patterns when compared to its previous test with the same name:
-        - 32 simulations: prevented → no_result
-        - 10 simulations: detected → no_result
-        - 6 simulations: missed → no_result
-        - 2 simulations: stopped → no_result
-        - Plus simulations present only in the baseline (≈14) or only in the current run (≈7)
-        Total: ~71 expected drifts (status changes + exclusives)
+        This test uses test ID 1762754400605.6 (test name: "Stav - Exfiltration Parallel ") 
+        which has significant drift patterns when compared to its previous test with the same name 
+        (baseline test ID: 1762149600283.2):
+        
+        Actual drift analysis results:
+        - missed-logged: 312 simulations (positive impact)
+        - missed-no_result: 49 simulations (neutral impact)  
+        - logged-no_result: 19 simulations (negative impact)
+        - stopped-no_result: 1 simulations (negative impact)
+        - no_result-stopped: 3 simulations (positive impact)
+        - missed-detected: 2 simulations (positive impact)
+        - detected-logged: 1 simulations (negative impact)
+        - Plus 490 simulations exclusive to baseline, 134 exclusive to current
+        Total: 1011 drifts (387 status changes + 624 exclusive simulations)
         """
         # Use specific test ID that has known drift patterns
-        test_id = "1754035200179.2"
+        test_id = "1762754400605.6"
         
-        result = sb_get_test_drifts(e2e_console, test_id)
+        result = sb_get_test_drifts(test_id, console=e2e_console)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -421,19 +427,20 @@ class TestDataServerE2E:
         assert 'current_simulations_count' in metadata
         assert 'analyzed_at' in metadata
         
-        # Expected drift patterns based on provided data:
-        # - 32 simulations: prevented → no_result  
-        # - 10 simulations: detected → no_result
-        # - 6 simulations: missed → no_result
-        # - 2 simulations: stopped → no_result
-        # - Additional simulations appear/disappear between runs
-        # Total expected: roughly 71 drifts (including exclusives)
+        # Verify expected metadata values based on actual data
+        assert metadata['baseline_test_id'] == "1762149600283.2"
+        assert metadata['test_name'] == "Stav - Exfiltration Parallel "
+        assert metadata['current_simulations_count'] == 1238
+        assert metadata['baseline_simulations_count'] == 1594
+        assert metadata['shared_drift_codes'] == 1104
+        assert metadata['status_drifts'] == 387
+        assert len(metadata['simulations_exclusive_to_baseline']) == 490
+        assert len(metadata['simulations_exclusive_to_current']) == 134
         
-        # Verify we have the expected number of drifts (approximately)
-        # Allow some flexibility as real data may vary slightly
+        # Verify we have the expected total number of drifts
+        # Based on actual analysis: 1011 total drifts
         total_drifts = result['total_drifts']
-        assert total_drifts >= 60, f"Expected at least 60 drifts, got {total_drifts}"
-        assert total_drifts <= 85, f"Expected at most 85 drifts, got {total_drifts}"
+        assert total_drifts == 1011, f"Expected exactly 1011 drifts, got {total_drifts}"
         
         # Count drift types to verify expected patterns
         drift_type_counts = {}
@@ -451,21 +458,31 @@ class TestDataServerE2E:
                 assert 'former_simulation_id' in drifted_sim
                 assert 'current_simulation_id' in drifted_sim
         
-        # Verify some of the major expected drift patterns exist
-        # Note: Exact counts may vary due to data changes over time
-        # Drift types are formatted as "{from_status}-{to_status}" with underscores replacing hyphens
-        expected_patterns = [
-            'prevented-no_result',  # Expected: ~32
-            'detected-no_result',   # Expected: ~10
-            'missed-no_result',     # Expected: ~6
-            'stopped-no_result',    # Expected: ~2
-        ]
+        # Verify the major expected drift patterns exist with expected counts
+        # Based on actual analysis of test ID 1762754400605.6
+        expected_drift_counts = {
+            'missed-logged': 312,      # Positive impact: missed → logged  
+            'missed-no_result': 49,    # Neutral impact: missed → no_result
+            'logged-no_result': 19,    # Negative impact: logged → no_result
+            'stopped-no_result': 1,    # Negative impact: stopped → no_result
+            'no_result-stopped': 3,    # Positive impact: no_result → stopped
+            'missed-detected': 2,      # Positive impact: missed → detected
+            'detected-logged': 1,      # Negative impact: detected → logged
+        }
         
-        # Verify at least some expected patterns are present
+        # Verify all expected drift patterns are present with exact counts
         found_patterns = set(drift_type_counts.keys())
-        expected_patterns_set = set(expected_patterns)
-        overlap = found_patterns.intersection(expected_patterns_set)
-        assert len(overlap) >= 4, f"Expected at least 4 matching patterns, found overlap: {overlap}"
+        expected_patterns = set(expected_drift_counts.keys())
+        
+        assert found_patterns == expected_patterns, \
+            f"Expected patterns {expected_patterns}, found {found_patterns}. " \
+            f"Missing: {expected_patterns - found_patterns}, Extra: {found_patterns - expected_patterns}"
+        
+        # Verify exact counts for each drift type
+        for drift_type, expected_count in expected_drift_counts.items():
+            actual_count = drift_type_counts[drift_type]
+            assert actual_count == expected_count, \
+                f"Expected {expected_count} simulations for {drift_type}, got {actual_count}"
         
         # Verify security impact classification exists and is valid
         security_impacts = {drift['security_impact'] for drift in result['drifts'].values()}

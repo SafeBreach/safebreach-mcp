@@ -320,7 +320,7 @@ class TestConfigFunctions:
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
         
-        result = sb_get_simulator_details("test-console", "sim1")
+        result = sb_get_simulator_details("sim1", "test-console")
         
         assert "id" in result
         assert result["id"] == "sim1"
@@ -338,7 +338,7 @@ class TestConfigFunctions:
         
         # The function should now raise an exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_simulator_details("test-console", "sim1")
+            sb_get_simulator_details("sim1", "test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -357,7 +357,7 @@ class TestConfigFunctions:
         """Test unknown console validation in sb_get_simulator_details."""
         # Test sb_get_simulator_details - should raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            sb_get_simulator_details(console="unknown_console", simulator_id="sim123")
+            sb_get_simulator_details(simulator_id="sim123", console="unknown_console")
         assert "not found" in str(exc_info.value)
     
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
@@ -381,19 +381,19 @@ class TestConfigFunctions:
             
             # Test sb_get_simulator_details - should raise ClientError
             with pytest.raises(ClientError) as exc_info:
-                sb_get_simulator_details(console="test-console", simulator_id="sim123")
+                sb_get_simulator_details(simulator_id="sim123", console="test-console")
             assert "ParameterNotFound" in str(exc_info.value)
     
     def test_sb_get_simulator_details_empty_simulator_id(self):
         """Test validation for empty simulator_id parameter."""
         # Test empty string
         with pytest.raises(ValueError) as exc_info:
-            sb_get_simulator_details("test-console", "")
+            sb_get_simulator_details("", "test-console")
         assert "simulator_id parameter is required and cannot be empty" in str(exc_info.value)
         
         # Test whitespace-only string
         with pytest.raises(ValueError) as exc_info:
-            sb_get_simulator_details("test-console", "   ")
+            sb_get_simulator_details("   ", "test-console")
         assert "simulator_id parameter is required and cannot be empty" in str(exc_info.value)
     
     def test_sb_get_console_simulators_invalid_order_by(self):

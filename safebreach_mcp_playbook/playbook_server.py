@@ -44,7 +44,7 @@ id_min (minimum ID), id_max (maximum ID), modified_date_start (ISO date), modifi
 published_date_start (ISO date), published_date_end (ISO date)"""
         )
         def get_playbook_attacks(
-            console: str,
+            console: str = "default",
             page_number: int = 0,
             name_filter: Optional[str] = None,
             description_filter: Optional[str] = None,
@@ -119,8 +119,8 @@ Parameters: console (required), attack_id (required), include_fix_suggestions (d
 include_tags (default False), include_parameters (default False)"""
         )
         def get_playbook_attack_details(
-            console: str,
             attack_id: int,
+            console: str = "default",
             include_fix_suggestions: bool = False,
             include_tags: bool = False,
             include_parameters: bool = False
@@ -128,8 +128,8 @@ include_tags (default False), include_parameters (default False)"""
             """Get detailed information for a specific playbook attack."""
             try:
                 result = sb_get_playbook_attack_details(
-                    console=console,
                     attack_id=attack_id,
+                    console=console,
                     include_fix_suggestions=include_fix_suggestions,
                     include_tags=include_tags,
                     include_parameters=include_parameters

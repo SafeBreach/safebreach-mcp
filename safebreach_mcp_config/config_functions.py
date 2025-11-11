@@ -24,7 +24,7 @@ CACHE_TTL = 3600  # 1 hour in seconds
 
 
 def sb_get_console_simulators(
-    console: str,
+    console: str = "default",
     status_filter: Optional[str] = None,
     name_filter: Optional[str] = None,
     label_filter: Optional[str] = None,
@@ -273,7 +273,7 @@ def _apply_simulator_ordering(
     return sorted(simulators, key=get_sort_key, reverse=reverse)
 
 
-def sb_get_simulator_details(console: str, simulator_id: str) -> Dict[str, Any]:
+def sb_get_simulator_details(simulator_id: str, console: str = "default") -> Dict[str, Any]:
     """
     Returns the full details of a specific Safebreach simulator linked to a given Safebreach management console.
     """
