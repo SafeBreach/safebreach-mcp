@@ -22,7 +22,8 @@ from .data_functions import (
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
-    sb_get_test_drifts
+    sb_get_test_drifts,
+    sb_get_execution_history_details
 )
 
 logger = logging.getLogger(__name__)
@@ -244,6 +245,25 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         ) -> dict:
             return sb_get_test_drifts(
                 test_id=test_id,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="get_execution_history_details",
+            description="""Retrieves detailed execution history for a specific simulation including comprehensive logs (~40KB LOGS field).
+            Primary use case: Detailed log analysis, troubleshooting failed simulations, step-by-step execution analysis.
+            Returns: logs (detailed simulator logs), simulation_steps (structured execution steps), execution_times, status, attack_info, host_info.
+            Parameters: simulation_id (required - e.g., '1477531'), plan_test_id (required - planRunId, e.g., '1764165600525.2'), console (default: 'default').
+            Note: Results are cached for 1 hour for performance. Use this for log analysis; use get_simulation_details for result summaries with enrichment."""
+        )
+        async def get_execution_history_details_tool(
+            simulation_id: str,
+            plan_test_id: str,
+            console: str = "default"
+        ) -> dict:
+            return sb_get_execution_history_details(
+                simulation_id=simulation_id,
+                plan_test_id=plan_test_id,
                 console=console
             )
 

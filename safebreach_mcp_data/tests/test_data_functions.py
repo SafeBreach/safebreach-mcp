@@ -18,6 +18,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
     sb_get_test_drifts,
+    sb_get_execution_history_details,
     _get_all_tests_from_cache_or_api,
     _apply_filters,
     _apply_ordering,
@@ -29,10 +30,13 @@ from safebreach_mcp_data.data_functions import (
     _get_all_findings_from_cache_or_api,
     _apply_findings_filters,
     _find_previous_test_by_name,
+    _get_execution_history_from_cache_or_api,
+    _fetch_execution_history_from_api,
     tests_cache,
     simulations_cache,
     security_control_events_cache,
     findings_cache,
+    execution_history_cache,
     CACHE_TTL,
     PAGE_SIZE
 )
@@ -47,6 +51,7 @@ class TestDataFunctions:
         simulations_cache.clear()
         security_control_events_cache.clear()
         findings_cache.clear()
+        execution_history_cache.clear()
     
     @pytest.fixture
     def mock_test_data(self):
@@ -2479,6 +2484,224 @@ class TestDataFunctions:
         """Test drift analysis when API calls fail."""
         # Simulate API error
         mock_get_details.side_effect = Exception("API connection failed")
-        
+
         with pytest.raises(Exception, match="API connection failed"):
             sb_get_test_drifts('test-123', 'test-console')
+
+    # Execution History Details Tests
+
+    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
+    def test_sb_get_execution_history_details_success(self, mock_fetch):
+        """Test successful execution history retrieval."""
+        # Mock API response with structure from simulation_response.json
+        mock_response = {
+            'id': '1477531',
+            'runId': '1764165600525.2',
+            'planRunId': '1764165600525.2',
+            'status': 'SUCCESS',
+            'finalStatus': 'logged',
+            'startTime': '2025-11-26T14:00:35.809Z',
+            'endTime': '2025-11-26T14:01:05.685Z',
+            'executionTime': '2025-11-26T14:01:05.685Z',
+            'securityAction': 'log_only',
+            'jobId': 1477531,
+            'taskId': 1324910,
+            'methodId': 39837,
+            'moveId': 11318,
+            'moveName': 'Write File to Disk',
+            'moveDesc': 'Write a file to disk and verify it persists',
+            'protocol': 'N/A',
+            'attackerNodeId': '3b6e04fb-828c-4017-84eb-0a898416f5ad',
+            'attackerNodeName': 'gold-simulator',
+            'targetNodeId': '3b6e04fb-828c-4017-84eb-0a898416f5ad',
+            'targetNodeName': 'gold-simulator',
+            'dataObj': {
+                'data': [[{
+                    'id': '3b6e04fb-828c-4017-84eb-0a898416f5ad',
+                    'nodeNameInMove': 'gold',
+                    'state': 'finished',
+                    'details': {
+                        'DETAILS': 'The task action finished running successfully',
+                        'ERROR': '',
+                        'LOGS': 'Sample log data here\n2025-11-26 14:00:37.607 - INFO: Starting simulation',
+                        'OUTPUT': '',
+                        'STATUS': 'DONE',
+                        'CODE': 0,
+                        'SIMULATION_START_TIME': '2025-11-26T14:00:37.817Z',
+                        'SIMULATION_END_TIME': '2025-11-26T14:01:05.419Z',
+                        'STARTUP_DURATION': 1.291,
+                        'SIMULATION_STEPS': [
+                            {
+                                'level': 'INFO',
+                                'message': 'Simulation started',
+                                'time': '2025-11-26T14:00:37.817Z',
+                                'params': {'process_id': 22440}
+                            }
+                        ]
+                    }
+                }]]
+            }
+        }
+        mock_fetch.return_value = mock_response
+
+        # Call the function
+        result = sb_get_execution_history_details(
+            simulation_id='1477531',
+            plan_test_id='1764165600525.2',
+            console='test-console'
+        )
+
+        # Verify results
+        assert result['simulation_id'] == '1477531'
+        assert result['test_id'] == '1764165600525.2'
+        assert result['run_id'] == '1764165600525.2'
+        assert 'logs' in result
+        assert 'Sample log data here' in result['logs']
+        assert result['status']['overall'] == 'SUCCESS'
+        assert result['status']['final_status'] == 'logged'
+        assert len(result['simulation_steps']) == 1
+        assert result['simulation_steps'][0]['message'] == 'Simulation started'
+        assert result['attack_info']['move_name'] == 'Write File to Disk'
+
+        # Verify cache was populated
+        cache_key = 'execution_history_test-console_1477531_1764165600525.2'
+        assert cache_key in execution_history_cache
+
+    def test_sb_get_execution_history_details_cache_hit(self):
+        """Test execution history retrieval from cache."""
+        # Populate cache with mock data
+        cache_key = 'execution_history_test-console_sim123_test456'
+        cached_data = {
+            'id': 'sim123',
+            'runId': 'test456',
+            'planRunId': 'test456',
+            'dataObj': {
+                'data': [[{
+                    'details': {
+                        'LOGS': 'Cached log data',
+                        'SIMULATION_STEPS': []
+                    }
+                }]]
+            }
+        }
+        execution_history_cache[cache_key] = (cached_data, time.time())
+
+        # Call the function
+        result = sb_get_execution_history_details(
+            simulation_id='sim123',
+            plan_test_id='test456',
+            console='test-console'
+        )
+
+        # Verify data came from cache
+        assert result['logs'] == 'Cached log data'
+        assert result['simulation_id'] == 'sim123'
+
+    def test_sb_get_execution_history_details_empty_simulation_id(self):
+        """Test that empty simulation_id raises ValueError."""
+        with pytest.raises(ValueError, match="simulation_id parameter is required"):
+            sb_get_execution_history_details(
+                simulation_id='',
+                plan_test_id='test456',
+                console='test-console'
+            )
+
+    def test_sb_get_execution_history_details_empty_plan_test_id(self):
+        """Test that empty plan_test_id raises ValueError."""
+        with pytest.raises(ValueError, match="plan_test_id parameter is required"):
+            sb_get_execution_history_details(
+                simulation_id='sim123',
+                plan_test_id='',
+                console='test-console'
+            )
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_execution_history_from_api_404(self, mock_account, mock_base_url, mock_secret, mock_get):
+        """Test handling of 404 response from API."""
+        mock_secret.return_value = 'test-token'
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+
+        # Mock 404 response
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = Exception("Not Found")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Execution history not found"):
+            _fetch_execution_history_from_api(
+                simulation_id='sim123',
+                plan_test_id='test456',
+                console='test-console'
+            )
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_execution_history_from_api_401(self, mock_account, mock_base_url, mock_secret, mock_get):
+        """Test handling of 401 authentication failure."""
+        mock_secret.return_value = 'test-token'
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+
+        # Mock 401 response
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Authentication failed"):
+            _fetch_execution_history_from_api(
+                simulation_id='sim123',
+                plan_test_id='test456',
+                console='test-console'
+            )
+
+    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
+    def test_sb_get_execution_history_details_missing_dataobj(self, mock_fetch):
+        """Test handling of response missing dataObj structure."""
+        # Mock response without dataObj
+        mock_response = {
+            'id': '1477531',
+            'runId': '1764165600525.2'
+        }
+        mock_fetch.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Response missing dataObj.data structure"):
+            sb_get_execution_history_details(
+                simulation_id='1477531',
+                plan_test_id='1764165600525.2',
+                console='test-console'
+            )
+
+    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
+    def test_sb_get_execution_history_details_duration_calculation(self, mock_fetch):
+        """Test duration calculation in execution times."""
+        mock_response = {
+            'id': '1477531',
+            'runId': '1764165600525.2',
+            'planRunId': '1764165600525.2',
+            'startTime': '2025-11-26T14:00:00.000Z',
+            'endTime': '2025-11-26T14:01:30.000Z',
+            'dataObj': {
+                'data': [[{
+                    'details': {
+                        'LOGS': 'Test logs',
+                        'SIMULATION_STEPS': []
+                    }
+                }]]
+            }
+        }
+        mock_fetch.return_value = mock_response
+
+        result = sb_get_execution_history_details(
+            simulation_id='1477531',
+            plan_test_id='1764165600525.2',
+            console='test-console'
+        )
+
+        # Verify duration is calculated (90 seconds between start and end)
+        assert result['execution_times']['duration_seconds'] == 90.0

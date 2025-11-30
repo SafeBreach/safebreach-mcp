@@ -1633,3 +1633,181 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
     except Exception as e:
         logger.error("Error analyzing test drifts for %s:%s: %s", console, test_id, str(e))
         raise
+
+
+# Global cache for execution history
+execution_history_cache = {}
+
+
+def sb_get_execution_history_details(
+    simulation_id: str,
+    plan_test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Get detailed execution history for a specific simulation including comprehensive logs.
+
+    This function retrieves the full execution history response from the SafeBreach API,
+    with primary focus on exposing the detailed LOGS field that contains ~40KB of
+    timestamped simulator execution logs.
+
+    Args:
+        simulation_id (str): Simulation ID - required (e.g., "1477531")
+        plan_test_id (str): Plan test ID / planRunId - required (e.g., "1764165600525.2")
+        console (str): SafeBreach console name - defaults to "default"
+
+    Returns:
+        Dict containing:
+            - simulation_id: Simulation identifier
+            - test_id: Test plan run ID
+            - execution_times: Start, end, execution timestamps and durations
+            - status: Execution status and final outcome
+            - logs: Full simulator logs (~40KB detailed text)
+            - simulation_steps: Structured array of execution steps
+            - details_summary: High-level execution summary
+            - metadata: Execution context and configuration
+            - attack_info: Move name, description, protocol, approach
+            - host_info: Attacker and target node information
+
+    Raises:
+        ValueError: If simulation_id or plan_test_id are empty/invalid
+        requests.HTTPError: If API request fails
+        KeyError: If response structure is unexpected
+
+    Example:
+        >>> details = sb_get_execution_history_details(
+        ...     simulation_id="1477531",
+        ...     plan_test_id="1764165600525.2",
+        ...     console="demo"
+        ... )
+        >>> print(f"Logs size: {len(details['logs'])} bytes")
+        >>> print(f"Steps count: {len(details['simulation_steps'])}")
+    """
+    # Validate required parameters
+    if not simulation_id or not simulation_id.strip():
+        raise ValueError("simulation_id parameter is required and cannot be empty")
+
+    if not plan_test_id or not plan_test_id.strip():
+        raise ValueError("plan_test_id parameter is required and cannot be empty")
+
+    try:
+        # Get data from cache or API
+        api_response = _get_execution_history_from_cache_or_api(simulation_id, plan_test_id, console)
+
+        # Transform using data types mapping
+        from .data_types import get_execution_history_details_mapping
+        result = get_execution_history_details_mapping(api_response)
+
+        return result
+
+    except Exception as e:
+        logger.error(
+            "Error getting execution history for simulation '%s', plan_test '%s' from console '%s': %s",
+            simulation_id, plan_test_id, console, str(e)
+        )
+        raise
+
+
+def _get_execution_history_from_cache_or_api(
+    simulation_id: str,
+    plan_test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Get execution history from cache or API.
+
+    Args:
+        simulation_id: Simulation ID
+        plan_test_id: Plan test ID / planRunId
+        console: SafeBreach console name
+
+    Returns:
+        Raw API response dictionary
+    """
+    cache_key = f"execution_history_{console}_{simulation_id}_{plan_test_id}"
+    current_time = time.time()
+
+    # Check cache first
+    if cache_key in execution_history_cache:
+        data, timestamp = execution_history_cache[cache_key]
+        if current_time - timestamp < CACHE_TTL:
+            logger.info("Retrieved execution history from cache: %s", cache_key)
+            return data
+
+    # Cache miss or expired - fetch from API
+    logger.info("Fetching execution history from API for simulation '%s', plan_test '%s' from console '%s'",
+                simulation_id, plan_test_id, console)
+    data = _fetch_execution_history_from_api(simulation_id, plan_test_id, console)
+
+    # Cache the result
+    execution_history_cache[cache_key] = (data, current_time)
+    logger.info("Cached execution history: %s", cache_key)
+
+    return data
+
+
+def _fetch_execution_history_from_api(
+    simulation_id: str,
+    plan_test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Fetch execution history from SafeBreach API.
+
+    Args:
+        simulation_id: Simulation ID
+        plan_test_id: Plan test ID / planRunId
+        console: SafeBreach console name
+
+    Returns:
+        Raw API response dictionary
+
+    Raises:
+        requests.HTTPError: If API request fails
+        ValueError: If response is invalid
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+
+        # Build API URL with simulation_id as path parameter and runId as query parameter
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={plan_test_id}"
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-apitoken": apitoken
+        }
+
+        logger.info("GET request to: %s", api_url)
+        response = requests.get(api_url, headers=headers, timeout=120)
+
+        # Handle HTTP errors
+        if response.status_code == 404:
+            raise ValueError(
+                f"Execution history not found for simulation_id='{simulation_id}', plan_test_id='{plan_test_id}'"
+            )
+        elif response.status_code == 401:
+            raise ValueError(f"Authentication failed for console '{console}'")
+
+        response.raise_for_status()
+
+        # Parse JSON response
+        try:
+            api_response = response.json()
+        except ValueError as e:
+            logger.error("Failed to parse execution history response: %s", str(e))
+            raise ValueError(f"Invalid JSON response from API: {str(e)}")
+
+        logger.info("Successfully retrieved execution history for simulation '%s'", simulation_id)
+        return api_response
+
+    except requests.exceptions.Timeout:
+        logger.error("Timeout fetching execution history for simulation '%s'", simulation_id)
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error("Request error fetching execution history for simulation '%s': %s", simulation_id, str(e))
+        raise
+    except Exception as e:
+        logger.error("Unexpected error fetching execution history: %s", str(e))
+        raise

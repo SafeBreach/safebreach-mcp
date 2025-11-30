@@ -363,14 +363,15 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 9. `get_test_findings_counts` - Findings summary by type with filtering
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
 11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
+12. `get_execution_history_details` ✨ **NEW** - Retrieves detailed execution history for a specific simulation including comprehensive logs (~40KB LOGS field) for detailed troubleshooting, step-by-step analysis, and log correlation
 
 **Playbook Server (Port 8003):**
-12. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
-13. `get_playbook_attack_details` ✨ **NEW** - Detailed attack information with verbosity options (fix suggestions, tags, parameters) for specific attack techniques
+13. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
+14. `get_playbook_attack_details` ✨ **NEW** - Detailed attack information with verbosity options (fix suggestions, tags, parameters) for specific attack techniques
 
 **Utilities Server (Port 8002):**
-14. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
-15. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
+15. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
+16. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 
 ## Filtering and Search Capabilities
