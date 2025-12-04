@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Running the Multi-Server Architecture (Recommended):**
 ```bash
-# Run all servers concurrently on ports 8000, 8001, 8002 (localhost-only, secure default)
+# Run all servers concurrently on ports 8000-8003 (localhost-only, secure default)
 uv run start_all_servers.py
 
 
@@ -58,22 +58,21 @@ uv run start_all_servers.py
 
 **Running Individual Servers:**
 ```bash
-# Config server (simulators) - Port 8000 (localhost-only by default)
+# Config server (simulators) - Port 8000
 uv run -m safebreach_mcp_config.config_server
 
-# Data server (tests/simulations) - Port 8001 (localhost-only by default)
+# Data server (tests/simulations) - Port 8001
 uv run -m safebreach_mcp_data.data_server
 
-# Utilities server (datetime functions) - Port 8002 (localhost-only by default)
+# Utilities server (datetime functions) - Port 8002
 uv run -m safebreach_mcp_utilities.utilities_server
 
-# Playbook server (attack knowledge base) - Port 8003 (localhost-only by default)
+# Playbook server (attack knowledge base) - Port 8003
 uv run -m safebreach_mcp_playbook.playbook_server
 
 # Individual servers with external connections
 SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_DATA_EXTERNAL=true uv run -m safebreach_mcp_data.data_server
 ```
-
 
 **Running the MCP Server (Remote Installation):**
 ```bash
@@ -81,7 +80,7 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_DATA_EXTERNAL=true uv run 
 uv tool install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git
 export PATH="$HOME/.local/bin:$PATH"  # If needed
 
-# Run multi-server architecture (localhost-only by default)
+# Run multi-server architecture
 safebreach-mcp-all-servers
 
 # Run with external connections
@@ -92,7 +91,6 @@ safebreach-mcp-config-server    # Port 8000
 safebreach-mcp-data-server      # Port 8001
 safebreach-mcp-utilities-server # Port 8002
 safebreach-mcp-playbook-server  # Port 8003
-
 ```
 
 
@@ -177,99 +175,7 @@ uv run python tests/run_auth_tests.py --coverage
 uv run pytest tests/test_external_authentication.py -v
 ```
 
-## OAuth 2.0 Implementation
 
-The SafeBreach MCP servers include a complete OAuth 2.0 Authorization Server implementation for seamless Claude Desktop integration with `mcp-remote` client compatibility.
-
-### OAuth 2.0 Endpoints
-
-**Discovery Endpoints (Public Access):**
-- `/.well-known/oauth-protected-resource` - OAuth 2.0 protected resource metadata
-- `/.well-known/oauth-authorization-server/sse` - OAuth 2.0 authorization server metadata
-
-**OAuth Flow Endpoints (Authenticated):**
-- `/register` (POST) - Dynamic client registration endpoint
-- `/auth` (GET) - Authorization endpoint (requires valid Bearer token)
-- `/token` (POST) - Token endpoint (requires valid Bearer token)
-
-### Security Model
-
-**Discovery Security**: OAuth discovery endpoints are publicly accessible as required by OAuth 2.0 specification for client discovery.
-
-**Flow Security**: Authorization and token endpoints require valid Bearer token authentication, ensuring only clients with existing valid tokens can complete the OAuth flow.
-
-**Token Integration**: OAuth token endpoint returns the configured `SAFEBREACH_MCP_AUTH_TOKEN`, seamlessly integrating OAuth and Bearer token authentication systems.
-
-### OAuth Metadata Response
-
-```json
-{
-  "issuer": "http://server-host:port",
-  "authorization_endpoint": "http://server-host:port/auth",
-  "token_endpoint": "http://server-host:port/token", 
-  "registration_endpoint": "http://server-host:port/register",
-  "resource": "http://server-host:port/sse",
-  "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code"],
-  "scopes_supported": ["mcp"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "none"],
-  "code_challenge_methods_supported": ["S256"],
-  "registration_endpoint_auth_methods_supported": ["none"]
-}
-```
-
-### PKCE Support
-
-Full support for Proof Key for Code Exchange (PKCE) with S256 code challenge method for secure authorization flows without requiring client secrets.
-
-## Authentication Debugging
-
-### Investigation Tools
-
-When debugging authentication issues, use these techniques:
-
-**1. Enhanced Server Logging:**
-```python
-# Add to authenticated_asgi_app for detailed token comparison:
-logger.info(f"🔍 AUTH DEBUG from {client_host}: received='{auth_header}' expected='{expected_auth}' equal={auth_header == expected_auth}")
-```
-
-**2. Claude Desktop Client Logs:**
-Check Claude Desktop logs for actual mcp-remote command arguments:
-```
-# Look for logs showing exact command and arguments used
-args: [
-  'mcp-remote',
-  'http://server:port/sse',
-  '--skip-auth',  // ← Important flag behavior
-  '--headers',
-  '{"Authorization": "Bearer token"}'
-]
-```
-
-**3. Server Log Analysis:**
-```bash
-# Monitor authentication attempts in real-time
-sudo journalctl -u safebreach-mcp.service -f | grep -E "(OAuth|Bearer|Auth|🚫|✅)"
-```
-
-### Common Authentication Scenarios
-
-**Mixed Success/Failure Patterns**: Normal behavior where mcp-remote tries multiple connection strategies:
-- Some attempts succeed with valid Bearer tokens
-- Some attempts fail due to missing headers or wrong tokens
-- OAuth attempts may fail while regular SSE connections succeed
-
-**Skip-Auth Flag Behavior**: The `--skip-auth` flag in mcp-remote can cause:
-- Configured headers to be bypassed
-- Alternative authentication mechanisms to be used
-- Cached or derived tokens to be used instead of configured ones
-
-**Security Validation Status**: 
-- ✅ Authentication system working correctly
-- ✅ OAuth endpoints properly secured  
-- ✅ Mixed authorized/unauthorized attempts are expected client behavior
-- ✅ No authentication bypass vulnerabilities exist
 
 ## Architecture Overview
 
@@ -363,7 +269,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 9. `get_test_findings_counts` - Findings summary by type with filtering
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
 11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
-12. `get_execution_history_details` ✨ **NEW** - Retrieves detailed execution history for a specific simulation including comprehensive logs (~40KB LOGS field) for detailed troubleshooting, step-by-step analysis, and log correlation
+12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs for a specific simulation including detailed traces (~40KB LOGS field) for deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
 
 **Playbook Server (Port 8003):**
 13. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
@@ -409,150 +315,20 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 **Enhanced Simulation Details (`get_simulation_details`):**
 - **Basic Details**: Returns standard simulation information
 - **Optional MITRE Techniques**: Set `include_mitre_techniques=True` to get MITRE ATT&CK technique details
-- **Optional Attack Logs**: Set `include_full_attack_logs=True` to get detailed attack logs by host
+- **Optional Attack Logs**: Set `include_basic_attack_logs=True` to get basic attack logs by host from simulation events
 - **Optional Drift Analysis**: Set `include_drift_info=True` to get comprehensive drift analysis information including drift type, security impact, description, and tracking code for correlation
 - **Robust Error Handling**: Improved handling of different data structure formats
 
 All filters work in combination and include pagination support. The response includes metadata about applied filters and total result counts.
 
-## Drift Analysis Functionality
+## Drift Analysis
 
-The SafeBreach MCP Data Server includes comprehensive drift analysis capabilities to help identify changes in security posture between test executions.
+**Drift Definition**: When simulations with identical parameters produce different results between test runs.
 
-### Understanding Drift
-
-**Drift Definition**: A drift occurs when two simulations with identical parameters (same attack ID, attacker host, target host, protocol, etc.) produce different final results. Simulations with identical parameters share the same `drift_tracking_code` for correlation.
-
-**Common Causes**: 
-- Heuristic behavior of security controls
-- Timing issues and varying host loads
-- Environmental changes (e.g., user logged into target host)
-- Security control configuration modifications
-
-### Drift Types and Security Impact
-
-The system recognizes various drift types with their security implications:
-
-**Positive Security Impact Drifts:**
-- `success-fail`: Attack was blocked in later execution (security improvement)
-- `stopped-prevented`: Better security control reporting (stopped → prevented)
-- `logged-detected`: Enhanced detection capabilities (logged → detected)
-- `missed-logged`: Improved logging coverage (missed → logged)
-
-**Negative Security Impact Drifts:**
-- `fail-success`: Attack succeeded in later execution (security degradation)
-- `prevented-stopped`: Reduced security control effectiveness (prevented → stopped)
-- `detected-logged`: Reduced detection capabilities (detected → logged)
-- `logged-missed`: Loss of logging coverage (logged → missed)
-
-**Neutral Impact Drifts:**
-- `result_improvement`: Technical failure resolved in later execution
-- `fail-internal_fail`: Internal failures in both executions
-- `success-internal_fail`: Technical failure in later execution
-
-### Using Drift Analysis
-
-**Filter Drifted Simulations:**
-```bash
-# Get only simulations that have drifted from previous results
-get_test_simulations(console="demo", test_id="123", drifted_only=True)
-```
-
-**Get Detailed Drift Information:**
-```bash
-# Include comprehensive drift analysis in simulation details
-get_simulation_details(
-    console="demo", 
-    test_id="123", 
-    simulation_id="sim456",
-    include_drift_info=True
-)
-```
-
-**Track Drift Statistics:**
-```bash
-# Include drift counts in test statistics
-get_test_details(console="demo", test_id="123", include_simulations_statistics=True)
-```
-
-### Drift Information Structure
-
-When `include_drift_info=True`, the response includes:
-- `type_of_drift`: Classification of the drift pattern
-- `security_impact`: "positive", "negative", or "neutral"
-- `description`: Human-readable explanation of the drift
-- `hint_to_llm`: Guidance for further investigation
-- `drift_tracking_code`: Correlation ID to find related simulations
-- `last_drift_date`: When the most recent drift occurred (if available)
-
-### Comprehensive Test Drift Analysis
-
-The `get_test_drifts` tool provides advanced drift analysis between two test runs, comparing a current test with the most recent previous test that has the same name.
-
-**Usage:**
-```bash
-# Analyze drift between current test and previous test with same name
-get_test_drifts(console="demo", test_id="current-test-123")
-```
-
-**Enhanced Response Structure:**
-```json
-{
-  "total_drifts": 15,  // Total count of all drift types found
-  
-  "drifts": {
-    // Grouped by drift type for organized analysis
-    "missed-reported": {
-      "drift_type": "missed-reported",
-      "security_impact": "negative", 
-      "description": "Attack missed in baseline but reported in current test - potential security degradation",
-      "drifted_simulations": [
-        {
-          "drift_tracking_code": "attack_123_hostA_hostB",
-          "former_simulation_id": "baseline_sim_001",
-          "current_simulation_id": "current_sim_001"
-        }
-        // ... more simulations with this drift pattern
-      ]
-    },
-    "prevented-stopped": {
-      "drift_type": "prevented-stopped", 
-      "security_impact": "positive",
-      "description": "Attack prevented in baseline but stopped in current - improved blocking",
-      "drifted_simulations": [ /* ... */ ]
-    }
-    // ... additional drift types found
-  },
-  
-  "_metadata": {
-    "console": "demo",
-    "current_test_id": "current-test-123",
-    "baseline_test_id": "baseline-test-456", 
-    "test_name": "Weekly Security Assessment",
-    "baseline_simulations_count": 150,
-    "current_simulations_count": 148,
-    "shared_drift_codes": 145,
-    "simulations_exclusive_to_baseline": ["baseline_sim_099"],  // Only in baseline
-    "simulations_exclusive_to_current": ["current_sim_147", "current_sim_148"],  // Only in current 
-    "status_drifts": 12,  // Count of simulations with status changes
-    "analyzed_at": 1703891234.56
-  }
-}
-```
-
-**Key Features:**
-- **Automatic Baseline Detection**: Finds the most recent previous test with the same name
-- **Three-Category Analysis**: Identifies simulations exclusive to baseline, exclusive to current, and shared with status changes
-- **Drift Type Classification**: Groups similar drift patterns using the comprehensive `drift_types_mapping`
-- **Security Impact Assessment**: Categorizes each drift type as positive, negative, or neutral security impact
-- **Comprehensive Metadata**: Provides complete context about the analysis including simulation counts and exclusions
-- **Organized Output**: Groups drifts by type for efficient analysis and reporting
-
-**Error Handling:**
-The tool provides detailed error messages for common scenarios:
-- No previous test found with the same name
-- Test details unavailable or missing required attributes  
-- API connectivity issues during simulation retrieval
+**Basic Usage:**
+- `get_test_simulations(..., drifted_only=True)` - Filter drifted simulations
+- `get_simulation_details(..., include_drift_info=True)` - Get drift details
+- `get_test_drifts(console, test_id)` - Compare with previous test run
 
 ## External Connection Support
 
@@ -564,7 +340,9 @@ The SafeBreach MCP servers support optional external connections with HTTP Autho
 - **Authentication**: HTTP Authorization header for external connections
 - **Localhost Bypass**: Local connections skip authentication automatically
 
-### Configuration Environment Variables
+### Configuration
+
+**Environment Variables:**
 ```bash
 # Global external access (all servers)
 export SAFEBREACH_MCP_ALLOW_EXTERNAL=true
@@ -579,7 +357,7 @@ export SAFEBREACH_MCP_UTILITIES_EXTERNAL=true   # Utilities server only
 export SAFEBREACH_MCP_BIND_HOST=0.0.0.0
 ```
 
-### Command-Line Arguments
+**Command-Line Arguments:**
 ```bash
 # Enable external connections for all servers
 SAFEBREACH_MCP_AUTH_TOKEN="token" uv run start_all_servers.py --external
@@ -660,186 +438,25 @@ Each SafeBreach environment in `environments_metadata.py` now includes a `secret
 
 ## Dynamic Environment Loading
 
-The MCP server supports loading additional SafeBreach environments dynamically at runtime using two methods:
+**Environment Variables:**
+- `SAFEBREACH_ENVS_FILE` - Load environments from JSON file
+- `SAFEBREACH_LOCAL_ENV` - Load environments from JSON string
 
-### Method 1: JSON File (SAFEBREACH_ENVS_FILE)
+**Environment Variable Naming**: API tokens use lowercase with underscores (e.g., `my_console_apitoken`)
 
-Load environments from a JSON file on disk:
+## Installation
 
+Basic installation commands:
 ```bash
-# Set the environment variable to point to your JSON file
-export SAFEBREACH_ENVS_FILE=/path/to/more_envs.json
-
-# Start the server - it will automatically load environments from the JSON file
-uv run start_all_servers.py
-```
-
-### Method 2: JSON String (SAFEBREACH_LOCAL_ENV) ✨ **NEW**
-
-Load environments directly from a JSON string in an environment variable (useful for containers and cloud deployments):
-
-```bash
-# Set the environment variable with JSON configuration directly
-export SAFEBREACH_LOCAL_ENV='{"my-console": {"url": "my-console.safebreach.com", "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "my_console_apitoken"}}}'
-
-# Set the API token
-export my_console_apitoken="your-api-token-here"
-
-# Start the server - it will automatically load environments from the JSON string
-uv run start_all_servers.py
-```
-
-**JSON Configuration Format:**
-
-**Basic Configuration (backward compatible):**
-```json
-{
-    "example-console": {
-        "url": "example-console.safebreach.com",
-        "account": "1234567890",
-        "secret_config": {
-            "provider": "env_var",
-            "parameter_name": "example-console-apitoken"
-        }
-    }
-}
-```
-
-**Enhanced Configuration with Per-Service URLs ✨ NEW:**
-```json
-{
-    "microservices-console": {
-        "url": "default.safebreach.com",
-        "urls": {
-            "config": "config-api.safebreach.com",
-            "data": "data-api.safebreach.com",
-            "playbook": "playbook-api.safebreach.com",
-            "siem": "siem-api.safebreach.com"
-        },
-        "account": "1234567890",
-        "secret_config": {
-            "provider": "env_var",
-            "parameter_name": "microservices_console_apitoken"
-        }
-    },
-    "mixed-console": {
-        "url": "mixed-console.safebreach.com",
-        "urls": {
-            "data": "https://data-cluster.safebreach.com:8443",
-            "playbook": "playbook-service.safebreach.com"
-        },
-        "account": "9876543210",
-        "secret_config": {
-            "provider": "aws_ssm",
-            "parameter_name": "mixed-console-token"
-        }
-    }
-}
-```
-
-**URL Resolution Priority:**
-1. **Single-tenant mode**: Environment variables (`DATA_URL`, `CONFIG_URL`, etc.)
-2. **Service-specific URLs**: `urls[service]` from configuration
-3. **Default fallback**: `url` from configuration
-
-**Benefits of Per-Service URLs:**
-- **Microservices Architecture**: Different services on different hosts/ports
-- **Load Balancing**: Dedicated endpoints for heavy services (data, playbook)
-- **Security Isolation**: Separate network zones for different service types
-- **Flexible Deployment**: Mix of shared and dedicated infrastructure
-
-**Environment Variable Naming:**
-When using the `env_var` provider, dashes in the `parameter_name` are converted to underscores but **remain lowercase**:
-- `example-console-apitoken` → looks for `example_console_apitoken` environment variable
-
-**⚠️ Important**: Environment API KEY variables must be lowercase with underscores, not uppercase!
-
-**Setting Environment Variables:**
-```bash
-# For the example above (note lowercase)
-export example_console_apitoken="your-api-token-here"
-export console1_apitoken="another-api-token"
-```
-
-### Combined Usage and Priority Order
-
-Both methods can be used simultaneously. The loading priority is:
-
-1. **Base**: Hardcoded environments in `environments_metadata.py`
-2. **File Extension**: `SAFEBREACH_ENVS_FILE` extends the base environments
-3. **Override**: `SAFEBREACH_LOCAL_ENV` extends and can override all previous environments
-
-**Example of Combined Usage:**
-```bash
-# Load base environments from file
-export SAFEBREACH_ENVS_FILE=/etc/safebreach/base_envs.json
-
-# Override or add specific environments via JSON string  
-export SAFEBREACH_LOCAL_ENV='{"dev-console": {"url": "dev.safebreach.com", "account": "9999999999", "secret_config": {"provider": "env_var", "parameter_name": "dev_console_apitoken"}}}'
-
-# Set tokens for all environments
-export dev_console_apitoken="dev-token-here"
-
-# Start server with combined configuration
-uv run start_all_servers.py
-```
-
-**Example with Per-Service URLs:**
-```bash
-# Configure microservices environment with dedicated service endpoints
-export SAFEBREACH_LOCAL_ENV='{"microservices-env": {"url": "default.safebreach.com", "urls": {"config": "config-api.safebreach.com", "data": "data-api.safebreach.com", "playbook": "playbook-api.safebreach.com"}, "account": "1234567890", "secret_config": {"provider": "env_var", "parameter_name": "microservices_env_apitoken"}}}'
-
-# Set API token
-export microservices_env_apitoken="your-token-here"
-
-# Start server - services will use dedicated URLs:
-# - Config operations: https://config-api.safebreach.com
-# - Data operations: https://data-api.safebreach.com  
-# - Playbook operations: https://playbook-api.safebreach.com
-# - SIEM operations: https://default.safebreach.com (fallback)
-uv run start_all_servers.py
-```
-
-**Benefits of SAFEBREACH_LOCAL_ENV:**
-- **No File System Dependencies**: Perfect for containerized deployments
-- **Environment-Specific Overrides**: Override production settings in staging/dev
-- **CI/CD Friendly**: Easy to inject configuration in deployment pipelines
-- **Kubernetes Compatible**: Works seamlessly with ConfigMaps and Secrets
-
-## Installation Options
-
-**Local Development:**
-```bash
+# Local development
 git clone git@github.com:SafeBreach/safebreach-mcp.git
 uv sync
+
+# Remote installation
+uv tool install git+ssh://git@github.com:SafeBreach/safebreach-mcp.git/
 ```
 
-**Remote Installation (SSH):**
-```bash
-uv tool install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git/
-```
 
-**Remote Installation (HTTPS with App Password):**
-```bash
-uv tool install git+https://username:personal-access-token@github.com/SafeBreach/safebreach-mcp.git
-```
-
-## Package Information
-
-The project provides multiple installation options with various entry points:
-
-**Multi-Server Entry Points:**
-- **`safebreach-mcp-all-servers`**: Concurrent multi-server launcher (recommended)
-- **`safebreach-mcp-config-server`**: Config server only (Port 8000)
-- **`safebreach-mcp-data-server`**: Data server only (Port 8001)
-- **`safebreach-mcp-utilities-server`**: Utilities server only (Port 8002)
-
-
-**Package Configuration:**
-- **Package Name**: safebreach-mcp-server
-- **Version**: 1.1.0
-- **Dependencies**: boto3, requests, mcp (see pyproject.toml)
-- **Installation**: Via git+ssh or git+https with subdirectory specification
 
 ## Claude Desktop Integration
 
@@ -931,37 +548,21 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
 ```
 
 
-### Validation Status
+### Status Summary
 
-**Functional Testing Results:**
-- ✅ **Config Server**: 5+ simulators accessible across multiple consoles
-- ✅ **Data Server**: 60+ tests available from SafeBreach environments
-- ✅ **Utilities Server**: Datetime conversion functions operational
-- ✅ **API Integration**: All SafeBreach console APIs working correctly
-- ✅ **Claude Desktop**: Remote MCP integration confirmed working
+**✅ External Connection Support**:
+- External connections fully operational with Bearer token authentication
+- Servers bind to all interfaces when external access enabled
+- Fixed MCP SDK compatibility issues
 
-### External Connection Support Status
+**✅ Validation Results**:
+- Config Server: 5+ simulators accessible across multiple consoles
+- Data Server: 60+ tests available from SafeBreach environments
+- Utilities Server: Datetime conversion functions operational
+- API Integration: All SafeBreach console APIs working correctly
+- Claude Desktop: Remote MCP integration confirmed working
 
-**✅ FULLY OPERATIONAL**: 
-- External connections now working after MCP SDK upgrade and code updates
-- **Servers bind to**: `0.0.0.0:8000`, `0.0.0.0:8001`, `0.0.0.0:8002` (all interfaces)
-- **Authentication**: Bearer token authentication working correctly
-- **Access**: Direct external network access with proper authentication
-
-**Fixed Issues**:
-- ✅ Resolved `'function' object has no attribute 'middleware'` error
-- ✅ Updated MCP SDK from 1.11.0 to 1.12.1
-- ✅ Deployed latest authentication wrapper code
-- ✅ Configured proper external binding environment variables
-
-**Current Access Methods**:
-1. **External Access**: `curl -H "Authorization: Bearer token" http://10.10.10.10:8001/sse`
-2. **Local Access**: `curl http://localhost:8001/sse` (no auth required for localhost)
-3. **Claude Desktop**: Full external MCP integration with Bearer token authentication
-
-### Deployment Troubleshooting
-
-**Environment Variable Issues**:
+**Deployment Tips**:
 ```bash
 # ✅ Correct casing for API tokens (lowercase with underscores)
 console1_apitoken=token-value
@@ -969,7 +570,4 @@ console1_apitoken=token-value
 # ✅ Correct casing for MCP variables (UPPERCASE)
 SAFEBREACH_ENVS_FILE=/path/to/file
 SAFEBREACH_MCP_AUTH_TOKEN=token-value
-
-# ❌ Wrong casing (will cause failures)
-safebreach_envs_file=/path/to/file   # Wrong - too low case
-
+```

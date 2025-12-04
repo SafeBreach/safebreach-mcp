@@ -99,14 +99,14 @@ def get_reduced_simulation_result_entity(simulation_result_entity):
     return reduced_entity_to_return
 
 
-def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_full_attack_logs=False, include_drift_info=False):
+def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_basic_attack_logs=False, include_drift_info=False):
     """
     Returns a full simulation result entity with optional extensions.
     
     Args:
         simulation_result_entity: Raw simulation result data from SafeBreach API
         include_mitre_techniques: Include MITRE ATT&CK technique details
-        include_full_attack_logs: Include detailed attack logs by host
+        include_basic_attack_logs: Include basic attack logs by host from simulation events
         
     Returns:
         Dict with full simulation result data and optional extensions
@@ -150,8 +150,8 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
             })
         full_simulation_result_entity['mitre_techniques'] = mitre_techniques
 
-    if include_full_attack_logs:
-        # Attack logs are actually stored in the simulationEvents field, not dataObj
+    if include_basic_attack_logs:
+        # Basic attack logs are stored in the simulationEvents field
         simulation_events = simulation_result_entity.get('simulationEvents', [])
         
         # Group events by nodeId (host)
@@ -175,7 +175,7 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
             }
             logs_by_host.append(host_object)
         
-        full_simulation_result_entity['full_attack_logs_by_hosts'] = logs_by_host
+        full_simulation_result_entity['basic_attack_logs_by_hosts'] = logs_by_host
 
     return full_simulation_result_entity
 
@@ -343,9 +343,9 @@ def get_full_security_control_events_mapping(security_control_event_entity, verb
         return map_security_control_event(security_control_event_entity, reduced_security_control_events_mapping)
 
 
-def get_execution_history_details_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform SafeBreach API execution history response to MCP tool format.
+    Transform SafeBreach API full simulation logs response to MCP tool format.
 
     Focuses on extracting detailed logs and structured execution information
     from the nested response structure. The primary feature is exposing the
@@ -355,7 +355,7 @@ def get_execution_history_details_mapping(api_response: Dict[str, Any]) -> Dict[
         api_response: Raw API response from executionsHistoryResults endpoint
 
     Returns:
-        Transformed dictionary with organized execution history data
+        Transformed dictionary with organized full simulation logs data
 
     Raises:
         ValueError: If expected fields are missing from response

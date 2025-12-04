@@ -18,7 +18,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
     sb_get_test_drifts,
-    sb_get_execution_history_details,
+    sb_get_full_simulation_logs,
     _get_all_tests_from_cache_or_api,
     _apply_filters,
     _apply_ordering,
@@ -30,13 +30,13 @@ from safebreach_mcp_data.data_functions import (
     _get_all_findings_from_cache_or_api,
     _apply_findings_filters,
     _find_previous_test_by_name,
-    _get_execution_history_from_cache_or_api,
-    _fetch_execution_history_from_api,
+    _get_full_simulation_logs_from_cache_or_api,
+    _fetch_full_simulation_logs_from_api,
     tests_cache,
     simulations_cache,
     security_control_events_cache,
     findings_cache,
-    execution_history_cache,
+    full_simulation_logs_cache,
     CACHE_TTL,
     PAGE_SIZE
 )
@@ -51,7 +51,7 @@ class TestDataFunctions:
         simulations_cache.clear()
         security_control_events_cache.clear()
         findings_cache.clear()
-        execution_history_cache.clear()
+        full_simulation_logs_cache.clear()
     
     @pytest.fixture
     def mock_test_data(self):
@@ -612,15 +612,15 @@ class TestDataFunctions:
             "sim1", 
             "test-console",
             include_mitre_techniques=True,
-            include_full_attack_logs=True
+            include_basic_attack_logs=True
         )
         
         assert "simulation_id" in result
         assert "mitre_techniques" in result
-        assert "full_attack_logs_by_hosts" in result
+        assert "basic_attack_logs_by_hosts" in result
         
         # Verify attack logs structure
-        attack_logs = result["full_attack_logs_by_hosts"]
+        attack_logs = result["basic_attack_logs_by_hosts"]
         assert isinstance(attack_logs, list)
         assert len(attack_logs) == 2  # Two hosts (node1 and node2)
         
@@ -2490,9 +2490,9 @@ class TestDataFunctions:
 
     # Execution History Details Tests
 
-    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
-    def test_sb_get_execution_history_details_success(self, mock_fetch):
-        """Test successful execution history retrieval."""
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_sb_get_full_simulation_logs_success(self, mock_fetch):
+        """Test successful full simulation logs retrieval."""
         # Mock API response with structure from simulation_response.json
         mock_response = {
             'id': '1477531',
@@ -2545,9 +2545,9 @@ class TestDataFunctions:
         mock_fetch.return_value = mock_response
 
         # Call the function
-        result = sb_get_execution_history_details(
+        result = sb_get_full_simulation_logs(
             simulation_id='1477531',
-            plan_test_id='1764165600525.2',
+            test_id='1764165600525.2',
             console='test-console'
         )
 
@@ -2564,13 +2564,13 @@ class TestDataFunctions:
         assert result['attack_info']['move_name'] == 'Write File to Disk'
 
         # Verify cache was populated
-        cache_key = 'execution_history_test-console_1477531_1764165600525.2'
-        assert cache_key in execution_history_cache
+        cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
+        assert cache_key in full_simulation_logs_cache
 
-    def test_sb_get_execution_history_details_cache_hit(self):
-        """Test execution history retrieval from cache."""
+    def test_sb_get_full_simulation_logs_cache_hit(self):
+        """Test full simulation logs retrieval from cache."""
         # Populate cache with mock data
-        cache_key = 'execution_history_test-console_sim123_test456'
+        cache_key = 'full_simulation_logs_test-console_sim123_test456'
         cached_data = {
             'id': 'sim123',
             'runId': 'test456',
@@ -2584,12 +2584,12 @@ class TestDataFunctions:
                 }]]
             }
         }
-        execution_history_cache[cache_key] = (cached_data, time.time())
+        full_simulation_logs_cache[cache_key] = (cached_data, time.time())
 
         # Call the function
-        result = sb_get_execution_history_details(
+        result = sb_get_full_simulation_logs(
             simulation_id='sim123',
-            plan_test_id='test456',
+            test_id='test456',
             console='test-console'
         )
 
@@ -2597,21 +2597,21 @@ class TestDataFunctions:
         assert result['logs'] == 'Cached log data'
         assert result['simulation_id'] == 'sim123'
 
-    def test_sb_get_execution_history_details_empty_simulation_id(self):
+    def test_sb_get_full_simulation_logs_empty_simulation_id(self):
         """Test that empty simulation_id raises ValueError."""
         with pytest.raises(ValueError, match="simulation_id parameter is required"):
-            sb_get_execution_history_details(
+            sb_get_full_simulation_logs(
                 simulation_id='',
-                plan_test_id='test456',
+                test_id='test456',
                 console='test-console'
             )
 
-    def test_sb_get_execution_history_details_empty_plan_test_id(self):
-        """Test that empty plan_test_id raises ValueError."""
-        with pytest.raises(ValueError, match="plan_test_id parameter is required"):
-            sb_get_execution_history_details(
+    def test_sb_get_full_simulation_logs_empty_test_id(self):
+        """Test that empty test_id raises ValueError."""
+        with pytest.raises(ValueError, match="test_id parameter is required"):
+            sb_get_full_simulation_logs(
                 simulation_id='sim123',
-                plan_test_id='',
+                test_id='',
                 console='test-console'
             )
 
@@ -2619,7 +2619,7 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id')
-    def test_fetch_execution_history_from_api_404(self, mock_account, mock_base_url, mock_secret, mock_get):
+    def test_fetch_full_simulation_logs_from_api_404(self, mock_account, mock_base_url, mock_secret, mock_get):
         """Test handling of 404 response from API."""
         mock_secret.return_value = 'test-token'
         mock_base_url.return_value = 'https://test.safebreach.com'
@@ -2631,10 +2631,10 @@ class TestDataFunctions:
         mock_response.raise_for_status.side_effect = Exception("Not Found")
         mock_get.return_value = mock_response
 
-        with pytest.raises(ValueError, match="Execution history not found"):
-            _fetch_execution_history_from_api(
+        with pytest.raises(ValueError, match="Full simulation logs not found"):
+            _fetch_full_simulation_logs_from_api(
                 simulation_id='sim123',
-                plan_test_id='test456',
+                test_id='test456',
                 console='test-console'
             )
 
@@ -2642,7 +2642,7 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id')
-    def test_fetch_execution_history_from_api_401(self, mock_account, mock_base_url, mock_secret, mock_get):
+    def test_fetch_full_simulation_logs_from_api_401(self, mock_account, mock_base_url, mock_secret, mock_get):
         """Test handling of 401 authentication failure."""
         mock_secret.return_value = 'test-token'
         mock_base_url.return_value = 'https://test.safebreach.com'
@@ -2654,14 +2654,14 @@ class TestDataFunctions:
         mock_get.return_value = mock_response
 
         with pytest.raises(ValueError, match="Authentication failed"):
-            _fetch_execution_history_from_api(
+            _fetch_full_simulation_logs_from_api(
                 simulation_id='sim123',
-                plan_test_id='test456',
+                test_id='test456',
                 console='test-console'
             )
 
-    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
-    def test_sb_get_execution_history_details_missing_dataobj(self, mock_fetch):
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_sb_get_full_simulation_logs_missing_dataobj(self, mock_fetch):
         """Test handling of response missing dataObj structure."""
         # Mock response without dataObj
         mock_response = {
@@ -2671,14 +2671,14 @@ class TestDataFunctions:
         mock_fetch.return_value = mock_response
 
         with pytest.raises(ValueError, match="Response missing dataObj.data structure"):
-            sb_get_execution_history_details(
+            sb_get_full_simulation_logs(
                 simulation_id='1477531',
-                plan_test_id='1764165600525.2',
+                test_id='1764165600525.2',
                 console='test-console'
             )
 
-    @patch('safebreach_mcp_data.data_functions._fetch_execution_history_from_api')
-    def test_sb_get_execution_history_details_duration_calculation(self, mock_fetch):
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_sb_get_full_simulation_logs_duration_calculation(self, mock_fetch):
         """Test duration calculation in execution times."""
         mock_response = {
             'id': '1477531',
@@ -2697,9 +2697,9 @@ class TestDataFunctions:
         }
         mock_fetch.return_value = mock_response
 
-        result = sb_get_execution_history_details(
+        result = sb_get_full_simulation_logs(
             simulation_id='1477531',
-            plan_test_id='1764165600525.2',
+            test_id='1764165600525.2',
             console='test-console'
         )
 
