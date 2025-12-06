@@ -786,7 +786,7 @@ def sb_get_simulation_details(
     simulation_id: str,
     console: str = "default",
     include_mitre_techniques: bool = False,
-    include_full_attack_logs: bool = False,
+    include_basic_attack_logs: bool = False,
     include_drift_info: bool = False
 ) -> Dict[str, Any]:
     """
@@ -796,7 +796,7 @@ def sb_get_simulation_details(
         console: SafeBreach console name
         simulation_id: Simulation ID
         include_mitre_techniques: Include MITRE ATT&CK techniques
-        include_full_attack_logs: Include full attack logs
+        include_basic_attack_logs: Include basic attack logs from simulation events
         include_drift_info: Include drift analysis information
         
     Returns:
@@ -832,7 +832,7 @@ def sb_get_simulation_details(
         return_details = get_full_simulation_result_entity(
             simulation_result['simulations'][0],
             include_mitre_techniques=include_mitre_techniques,
-            include_full_attack_logs=include_full_attack_logs,
+            include_basic_attack_logs=include_basic_attack_logs,
             include_drift_info=include_drift_info
         )
         
@@ -1632,4 +1632,182 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
         
     except Exception as e:
         logger.error("Error analyzing test drifts for %s:%s: %s", console, test_id, str(e))
+        raise
+
+
+# Global cache for full simulation logs
+full_simulation_logs_cache = {}
+
+
+def sb_get_full_simulation_logs(
+    simulation_id: str,
+    test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Get comprehensive execution logs for a specific simulation including detailed traces.
+
+    This function retrieves the full simulation logs response from the SafeBreach API,
+    with primary focus on exposing the detailed LOGS field that contains ~40KB of
+    timestamped simulator execution logs for troubleshooting and forensic analysis.
+
+    Args:
+        simulation_id (str): Simulation ID - required (e.g., "1477531")
+        test_id (str): Test ID / planRunId - required (e.g., "1764165600525.2")
+        console (str): SafeBreach console name - defaults to "default"
+
+    Returns:
+        Dict containing:
+            - simulation_id: Simulation identifier
+            - test_id: Test plan run ID
+            - execution_times: Start, end, execution timestamps and durations
+            - status: Execution status and final outcome
+            - logs: Full simulator logs (~40KB detailed text)
+            - simulation_steps: Structured array of execution steps
+            - details_summary: High-level execution summary
+            - metadata: Execution context and configuration
+            - attack_info: Move name, description, protocol, approach
+            - host_info: Attacker and target node information
+
+    Raises:
+        ValueError: If simulation_id or test_id are empty/invalid
+        requests.HTTPError: If API request fails
+        KeyError: If response structure is unexpected
+
+    Example:
+        >>> details = sb_get_full_simulation_logs(
+        ...     simulation_id="1477531",
+        ...     test_id="1764165600525.2",
+        ...     console="demo"
+        ... )
+        >>> print(f"Logs size: {len(details['logs'])} bytes")
+        >>> print(f"Steps count: {len(details['simulation_steps'])}")
+    """
+    # Validate required parameters
+    if not simulation_id or not simulation_id.strip():
+        raise ValueError("simulation_id parameter is required and cannot be empty")
+
+    if not test_id or not test_id.strip():
+        raise ValueError("test_id parameter is required and cannot be empty")
+
+    try:
+        # Get data from cache or API
+        api_response = _get_full_simulation_logs_from_cache_or_api(simulation_id, test_id, console)
+
+        # Transform using data types mapping
+        from .data_types import get_full_simulation_logs_mapping
+        result = get_full_simulation_logs_mapping(api_response)
+
+        return result
+
+    except Exception as e:
+        logger.error(
+            "Error getting full simulation logs for simulation '%s', test '%s' from console '%s': %s",
+            simulation_id, test_id, console, str(e)
+        )
+        raise
+
+
+def _get_full_simulation_logs_from_cache_or_api(
+    simulation_id: str,
+    test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Get full simulation logs from cache or API.
+
+    Args:
+        simulation_id: Simulation ID
+        test_id: Test ID / planRunId
+        console: SafeBreach console name
+
+    Returns:
+        Raw API response dictionary
+    """
+    cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}"
+    current_time = time.time()
+
+    # Check cache first
+    if cache_key in full_simulation_logs_cache:
+        data, timestamp = full_simulation_logs_cache[cache_key]
+        if current_time - timestamp < CACHE_TTL:
+            logger.info("Retrieved full simulation logs from cache: %s", cache_key)
+            return data
+
+    # Cache miss or expired - fetch from API
+    logger.info("Fetching full simulation logs from API for simulation '%s', test '%s' from console '%s'",
+                simulation_id, test_id, console)
+    data = _fetch_full_simulation_logs_from_api(simulation_id, test_id, console)
+
+    # Cache the result
+    full_simulation_logs_cache[cache_key] = (data, current_time)
+    logger.info("Cached full simulation logs: %s", cache_key)
+
+    return data
+
+
+def _fetch_full_simulation_logs_from_api(
+    simulation_id: str,
+    test_id: str,
+    console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Fetch full simulation logs from SafeBreach API.
+
+    Args:
+        simulation_id: Simulation ID
+        test_id: Test ID / planRunId
+        console: SafeBreach console name
+
+    Returns:
+        Raw API response dictionary
+
+    Raises:
+        requests.HTTPError: If API request fails
+        ValueError: If response is invalid
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+
+        # Build API URL with simulation_id as path parameter and runId as query parameter
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-apitoken": apitoken
+        }
+
+        logger.info("GET request to: %s", api_url)
+        response = requests.get(api_url, headers=headers, timeout=120)
+
+        # Handle HTTP errors
+        if response.status_code == 404:
+            raise ValueError(
+                f"Full simulation logs not found for simulation_id='{simulation_id}', test_id='{test_id}'"
+            )
+        elif response.status_code == 401:
+            raise ValueError(f"Authentication failed for console '{console}'")
+
+        response.raise_for_status()
+
+        # Parse JSON response
+        try:
+            api_response = response.json()
+        except ValueError as e:
+            logger.error("Failed to parse full simulation logs response: %s", str(e))
+            raise ValueError(f"Invalid JSON response from API: {str(e)}")
+
+        logger.info("Successfully retrieved full simulation logs for simulation '%s'", simulation_id)
+        return api_response
+
+    except requests.exceptions.Timeout:
+        logger.error("Timeout fetching full simulation logs for simulation '%s'", simulation_id)
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error("Request error fetching full simulation logs for simulation '%s': %s", simulation_id, str(e))
+        raise
+    except Exception as e:
+        logger.error("Unexpected error fetching full simulation logs: %s", str(e))
         raise

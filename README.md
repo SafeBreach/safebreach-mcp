@@ -750,14 +750,16 @@ The MCP server exposes the following tools for SafeBreach operations:
 8. **`get_security_control_event_details`** ✨ **NEW** - Detailed security event with verbosity levels
 9. **`get_test_findings_counts`** ✨ **NEW** - Findings summary by type with filtering
 10. **`get_test_findings_details`** ✨ **NEW** - Detailed findings with comprehensive filtering
+11. **`get_test_drifts`** ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification
+12. **`get_full_simulation_logs`** ✨ **NEW** - Comprehensive execution logs with detailed traces (~40KB) for forensic analysis
 
 **Playbook Server (Port 8003):**
-11. **`get_playbook_attacks`** ✨ **NEW** - Filtered and paginated playbook attacks with comprehensive filtering
-12. **`get_playbook_attack_details`** ✨ **NEW** - Detailed attack information with verbosity options
+13. **`get_playbook_attacks`** ✨ **NEW** - Filtered and paginated playbook attacks with comprehensive filtering
+14. **`get_playbook_attack_details`** ✨ **NEW** - Detailed attack information with verbosity options
 
 **Utilities Server (Port 8002):**
-13. **`convert_datetime_to_epoch`**
-14. **`convert_epoch_to_datetime`**
+15. **`convert_datetime_to_epoch`**
+16. **`convert_epoch_to_datetime`**
 
 #### Tool Details
 
@@ -820,7 +822,7 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `console` (string, required) - SafeBreach console name
      - `simulation_id` (string, required) - Simulation ID to get details for
      - `include_mitre_techniques` (bool, optional, default False) - Include MITRE ATT&CK technique details
-     - `include_full_attack_logs` (bool, optional, default False) - Include detailed attack logs by host
+     - `include_basic_attack_logs` (bool, optional, default False) - Include basic attack logs by host from simulation events
      - `include_simulation_logs` (bool, optional, default False) - Include simulation execution logs
    - Returns: Complete simulation results with optional extensions
 
@@ -877,9 +879,36 @@ The MCP server exposes the following tools for SafeBreach operations:
    - Filtering: Advanced attribute search across all finding fields including nested objects, arrays, and complex data structures
    - Note: Retrieves test-level findings across all simulations (not simulation-specific findings)
 
+11. **`get_test_drifts`** ✨ **NEW** - Advanced Drift Analysis Between Test Runs
+   - Analyzes drift between the given test and the most recent previous test with the same name
+   - Compares simulation results to identify changes in security posture between executions
+   - Parameters:
+     - `console` (string, required) - SafeBreach console name
+     - `test_id` (string, required) - Current test ID to analyze for drifts
+   - Returns: Comprehensive drift analysis with security impact classification and detailed metadata
+   - Useful for: Tracking changes in security controls effectiveness, identifying security posture trends
+   - Analysis Types: Simulations exclusive to baseline, simulations exclusive to current, simulations with status changes
+   - Security Impact: Categorizes each drift type as positive, negative, or neutral security impact
+
+12. **`get_full_simulation_logs`** ✨ **NEW** - Comprehensive Execution Logs for Forensic Analysis
+   - Retrieves comprehensive execution logs for a specific simulation including detailed traces (~40KB LOGS field)
+   - Primary use case: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation
+   - Parameters:
+     - `simulation_id` (string, required) - Simulation ID to get comprehensive logs for (e.g., '1477531')
+     - `test_id` (string, required) - Test ID (planRunId) containing the simulation (e.g., '1764165600525.2')
+     - `console` (string, default 'default') - SafeBreach console name
+   - Returns: Comprehensive execution data including:
+     - `logs` (string) - Raw, verbose simulator logs with full trace output (~40KB)
+     - `simulation_steps` (list) - Structured step-by-step execution with timing information
+     - `details_summary` (string) - Exception traceback summary if errors occurred
+     - `output` (string) - Simulation initialization output
+     - `metadata` (dict) - Additional fields like method_id, state, execution_times
+   - Caching: Results cached for 1 hour for performance optimization
+   - Note: Use this for comprehensive log analysis; use get_simulation_details with include_basic_attack_logs for summary-level logs
+
 #### Utility Tools
 
-11. **`convert_datetime_to_epoch`**
+13. **`convert_datetime_to_epoch`**
    - Converts ISO datetime strings to Unix epoch timestamps
    - Parameters: `datetime_str` (string, required) - ISO format datetime string
    - Returns: Epoch timestamp and parsing details

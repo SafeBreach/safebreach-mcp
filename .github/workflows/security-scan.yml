@@ -9,6 +9,7 @@ on:
 jobs:
   security-scan:
     runs-on: ubuntu-latest
+    environment: SafeBreach_MCP
     steps:
     - uses: actions/checkout@v4
       with:
@@ -18,8 +19,7 @@ jobs:
       uses: gitleaks/gitleaks-action@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        config-path: .gitleaks.toml
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
     - name: Run TruffleHog OSS
       uses: trufflesecurity/trufflehog@main

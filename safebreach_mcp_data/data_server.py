@@ -22,7 +22,8 @@ from .data_functions import (
     sb_get_security_control_event_details,
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
-    sb_get_test_drifts
+    sb_get_test_drifts,
+    sb_get_full_simulation_logs
 )
 
 logger = logging.getLogger(__name__)
@@ -116,22 +117,23 @@ playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial na
         @self.mcp.tool(
             name="get_test_simulation_details",
             description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
-Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, full attack logs by host, and drift analysis information.
+Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
 Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False), 
-include_full_attack_logs (bool, default False), include_drift_info (bool, default False)"""
+include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
+Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead."""
         )
         async def get_test_simulation_details_tool(
             simulation_id: str,
             console: str = "default",
             include_mitre_techniques: bool = False,
-            include_full_attack_logs: bool = False,
+            include_basic_attack_logs: bool = False,
             include_drift_info: bool = False
         ) -> dict:
             return sb_get_simulation_details(
                 simulation_id,
                 console,
                 include_mitre_techniques=include_mitre_techniques,
-                include_full_attack_logs=include_full_attack_logs,
+                include_basic_attack_logs=include_basic_attack_logs,
                 include_drift_info=include_drift_info
             )
         
@@ -243,6 +245,25 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             console: str = "default"
         ) -> dict:
             return sb_get_test_drifts(
+                test_id=test_id,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="get_full_simulation_logs",
+            description="""Retrieves comprehensive execution logs for a specific simulation including detailed traces (~40KB LOGS field).
+            Primary use case: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation.
+            Returns: logs (full simulator execution logs), simulation_steps (structured execution steps), execution_times, status, attack_info, host_info.
+            Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (default: 'default').
+            Note: Results are cached for 1 hour for performance. Use this for comprehensive log analysis; use get_simulation_details with include_basic_attack_logs for summary-level logs."""
+        )
+        async def get_full_simulation_logs_tool(
+            simulation_id: str,
+            test_id: str,
+            console: str = "default"
+        ) -> dict:
+            return sb_get_full_simulation_logs(
+                simulation_id=simulation_id,
                 test_id=test_id,
                 console=console
             )

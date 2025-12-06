@@ -99,14 +99,14 @@ def get_reduced_simulation_result_entity(simulation_result_entity):
     return reduced_entity_to_return
 
 
-def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_full_attack_logs=False, include_drift_info=False):
+def get_full_simulation_result_entity(simulation_result_entity, include_mitre_techniques=False, include_basic_attack_logs=False, include_drift_info=False):
     """
     Returns a full simulation result entity with optional extensions.
     
     Args:
         simulation_result_entity: Raw simulation result data from SafeBreach API
         include_mitre_techniques: Include MITRE ATT&CK technique details
-        include_full_attack_logs: Include detailed attack logs by host
+        include_basic_attack_logs: Include basic attack logs by host from simulation events
         
     Returns:
         Dict with full simulation result data and optional extensions
@@ -150,8 +150,8 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
             })
         full_simulation_result_entity['mitre_techniques'] = mitre_techniques
 
-    if include_full_attack_logs:
-        # Attack logs are actually stored in the simulationEvents field, not dataObj
+    if include_basic_attack_logs:
+        # Basic attack logs are stored in the simulationEvents field
         simulation_events = simulation_result_entity.get('simulationEvents', [])
         
         # Group events by nodeId (host)
@@ -175,7 +175,7 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
             }
             logs_by_host.append(host_object)
         
-        full_simulation_result_entity['full_attack_logs_by_hosts'] = logs_by_host
+        full_simulation_result_entity['basic_attack_logs_by_hosts'] = logs_by_host
 
     return full_simulation_result_entity
 
@@ -341,3 +341,123 @@ def get_full_security_control_events_mapping(security_control_event_entity, verb
     else:
         # Default to standard level
         return map_security_control_event(security_control_event_entity, reduced_security_control_events_mapping)
+
+
+def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform SafeBreach API full simulation logs response to MCP tool format.
+
+    Focuses on extracting detailed logs and structured execution information
+    from the nested response structure. The primary feature is exposing the
+    LOGS field (~40KB) that contains timestamped simulator execution logs.
+
+    Args:
+        api_response: Raw API response from executionsHistoryResults endpoint
+
+    Returns:
+        Transformed dictionary with organized full simulation logs data
+
+    Raises:
+        ValueError: If expected fields are missing from response
+        IndexError: If dataObj structure is unexpected
+    """
+    # Extract nested details object
+    data_obj = api_response.get('dataObj', {})
+    data_array = data_obj.get('data', [[]])
+
+    if not data_array or not data_array[0]:
+        raise ValueError("Response missing dataObj.data structure")
+
+    details_obj = data_array[0][0]
+    details = details_obj.get('details', {})
+
+    # Helper function to calculate duration
+    def calculate_duration(start_time: str, end_time: str) -> float:
+        """Calculate duration in seconds between two ISO timestamps."""
+        if not start_time or not end_time:
+            return 0.0
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            return (end - start).total_seconds()
+        except (ValueError, AttributeError):
+            return 0.0
+
+    # Build transformed response
+    return {
+        # Core identification
+        "simulation_id": str(api_response.get('id', '')),
+        "test_id": api_response.get('planRunId', ''),
+        "run_id": api_response.get('runId', ''),
+
+        # Execution timing
+        "execution_times": {
+            "start_time": api_response.get('startTime', ''),
+            "end_time": api_response.get('endTime', ''),
+            "execution_time": api_response.get('executionTime', ''),
+            "duration_seconds": calculate_duration(
+                api_response.get('startTime', ''),
+                api_response.get('endTime', '')
+            ),
+            "simulation_start": details.get('SIMULATION_START_TIME', ''),
+            "simulation_end": details.get('SIMULATION_END_TIME', ''),
+            "startup_duration": details.get('STARTUP_DURATION', 0.0)
+        },
+
+        # Execution status
+        "status": {
+            "overall": api_response.get('status', ''),
+            "final_status": api_response.get('finalStatus', ''),
+            "task_status": details.get('STATUS', ''),
+            "task_code": details.get('CODE', 0),
+            "security_action": api_response.get('securityAction', '')
+        },
+
+        # PRIMARY FEATURE: Detailed logs
+        "logs": details.get('LOGS', ''),
+
+        # Structured execution steps
+        "simulation_steps": details.get('SIMULATION_STEPS', []),
+
+        # Summary information
+        "details_summary": details.get('DETAILS', ''),
+        "error": details.get('ERROR', ''),
+        "output": details.get('OUTPUT', ''),
+
+        # Execution context
+        "metadata": {
+            "job_id": api_response.get('jobId', 0),
+            "task_id": api_response.get('taskId', 0),
+            "method_id": api_response.get('methodId', 0),
+            "node_name_in_move": details_obj.get('nodeNameInMove', ''),
+            "state": details_obj.get('state', ''),
+            "node_id": details_obj.get('id', '')
+        },
+
+        # Attack information
+        "attack_info": {
+            "move_id": api_response.get('moveId', 0),
+            "move_name": api_response.get('moveName', ''),
+            "move_description": api_response.get('moveDesc', ''),
+            "protocol": api_response.get('protocol', ''),
+            "approach": api_response.get('approach', ''),
+            "opponent": api_response.get('opponent', ''),
+            "noise_level": api_response.get('noiseLevel', ''),
+            "impact": api_response.get('impact', '')
+        },
+
+        # Host information
+        "host_info": {
+            "attacker_node_id": api_response.get('attackerNodeId', ''),
+            "attacker_node_name": api_response.get('attackerNodeName', ''),
+            "attacker_os_type": api_response.get('attackerOSType', ''),
+            "attacker_os_version": api_response.get('attackerOSVersion', ''),
+            "target_node_id": api_response.get('targetNodeId', ''),
+            "target_node_name": api_response.get('targetNodeName', ''),
+            "target_os_type": api_response.get('targetOSType', ''),
+            "target_os_version": api_response.get('targetOSVersion', ''),
+            "src_node_id": api_response.get('srcNodeId', ''),
+            "dest_node_id": api_response.get('destNodeId', '')
+        }
+    }
