@@ -27,6 +27,7 @@ safebreach-mcp-config-server = "safebreach_mcp_config.config_server:main"
 safebreach-mcp-data-server = "safebreach_mcp_data.data_server:main"
 safebreach-mcp-utilities-server = "safebreach_mcp_utilities.utilities_server:main"
 safebreach-mcp-playbook-server = "safebreach_mcp_playbook.playbook_server:main"
+safebreach-mcp-studio-server = "safebreach_mcp_studio.studio_server:main"
 
 # Multi-server launcher
 safebreach-mcp-all-servers = "start_all_servers:console_entry_point"
@@ -47,7 +48,8 @@ include = [
     "safebreach_mcp_config*",
     "safebreach_mcp_data*",
     "safebreach_mcp_utilities*",
-    "safebreach_mcp_playbook*"
+    "safebreach_mcp_playbook*",
+    "safebreach_mcp_studio*"
 ]
 
 [build-system]
