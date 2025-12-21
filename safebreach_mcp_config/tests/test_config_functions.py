@@ -109,22 +109,23 @@ class TestConfigFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_from_cache(self, mock_get, mock_secret, mock_simulator_data):
-        """Test retrieval of simulators from cache."""
+    def test_get_all_simulators_from_cache(self, mock_get, mock_secret, mock_cache_enabled, mock_simulator_data):
+        """Test retrieval of simulators from cache when caching is enabled."""
         # Setup cache
         cache_key = "simulators_test-console"
         current_time = time.time()
         simulators_cache[cache_key] = (mock_simulator_data, current_time)
-        
+
         # Test
         result = _get_all_simulators_from_cache_or_api("test-console")
-        
+
         # Assertions
         assert len(result) == 2
         assert result[0]["id"] == "sim1"
-        
+
         # Verify API was NOT called
         mock_get.assert_not_called()
         mock_secret.assert_not_called()

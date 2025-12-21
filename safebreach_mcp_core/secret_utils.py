@@ -8,6 +8,7 @@ Supports multiple secret storage backends through the SecretProvider interface.
 import logging
 from typing import Optional, Dict, Any
 import os
+from .cache_config import is_caching_enabled
 from .secret_providers import SecretProviderFactory, SecretProvider
 from .environments_metadata import safebreach_envs, get_environment_by_name
 
@@ -64,25 +65,32 @@ def get_secret_for_console(console: str) -> str:
 def _get_or_create_provider(provider_type: str, secret_config: Dict[str, Any]) -> SecretProvider:
     """
     Get or create a secret provider instance, with caching.
-    
+
     Args:
         provider_type: Type of provider ('aws_ssm', 'aws_secrets_manager')
         secret_config: Configuration for the provider
-        
+
     Returns:
         SecretProvider instance
     """
     cache_key = f"{provider_type}:{secret_config.get('region_name', 'us-east-1')}"
-    
-    if cache_key not in _provider_cache:
-        # Extract provider initialization parameters
-        provider_kwargs = {}
-        if 'region_name' in secret_config:
-            provider_kwargs['region_name'] = secret_config['region_name']
-        
-        _provider_cache[cache_key] = SecretProviderFactory.create_provider(
-            provider_type, **provider_kwargs
-        )
-        logger.debug(f"Created new provider instance: {cache_key}")
-    
-    return _provider_cache[cache_key]
+
+    # Check cache first (only if caching is enabled)
+    if is_caching_enabled() and cache_key in _provider_cache:
+        return _provider_cache[cache_key]
+
+    # Extract provider initialization parameters
+    provider_kwargs = {}
+    if 'region_name' in secret_config:
+        provider_kwargs['region_name'] = secret_config['region_name']
+
+    provider = SecretProviderFactory.create_provider(
+        provider_type, **provider_kwargs
+    )
+
+    # Cache the provider (only if caching is enabled)
+    if is_caching_enabled():
+        _provider_cache[cache_key] = provider
+        logger.debug(f"Created and cached new provider instance: {cache_key}")
+
+    return provider

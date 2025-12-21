@@ -29,7 +29,7 @@ from safebreach_mcp_data.data_functions import (
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def e2e_console():
     """Get console name for E2E tests from environment."""
     console = os.environ.get('E2E_CONSOLE', 'demo-console')
@@ -38,29 +38,35 @@ def e2e_console():
     return console
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def sample_test_id(e2e_console):
-    """Get a real test ID from the console for E2E testing."""
+    """Get a real test ID from the console for E2E testing.
+
+    Scoped to class to avoid repeated API calls for each test.
+    """
     # Get the first test from history to use for detailed testing
     tests_response = sb_get_tests_history(console=e2e_console, page_number=0, test_type="propagate")
-    
+
     if 'tests_in_page' not in tests_response or not tests_response['tests_in_page']:
         pytest.skip(f"No tests found in console {e2e_console} for E2E testing")
-    
+
     # Get the first test ID
     test_id = tests_response['tests_in_page'][0]['test_id']
     return test_id
 
 
-@pytest.fixture 
+@pytest.fixture(scope="class")
 def sample_simulation_id(e2e_console, sample_test_id):
-    """Get a real simulation ID from the console for E2E testing."""
+    """Get a real simulation ID from the console for E2E testing.
+
+    Scoped to class to avoid repeated API calls for each test.
+    """
     # Get simulations from the sample test
     simulations_response = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
-    
+
     if 'simulations_in_page' not in simulations_response or not simulations_response['simulations_in_page']:
         pytest.skip(f"No simulations found in test {sample_test_id} for E2E testing")
-    
+
     # Get the first simulation ID
     simulation_id = simulations_response['simulations_in_page'][0]['simulation_id']
     return simulation_id

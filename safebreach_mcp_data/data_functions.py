@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Optional, Any, Iterable
 
 import requests
+from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .data_types import (
@@ -193,9 +194,9 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
     """
     cache_key = f"tests_{console}"
     current_time = time.time()
-    
-    # Check cache first
-    if use_cache and cache_key in tests_cache:
+
+    # Check cache first (only if caching is enabled)
+    if use_cache and is_caching_enabled() and cache_key in tests_cache:
         data, timestamp = tests_cache[cache_key]
         if current_time - timestamp < CACHE_TTL:
             logger.info("Retrieved %d tests from cache for console '%s'", len(data), console)
@@ -227,9 +228,10 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
         for test_summary in tests_summaries:
             logger.info("Adding test %s to the return list", test_summary['planName'])
             tests.append(get_reduced_test_summary_mapping(test_summary))
-        
-        # Cache the result so subsequent calls can reuse it
-        tests_cache[cache_key] = (tests, current_time)
+
+        # Cache the result so subsequent calls can reuse it (only if caching is enabled)
+        if is_caching_enabled():
+            tests_cache[cache_key] = (tests, current_time)
         
         logger.info("Retrieved %d tests from API for console '%s'", len(tests), console)
         return tests
@@ -623,9 +625,9 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
     """
     cache_key = f"simulations_{console}_{test_id}"
     current_time = time.time()
-    
-    # Check cache first
-    if cache_key in simulations_cache:
+
+    # Check cache first (only if caching is enabled)
+    if is_caching_enabled() and cache_key in simulations_cache:
         data, timestamp = simulations_cache[cache_key]
         if current_time - timestamp < CACHE_TTL:
             logger.info("Retrieved %d simulations from cache for test '%s'", len(data), test_id)
@@ -692,9 +694,10 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
         for simulation_result in all_simulations_results:
             logger.info("Adding simulation %s to the return list", simulation_result['id'])
             simulations.append(get_reduced_simulation_result_entity(simulation_result))
-        
-        # Cache the result
-        simulations_cache[cache_key] = (simulations, current_time)
+
+        # Cache the result (only if caching is enabled)
+        if is_caching_enabled():
+            simulations_cache[cache_key] = (simulations, current_time)
         
         logger.info("Retrieved %d simulations total from %d pages for test '%s'", len(simulations), page - 1, test_id)
         return simulations
@@ -886,9 +889,9 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
     """
     cache_key = f"{console}:{test_id}:{simulation_id}"
     current_time = time.time()
-    
-    # Check cache first
-    if cache_key in security_control_events_cache:
+
+    # Check cache first (only if caching is enabled)
+    if is_caching_enabled() and cache_key in security_control_events_cache:
         cache_entry = security_control_events_cache[cache_key]
         if current_time - cache_entry['timestamp'] < CACHE_TTL:
             logger.info("Using cached security control events for %s:%s:%s", console, test_id, simulation_id)
@@ -914,14 +917,14 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
         security_events = []
         if 'result' in response_data and 'siemLogs' in response_data['result']:
             security_events = response_data['result']['siemLogs']
-        
-        # Cache the result
-        security_control_events_cache[cache_key] = {
-            'data': security_events,
-            'timestamp': current_time
-        }
-        
-        logger.info("Cached %d security control events for %s:%s:%s", len(security_events), console, test_id, simulation_id)
+
+        # Cache the result (only if caching is enabled)
+        if is_caching_enabled():
+            security_control_events_cache[cache_key] = {
+                'data': security_events,
+                'timestamp': current_time
+            }
+            logger.info("Cached %d security control events for %s:%s:%s", len(security_events), console, test_id, simulation_id)
         return security_events
         
     except Exception as e:
@@ -1205,9 +1208,9 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
     """
     cache_key = f"{console}:{test_id}"
     current_time = time.time()
-    
-    # Check if we have valid cached data
-    if (cache_key in findings_cache and
+
+    # Check if we have valid cached data (only if caching is enabled)
+    if (is_caching_enabled() and cache_key in findings_cache and
         current_time - findings_cache[cache_key]['timestamp'] < CACHE_TTL):
         logger.info("Using cached findings data for %s", cache_key)
         return findings_cache[cache_key]['data']
@@ -1226,14 +1229,14 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
         
         data = response.json()
         findings_data = data.get('findings', [])
-        
-        # Cache the data
-        findings_cache[cache_key] = {
-            'data': findings_data,
-            'timestamp': current_time
-        }
-        
-        logger.info("Cached %d findings for %s", len(findings_data), cache_key)
+
+        # Cache the data (only if caching is enabled)
+        if is_caching_enabled():
+            findings_cache[cache_key] = {
+                'data': findings_data,
+                'timestamp': current_time
+            }
+            logger.info("Cached %d findings for %s", len(findings_data), cache_key)
         return findings_data
         
     except Exception as e:
@@ -1727,8 +1730,8 @@ def _get_full_simulation_logs_from_cache_or_api(
     cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}"
     current_time = time.time()
 
-    # Check cache first
-    if cache_key in full_simulation_logs_cache:
+    # Check cache first (only if caching is enabled)
+    if is_caching_enabled() and cache_key in full_simulation_logs_cache:
         data, timestamp = full_simulation_logs_cache[cache_key]
         if current_time - timestamp < CACHE_TTL:
             logger.info("Retrieved full simulation logs from cache: %s", cache_key)
@@ -1739,9 +1742,10 @@ def _get_full_simulation_logs_from_cache_or_api(
                 simulation_id, test_id, console)
     data = _fetch_full_simulation_logs_from_api(simulation_id, test_id, console)
 
-    # Cache the result
-    full_simulation_logs_cache[cache_key] = (data, current_time)
-    logger.info("Cached full simulation logs: %s", cache_key)
+    # Cache the result (only if caching is enabled)
+    if is_caching_enabled():
+        full_simulation_logs_cache[cache_key] = (data, current_time)
+        logger.info("Cached full simulation logs: %s", cache_key)
 
     return data
 

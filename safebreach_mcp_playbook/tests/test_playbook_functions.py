@@ -150,16 +150,17 @@ class TestGetAllAttacksFromCacheOrApi:
         
         assert "API call failed with status 500" in str(exc_info.value)
     
+    @patch('safebreach_mcp_playbook.playbook_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
     @patch('safebreach_mcp_playbook.playbook_functions.get_secret_for_console')
     @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url')
     @patch('safebreach_mcp_playbook.playbook_functions.playbook_cache')
-    def test_cache_hit(self, mock_cache, mock_base_url, mock_get_secret, mock_requests_get, sample_attack_data):
-        """Test cache hit scenario."""
+    def test_cache_hit(self, mock_cache, mock_base_url, mock_get_secret, mock_requests_get, mock_cache_enabled, sample_attack_data):
+        """Test cache hit scenario when caching is enabled."""
         # Setup mocks - these shouldn't be called due to cache hit
         mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = "test-token"
-        
+
         # Setup cache mock to simulate cache hit
         cache_key = "attacks_test-console"
         current_timestamp = time.time()
@@ -169,18 +170,18 @@ class TestGetAllAttacksFromCacheOrApi:
                 'timestamp': current_timestamp
             }
         }
-        
+
         # Configure cache mock behaviors
         mock_cache.__contains__ = Mock(side_effect=lambda key: key in cache_data)
         mock_cache.__getitem__ = Mock(side_effect=lambda key: cache_data[key])
         mock_cache.get = Mock(side_effect=lambda key, default=None: cache_data.get(key, default))
-        
+
         # Call function
         result = _get_all_attacks_from_cache_or_api('test-console')
-        
+
         # Verify results
         assert result == sample_attack_data
-        
+
         # Verify no API call was made (cache hit)
         mock_requests_get.assert_not_called()
         mock_get_secret.assert_not_called()
