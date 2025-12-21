@@ -7,6 +7,7 @@ Provides centralized authentication and API communication for all MCP servers.
 import requests
 import time
 from typing import Dict, Optional, Any
+from .cache_config import is_caching_enabled
 from .secret_utils import get_secret_for_console
 from .environments_metadata import get_environment_by_name
 
@@ -20,9 +21,12 @@ class SafeBreachAuth:
     
     def get_token(self, console: str) -> str:
         """Get API token for the specified console."""
-        if console not in self._token_cache:
-            self._token_cache[console] = get_secret_for_console(console)
-        return self._token_cache[console]
+        if is_caching_enabled() and console in self._token_cache:
+            return self._token_cache[console]
+        token = get_secret_for_console(console)
+        if is_caching_enabled():
+            self._token_cache[console] = token
+        return token
     
     def get_headers(self, console: str) -> Dict[str, str]:
         """Get authentication headers for API requests."""

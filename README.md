@@ -83,7 +83,7 @@ This MCP server enables AI agents to interact with SafeBreach management console
 
 ### 🌐 Integration
 - **Multi-Environment Support**: Connect to multiple SafeBreach environments (staging, dev, production)
-- **Intelligent Caching**: Server-specific caching for improved performance and reduced API calls
+- **Opt-in Caching**: Configurable local caching (disabled by default) to prevent unbounded memory growth
 
 ## Architecture
 
@@ -224,6 +224,31 @@ safebreach_envs = {
     }
 }
 ```
+
+### Local Caching Configuration
+
+By default, local caching is **disabled** to prevent unbounded memory growth in long-running sessions. You can enable caching to improve performance and reduce API calls:
+
+```bash
+# Enable local caching (disabled by default)
+export SB_MCP_ENABLE_LOCAL_CACHING=true
+
+# Disable caching (default behavior)
+export SB_MCP_ENABLE_LOCAL_CACHING=false
+# Or simply don't set the variable
+```
+
+**Truthy values**: `true`, `1`, `yes`, `on` (case-insensitive)
+
+**When to enable caching**:
+- Short-lived sessions where memory growth is not a concern
+- Development and testing scenarios
+- When making repeated queries for the same data
+
+**When to keep caching disabled (default)**:
+- Long-running production deployments
+- Memory-constrained environments
+- When data freshness is critical
 
 ### API Tokens
 
@@ -1399,25 +1424,42 @@ Tests are auto-discovered in VS Code Test Explorer.
 
 ### Caching Behavior
 
-The multi-server architecture implements intelligent caching with server-specific optimization:
+**Caching is disabled by default** to prevent unbounded memory growth. Set `SB_MCP_ENABLE_LOCAL_CACHING=true` to enable.
+
+When enabled, the multi-server architecture implements server-specific caching with 1-hour TTL:
 
 **Config Server:**
-- **Simulator Cache**: 1-hour TTL for simulator data per console
+- **Simulator Cache**: Simulator data per console
 - **Console Isolation**: Separate caches per SafeBreach console
 
 **Data Server:**
-- **Test Cache**: 1-hour TTL for test history data per console
-- **Simulation Cache**: 1-hour TTL for simulation results per test
-- **Security Events Cache**: 1-hour TTL for security control events per simulation
-- **Findings Cache**: 1-hour TTL for test findings data per test
+- **Test Cache**: Test history data per console
+- **Simulation Cache**: Simulation results per test
+- **Security Events Cache**: Security control events per simulation
+- **Findings Cache**: Test findings data per test
+- **Full Logs Cache**: Comprehensive simulation logs per simulation
 - **Console/Test Isolation**: Separate caches per SafeBreach console and test
+
+**Playbook Server:**
+- **Playbook Cache**: Attack playbook data per console
+
+**Core Components:**
+- **Token Cache**: API tokens per console (safebreach_auth.py)
+- **Provider Cache**: Secret provider instances (secret_utils.py)
+- **Secret Caches**: Retrieved secrets per provider (secret_providers.py)
 
 **Utilities Server:**
 - **Stateless**: No caching (pure utility functions)
 
-**Common Features:**
-- **Automatic Expiration**: Stale data automatically refreshed
+**When Caching is Enabled:**
+- **Automatic Expiration**: Stale data automatically refreshed after 1 hour
 - **Cache Isolation**: Each server maintains its own cache
+- **Performance**: Reduced API calls for repeated queries
+
+**When Caching is Disabled (Default):**
+- All data is fetched fresh from APIs on each request
+- No memory growth from cached data
+- Recommended for long-running production deployments
 
 ### Adding New Environments
 

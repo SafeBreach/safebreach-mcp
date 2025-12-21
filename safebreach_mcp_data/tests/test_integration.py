@@ -122,12 +122,13 @@ class TestSecurityControlEventsIntegration:
             }
         ]
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_full_workflow_simulation_to_security_events(self, mock_get, mock_post, mock_secret, mock_account_id, mock_base_url, mock_security_control_events_response, mock_simulation_response):
+    def test_full_workflow_simulation_to_security_events(self, mock_get, mock_post, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_security_control_events_response, mock_simulation_response):
         """Test complete workflow from simulation to security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -192,11 +193,12 @@ class TestSecurityControlEventsIntegration:
         secret_calls = [call[0][0] for call in mock_secret.call_args_list]
         assert "test-console" in secret_calls, f"Expected 'test-console' in calls but got: {secret_calls}"
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_security_control_events_filtering_workflow(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_security_control_events_response):
+    def test_security_control_events_filtering_workflow(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_security_control_events_response):
         """Test filtering workflow for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -270,11 +272,12 @@ class TestSecurityControlEventsIntegration:
         # Should call API a limited number of times (caching may vary due to parameter changes)
         assert mock_get.call_count <= 5  # Allow for some cache misses during parameter refactoring
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_security_control_event_details_verbosity_levels(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_security_control_events_response):
+    def test_security_control_event_details_verbosity_levels(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_security_control_events_response):
         """Test different verbosity levels for security control event details."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -335,11 +338,12 @@ class TestSecurityControlEventsIntegration:
         # Should only call API once due to caching
         assert mock_get.call_count == 1
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_security_control_events_pagination_workflow(self, mock_get, mock_secret, mock_account_id, mock_base_url):
+    def test_security_control_events_pagination_workflow(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled):
         """Test pagination workflow for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -408,11 +412,12 @@ class TestSecurityControlEventsIntegration:
         # Should only call API once due to caching
         assert mock_get.call_count == 1
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_security_control_events_response):
+    def test_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_security_control_events_response):
         """Test cache behavior for security control events."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -578,11 +583,12 @@ class TestFindingsIntegration:
             ]
         }
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.requests')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
-    def test_full_workflow_findings_retrieval(self, mock_get_secret, mock_requests, mock_account_id, mock_base_url, mock_findings_response):
+    def test_full_workflow_findings_retrieval(self, mock_get_secret, mock_requests, mock_account_id, mock_base_url, mock_cache_enabled, mock_findings_response):
         """Test complete workflow from findings counts to details."""
         # Setup mocks
         mock_get_secret.return_value = "test-api-token"
@@ -776,11 +782,12 @@ class TestFindingsIntegration:
         assert filtered_page["total_pages"] == 2
         assert len(filtered_page["findings_in_page"]) == 10
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.requests')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
-    def test_findings_cache_behavior(self, mock_get_secret, mock_requests, mock_account_id, mock_base_url, mock_findings_response):
+    def test_findings_cache_behavior(self, mock_get_secret, mock_requests, mock_account_id, mock_base_url, mock_cache_enabled, mock_findings_response):
         """Test findings cache behavior across multiple calls."""
         # Setup mocks
         mock_get_secret.return_value = "test-api-token"
@@ -1143,12 +1150,13 @@ class TestDriftAnalysisIntegration:
         assert mock_get.call_count >= 2  # test details + tests history
         assert mock_post.call_count >= 2  # baseline + current simulations
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://cache-console.safebreach.com')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='1234567890')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_drift_analysis_caching_behavior(self, mock_post, mock_get, mock_secret, mock_account_id, mock_base_url):
+    def test_drift_analysis_caching_behavior(self, mock_post, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled):
         """Test that drift analysis properly utilizes caching."""
         # Mock secret retrieval
         mock_secret.return_value = "test-api-token"

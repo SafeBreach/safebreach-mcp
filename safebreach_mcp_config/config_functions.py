@@ -9,6 +9,7 @@ import requests
 import logging
 import time
 from typing import Dict, List, Optional, Any
+from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .config_types import get_minimal_simulator_mapping, get_full_simulator_mapping
@@ -129,9 +130,9 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     """
     cache_key = f"simulators_{console}"
     current_time = time.time()
-    
-    # Check cache first
-    if cache_key in simulators_cache:
+
+    # Check cache first (only if caching is enabled)
+    if is_caching_enabled() and cache_key in simulators_cache:
         data, timestamp = simulators_cache[cache_key]
         if current_time - timestamp < CACHE_TTL:
             logger.info(f"Retrieved {len(data)} simulators from cache for console '{console}'")
@@ -164,9 +165,10 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         for simulator in api_data:
             logger.info("Adding simulator %s to the return list", simulator['name'])
             simulators.append(get_minimal_simulator_mapping(simulator))
-        
-        # Cache the result
-        simulators_cache[cache_key] = (simulators, current_time)
+
+        # Cache the result (only if caching is enabled)
+        if is_caching_enabled():
+            simulators_cache[cache_key] = (simulators, current_time)
         
         if len(simulators) == 0:
             logger.warning("Zero simulators found on the environment %s", console)

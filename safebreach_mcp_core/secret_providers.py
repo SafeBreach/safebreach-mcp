@@ -11,6 +11,7 @@ import boto3
 from botocore.exceptions import ClientError
 import logging
 import os
+from .cache_config import is_caching_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -59,20 +60,21 @@ class AWSSSMSecretProvider(SecretProvider):
     def get_secret(self, parameter_name: str) -> str:
         """
         Get a parameter from AWS SSM Parameter Store.
-        
+
         Args:
             parameter_name: The parameter name in SSM
-            
+
         Returns:
             The parameter value
-            
+
         Raises:
             ClientError: If the parameter cannot be retrieved
         """
-        if parameter_name in self._cache:
+        # Check cache first (only if caching is enabled)
+        if is_caching_enabled() and parameter_name in self._cache:
             logger.debug(f"Retrieved cached SSM parameter: {parameter_name}")
             return self._cache[parameter_name]
-        
+
         try:
             logger.info(f"Retrieving SSM parameter: {parameter_name}")
             response = self.client.get_parameter(
@@ -80,7 +82,9 @@ class AWSSSMSecretProvider(SecretProvider):
                 WithDecryption=True
             )
             value = response['Parameter']['Value']
-            self._cache[parameter_name] = value
+            # Cache the value (only if caching is enabled)
+            if is_caching_enabled():
+                self._cache[parameter_name] = value
             logger.debug(f"Successfully retrieved SSM parameter: {parameter_name}")
             return value
         except ClientError as e:
@@ -116,25 +120,28 @@ class AWSSecretsManagerProvider(SecretProvider):
     def get_secret(self, secret_name: str) -> str:
         """
         Get a secret from AWS Secrets Manager.
-        
+
         Args:
             secret_name: The secret name in Secrets Manager
-            
+
         Returns:
             The secret value
-            
+
         Raises:
             ClientError: If the secret cannot be retrieved
         """
-        if secret_name in self._cache:
+        # Check cache first (only if caching is enabled)
+        if is_caching_enabled() and secret_name in self._cache:
             logger.debug(f"Retrieved cached Secrets Manager secret: {secret_name}")
             return self._cache[secret_name]
-        
+
         try:
             logger.info(f"Retrieving Secrets Manager secret: {secret_name}")
             response = self.client.get_secret_value(SecretId=secret_name)
             value = response['SecretString']
-            self._cache[secret_name] = value
+            # Cache the value (only if caching is enabled)
+            if is_caching_enabled():
+                self._cache[secret_name] = value
             logger.debug(f"Successfully retrieved Secrets Manager secret: {secret_name}")
             return value
         except ClientError as e:
@@ -152,34 +159,37 @@ class EnvVarSecretProvider(SecretProvider):
     def get_secret(self, env_var_name: str) -> str:
         """
         Get a secret from environment variables.
-        
+
         Args:
             env_var_name: The environment variable name
-            
+
         Returns:
             The environment variable value
-            
+
         Raises:
             ValueError: If the environment variable is not found or empty
         """
-        if env_var_name in self._cache:
+        # Check cache first (only if caching is enabled)
+        if is_caching_enabled() and env_var_name in self._cache:
             logger.debug(f"Retrieved cached environment variable: {env_var_name}")
             return self._cache[env_var_name]
-        
+
         logger.info(f"Retrieving environment variable: {env_var_name}")
         value = os.getenv(env_var_name.replace('-', '_'))
-        
+
         if value is None:
             error_msg = f"Environment variable '{env_var_name}' not found"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        
+
         if not value.strip():
             error_msg = f"Environment variable '{env_var_name}' is empty"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        
-        self._cache[env_var_name] = value
+
+        # Cache the value (only if caching is enabled)
+        if is_caching_enabled():
+            self._cache[env_var_name] = value
         logger.debug(f"Successfully retrieved environment variable: {env_var_name}")
         return value
 

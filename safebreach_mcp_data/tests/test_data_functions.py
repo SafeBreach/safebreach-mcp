@@ -199,21 +199,22 @@ class TestDataFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_tests_from_cache(self, mock_get, mock_secret, mock_test_data):
-        """Test retrieval of tests from cache."""
+    def test_get_all_tests_from_cache(self, mock_get, mock_secret, mock_cache_enabled, mock_test_data):
+        """Test retrieval of tests from cache when caching is enabled."""
         # Setup cache
         cache_key = "tests_test-console"
         current_time = time.time()
         tests_cache[cache_key] = (mock_test_data, current_time)
-        
+
         # Test
         result = _get_all_tests_from_cache_or_api("test-console")
-        
+
         # Assertions
         assert len(result) == 2
-        
+
         # Verify API was NOT called
         mock_get.assert_not_called()
         mock_secret.assert_not_called()
@@ -689,37 +690,39 @@ class TestDataFunctions:
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
-        """Test cache behavior for security control events."""
+    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
+        """Test cache behavior for security control events when caching is enabled."""
         # Setup mocks
         mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {"result": {"siemLogs": mock_security_control_events_data}}
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
-        
+
         # First call - should hit API
         result1 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
-        
+
         # Second call - should use cache
         result2 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
-        
+
         # Assertions
         assert len(result1) == 2
         assert len(result2) == 2
         assert result1 == result2
         mock_get.assert_called_once()  # Should only be called once due to cache
-    
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
-        """Test cache expiration for security control events."""
+    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
+        """Test cache expiration for security control events when caching is enabled."""
         # Setup mocks
         mock_secret.return_value = "test-token"
         mock_response = Mock()
@@ -1309,26 +1312,27 @@ class TestDataFunctions:
             assert result[0]["type"] == "test"
             mock_requests.get.assert_called_once()
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    def test_get_all_findings_cache_behavior(self, mock_base_url, mock_account_id):
-        """Test findings cache behavior."""
+    def test_get_all_findings_cache_behavior(self, mock_base_url, mock_account_id, mock_cache_enabled):
+        """Test findings cache behavior when caching is enabled."""
         # First call should hit the API
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
              patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
-            
+
             mock_get_secret.return_value = "test-token"
             mock_response = Mock()
             mock_response.json.return_value = {"findings": [{"type": "test"}]}
             mock_response.raise_for_status.return_value = None
             mock_requests.get.return_value = mock_response
-            
+
             # First call
             result1 = _get_all_findings_from_cache_or_api("test-id", "test-console")
-            
+
             # Second call should use cache
             result2 = _get_all_findings_from_cache_or_api("test-id", "test-console")
-            
+
             # API should only be called once
             mock_requests.get.assert_called_once()
             assert result1 == result2
@@ -2490,8 +2494,9 @@ class TestDataFunctions:
 
     # Execution History Details Tests
 
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
-    def test_sb_get_full_simulation_logs_success(self, mock_fetch):
+    def test_sb_get_full_simulation_logs_success(self, mock_fetch, mock_cache_enabled):
         """Test successful full simulation logs retrieval."""
         # Mock API response with structure from simulation_response.json
         mock_response = {
@@ -2567,8 +2572,9 @@ class TestDataFunctions:
         cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
         assert cache_key in full_simulation_logs_cache
 
-    def test_sb_get_full_simulation_logs_cache_hit(self):
-        """Test full simulation logs retrieval from cache."""
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    def test_sb_get_full_simulation_logs_cache_hit(self, mock_cache_enabled):
+        """Test full simulation logs retrieval from cache when caching is enabled."""
         # Populate cache with mock data
         cache_key = 'full_simulation_logs_test-console_sim123_test456'
         cached_data = {

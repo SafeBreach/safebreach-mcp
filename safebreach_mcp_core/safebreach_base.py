@@ -12,6 +12,7 @@ import sys
 import time
 from typing import Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
+from .cache_config import is_caching_enabled
 # FastAPI imports - only needed for external connections
 try:
     from fastapi import Request
@@ -60,13 +61,15 @@ class SafeBreachMCPBase:
     def get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """
         Get data from cache if not expired.
-        
+
         Args:
             key: Cache key
-            
+
         Returns:
             Cached data if available and not expired, None otherwise
         """
+        if not is_caching_enabled():
+            return None
         if key in self._cache:
             timestamp = self._cache_timestamps.get(key, 0)
             if time.time() - timestamp < self.CACHE_TTL:
@@ -80,11 +83,13 @@ class SafeBreachMCPBase:
     def set_cache(self, key: str, data: Dict[str, Any]) -> None:
         """
         Set data in cache.
-        
+
         Args:
             key: Cache key
             data: Data to cache
         """
+        if not is_caching_enabled():
+            return
         self._cache[key] = data
         self._cache_timestamps[key] = time.time()
     
