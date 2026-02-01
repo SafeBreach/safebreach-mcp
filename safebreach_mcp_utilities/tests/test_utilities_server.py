@@ -55,7 +55,7 @@ class TestDateTimeUtils:
     def test_convert_epoch_to_datetime_success(self):
         """Test successful epoch to datetime conversion."""
         # Test with UTC timezone (default) - using seconds (auto-detected)
-        timestamp_seconds = 1705312200  # 2024-01-15T10:30:00Z in seconds
+        timestamp_seconds = 1705314600  # 2024-01-15T10:30:00Z in seconds
         result = convert_epoch_to_datetime(timestamp_seconds)
         assert "iso_datetime" in result
         assert "human_readable" in result
@@ -70,7 +70,7 @@ class TestDateTimeUtils:
         assert result["iso_datetime"].endswith("Z")
 
         # Test with milliseconds input (SafeBreach API format)
-        timestamp_ms = 1705312200000  # 2024-01-15T10:30:00Z in milliseconds
+        timestamp_ms = 1705314600000  # 2024-01-15T10:30:00Z in milliseconds
         result = convert_epoch_to_datetime(timestamp_ms)
         assert result["epoch_timestamp"] == timestamp_ms
         assert result["input_unit"] == "milliseconds"
