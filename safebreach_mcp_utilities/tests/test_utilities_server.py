@@ -20,17 +20,23 @@ class TestDateTimeUtils:
         assert "parsed_datetime" in result
         assert "human_readable" in result
         assert "timezone" in result
+        assert "unit" in result
+        assert result["unit"] == "milliseconds"
         assert isinstance(result["epoch_timestamp"], int)
-        
+        # Verify it's in milliseconds (should be > 10^12 for dates after 2001)
+        assert result["epoch_timestamp"] > 10**12
+
         # Test with +00:00 timezone
         result = convert_datetime_to_epoch("2024-01-15T10:30:00+00:00")
         assert "epoch_timestamp" in result
         assert isinstance(result["epoch_timestamp"], int)
-        
+        assert result["epoch_timestamp"] > 10**12
+
         # Test with different timezone
         result = convert_datetime_to_epoch("2024-01-15T10:30:00-05:00")
         assert "epoch_timestamp" in result
         assert isinstance(result["epoch_timestamp"], int)
+        assert result["epoch_timestamp"] > 10**12
     
     def test_convert_datetime_to_epoch_invalid_format(self):
         """Test datetime to epoch conversion with invalid format."""
@@ -48,21 +54,31 @@ class TestDateTimeUtils:
     
     def test_convert_epoch_to_datetime_success(self):
         """Test successful epoch to datetime conversion."""
-        # Test with UTC timezone (default)
-        timestamp = 1705312200  # 2024-01-15T10:30:00Z
-        result = convert_epoch_to_datetime(timestamp)
+        # Test with UTC timezone (default) - using seconds (auto-detected)
+        timestamp_seconds = 1705312200  # 2024-01-15T10:30:00Z in seconds
+        result = convert_epoch_to_datetime(timestamp_seconds)
         assert "iso_datetime" in result
         assert "human_readable" in result
         assert "epoch_timestamp" in result
+        assert "input_unit" in result
         assert "timezone" in result
         assert "date_only" in result
         assert "time_only" in result
-        assert result["epoch_timestamp"] == timestamp
+        assert result["epoch_timestamp"] == timestamp_seconds
+        assert result["input_unit"] == "seconds"
         assert result["timezone"] == "UTC"
         assert result["iso_datetime"].endswith("Z")
-        
+
+        # Test with milliseconds input (SafeBreach API format)
+        timestamp_ms = 1705312200000  # 2024-01-15T10:30:00Z in milliseconds
+        result = convert_epoch_to_datetime(timestamp_ms)
+        assert result["epoch_timestamp"] == timestamp_ms
+        assert result["input_unit"] == "milliseconds"
+        assert result["iso_datetime"].endswith("Z")
+        assert "2024-01-15T10:30:00" in result["iso_datetime"]
+
         # Test with custom timezone
-        result = convert_epoch_to_datetime(timestamp, timezone="EST")
+        result = convert_epoch_to_datetime(timestamp_seconds, timezone="EST")
         assert result["timezone"] == "EST"
         assert not result["iso_datetime"].endswith("Z")
     
@@ -86,16 +102,18 @@ class TestDateTimeUtils:
     def test_round_trip_conversion(self):
         """Test round-trip conversion from datetime to epoch and back."""
         original_datetime = "2024-01-15T10:30:00Z"
-        
-        # Convert to epoch
+
+        # Convert to epoch (returns milliseconds)
         epoch_result = convert_datetime_to_epoch(original_datetime)
         assert "epoch_timestamp" in epoch_result
-        
-        # Convert back to datetime
+        assert epoch_result["unit"] == "milliseconds"
+
+        # Convert back to datetime (auto-detects milliseconds)
         datetime_result = convert_epoch_to_datetime(epoch_result["epoch_timestamp"])
         assert "iso_datetime" in datetime_result
-        
-        # Should be approximately the same (allowing for precision loss)
+        assert datetime_result["input_unit"] == "milliseconds"
+
+        # Should be exactly the same datetime
         assert datetime_result["iso_datetime"].startswith("2024-01-15T10:30:00")
     
     def test_datetime_parsing_edge_cases(self):
@@ -194,30 +212,45 @@ class TestDateTimeUtils:
     
     def test_timezone_conversion_utc_special_case(self):
         """Test that UTC timezone works correctly."""
-        timestamp = 1640995200  # 2022-01-01 00:00:00 UTC
+        timestamp = 1640995200  # 2022-01-01 00:00:00 UTC (in seconds)
         result = convert_epoch_to_datetime(timestamp, "UTC")
-        
+
         assert result["timezone"] == "UTC"
         assert result["timezone_abbreviation"] == "UTC"
         assert result["timezone_offset"] == "+00:00"
         assert result["iso_datetime"].endswith("Z")
         assert "2022-01-01T00:00:00Z" == result["iso_datetime"]
         assert "UTC" in result["human_readable"]
+        assert result["input_unit"] == "seconds"
+
+        # Test with milliseconds input
+        timestamp_ms = 1640995200000  # Same in milliseconds
+        result_ms = convert_epoch_to_datetime(timestamp_ms, "UTC")
+        assert result_ms["input_unit"] == "milliseconds"
+        assert result_ms["iso_datetime"] == result["iso_datetime"]
     
     def test_epoch_conversion_precision(self):
         """Test epoch conversion precision."""
-        # Test with a known timestamp for consistency
-        test_timestamp = 1640995200  # 2022-01-01 00:00:00 UTC
-        
-        # Convert to datetime
-        back_result = convert_epoch_to_datetime(test_timestamp)
+        # Test with a known timestamp in seconds for consistency
+        test_timestamp_seconds = 1640995200  # 2022-01-01 00:00:00 UTC
+        test_timestamp_ms = 1640995200000  # Same in milliseconds
+
+        # Convert seconds to datetime (auto-detected as seconds)
+        back_result = convert_epoch_to_datetime(test_timestamp_seconds)
         assert "iso_datetime" in back_result
-        assert back_result["epoch_timestamp"] == test_timestamp
-        
-        # Convert back to epoch
+        assert back_result["epoch_timestamp"] == test_timestamp_seconds
+        assert back_result["input_unit"] == "seconds"
+
+        # Convert back to epoch (returns milliseconds now)
         iso_datetime = back_result["iso_datetime"]
         forward_result = convert_datetime_to_epoch(iso_datetime)
         assert "epoch_timestamp" in forward_result
-        
-        # Should be the same timestamp
-        assert forward_result["epoch_timestamp"] == test_timestamp
+        assert forward_result["unit"] == "milliseconds"
+
+        # Should be the same timestamp but in milliseconds
+        assert forward_result["epoch_timestamp"] == test_timestamp_ms
+
+        # Test with milliseconds input
+        back_result_ms = convert_epoch_to_datetime(test_timestamp_ms)
+        assert back_result_ms["input_unit"] == "milliseconds"
+        assert back_result_ms["iso_datetime"] == back_result["iso_datetime"]

@@ -33,18 +33,20 @@ class SafeBreachUtilitiesServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="convert_datetime_to_epoch",
-            description="""Converts a datetime string in ISO format to Unix epoch timestamp.
-Supports various ISO datetime formats including timezone information. Useful for preparing datetime values for SafeBreach API filtering.
+            description="""Converts a datetime string in ISO format to Unix epoch timestamp in MILLISECONDS.
+Returns timestamps in milliseconds format to match SafeBreach API expectations for date filtering parameters (start_date, end_date).
+Supports various ISO datetime formats including timezone information.
 Parameters: datetime_str (required, ISO format string like '2024-01-15T10:30:00Z' or '2024-01-15T10:30:00+00:00')"""
         )
         async def convert_datetime_to_epoch_tool(datetime_str: str) -> dict:
             return convert_datetime_to_epoch(datetime_str)
-        
+
         @self.mcp.tool(
             name="convert_epoch_to_datetime",
             description="""Converts a Unix epoch timestamp to ISO format datetime string.
+Accepts timestamps in both MILLISECONDS (SafeBreach API format) and seconds - auto-detects the format.
 Supports optional timezone specification for the output format. Useful for interpreting epoch timestamps from SafeBreach API responses.
-Parameters: epoch_timestamp (required, Unix timestamp as integer), timezone (optional, default 'UTC')"""
+Parameters: epoch_timestamp (required, Unix timestamp as integer in milliseconds or seconds), timezone (optional, default 'UTC')"""
         )
         async def convert_epoch_to_datetime_tool(epoch_timestamp: int, timezone: str = "UTC") -> dict:
             return convert_epoch_to_datetime(epoch_timestamp, timezone)
