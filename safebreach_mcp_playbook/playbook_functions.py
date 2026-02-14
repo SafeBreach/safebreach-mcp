@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Optional, Any
 
 import requests
+from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url
 from .playbook_types import (
@@ -43,11 +44,11 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         ValueError: If console is not found or API call fails
     """
 
-    # Check cache first
+    # Check cache first (only if caching is enabled)
     cache_key = f"attacks_{console}"
     current_time = time.time()
 
-    if (cache_key in playbook_cache and
+    if (is_caching_enabled() and cache_key in playbook_cache and
         current_time - playbook_cache[cache_key]['timestamp'] < CACHE_TTL):
         logger.info("Cache hit for console %s playbook attacks", console)
         return playbook_cache[cache_key]['data']
@@ -80,13 +81,13 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
         attacks_data = response_data['data']
 
-        # Cache the results
-        playbook_cache[cache_key] = {
-            'data': attacks_data,
-            'timestamp': current_time
-        }
-
-        logger.info("Successfully cached %d attacks for console %s", len(attacks_data), console)
+        # Cache the results (only if caching is enabled)
+        if is_caching_enabled():
+            playbook_cache[cache_key] = {
+                'data': attacks_data,
+                'timestamp': current_time
+            }
+            logger.info("Successfully cached %d attacks for console %s", len(attacks_data), console)
         return attacks_data
 
     except requests.RequestException as e:

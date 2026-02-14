@@ -45,10 +45,11 @@ class SafeBreachDataServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="get_tests_history",
-            description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console. 
+            description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console.
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
-Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), start_date (Unix timestamp), end_date (Unix timestamp), 
-status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc')"""
+Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), start_date (Unix timestamp in MILLISECONDS), end_date (Unix timestamp in MILLISECONDS),
+status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
+Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format."""
         )
         async def get_tests_history_tool(
             console: str = "default",
@@ -88,8 +89,9 @@ status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name 
             name="get_test_simulations",
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
-Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp), end_time (Unix timestamp), 
-playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations)"""
+Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp in MILLISECONDS), end_time (Unix timestamp in MILLISECONDS),
+playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations).
+Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format."""
         )
         async def get_test_simulations_tool(
             test_id: str,

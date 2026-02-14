@@ -19,6 +19,7 @@ from safebreach_mcp_playbook.playbook_functions import (
     sb_get_playbook_attack_details,
     clear_playbook_cache
 )
+from safebreach_mcp_core.cache_config import is_caching_enabled
 
 
 # Skip E2E tests if not in proper environment
@@ -215,29 +216,38 @@ class TestPlaybookE2E:
             pytest.fail(f"E2E test failed: {str(e)}")
     
     def test_cache_behavior_real_api(self):
-        """Test cache behavior with real API calls."""
+        """Test cache behavior with real API calls.
+
+        This test only runs when caching is enabled via SB_MCP_ENABLE_LOCAL_CACHING.
+        """
+        if not is_caching_enabled():
+            pytest.skip("Caching is disabled (SB_MCP_ENABLE_LOCAL_CACHING not set to truthy value)")
+
         try:
+            # Clear cache to ensure clean state
+            clear_playbook_cache()
+
             start_time = time.time()
-            
+
             # First call - should hit API
             first_call = sb_get_playbook_attacks(E2E_CONSOLE)
             first_call_time = time.time() - start_time
-            
+
             start_time = time.time()
-            
+
             # Second call - should use cache
             second_call = sb_get_playbook_attacks(E2E_CONSOLE)
             second_call_time = time.time() - start_time
-            
+
             # Results should be identical
             assert first_call['total_attacks'] == second_call['total_attacks']
             assert len(first_call['attacks_in_page']) == len(second_call['attacks_in_page'])
-            
+
             # Second call should be faster (cached)
             assert second_call_time < first_call_time, "Cache should make second call faster"
-            
+
             print(f"✅ Cache working: First call {first_call_time:.2f}s, Second call {second_call_time:.2f}s")
-            
+
         except Exception as e:
             pytest.fail(f"E2E test failed: {str(e)}")
     
