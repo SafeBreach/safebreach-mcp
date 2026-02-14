@@ -9,17 +9,26 @@ import time
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_studio.studio_functions import (
     sb_validate_studio_code,
-    sb_save_studio_draft,
-    sb_get_all_studio_simulations,
-    sb_update_studio_draft,
-    sb_get_studio_simulation_source,
-    sb_run_studio_simulation,
-    sb_get_studio_simulation_latest_result,
+    sb_save_studio_attack_draft,
+    sb_get_all_studio_attacks,
+    sb_update_studio_attack_draft,
+    sb_get_studio_attack_source,
+    sb_run_studio_attack,
+    sb_get_studio_attack_latest_result,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
+    _lint_check_parameters,
     VALID_PARAMETER_TYPES,
-    VALID_PROTOCOLS
+    VALID_PROTOCOLS,
+    VALID_ATTACK_TYPES,
+    DUAL_SCRIPT_TYPES,
+    PAGE_SIZE,
+)
+from safebreach_mcp_studio.studio_types import (
+    paginate_studio_attacks,
+    get_execution_result_mapping,
+    _parse_simulation_steps,
 )
 
 
@@ -371,8 +380,8 @@ class TestValidateStudioCode:
         assert result['stderr'] != ""
 
 
-class TestSaveStudioDraft:
-    """Test the sb_save_studio_draft function."""
+class TestSaveStudioAttackDraft:
+    """Test the sb_save_studio_attack_draft function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -399,7 +408,7 @@ class TestSaveStudioDraft:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             description="Test description",
@@ -427,7 +436,7 @@ class TestSaveStudioDraft:
     def test_save_studio_draft_empty_name(self, sample_valid_python_code):
         """Test saving draft with empty name parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_save_studio_draft(
+            sb_save_studio_attack_draft(
                 name="",
                 python_code=sample_valid_python_code,
                 console="demo"
@@ -438,7 +447,7 @@ class TestSaveStudioDraft:
     def test_save_studio_draft_empty_code(self):
         """Test saving draft with empty python_code parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_save_studio_draft(
+            sb_save_studio_attack_draft(
                 name="Test Simulation",
                 python_code="",
                 console="demo"
@@ -449,7 +458,7 @@ class TestSaveStudioDraft:
     def test_save_studio_draft_invalid_timeout(self, sample_valid_python_code):
         """Test saving draft with invalid timeout."""
         with pytest.raises(ValueError) as exc_info:
-            sb_save_studio_draft(
+            sb_save_studio_attack_draft(
                 name="Test Simulation",
                 python_code=sample_valid_python_code,
                 timeout=0,
@@ -461,10 +470,10 @@ class TestSaveStudioDraft:
     def test_save_studio_draft_invalid_os_constraint(self, sample_valid_python_code):
         """Test saving draft with invalid os_constraint parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_save_studio_draft(
+            sb_save_studio_attack_draft(
                 name="Test Simulation",
                 python_code=sample_valid_python_code,
-                os_constraint="invalid_os",
+                target_os="invalid_os",
                 console="demo"
             )
 
@@ -495,12 +504,12 @@ class TestSaveStudioDraft:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             description="Test description",
             timeout=300,
-            os_constraint="WINDOWS",
+            target_os="WINDOWS",
             console="demo"
         )
 
@@ -511,7 +520,7 @@ class TestSaveStudioDraft:
         call_args = mock_post.call_args
         data = call_args[1]['data']
         assert 'targetConstraints' in data
-        assert data['targetConstraints'] == '{"os":"WINDOWS"}'
+        assert data['targetConstraints'] == '{"os": "WINDOWS"}'
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -538,12 +547,12 @@ class TestSaveStudioDraft:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             description="Test description",
             timeout=300,
-            os_constraint="All",
+            target_os="All",
             console="demo"
         )
 
@@ -580,7 +589,7 @@ class TestSaveStudioDraft:
 
         # Execute and verify
         with pytest.raises(Exception) as exc_info:
-            sb_save_studio_draft(
+            sb_save_studio_attack_draft(
                 name="Test Simulation",
                 python_code=sample_valid_python_code,
                 console="demo"
@@ -617,7 +626,7 @@ class TestSaveStudioDraft:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             console="demo"
@@ -631,8 +640,8 @@ class TestSaveStudioDraft:
         assert cached_item['timestamp'] == 1000.0
 
 
-class TestGetAllStudioSimulations:
-    """Test the sb_get_all_studio_simulations function."""
+class TestGetAllStudioAttacks:
+    """Test the sb_get_all_studio_attacks function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -657,13 +666,13 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute
-        result = sb_get_all_studio_simulations(console="demo", status_filter="all")
+        result = sb_get_all_studio_attacks(console="demo", status_filter="all")
 
         # Verify
-        assert result['total_count'] == 3
+        assert result['total_attacks'] == 3
         assert result['draft_count'] == 2
         assert result['published_count'] == 1
-        assert len(result['simulations']) == 3
+        assert len(result['attacks_in_page']) == 3
 
         # Verify API was called correctly
         mock_get.assert_called_once()
@@ -694,11 +703,11 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute
-        result = sb_get_all_studio_simulations(console="demo", status_filter="draft")
+        result = sb_get_all_studio_attacks(console="demo", status_filter="draft")
 
         # Verify
-        assert result['total_count'] == 2
-        assert all(sim['status'] == 'draft' for sim in result['simulations'])
+        assert result['total_attacks'] == 2
+        assert all(sim['status'] == 'draft' for sim in result['attacks_in_page'])
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -723,16 +732,16 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute
-        result = sb_get_all_studio_simulations(console="demo", status_filter="published")
+        result = sb_get_all_studio_attacks(console="demo", status_filter="published")
 
         # Verify
-        assert result['total_count'] == 1
-        assert all(sim['status'] == 'published' for sim in result['simulations'])
+        assert result['total_attacks'] == 1
+        assert all(sim['status'] == 'published' for sim in result['attacks_in_page'])
 
     def test_get_all_simulations_invalid_status_filter(self):
         """Test validation of invalid status filter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_all_studio_simulations(console="demo", status_filter="invalid")
+            sb_get_all_studio_attacks(console="demo", status_filter="invalid")
 
         assert "status_filter must be one of" in str(exc_info.value)
 
@@ -759,11 +768,11 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute - filter by "Draft" in name (should match both draft simulations)
-        result = sb_get_all_studio_simulations(console="demo", name_filter="Draft")
+        result = sb_get_all_studio_attacks(console="demo", name_filter="Draft")
 
         # Verify
-        assert result['total_count'] == 2
-        assert all("Draft" in sim['name'] or "draft" in sim['name'] for sim in result['simulations'])
+        assert result['total_attacks'] == 2
+        assert all("Draft" in sim['name'] or "draft" in sim['name'] for sim in result['attacks_in_page'])
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -826,11 +835,11 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute - filter by user ID 123
-        result = sb_get_all_studio_simulations(console="demo", user_id_filter=123)
+        result = sb_get_all_studio_attacks(console="demo", user_id_filter=123)
 
         # Verify
-        assert result['total_count'] == 2
-        assert all(sim['user_created'] == 123 for sim in result['simulations'])
+        assert result['total_attacks'] == 2
+        assert all(sim['user_created'] == 123 for sim in result['attacks_in_page'])
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -893,7 +902,7 @@ class TestGetAllStudioSimulations:
         mock_get.return_value = mock_response
 
         # Execute - filter by status=draft, name contains "Test", user_id=123
-        result = sb_get_all_studio_simulations(
+        result = sb_get_all_studio_attacks(
             console="demo",
             status_filter="draft",
             name_filter="Test",
@@ -901,11 +910,11 @@ class TestGetAllStudioSimulations:
         )
 
         # Verify - should only return ID 1 (draft, "Test" in name, user 123)
-        assert result['total_count'] == 1
-        assert result['simulations'][0]['id'] == 1
-        assert result['simulations'][0]['status'] == 'draft'
-        assert "Test" in result['simulations'][0]['name']
-        assert result['simulations'][0]['user_created'] == 123
+        assert result['total_attacks'] == 1
+        assert result['attacks_in_page'][0]['id'] == 1
+        assert result['attacks_in_page'][0]['status'] == 'draft'
+        assert "Test" in result['attacks_in_page'][0]['name']
+        assert result['attacks_in_page'][0]['user_created'] == 123
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -931,13 +940,13 @@ class TestGetAllStudioSimulations:
 
         # Execute and verify
         with pytest.raises(Exception) as exc_info:
-            sb_get_all_studio_simulations(console="demo")
+            sb_get_all_studio_attacks(console="demo")
 
         assert "API Error" in str(exc_info.value)
 
 
-class TestUpdateStudioDraft:
-    """Test the sb_update_studio_draft function."""
+class TestUpdateStudioAttackDraft:
+    """Test the sb_update_studio_attack_draft function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -964,8 +973,8 @@ class TestUpdateStudioDraft:
         mock_put.return_value = mock_response
 
         # Execute
-        result = sb_update_studio_draft(
-            draft_id=10000298,
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298,
             name="Updated Simulation",
             python_code=sample_valid_python_code,
             description="Updated description",
@@ -991,32 +1000,32 @@ class TestUpdateStudioDraft:
     def test_update_draft_invalid_draft_id_zero(self, sample_valid_python_code):
         """Test updating draft with invalid draft_id (zero)."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=0,
+            sb_update_studio_attack_draft(
+                attack_id=0,
                 name="Test",
                 python_code=sample_valid_python_code,
                 console="demo"
             )
 
-        assert "draft_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     def test_update_draft_invalid_draft_id_negative(self, sample_valid_python_code):
         """Test updating draft with invalid draft_id (negative)."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=-1,
+            sb_update_studio_attack_draft(
+                attack_id=-1,
                 name="Test",
                 python_code=sample_valid_python_code,
                 console="demo"
             )
 
-        assert "draft_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     def test_update_draft_empty_name(self, sample_valid_python_code):
         """Test updating draft with empty name."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=12345,
+            sb_update_studio_attack_draft(
+                attack_id=12345,
                 name="",
                 python_code=sample_valid_python_code,
                 console="demo"
@@ -1027,8 +1036,8 @@ class TestUpdateStudioDraft:
     def test_update_draft_empty_code(self):
         """Test updating draft with empty python_code."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=12345,
+            sb_update_studio_attack_draft(
+                attack_id=12345,
                 name="Test",
                 python_code="",
                 console="demo"
@@ -1039,8 +1048,8 @@ class TestUpdateStudioDraft:
     def test_update_draft_invalid_timeout(self, sample_valid_python_code):
         """Test updating draft with invalid timeout."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=12345,
+            sb_update_studio_attack_draft(
+                attack_id=12345,
                 name="Test",
                 python_code=sample_valid_python_code,
                 timeout=0,
@@ -1052,11 +1061,11 @@ class TestUpdateStudioDraft:
     def test_update_draft_invalid_os_constraint(self, sample_valid_python_code):
         """Test updating draft with invalid os_constraint parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_update_studio_draft(
-                draft_id=12345,
+            sb_update_studio_attack_draft(
+                attack_id=12345,
                 name="Test",
                 python_code=sample_valid_python_code,
-                os_constraint="INVALID",
+                target_os="INVALID",
                 console="demo"
             )
 
@@ -1087,13 +1096,13 @@ class TestUpdateStudioDraft:
         mock_put.return_value = mock_response
 
         # Execute
-        result = sb_update_studio_draft(
-            draft_id=10000298,
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298,
             name="Updated Simulation",
             python_code=sample_valid_python_code,
             description="Updated description",
             timeout=600,
-            os_constraint="LINUX",
+            target_os="LINUX",
             console="demo"
         )
 
@@ -1104,7 +1113,7 @@ class TestUpdateStudioDraft:
         call_args = mock_put.call_args
         data = call_args[1]['data']
         assert 'targetConstraints' in data
-        assert data['targetConstraints'] == '{"os":"LINUX"}'
+        assert data['targetConstraints'] == '{"os": "LINUX"}'
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1131,13 +1140,13 @@ class TestUpdateStudioDraft:
         mock_put.return_value = mock_response
 
         # Execute
-        result = sb_update_studio_draft(
-            draft_id=10000298,
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298,
             name="Updated Simulation",
             python_code=sample_valid_python_code,
             description="Updated description",
             timeout=600,
-            os_constraint="MAC",
+            target_os="MAC",
             console="demo"
         )
 
@@ -1148,7 +1157,7 @@ class TestUpdateStudioDraft:
         call_args = mock_put.call_args
         data = call_args[1]['data']
         assert 'targetConstraints' in data
-        assert data['targetConstraints'] == '{"os":"MAC"}'
+        assert data['targetConstraints'] == '{"os": "MAC"}'
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1175,13 +1184,13 @@ class TestUpdateStudioDraft:
         mock_put.return_value = mock_response
 
         # Execute
-        result = sb_update_studio_draft(
-            draft_id=10000298,
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298,
             name="Updated Simulation",
             python_code=sample_valid_python_code,
             description="Updated description",
             timeout=600,
-            os_constraint="All",
+            target_os="All",
             console="demo"
         )
 
@@ -1218,8 +1227,8 @@ class TestUpdateStudioDraft:
 
         # Execute and verify
         with pytest.raises(Exception) as exc_info:
-            sb_update_studio_draft(
-                draft_id=99999,
+            sb_update_studio_attack_draft(
+                attack_id=99999,
                 name="Test",
                 python_code=sample_valid_python_code,
                 console="demo"
@@ -1256,8 +1265,8 @@ class TestUpdateStudioDraft:
         mock_put.return_value = mock_response
 
         # Execute
-        result = sb_update_studio_draft(
-            draft_id=10000298,
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298,
             name="Updated Simulation",
             python_code=sample_valid_python_code,
             console="demo"
@@ -1272,8 +1281,8 @@ class TestUpdateStudioDraft:
         assert cached_item['timestamp'] == 2000.0
 
 
-class TestGetStudioSimulationSource:
-    """Test the sb_get_studio_simulation_source function."""
+class TestGetStudioAttackSource:
+    """Test the sb_get_studio_attack_source function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1293,41 +1302,47 @@ class TestGetStudioSimulationSource:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = mock_source_response
-        mock_get.return_value = mock_response
+        # First call returns target, second call returns 404 (no attacker for host attack)
+        mock_target_response = MagicMock()
+        mock_target_response.json.return_value = mock_source_response
+        mock_target_response.status_code = 200
+
+        mock_attacker_response = MagicMock()
+        mock_attacker_response.status_code = 404
+
+        mock_get.side_effect = [mock_target_response, mock_attacker_response]
 
         # Execute
-        result = sb_get_studio_simulation_source(
-            simulation_id=10000298,
+        result = sb_get_studio_attack_source(
+            attack_id=10000298,
             console="demo"
         )
 
-        # Verify
-        assert result['filename'] == "target.py"
-        assert 'content' in result
-        assert 'def main(system_data, asset, proxy, *args, **kwargs):' in result['content']
-        assert len(result['content']) > 0
+        # Verify new return structure
+        assert result['attack_id'] == 10000298
+        assert result['target']['filename'] == "target.py"
+        assert 'def main(system_data, asset, proxy, *args, **kwargs):' in result['target']['content']
+        assert len(result['target']['content']) > 0
+        assert result['attacker'] is None
 
-        # Verify API was called correctly
-        mock_get.assert_called_once()
-        call_args = mock_get.call_args
-        assert "customMethods/10000298/files/target" in call_args[0][0]
-        assert call_args[1]['timeout'] == 120
+        # Verify API was called for target
+        assert mock_get.call_count == 2
+        target_call = mock_get.call_args_list[0]
+        assert "customMethods/10000298/files/target" in target_call[0][0]
 
     def test_get_source_invalid_simulation_id_zero(self):
         """Test getting source with invalid simulation_id (zero)."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_source(simulation_id=0, console="demo")
+            sb_get_studio_attack_source(attack_id=0, console="demo")
 
-        assert "simulation_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     def test_get_source_invalid_simulation_id_negative(self):
         """Test getting source with invalid simulation_id (negative)."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_source(simulation_id=-1, console="demo")
+            sb_get_studio_attack_source(attack_id=-1, console="demo")
 
-        assert "simulation_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1353,7 +1368,7 @@ class TestGetStudioSimulationSource:
 
         # Execute and verify
         with pytest.raises(Exception) as exc_info:
-            sb_get_studio_simulation_source(simulation_id=99999, console="demo")
+            sb_get_studio_attack_source(attack_id=99999, console="demo")
 
         assert "API Error" in str(exc_info.value)
 
@@ -1374,27 +1389,34 @@ class TestGetStudioSimulationSource:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
-        # Mock response with empty content
+        # Mock response with empty content for target
         empty_response = {
             "data": {
                 "filename": "target.py",
                 "content": ""
             }
         }
-        mock_response = MagicMock()
-        mock_response.json.return_value = empty_response
-        mock_get.return_value = mock_response
+        mock_target_response = MagicMock()
+        mock_target_response.json.return_value = empty_response
+        mock_target_response.status_code = 200
+
+        mock_attacker_response = MagicMock()
+        mock_attacker_response.status_code = 404
+
+        mock_get.side_effect = [mock_target_response, mock_attacker_response]
 
         # Execute
-        result = sb_get_studio_simulation_source(simulation_id=12345, console="demo")
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
 
-        # Verify
-        assert result['filename'] == "target.py"
-        assert result['content'] == ""
+        # Verify new return structure
+        assert result['attack_id'] == 12345
+        assert result['target']['filename'] == "target.py"
+        assert result['target']['content'] == ""
+        assert result['attacker'] is None
 
 
-class TestRunStudioSimulation:
-    """Test the sb_run_studio_simulation function."""
+class TestRunStudioAttack:
+    """Test the sb_run_studio_attack function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1419,17 +1441,16 @@ class TestRunStudioSimulation:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_run_studio_simulation(
-            simulation_id=10000298,
-            console="demo"
+        result = sb_run_studio_attack(
+            attack_id=10000298,
+            console="demo",
+            all_connected=True,
         )
 
         # Verify result
-        assert result['plan_run_id'] == "1764570357286.4"
+        assert result['test_id'] == "1764570357286.4"
         assert result['step_run_id'] == "1764570357287.5"
-        assert result['simulation_id'] == 10000298
-        assert result['simulator_count'] == 'all connected'
-        assert result['draft'] is True
+        assert result['attack_id'] == 10000298
 
         # Verify API was called correctly
         mock_post.assert_called_once()
@@ -1465,26 +1486,26 @@ class TestRunStudioSimulation:
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
-        simulator_ids = ["sim-uuid-1", "sim-uuid-2", "sim-uuid-3"]
+        target_ids = ["sim-uuid-1", "sim-uuid-2", "sim-uuid-3"]
 
         # Execute
-        result = sb_run_studio_simulation(
-            simulation_id=10000298,
+        result = sb_run_studio_attack(
+            attack_id=10000298,
             console="demo",
-            simulator_ids=simulator_ids
+            target_simulator_ids=target_ids,
         )
 
         # Verify result
-        assert result['plan_run_id'] == "1764570357286.4"
-        assert result['simulator_count'] == 3
+        assert result['test_id'] == "1764570357286.4"
 
         # Verify payload structure for specific simulators
         call_args = mock_post.call_args
         payload = call_args[1]['json']
         assert 'simulators' in payload['plan']['steps'][0]['attackerFilter']
         assert 'simulators' in payload['plan']['steps'][0]['targetFilter']
-        assert payload['plan']['steps'][0]['attackerFilter']['simulators']['values'] == simulator_ids
-        assert payload['plan']['steps'][0]['targetFilter']['simulators']['values'] == simulator_ids
+        # Host attack: attacker IDs = target IDs
+        assert payload['plan']['steps'][0]['attackerFilter']['simulators']['values'] == target_ids
+        assert payload['plan']['steps'][0]['targetFilter']['simulators']['values'] == target_ids
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1509,9 +1530,10 @@ class TestRunStudioSimulation:
         mock_post.return_value = mock_response
 
         # Execute
-        result = sb_run_studio_simulation(
-            simulation_id=10000298,
+        result = sb_run_studio_attack(
+            attack_id=10000298,
             console="demo",
+            all_connected=True,
             test_name="My Custom Test Name"
         )
 
@@ -1523,20 +1545,20 @@ class TestRunStudioSimulation:
     def test_run_simulation_invalid_simulation_id(self):
         """Test running simulation with invalid simulation_id."""
         with pytest.raises(ValueError) as exc_info:
-            sb_run_studio_simulation(simulation_id=0, console="demo")
+            sb_run_studio_attack(attack_id=0, console="demo", all_connected=True)
 
-        assert "simulation_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     def test_run_simulation_empty_simulator_list(self):
-        """Test running simulation with empty simulator_ids list."""
+        """Test running simulation with empty target_simulator_ids list."""
         with pytest.raises(ValueError) as exc_info:
-            sb_run_studio_simulation(
-                simulation_id=10000298,
+            sb_run_studio_attack(
+                attack_id=10000298,
                 console="demo",
-                simulator_ids=[]
+                target_simulator_ids=[]
             )
 
-        assert "simulator_ids cannot be an empty list" in str(exc_info.value)
+        assert "target_simulator_ids cannot be an empty list" in str(exc_info.value)
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1562,9 +1584,15 @@ class TestRunStudioSimulation:
 
         # Execute and verify
         with pytest.raises(Exception) as exc_info:
-            sb_run_studio_simulation(simulation_id=10000298, console="demo")
+            sb_run_studio_attack(attack_id=10000298, console="demo", all_connected=True)
 
         assert "API Error" in str(exc_info.value)
+
+    def test_run_no_simulators_no_all_connected(self):
+        """Test that neither target_simulator_ids nor all_connected raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_run_studio_attack(attack_id=10000298, console="demo")
+        assert "target_simulator_ids must be provided or all_connected must be True" in str(exc_info.value)
 
 
 class TestMainFunctionPattern:
@@ -1737,8 +1765,8 @@ def mock_execution_result_empty_response():
     }
 
 
-class TestGetStudioSimulationLatestResult:
-    """Test suite for sb_get_studio_simulation_latest_result function."""
+class TestGetStudioAttackLatestResult:
+    """Test suite for sb_get_studio_attack_latest_result function."""
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1764,14 +1792,14 @@ class TestGetStudioSimulationLatestResult:
         mock_post.return_value = mock_response
 
         # Call function
-        result = sb_get_studio_simulation_latest_result(
-            simulation_id=10000291,
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291,
             console="demo",
             max_results=1
         )
 
         # Assertions
-        assert result['simulation_id'] == 10000291
+        assert result['attack_id'] == 10000291
         assert result['console'] == "demo"
         assert result['total_found'] == 2
         assert result['returned_count'] == 1
@@ -1780,14 +1808,14 @@ class TestGetStudioSimulationLatestResult:
 
         # Check first execution details
         execution = result['executions'][0]
-        assert execution['execution_id'] == "1463450"
-        assert execution['simulation_id'] == 10000291
-        assert execution['simulation_name'] == "test registry shuit"
-        assert execution['status'] == "SUCCESS"
-        assert execution['final_status'] == "missed"
+        assert execution['simulation_id'] == "1463450"
+        assert execution['attack_id'] == 10000291
+        assert execution['attack_name'] == "test registry shuit"
+        assert execution['execution_status'] == "SUCCESS"
+        assert execution['status'] == "missed"
         assert execution['security_action'] == "not_logged"
         assert execution['test_name'] == "test registry shuit"
-        assert execution['plan_run_id'] == "1764570357286.4"
+        assert execution['test_id'] == "1764570357286.4"
 
         # Verify API call
         mock_post.assert_called_once()
@@ -1825,8 +1853,8 @@ class TestGetStudioSimulationLatestResult:
         mock_post.return_value = mock_response
 
         # Call function with max_results=2
-        result = sb_get_studio_simulation_latest_result(
-            simulation_id=10000291,
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291,
             console="demo",
             max_results=2
         )
@@ -1838,12 +1866,12 @@ class TestGetStudioSimulationLatestResult:
         assert len(result['executions']) == 2
 
         # Check ordering (newest first)
-        assert result['executions'][0]['execution_id'] == "1463450"
-        assert result['executions'][1]['execution_id'] == "1462025"
+        assert result['executions'][0]['simulation_id'] == "1463450"
+        assert result['executions'][1]['simulation_id'] == "1462025"
 
         # Verify different statuses
-        assert result['executions'][0]['status'] == "SUCCESS"
-        assert result['executions'][1]['status'] == "FAIL"
+        assert result['executions'][0]['execution_status'] == "SUCCESS"
+        assert result['executions'][1]['execution_status'] == "FAIL"
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1869,8 +1897,8 @@ class TestGetStudioSimulationLatestResult:
         mock_post.return_value = mock_response
 
         # Call function
-        result = sb_get_studio_simulation_latest_result(
-            simulation_id=99999,
+        result = sb_get_studio_attack_latest_result(
+            attack_id=99999,
             console="demo"
         )
 
@@ -1883,20 +1911,20 @@ class TestGetStudioSimulationLatestResult:
     def test_get_latest_result_invalid_simulation_id(self):
         """Test with invalid simulation ID."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_latest_result(simulation_id=0, console="demo")
+            sb_get_studio_attack_latest_result(attack_id=0, console="demo")
 
-        assert "simulation_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_latest_result(simulation_id=-1, console="demo")
+            sb_get_studio_attack_latest_result(attack_id=-1, console="demo")
 
-        assert "simulation_id must be a positive integer" in str(exc_info.value)
+        assert "attack_id must be a positive integer" in str(exc_info.value)
 
     def test_get_latest_result_invalid_max_results(self):
         """Test with invalid max_results parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_latest_result(
-                simulation_id=10000291,
+            sb_get_studio_attack_latest_result(
+                attack_id=10000291,
                 console="demo",
                 max_results=0
             )
@@ -1906,8 +1934,8 @@ class TestGetStudioSimulationLatestResult:
     def test_get_latest_result_invalid_page_size(self):
         """Test with invalid page_size parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_latest_result(
-                simulation_id=10000291,
+            sb_get_studio_attack_latest_result(
+                attack_id=10000291,
                 console="demo",
                 page_size=0
             )
@@ -1915,8 +1943,8 @@ class TestGetStudioSimulationLatestResult:
         assert "page_size must be between 1 and 1000" in str(exc_info.value)
 
         with pytest.raises(ValueError) as exc_info:
-            sb_get_studio_simulation_latest_result(
-                simulation_id=10000291,
+            sb_get_studio_attack_latest_result(
+                attack_id=10000291,
                 console="demo",
                 page_size=2000
             )
@@ -1949,7 +1977,7 @@ class TestGetStudioSimulationLatestResult:
 
         # Call function and expect exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_studio_simulation_latest_result(simulation_id=10000291, console="demo")
+            sb_get_studio_attack_latest_result(attack_id=10000291, console="demo")
 
         assert "API Error" in str(exc_info.value)
 
@@ -2032,7 +2060,7 @@ class TestParameterValidationAndBuilding:
             {"name": "port", "value": 8080, "type": "PORT"},
             {"name": "url", "value": "https://test.com", "type": "URI"}
         ]
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             parameters=params,
@@ -2168,7 +2196,7 @@ class TestProtocolParameterValidation:
 
         # Execute with protocol parameter
         params = [{"name": "protocol", "value": "SSH", "type": "PROTOCOL"}]
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             parameters=params,
@@ -2306,7 +2334,7 @@ class TestMultiValueParameters:
             {"name": "file_paths", "value": ["c:\\temp\\file1.txt", "c:\\temp\\file2.txt"]},
             {"name": "protocols", "value": ["TCP", "UDP"], "type": "PROTOCOL"}
         ]
-        result = sb_save_studio_draft(
+        result = sb_save_studio_attack_draft(
             name="Test Simulation",
             python_code=sample_valid_python_code,
             parameters=params,
@@ -2331,3 +2359,1762 @@ class TestMultiValueParameters:
         assert len(params_sent[1]['values']) == 2
         assert params_sent[1]['values'][0]['value'] == "TCP"
         assert params_sent[1]['values'][1]['value'] == "UDP"
+
+
+# ============================================================================
+# Phase 2: Validation Enhancement Tests
+# ============================================================================
+
+@pytest.fixture
+def sample_attacker_code():
+    """Sample valid Python attacker code with required main function."""
+    return """
+import logging
+
+def main(system_data, asset, proxy, *args, **kwargs):
+    \"\"\"Attacker entry point.\"\"\"
+    logging.info("Running attacker")
+    return True
+"""
+
+
+@pytest.fixture
+def sample_attacker_code_no_main():
+    """Sample attacker code without required main function."""
+    return """
+import logging
+
+def attack():
+    logging.info("Wrong function signature")
+    return True
+"""
+
+
+@pytest.fixture
+def sample_attacker_code_syntax_error():
+    """Sample attacker code with syntax error."""
+    return """
+def main(system_data, asset, proxy, *args, **kwargs):
+    if True
+        return False
+"""
+
+
+class TestValidateAttackType:
+    """Test attack type validation in sb_validate_studio_code."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_valid_host_type(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test validation with valid 'host' attack type."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo", attack_type="host"
+        )
+        assert result['is_valid'] is True
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_valid_exfil_type(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
+    ):
+        """Test validation with valid 'exfil' attack type and attacker code."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="exfil", attacker_code=sample_attacker_code
+        )
+        assert result['is_valid'] is True
+        assert result['attacker_validation'] is not None
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_valid_infil_type(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
+    ):
+        """Test validation with valid 'infil' attack type."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="infil", attacker_code=sample_attacker_code
+        )
+        assert result['is_valid'] is True
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_valid_lateral_type(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
+    ):
+        """Test validation with valid 'lateral' attack type."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="lateral", attacker_code=sample_attacker_code
+        )
+        assert result['is_valid'] is True
+
+    def test_invalid_attack_type(self, sample_valid_python_code):
+        """Test validation rejects invalid attack type."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo", attack_type="invalid"
+            )
+        assert "attack_type must be one of" in str(exc_info.value)
+
+    def test_case_sensitive_attack_type(self, sample_valid_python_code):
+        """Test that attack type is case-sensitive (e.g., 'Host' is invalid)."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo", attack_type="Host"
+            )
+        assert "attack_type must be one of" in str(exc_info.value)
+
+
+class TestDualScriptValidation:
+    """Test dual-script validation in sb_validate_studio_code."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_exfil_with_both_scripts_valid(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
+    ):
+        """Test exfil with both valid scripts passes."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="exfil", attacker_code=sample_attacker_code
+        )
+        assert result['is_valid'] is True
+        assert result['target_validation'] is not None
+        assert result['attacker_validation'] is not None
+        # API should be called twice (target + attacker)
+        assert mock_put.call_count == 2
+
+    def test_exfil_missing_attacker_code(self, sample_valid_python_code):
+        """Test exfil without attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo",
+                attack_type="exfil"
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+    def test_infil_missing_attacker_code(self, sample_valid_python_code):
+        """Test infil without attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo",
+                attack_type="infil"
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+    def test_lateral_missing_attacker_code(self, sample_valid_python_code):
+        """Test lateral without attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo",
+                attack_type="lateral"
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_with_only_target_valid(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test host attack with only target code is valid."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo", attack_type="host"
+        )
+        assert result['is_valid'] is True
+        assert result['attacker_validation'] is None
+        # API called only once for host
+        assert mock_put.call_count == 1
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_attacker_code_syntax_error(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code_syntax_error,
+        mock_validation_response_valid
+    ):
+        """Test attacker code with syntax error causes is_valid=False."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="exfil",
+            attacker_code=sample_attacker_code_syntax_error
+        )
+        # Local syntax check catches the error
+        assert result['is_valid'] is False
+        assert any("syntax error" in e.lower() for e in result['validation_errors'])
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_both_scripts_api_errors_combined(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code,
+        mock_validation_response_invalid
+    ):
+        """Test both scripts with API errors produces combined errors."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_invalid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="exfil", attacker_code=sample_attacker_code
+        )
+        assert result['is_valid'] is False
+        # Should have errors from both target and attacker validations
+        assert len(result['validation_errors']) > 0
+
+    def test_exfil_empty_attacker_code(self, sample_valid_python_code):
+        """Test exfil with empty string attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo",
+                attack_type="exfil", attacker_code=""
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+
+class TestLintSB011:
+    """Test SB011 lint check: parameter names must be valid Python identifiers."""
+
+    def test_valid_identifier_passes(self):
+        """Test valid Python identifier passes SB011."""
+        params = [{"name": "my_param", "value": "test"}]
+        warnings = _lint_check_parameters(params)
+        assert not any(w['code'] == 'SB011' for w in warnings)
+
+    def test_hyphenated_name_fails(self):
+        """Test hyphenated name triggers SB011 warning."""
+        params = [{"name": "my-param", "value": "test"}]
+        warnings = _lint_check_parameters(params)
+        sb011_warnings = [w for w in warnings if w['code'] == 'SB011']
+        assert len(sb011_warnings) == 1
+        assert "my-param" in sb011_warnings[0]['message']
+
+    def test_number_prefix_fails(self):
+        """Test name starting with number triggers SB011 warning."""
+        params = [{"name": "2nd_attempt", "value": "test"}]
+        warnings = _lint_check_parameters(params)
+        sb011_warnings = [w for w in warnings if w['code'] == 'SB011']
+        assert len(sb011_warnings) == 1
+        assert "2nd_attempt" in sb011_warnings[0]['message']
+
+    def test_space_in_name_fails(self):
+        """Test name with space triggers SB011 warning."""
+        params = [{"name": "param name", "value": "test"}]
+        warnings = _lint_check_parameters(params)
+        sb011_warnings = [w for w in warnings if w['code'] == 'SB011']
+        assert len(sb011_warnings) == 1
+
+    def test_python_keyword_passes(self):
+        """Test Python keyword is a valid identifier (SB011 doesn't check keywords)."""
+        params = [{"name": "class", "value": "test"}]
+        warnings = _lint_check_parameters(params)
+        assert not any(w['code'] == 'SB011' for w in warnings)
+
+
+class TestLintSB012:
+    """Test SB012 lint check: duplicate parameter names."""
+
+    def test_unique_names_pass(self):
+        """Test unique parameter names pass SB012."""
+        params = [
+            {"name": "port", "value": 80},
+            {"name": "host", "value": "localhost"}
+        ]
+        warnings = _lint_check_parameters(params)
+        assert not any(w['code'] == 'SB012' for w in warnings)
+
+    def test_duplicate_names_fail(self):
+        """Test duplicate parameter names trigger SB012 warning."""
+        params = [
+            {"name": "port", "value": 80},
+            {"name": "port", "value": 443}
+        ]
+        warnings = _lint_check_parameters(params)
+        sb012_warnings = [w for w in warnings if w['code'] == 'SB012']
+        assert len(sb012_warnings) == 1
+        assert "port" in sb012_warnings[0]['message']
+
+    def test_case_sensitive_different_names_pass(self):
+        """Test Port and port are different names (case-sensitive) - both pass."""
+        params = [
+            {"name": "Port", "value": 80},
+            {"name": "port", "value": 443}
+        ]
+        warnings = _lint_check_parameters(params)
+        assert not any(w['code'] == 'SB012' for w in warnings)
+
+    def test_empty_parameter_list_passes(self):
+        """Test empty parameter list passes SB012."""
+        warnings = _lint_check_parameters([])
+        assert not any(w['code'] == 'SB012' for w in warnings)
+
+
+class TestOSConstraintValidation:
+    """Test OS constraint validation in sb_validate_studio_code."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_valid_target_os_and_attacker_os(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
+    ):
+        """Test valid target_os and attacker_os pass validation."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="exfil", attacker_code=sample_attacker_code,
+            target_os="WINDOWS", attacker_os="LINUX"
+        )
+        assert result['is_valid'] is True
+
+    def test_invalid_target_os_raises(self, sample_valid_python_code):
+        """Test invalid target_os raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo", target_os="INVALID"
+            )
+        assert "os_constraint must be one of" in str(exc_info.value)
+
+    def test_attacker_os_validated_for_dual_script(self, sample_valid_python_code, sample_attacker_code):
+        """Test attacker_os is validated for dual-script types."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_validate_studio_code(
+                sample_valid_python_code, "demo",
+                attack_type="exfil", attacker_code=sample_attacker_code,
+                attacker_os="INVALID"
+            )
+        assert "os_constraint must be one of" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_attack_ignores_attacker_os(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test host attack does not validate attacker_os (even if invalid)."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        # host attack should not validate attacker_os
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo",
+            attack_type="host", attacker_os="INVALID_OS"
+        )
+        assert result['is_valid'] is True
+
+
+class TestValidationWithLintIntegration:
+    """Test SB011/SB012 lint checks integrated into sb_validate_studio_code."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_validation_with_lint_warnings(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test that lint warnings are included in validation result."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        params = [{"name": "my-param", "value": "test"}]
+        result = sb_validate_studio_code(
+            sample_valid_python_code, "demo", parameters=params
+        )
+        # Code is valid but has lint warnings
+        assert result['is_valid'] is True
+        assert len(result['lint_warnings']) == 1
+        assert result['lint_warnings'][0]['code'] == 'SB011'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_validation_with_no_parameters(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test that no lint warnings when no parameters provided."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(sample_valid_python_code, "demo")
+        assert result['lint_warnings'] == []
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_validation_result_structure(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_validation_response_valid
+    ):
+        """Test that validation result has all expected fields."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_validation_response_valid
+        mock_put.return_value = mock_response
+
+        result = sb_validate_studio_code(sample_valid_python_code, "demo")
+        expected_keys = {
+            'is_valid', 'exit_code', 'has_main_function', 'validation_errors',
+            'target_validation', 'attacker_validation', 'lint_warnings',
+            'stderr', 'stdout'
+        }
+        assert set(result.keys()) == expected_keys
+
+
+# ============================================================================
+# Phase 3: Dual-Script Draft Management Tests
+# ============================================================================
+
+
+class TestDualScriptSave:
+    """Test dual-script support in sb_save_studio_attack_draft."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_save_single_file_method_type_5(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, mock_draft_response, clear_cache
+    ):
+        """Test host save sends single file with methodType=5."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Host Attack", python_code=sample_valid_python_code,
+            attack_type="host", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        files = call_args[1]['files']
+        assert data['methodType'] == '5'
+        assert 'targetFile' in files
+        assert 'attackerFile' not in files
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_exfil_save_two_files_method_type_0(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
+    ):
+        """Test exfil save sends two files with methodType=0."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Exfil Attack", python_code=sample_valid_python_code,
+            attacker_code=sample_attacker_code, attack_type="exfil", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        files = call_args[1]['files']
+        assert data['methodType'] == '0'
+        assert 'targetFile' in files
+        assert 'attackerFile' in files
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_infil_save_method_type_2(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
+    ):
+        """Test infil save with methodType=2."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Infil Attack", python_code=sample_valid_python_code,
+            attacker_code=sample_attacker_code, attack_type="infil", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        assert data['methodType'] == '2'
+        assert 'attackerFile' in call_args[1]['files']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_lateral_save_method_type_1(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
+    ):
+        """Test lateral save with methodType=1."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Lateral Attack", python_code=sample_valid_python_code,
+            attacker_code=sample_attacker_code, attack_type="lateral", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        assert data['methodType'] == '1'
+        assert 'attackerFile' in call_args[1]['files']
+
+    def test_dual_script_save_without_attacker_code(self, sample_valid_python_code):
+        """Test dual-script save without attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_save_studio_attack_draft(
+                name="Exfil Attack", python_code=sample_valid_python_code,
+                attack_type="exfil", console="demo"
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dual_script_multipart_structure(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
+    ):
+        """Test multipart form data structure for dual-script save."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Exfil Attack", python_code=sample_valid_python_code,
+            attacker_code=sample_attacker_code, attack_type="exfil", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        files = call_args[1]['files']
+        # Verify file tuples
+        assert files['targetFile'][0] == 'target.py'
+        assert files['attackerFile'][0] == 'attacker.py'
+        # Verify metadata includes attackerFileName
+        import json
+        meta_data = json.loads(call_args[1]['data']['metaData'])
+        assert meta_data['targetFileName'] == 'target.py'
+        assert meta_data['attackerFileName'] == 'attacker.py'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dual_script_attacker_constraints(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
+    ):
+        """Test attackerConstraints sent when attacker_os != 'All'."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Exfil Attack", python_code=sample_valid_python_code,
+            attacker_code=sample_attacker_code, attack_type="exfil",
+            attacker_os="WINDOWS", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        assert 'attackerConstraints' in data
+        import json
+        assert json.loads(data['attackerConstraints']) == {"os": "WINDOWS"}
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_save_no_attacker_constraints(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        sample_valid_python_code, mock_draft_response, clear_cache
+    ):
+        """Test host save does not include attackerConstraints or attackerFile."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_draft_response
+        mock_post.return_value = mock_response
+
+        sb_save_studio_attack_draft(
+            name="Host Attack", python_code=sample_valid_python_code,
+            attack_type="host", console="demo"
+        )
+
+        call_args = mock_post.call_args
+        data = call_args[1]['data']
+        files = call_args[1]['files']
+        assert 'attackerConstraints' not in data
+        assert 'attackerFile' not in files
+        import json
+        meta_data = json.loads(data['metaData'])
+        assert 'attackerFileName' not in meta_data
+
+
+class TestDualScriptUpdate:
+    """Test dual-script support in sb_update_studio_attack_draft."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_update_host_attack_single_file(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, mock_update_response, clear_cache
+    ):
+        """Test update host attack sends single file."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_update_response
+        mock_put.return_value = mock_response
+
+        sb_update_studio_attack_draft(
+            attack_id=10000298, name="Updated Host Attack",
+            python_code=sample_valid_python_code, attack_type="host", console="demo"
+        )
+
+        call_args = mock_put.call_args
+        data = call_args[1]['data']
+        files = call_args[1]['files']
+        assert data['methodType'] == '5'
+        assert 'targetFile' in files
+        assert 'attackerFile' not in files
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_update_exfil_attack_both_files(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
+    ):
+        """Test update exfil attack sends both files."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_update_response
+        mock_put.return_value = mock_response
+
+        sb_update_studio_attack_draft(
+            attack_id=10000298, name="Updated Exfil Attack",
+            python_code=sample_valid_python_code, attacker_code=sample_attacker_code,
+            attack_type="exfil", console="demo"
+        )
+
+        call_args = mock_put.call_args
+        data = call_args[1]['data']
+        files = call_args[1]['files']
+        assert data['methodType'] == '0'
+        assert 'targetFile' in files
+        assert 'attackerFile' in files
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_update_with_changed_attack_type(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
+    ):
+        """Test update with changed attack_type sends correct methodType."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_update_response
+        mock_put.return_value = mock_response
+
+        sb_update_studio_attack_draft(
+            attack_id=10000298, name="Lateral Attack",
+            python_code=sample_valid_python_code, attacker_code=sample_attacker_code,
+            attack_type="lateral", console="demo"
+        )
+
+        call_args = mock_put.call_args
+        data = call_args[1]['data']
+        assert data['methodType'] == '1'
+
+    def test_update_dual_script_without_attacker_code(self, sample_valid_python_code):
+        """Test update dual-script without attacker_code raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_update_studio_attack_draft(
+                attack_id=10000298, name="Exfil Attack",
+                python_code=sample_valid_python_code, attack_type="exfil", console="demo"
+            )
+        assert "attacker_code is required" in str(exc_info.value)
+
+    def test_update_invalid_attack_type(self, sample_valid_python_code):
+        """Test update with invalid attack_type raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_update_studio_attack_draft(
+                attack_id=10000298, name="Test",
+                python_code=sample_valid_python_code, attack_type="invalid", console="demo"
+            )
+        assert "attack_type must be one of" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.time.time')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_update_cache_includes_attack_type_info(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put, mock_time,
+        sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
+    ):
+        """Test that cache update includes attack type related info."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_time.return_value = 1700000000.0
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_update_response
+        mock_put.return_value = mock_response
+
+        result = sb_update_studio_attack_draft(
+            attack_id=10000298, name="Updated Exfil",
+            python_code=sample_valid_python_code, attacker_code=sample_attacker_code,
+            attack_type="exfil", console="demo"
+        )
+
+        # Verify cache was updated
+        cache_key = f"studio_draft_demo_{result['draft_id']}"
+        assert cache_key in studio_draft_cache
+        cached = studio_draft_cache[cache_key]
+        assert cached['timestamp'] == 1700000000.0
+
+
+class TestDualScriptSource:
+    """Test dual-script support in sb_get_studio_attack_source."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_attack_source_target_only(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test host attack source returns target only, attacker is None."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_target = MagicMock()
+        mock_target.json.return_value = {"data": {"filename": "target.py", "content": "target code"}}
+        mock_target.status_code = 200
+
+        mock_attacker = MagicMock()
+        mock_attacker.status_code = 404
+
+        mock_get.side_effect = [mock_target, mock_attacker]
+
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
+
+        assert result['attack_id'] == 12345
+        assert result['target']['filename'] == 'target.py'
+        assert result['target']['content'] == 'target code'
+        assert result['attacker'] is None
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dual_script_source_both_present(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test dual-script source returns both target and attacker content."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_target = MagicMock()
+        mock_target.json.return_value = {"data": {"filename": "target.py", "content": "target code"}}
+        mock_target.status_code = 200
+
+        mock_attacker = MagicMock()
+        mock_attacker.json.return_value = {"data": {"filename": "attacker.py", "content": "attacker code"}}
+        mock_attacker.status_code = 200
+
+        mock_get.side_effect = [mock_target, mock_attacker]
+
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
+
+        assert result['attack_id'] == 12345
+        assert result['target']['filename'] == 'target.py'
+        assert result['target']['content'] == 'target code'
+        assert result['attacker']['filename'] == 'attacker.py'
+        assert result['attacker']['content'] == 'attacker code'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_attacker_file_404_graceful(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test attacker file 404 is handled gracefully."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_target = MagicMock()
+        mock_target.json.return_value = {"data": {"filename": "target.py", "content": "code"}}
+        mock_target.status_code = 200
+
+        mock_attacker = MagicMock()
+        mock_attacker.status_code = 404
+
+        mock_get.side_effect = [mock_target, mock_attacker]
+
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
+        assert result['attacker'] is None
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_target_api_error_raises(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test API error on target fetch raises exception."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("API Error")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(Exception) as exc_info:
+            sb_get_studio_attack_source(attack_id=12345, console="demo")
+        assert "API Error" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_return_structure_keys(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test return structure has attack_id, target, attacker keys."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_target = MagicMock()
+        mock_target.json.return_value = {"data": {"filename": "target.py", "content": "code"}}
+        mock_target.status_code = 200
+
+        mock_attacker = MagicMock()
+        mock_attacker.status_code = 404
+
+        mock_get.side_effect = [mock_target, mock_attacker]
+
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
+        assert set(result.keys()) == {'attack_id', 'target', 'attacker'}
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_attacker_fetch_network_error_graceful(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test attacker fetch network error is handled gracefully (non-fatal)."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_target = MagicMock()
+        mock_target.json.return_value = {"data": {"filename": "target.py", "content": "code"}}
+        mock_target.status_code = 200
+
+        import requests as req
+        mock_get.side_effect = [mock_target, req.exceptions.ConnectionError("Network error")]
+
+        result = sb_get_studio_attack_source(attack_id=12345, console="demo")
+        assert result['target']['content'] == 'code'
+        assert result['attacker'] is None
+
+
+# ============================================================================
+# Phase 4: Pagination Tests
+# ============================================================================
+
+
+class TestPaginateStudioAttacks:
+    """Test the paginate_studio_attacks function directly."""
+
+    def _make_attacks(self, count):
+        """Generate a list of fake attack dicts."""
+        return [{'id': i, 'name': f'Attack {i}', 'status': 'draft'} for i in range(count)]
+
+    def test_page_0_of_25(self):
+        """Page 0 with 25 total -> 10 items, total_pages=3."""
+        result = paginate_studio_attacks(self._make_attacks(25), page_number=0)
+        assert len(result['attacks_in_page']) == 10
+        assert result['total_attacks'] == 25
+        assert result['total_pages'] == 3
+        assert result['page_number'] == 0
+        assert 'page_number=1' in result['hint_to_agent']
+
+    def test_page_1_of_25(self):
+        """Page 1 with 25 total -> 10 items, no overlap with page 0."""
+        attacks = self._make_attacks(25)
+        page0 = paginate_studio_attacks(attacks, page_number=0)
+        page1 = paginate_studio_attacks(attacks, page_number=1)
+        assert len(page1['attacks_in_page']) == 10
+        ids_0 = {a['id'] for a in page0['attacks_in_page']}
+        ids_1 = {a['id'] for a in page1['attacks_in_page']}
+        assert ids_0.isdisjoint(ids_1)
+
+    def test_last_page_of_25(self):
+        """Page 2 with 25 total -> 5 items, hint says last page."""
+        result = paginate_studio_attacks(self._make_attacks(25), page_number=2)
+        assert len(result['attacks_in_page']) == 5
+        assert result['hint_to_agent'] == 'This is the last page'
+
+    def test_out_of_range_page(self):
+        """Page 3 with 25 total -> error dict."""
+        result = paginate_studio_attacks(self._make_attacks(25), page_number=3)
+        assert 'error' in result
+        assert 'Invalid page_number 3' in result['error']
+        assert result['attacks_in_page'] == []
+
+    def test_empty_results(self):
+        """Empty results -> total_pages=0, empty attacks_in_page."""
+        result = paginate_studio_attacks([], page_number=0)
+        assert result['total_pages'] == 0
+        assert result['total_attacks'] == 0
+        assert result['attacks_in_page'] == []
+
+    def test_negative_page_number(self):
+        """Negative page number -> error dict."""
+        result = paginate_studio_attacks(self._make_attacks(5), page_number=-1)
+        assert 'error' in result
+        assert 'Invalid page_number -1' in result['error']
+
+    def test_single_page(self):
+        """5 items with PAGE_SIZE=10 -> single page."""
+        result = paginate_studio_attacks(self._make_attacks(5), page_number=0)
+        assert result['total_pages'] == 1
+        assert len(result['attacks_in_page']) == 5
+        assert result['hint_to_agent'] == 'This is the last page'
+
+    def test_exact_page_boundary(self):
+        """Exactly 10 items -> 1 page, no next hint."""
+        result = paginate_studio_attacks(self._make_attacks(10), page_number=0)
+        assert result['total_pages'] == 1
+        assert len(result['attacks_in_page']) == 10
+        assert result['hint_to_agent'] == 'This is the last page'
+
+
+class TestGetAllStudioAttacksPagination:
+    """Test pagination integration in sb_get_all_studio_attacks."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_pagination_with_filters(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test pagination works with filters applied."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Create 15 draft attacks
+        data = [
+            {"id": i, "name": f"Draft Attack {i}", "status": "draft",
+             "creationDate": "2025-11-30T12:00:00Z", "updateDate": "2025-11-30T12:00:00Z",
+             "targetFileName": "target.py", "methodType": 5, "origin": "BREACH_STUDIO"}
+            for i in range(15)
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": data}
+        mock_get.return_value = mock_response
+
+        result = sb_get_all_studio_attacks(console="demo", status_filter="draft", page_number=0)
+        assert len(result['attacks_in_page']) == 10
+        assert result['total_attacks'] == 15
+        assert result['total_pages'] == 2
+
+        result_p1 = sb_get_all_studio_attacks(console="demo", status_filter="draft", page_number=1)
+        assert len(result_p1['attacks_in_page']) == 5
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_applied_filters_present(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test applied_filters is present in result."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": []}
+        mock_get.return_value = mock_response
+
+        result = sb_get_all_studio_attacks(
+            console="demo", status_filter="draft", name_filter="test", user_id_filter=123
+        )
+        assert 'applied_filters' in result
+        assert result['applied_filters']['status_filter'] == 'draft'
+        assert result['applied_filters']['name_filter'] == 'test'
+        assert result['applied_filters']['user_filter'] == 123
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_hint_to_agent_present(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test hint_to_agent is present and meaningful."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        data = [
+            {"id": i, "name": f"Attack {i}", "status": "draft",
+             "creationDate": "2025-11-30T12:00:00Z", "updateDate": "2025-11-30T12:00:00Z",
+             "targetFileName": "target.py", "methodType": 5, "origin": "BREACH_STUDIO"}
+            for i in range(25)
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": data}
+        mock_get.return_value = mock_response
+
+        result = sb_get_all_studio_attacks(console="demo", page_number=0)
+        assert 'hint_to_agent' in result
+        assert result['hint_to_agent'] is not None
+        assert 'page_number=1' in result['hint_to_agent']
+
+    def test_negative_page_number_raises(self):
+        """Test negative page_number raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_all_studio_attacks(console="demo", page_number=-1)
+        assert "Invalid page_number parameter" in str(exc_info.value)
+
+
+class TestExplicitSimulatorSelection:
+    """Test explicit simulator selection in sb_run_studio_attack (Phase 5)."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_host_attack_target_ids_used_for_both(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Host attack: target_simulator_ids used for both attacker and target filters."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        target_ids = ["sim-uuid-1", "sim-uuid-2"]
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            target_simulator_ids=target_ids
+        )
+
+        payload = mock_post.call_args[1]['json']
+        step = payload['plan']['steps'][0]
+        # Both attacker and target use the same target_simulator_ids
+        assert step['targetFilter']['simulators']['values'] == target_ids
+        assert step['attackerFilter']['simulators']['values'] == target_ids
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_network_attack_separate_attacker_and_target(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Network attack: separate attacker and target simulator IDs in payload."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        target_ids = ["target-uuid-1"]
+        attacker_ids = ["attacker-uuid-1", "attacker-uuid-2"]
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            target_simulator_ids=target_ids,
+            attacker_simulator_ids=attacker_ids,
+        )
+
+        payload = mock_post.call_args[1]['json']
+        step = payload['plan']['steps'][0]
+        assert step['targetFilter']['simulators']['values'] == target_ids
+        assert step['attackerFilter']['simulators']['values'] == attacker_ids
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_no_attacker_ids_defaults_to_target_ids(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """When attacker_simulator_ids not provided, attacker uses target IDs."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        target_ids = ["sim-uuid-1"]
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            target_simulator_ids=target_ids,
+        )
+
+        payload = mock_post.call_args[1]['json']
+        step = payload['plan']['steps'][0]
+        # attacker defaults to target IDs
+        assert step['attackerFilter']['simulators']['values'] == target_ids
+        assert step['targetFilter']['simulators']['values'] == target_ids
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_connected_uses_connection_filter(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """all_connected=True uses connection filter in payload."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            all_connected=True,
+        )
+
+        payload = mock_post.call_args[1]['json']
+        step = payload['plan']['steps'][0]
+        assert 'connection' in step['attackerFilter']
+        assert 'connection' in step['targetFilter']
+        assert step['attackerFilter']['connection']['values'] == [True]
+        assert step['targetFilter']['connection']['values'] == [True]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_connected_ignores_simulator_ids(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """all_connected=True ignores provided simulator IDs."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            all_connected=True,
+            target_simulator_ids=["sim-uuid-1"],
+            attacker_simulator_ids=["sim-uuid-2"],
+        )
+
+        payload = mock_post.call_args[1]['json']
+        step = payload['plan']['steps'][0]
+        # Should use connection filter, not simulator IDs
+        assert 'connection' in step['attackerFilter']
+        assert 'connection' in step['targetFilter']
+        assert 'simulators' not in step['attackerFilter']
+        assert 'simulators' not in step['targetFilter']
+
+    def test_empty_attacker_simulator_ids_raises(self):
+        """Empty attacker_simulator_ids list raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_run_studio_attack(
+                attack_id=10000298, console="demo",
+                target_simulator_ids=["sim-uuid-1"],
+                attacker_simulator_ids=[],
+            )
+        assert "attacker_simulator_ids cannot be an empty list" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_return_has_test_id_and_attack_id(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Return structure has test_id and attack_id keys."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            all_connected=True,
+        )
+
+        assert 'test_id' in result
+        assert 'attack_id' in result
+        assert result['test_id'] == "1764570357286.4"
+        assert result['attack_id'] == 10000298
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_return_has_status_queued(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Return structure has status key set to 'queued'."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            all_connected=True,
+        )
+
+        assert result['status'] == 'queued'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_payload_structure_matches_api_format(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Verify full API payload structure."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            target_simulator_ids=["sim-1"],
+            test_name="Test Run",
+        )
+
+        payload = mock_post.call_args[1]['json']
+        # Verify top-level structure
+        assert 'plan' in payload
+        assert 'name' in payload['plan']
+        assert 'steps' in payload['plan']
+        assert 'draft' in payload['plan']
+        assert payload['plan']['draft'] is True
+        assert payload['plan']['name'] == "Test Run"
+
+        # Verify step structure
+        step = payload['plan']['steps'][0]
+        assert 'attacksFilter' in step
+        assert 'attackerFilter' in step
+        assert 'targetFilter' in step
+        assert 'systemFilter' in step
+
+        # Verify attacks filter
+        assert step['attacksFilter']['playbook']['operator'] == 'is'
+        assert step['attacksFilter']['playbook']['values'] == [10000298]
+        assert step['attacksFilter']['playbook']['name'] == 'playbook'
+
+        # Verify simulator filter
+        assert step['targetFilter']['simulators']['operator'] == 'is'
+        assert step['targetFilter']['simulators']['name'] == 'simulators'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_return_has_step_run_id(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        mock_run_response
+    ):
+        """Return structure includes step_run_id from API response."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(
+            attack_id=10000298, console="demo",
+            all_connected=True,
+        )
+
+        assert 'step_run_id' in result
+        assert result['step_run_id'] == "1764570357287.5"
+
+
+class TestEnhancedResults:
+    """Test enhanced results with simulation_steps, logs, and output (Phase 6)."""
+
+    def test_result_with_simulation_events_populates_steps(self):
+        """Result with simulation events produces populated simulation_steps."""
+        execution = {
+            "id": "1463450",
+            "moveId": 10000291,
+            "moveName": "Test Attack",
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [
+                {
+                    "action": "START",
+                    "timestamp": "2025-11-02T07:58:00.568Z",
+                    "type": "PROCESS",
+                    "nodeNameInMove": "attacker",
+                    "details": "Process started"
+                },
+                {
+                    "action": "CREATE",
+                    "timestamp": "2025-11-02T07:58:01.000Z",
+                    "type": "FILE",
+                    "nodeId": "node-123",
+                    "details": "File created"
+                }
+            ],
+        }
+        result = get_execution_result_mapping(execution)
+        assert len(result['simulation_steps']) == 2
+        assert result['simulation_steps'][0]['step_name'] == "START"
+        assert result['simulation_steps'][0]['timing'] == "2025-11-02T07:58:00.568Z"
+        assert result['simulation_steps'][0]['status'] == "PROCESS"
+        assert result['simulation_steps'][0]['node'] == "attacker"
+        assert result['simulation_steps'][0]['details'] == "Process started"
+        assert result['simulation_steps'][1]['step_name'] == "CREATE"
+        assert result['simulation_steps'][1]['node'] == "node-123"  # Falls back to nodeId
+
+    def test_result_with_logs_string(self):
+        """Result with logs field produces logs string."""
+        execution = {
+            "id": "1463450",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+            "logs": "2025-11-02 07:58:00 - INFO: Starting simulation\n2025-11-02 07:58:10 - INFO: Done",
+        }
+        result = get_execution_result_mapping(execution)
+        assert "Starting simulation" in result['logs']
+        assert "Done" in result['logs']
+
+    def test_result_with_output_string(self):
+        """Result with output field produces output string."""
+        execution = {
+            "id": "1463450",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+            "output": "Registry key written successfully",
+        }
+        result = get_execution_result_mapping(execution)
+        assert result['output'] == "Registry key written successfully"
+
+    def test_empty_simulation_events_produces_empty_steps(self):
+        """Empty simulation events produces empty simulation_steps list."""
+        execution = {
+            "id": "1463450",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+        }
+        result = get_execution_result_mapping(execution)
+        assert result['simulation_steps'] == []
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_include_logs_false_strips_debug_fields(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+    ):
+        """include_logs=False strips simulation_steps, logs, and output."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "simulations": [{
+                "id": "1463450",
+                "moveId": 10000291,
+                "moveName": "Test",
+                "status": "SUCCESS",
+                "finalStatus": "missed",
+                "simulationEvents": [
+                    {"action": "START", "timestamp": "T1", "type": "PROCESS", "nodeId": "n1"}
+                ],
+                "logs": "some logs",
+                "output": "some output",
+            }],
+            "total": 1
+        }
+        mock_post.return_value = mock_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo", include_logs=False
+        )
+
+        execution = result['executions'][0]
+        assert 'simulation_steps' not in execution
+        assert 'logs' not in execution
+        assert 'output' not in execution
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_include_logs_true_keeps_debug_fields(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+    ):
+        """include_logs=True (default) keeps simulation_steps, logs, and output."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "simulations": [{
+                "id": "1463450",
+                "moveId": 10000291,
+                "moveName": "Test",
+                "status": "SUCCESS",
+                "finalStatus": "missed",
+                "simulationEvents": [
+                    {"action": "START", "timestamp": "T1", "type": "PROCESS", "nodeId": "n1"}
+                ],
+                "logs": "some logs",
+                "output": "some output",
+            }],
+            "total": 1
+        }
+        mock_post.return_value = mock_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo", include_logs=True
+        )
+
+        execution = result['executions'][0]
+        assert 'simulation_steps' in execution
+        assert 'logs' in execution
+        assert 'output' in execution
+        assert len(execution['simulation_steps']) == 1
+        assert execution['logs'] == "some logs"
+        assert execution['output'] == "some output"
+
+    def test_is_drifted_true_when_original_differs(self):
+        """is_drifted is True when originalExecutionId differs from id."""
+        execution = {
+            "id": "1463450",
+            "originalExecutionId": "different-id-from-previous-run",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+        }
+        result = get_execution_result_mapping(execution)
+        assert result['is_drifted'] is True
+        assert result['drift_tracking_code'] == "different-id-from-previous-run"
+
+    def test_is_drifted_false_when_same_id(self):
+        """is_drifted is False when originalExecutionId equals id."""
+        execution = {
+            "id": "1463450",
+            "originalExecutionId": "1463450",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+        }
+        result = get_execution_result_mapping(execution)
+        assert result['is_drifted'] is False
+
+    def test_is_drifted_false_when_empty(self):
+        """is_drifted is False when originalExecutionId is empty."""
+        execution = {
+            "id": "1463450",
+            "originalExecutionId": "",
+            "moveId": 10000291,
+            "status": "SUCCESS",
+            "finalStatus": "missed",
+            "simulationEvents": [],
+        }
+        result = get_execution_result_mapping(execution)
+        assert result['is_drifted'] is False
+
+
+class TestDataServerFieldAlignment:
+    """Test that execution result fields align with Data server vocabulary (Phase 6)."""
+
+    def _make_execution(self, **overrides):
+        """Create a minimal execution dict for testing field names."""
+        base = {
+            "id": "1463450",
+            "jobId": 1463450,
+            "originalExecutionId": "49aedc2a07b581aa55f56a165ac29b48",
+            "moveId": 10000291,
+            "moveName": "Test Attack",
+            "moveDesc": "Test Description",
+            "planRunId": "1764570357286.4",
+            "finalStatus": "missed",
+            "status": "SUCCESS",
+            "securityAction": "not_logged",
+            "simulationEvents": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_result_contains_simulation_id(self):
+        """Result uses simulation_id (not execution_id) for runtime result ID."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'simulation_id' in result
+        assert result['simulation_id'] == "1463450"
+        assert 'execution_id' not in result
+
+    def test_result_contains_attack_id(self):
+        """Result uses attack_id (not simulation_id) for authored artifact ID (moveId)."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'attack_id' in result
+        assert result['attack_id'] == 10000291
+
+    def test_result_contains_test_id(self):
+        """Result uses test_id (not plan_run_id) for execution run ID."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'test_id' in result
+        assert result['test_id'] == "1764570357286.4"
+        assert 'plan_run_id' not in result
+
+    def test_result_contains_status(self):
+        """Result uses status (not final_status) for the final status field."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'status' in result
+        assert result['status'] == "missed"
+        assert 'final_status' not in result
+
+    def test_result_contains_drift_tracking_code(self):
+        """Result uses drift_tracking_code (not original_execution_id)."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'drift_tracking_code' in result
+        assert result['drift_tracking_code'] == "49aedc2a07b581aa55f56a165ac29b48"
+        assert 'original_execution_id' not in result
+
+    def test_result_contains_attack_name(self):
+        """Result uses attack_name (not simulation_name)."""
+        result = get_execution_result_mapping(self._make_execution())
+        assert 'attack_name' in result
+        assert result['attack_name'] == "Test Attack"
+        assert 'simulation_name' not in result
+
+
+class TestParseSimulationSteps:
+    """Test _parse_simulation_steps helper function."""
+
+    def test_empty_events(self):
+        """Empty event list returns empty steps."""
+        assert _parse_simulation_steps([]) == []
+
+    def test_events_with_all_fields(self):
+        """Events with all fields are properly mapped."""
+        events = [{
+            "action": "START",
+            "timestamp": "2025-11-02T07:58:00.568Z",
+            "type": "PROCESS",
+            "nodeNameInMove": "attacker",
+            "details": "Process started"
+        }]
+        steps = _parse_simulation_steps(events)
+        assert len(steps) == 1
+        assert steps[0]['step_name'] == "START"
+        assert steps[0]['timing'] == "2025-11-02T07:58:00.568Z"
+        assert steps[0]['status'] == "PROCESS"
+        assert steps[0]['node'] == "attacker"
+        assert steps[0]['details'] == "Process started"
+
+    def test_events_fallback_to_node_id(self):
+        """When nodeNameInMove is absent, falls back to nodeId."""
+        events = [{
+            "action": "CREATE",
+            "timestamp": "T1",
+            "type": "FILE",
+            "nodeId": "node-abc",
+        }]
+        steps = _parse_simulation_steps(events)
+        assert steps[0]['node'] == "node-abc"
+
+    def test_events_missing_fields_use_defaults(self):
+        """Events with missing fields use empty string defaults."""
+        events = [{}]
+        steps = _parse_simulation_steps(events)
+        assert steps[0]['step_name'] == ""
+        assert steps[0]['timing'] == ""
+        assert steps[0]['status'] == ""
+        assert steps[0]['node'] == ""
+        assert steps[0]['details'] == ""

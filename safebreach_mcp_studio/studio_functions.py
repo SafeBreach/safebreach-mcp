@@ -1,8 +1,8 @@
 """
 Business logic functions for Studio MCP Server.
 
-This module provides the core functionality for validating custom Python simulation
-code and saving simulations as drafts in SafeBreach Breach Studio.
+This module provides the core functionality for validating custom Python attack
+code and managing attack drafts in SafeBreach Breach Studio.
 """
 
 import re
@@ -17,7 +17,9 @@ from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_
 from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
-    get_all_simulations_response_mapping
+    get_all_attacks_response_mapping,
+    paginate_studio_attacks,
+    PAGE_SIZE
 )
 
 # Configure logging
@@ -39,6 +41,14 @@ VALID_OS_CONSTRAINTS = {"All", "WINDOWS", "LINUX", "MAC"}
 
 # Valid parameter types (excluding BINARY for now - will be added in future iteration)
 VALID_PARAMETER_TYPES = {"NOT_CLASSIFIED", "PORT", "URI", "PROTOCOL"}
+
+# Valid attack types with their methodType codes
+VALID_ATTACK_TYPES = {
+    "host": 5, "exfil": 0, "infil": 2, "lateral": 1,
+}
+
+# Attack types that require both target and attacker scripts
+DUAL_SCRIPT_TYPES = {"exfil", "infil", "lateral"}
 
 # Valid protocol values for PROTOCOL parameter type
 VALID_PROTOCOLS = {
@@ -188,152 +198,271 @@ def _validate_and_build_parameters(parameters: list) -> str:
     return json.dumps(built_parameters)
 
 
-def sb_validate_studio_code(python_code: str, console: str = "default") -> Dict[str, Any]:
+def _lint_check_parameters(parameters: list) -> list:
     """
-    Validate custom Python simulation code against Breach Studio requirements.
-
-    This function checks if the provided Python code contains the required main function
-    signature and validates it against the SafeBreach Breach Studio API.
+    Run SB011/SB012 lint checks on parameter definitions.
 
     Args:
-        python_code: The Python code content to validate
+        parameters: List of parameter dictionaries with 'name' field
+
+    Returns:
+        List of lint warning dictionaries with 'code', 'message', and 'parameter' fields
+    """
+    warnings = []
+
+    # SB011: Check parameter names are valid Python identifiers
+    for param in parameters:
+        name = param.get("name", "")
+        if name and not name.isidentifier():
+            warnings.append({
+                "code": "SB011",
+                "message": f"Parameter name '{name}' is not a valid Python identifier. "
+                          f"Use names like 'my_param' instead of '{name}'.",
+                "parameter": name
+            })
+
+    # SB012: Check for duplicate parameter names (case-sensitive)
+    seen_names = set()
+    for param in parameters:
+        name = param.get("name", "")
+        if name in seen_names:
+            warnings.append({
+                "code": "SB012",
+                "message": f"Duplicate parameter name '{name}'.",
+                "parameter": name
+            })
+        seen_names.add(name)
+
+    return warnings
+
+
+def _validate_code_locally(code: str, label: str) -> Dict[str, Any]:
+    """
+    Perform local validation checks on Python code (main function + syntax).
+
+    Args:
+        code: Python source code to validate
+        label: Human-readable label for error messages (e.g., "target", "attacker")
+
+    Returns:
+        Dictionary with 'has_main_function' and 'syntax_error' fields
+    """
+    has_main = bool(re.search(MAIN_FUNCTION_PATTERN, code))
+    syntax_error = None
+    try:
+        compile(code, f"<{label}>", "exec")
+    except SyntaxError as e:
+        syntax_error = f"{label} code syntax error at line {e.lineno}: {e.msg}"
+
+    return {"has_main_function": has_main, "syntax_error": syntax_error}
+
+
+def _call_validation_api(
+    code: str,
+    filename: str,
+    api_url: str,
+    headers: dict,
+) -> Dict[str, Any]:
+    """
+    Call the SafeBreach validation API for a single code file.
+
+    Args:
+        code: Python source code to validate
+        filename: Filename to use in the multipart upload
+        api_url: Full API URL
+        headers: Request headers
+
+    Returns:
+        Transformed validation result from API
+    """
+    files = {'file': (filename, code, 'text/x-python-script')}
+    data = {'class': 'python'}
+
+    response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
+    response.raise_for_status()
+    api_response = response.json()
+    return get_validation_response_mapping(api_response)
+
+
+def sb_validate_studio_code(
+    python_code: str,
+    console: str = "default",
+    attack_type: str = "host",
+    attacker_code: str = None,
+    target_os: str = "All",
+    attacker_os: str = "All",
+    parameters: list = None,
+) -> Dict[str, Any]:
+    """
+    Validate custom Python attack code against Breach Studio requirements.
+
+    Performs two-tier validation:
+    - Tier 1 (local): attack type, main() signature, syntax check, SB011/SB012 lint
+    - Tier 2 (API): backend code validation for target and attacker scripts
+
+    Args:
+        python_code: The target Python code content to validate
         console: SafeBreach console identifier (default: "default")
+        attack_type: Attack type - "host", "exfil", "infil", or "lateral" (default: "host")
+        attacker_code: Python code for attacker script (required for dual-script types)
+        target_os: OS constraint for target script (default: "All")
+        attacker_os: OS constraint for attacker script (default: "All", dual-script only)
+        parameters: Optional list of parameter dicts to validate (SB011/SB012 lint)
 
     Returns:
         Validation result dictionary containing:
-        - is_valid: Overall validation status
-        - exit_code: Exit code from validator
-        - has_main_function: Whether required main() signature exists
-        - validation_errors: List of validation errors
-        - stderr: Standard error output
-        - stdout: Standard output details
+        - is_valid: Overall validation status (both tiers)
+        - exit_code: Exit code from target validator
+        - has_main_function: Whether target code has required main() signature
+        - validation_errors: Combined list of validation errors
+        - target_validation: Target-specific API validation results
+        - attacker_validation: Attacker-specific API validation results (None for host)
+        - lint_warnings: List of SB011/SB012 lint warnings
+        - stderr: Standard error output from target validation
+        - stdout: Standard output details from target validation
 
     Raises:
-        ValueError: If python_code is empty or None
+        ValueError: If inputs are invalid (empty code, bad attack_type, missing attacker_code)
         requests.HTTPError: For API errors (401, 404, 500, etc.)
-        Exception: For unexpected errors
-
-    Example:
-        >>> result = sb_validate_studio_code(code, "demo")
-        >>> print(result['is_valid'])
-        True
-        >>> print(result['has_main_function'])
-        True
     """
-    # Validate input
+    # --- Tier 1: Local validation ---
+
+    # Validate basic input
     if not python_code or not python_code.strip():
         raise ValueError("python_code parameter is required and cannot be empty")
 
-    logger.info(f"Validating Python code for console: {console}")
+    # Validate attack type
+    if attack_type not in VALID_ATTACK_TYPES:
+        raise ValueError(
+            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
+        )
 
-    # Check for required main function signature
-    has_main_function = bool(re.search(MAIN_FUNCTION_PATTERN, python_code))
-    logger.debug(f"Main function signature found: {has_main_function}")
+    # Validate OS constraints
+    _validate_os_constraint(target_os)
+    if attack_type in DUAL_SCRIPT_TYPES:
+        _validate_os_constraint(attacker_os)
 
-    # Get authentication and base URL
+    # Validate dual-script requirement
+    is_dual_script = attack_type in DUAL_SCRIPT_TYPES
+    if is_dual_script and (not attacker_code or not attacker_code.strip()):
+        raise ValueError(
+            f"attacker_code is required for '{attack_type}' attack type (dual-script)"
+        )
+
+    logger.info(f"Validating {attack_type} attack code for console: {console}")
+
+    # Local checks on target code
+    target_local = _validate_code_locally(python_code, "target")
+    has_main_function = target_local["has_main_function"]
+
+    # Local checks on attacker code (dual-script only)
+    attacker_local = None
+    if is_dual_script:
+        attacker_local = _validate_code_locally(attacker_code, "attacker")
+
+    # Collect local syntax errors as validation errors
+    local_errors = []
+    if target_local["syntax_error"]:
+        local_errors.append(target_local["syntax_error"])
+    if attacker_local and attacker_local["syntax_error"]:
+        local_errors.append(attacker_local["syntax_error"])
+
+    # SB011/SB012 lint checks on parameters
+    lint_warnings = []
+    if parameters:
+        _validate_and_build_parameters(parameters)  # structural validation
+        lint_warnings = _lint_check_parameters(parameters)
+
+    # --- Tier 2: API validation ---
+
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    # Note: Don't set Content-Type header - requests library will set it automatically
-    # for multipart/form-data when files parameter is used
     headers = {"x-apitoken": apitoken}
-
-    # Prepare multipart form data with Python file
-    files = {
-        'file': ('target.py', python_code, 'text/x-python-script')
-    }
-
-    # Required form data parameters for validation
-    data = {
-        'class': 'python'
-    }
-
-    # Call validation API
     api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/validate"
+
     logger.info(f"Calling validation API: {api_url}")
 
     try:
-        response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
-        response.raise_for_status()
-        api_response = response.json()
-        logger.info("Validation API call successful")
+        # Validate target code
+        target_validation = _call_validation_api(python_code, "target.py", api_url, headers)
+
+        # Validate attacker code for dual-script types
+        attacker_validation = None
+        if is_dual_script:
+            attacker_validation = _call_validation_api(attacker_code, "attacker.py", api_url, headers)
+
     except requests.exceptions.RequestException as e:
         logger.error(f"Validation API call failed: {e}")
         raise
 
-    # Transform response and add main function check
-    result = get_validation_response_mapping(api_response)
-    result['has_main_function'] = has_main_function
+    # --- Merge results ---
 
-    logger.debug(f"Validation result: is_valid={result['is_valid']}, "
+    # Combine validation errors from all sources
+    all_errors = local_errors + target_validation.get('validation_errors', [])
+    if attacker_validation:
+        all_errors += attacker_validation.get('validation_errors', [])
+
+    # Overall validity: no local errors AND target valid AND attacker valid (if applicable)
+    is_valid = (
+        not local_errors
+        and target_validation.get('is_valid', False)
+        and (attacker_validation is None or attacker_validation.get('is_valid', False))
+    )
+
+    result = {
+        "is_valid": is_valid,
+        "exit_code": target_validation.get('exit_code', -1),
+        "has_main_function": has_main_function,
+        "validation_errors": all_errors,
+        "target_validation": target_validation,
+        "attacker_validation": attacker_validation,
+        "lint_warnings": lint_warnings,
+        "stderr": target_validation.get('stderr', ''),
+        "stdout": target_validation.get('stdout', {}),
+    }
+
+    logger.debug(f"Validation result: is_valid={is_valid}, "
                  f"has_main_function={has_main_function}, "
                  f"exit_code={result['exit_code']}")
 
     return result
 
 
-def sb_save_studio_draft(
+def sb_save_studio_attack_draft(
     name: str,
     python_code: str,
     description: str = "",
     timeout: int = 300,
-    os_constraint: str = "All",
+    target_os: str = "All",
     parameters: list = None,
-    console: str = "default"
+    console: str = "default",
+    attack_type: str = "host",
+    attacker_code: str = None,
+    attacker_os: str = "All",
 ) -> Dict[str, Any]:
     """
-    Save a custom Python simulation as a draft in Breach Studio.
-
-    This function submits the provided Python code and metadata to the SafeBreach
-    Breach Studio API to create a new draft simulation.
+    Save a custom Python attack as a draft in Breach Studio.
 
     Args:
-        name: Simulation name (e.g., "Port Scanner")
-        python_code: The Python code content
-        description: Simulation description (optional, default: "")
+        name: Attack name (e.g., "Port Scanner")
+        python_code: The target Python code content
+        description: Attack description (optional, default: "")
         timeout: Execution timeout in seconds (default: 300, min: 1)
-        os_constraint: OS constraint for simulation execution (default: "All")
-                      Valid values: "All" (no constraint), "WINDOWS", "LINUX", "MAC"
-        parameters: Optional list of parameters accessible in system_data (default: None)
-                   Each parameter is a dict with:
-                   - name (required): Parameter name
-                   - value (required): Parameter value (single value or list of values)
-                   - type (optional): "NOT_CLASSIFIED", "PORT", "URI", or "PROTOCOL" (default: "NOT_CLASSIFIED")
-                     * PROTOCOL type requires value to be one of 52 valid protocols (TCP, HTTP, SSH, etc.)
-                   - display_name (optional): Display name (defaults to name)
-                   - description (optional): Description (defaults to "")
-                   Example single value: {"name": "port", "value": 8080}
-                   Example multiple values: {"name": "paths", "value": ["file1.txt", "file2.txt"]}
+        target_os: OS constraint for target script (default: "All")
+                   Valid values: "All", "WINDOWS", "LINUX", "MAC"
+        parameters: Optional list of parameter dicts (default: None)
         console: SafeBreach console identifier (default: "default")
+        attack_type: Attack type - "host", "exfil", "infil", or "lateral" (default: "host")
+        attacker_code: Python code for attacker script (required for dual-script types)
+        attacker_os: OS constraint for attacker script (default: "All", dual-script only)
 
     Returns:
-        Draft metadata dictionary containing:
-        - draft_id: ID of created draft
-        - name: Draft name
-        - description: Draft description
-        - status: Always "draft"
-        - timeout: Execution timeout
-        - os_constraint: OS constraint applied
-        - parameters_count: Number of parameters defined
-        - creation_date: ISO datetime string
-        - update_date: ISO datetime string
-        - target_file_name: Always "target.py"
-        - method_type: Always 5
-        - origin: Always "BREACH_STUDIO"
+        Draft metadata dictionary with draft_id, name, status, attack_type, etc.
 
     Raises:
-        ValueError: If name or python_code is empty, timeout is less than 1,
-                   os_constraint is invalid, or parameters are invalid
-        requests.HTTPError: For API errors (401, 404, 500, etc.)
-        Exception: For unexpected errors
-
-    Example:
-        >>> params = [{"name": "port", "value": 8080, "type": "PORT"}]
-        >>> result = sb_save_studio_draft("My Attack", code, "Test", 300, "WINDOWS", params, "demo")
-        >>> print(result['draft_id'])
-        10000296
-        >>> print(result['parameters_count'])
-        1
+        ValueError: If inputs are invalid
+        requests.HTTPError: For API errors
     """
     # Validate inputs
     if not name or not name.strip():
@@ -343,28 +472,50 @@ def sb_save_studio_draft(
     if timeout < 1:
         raise ValueError("timeout must be at least 1 second")
 
-    # Validate OS constraint
-    _validate_os_constraint(os_constraint)
+    # Validate attack type
+    if attack_type not in VALID_ATTACK_TYPES:
+        raise ValueError(
+            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
+        )
+
+    # Validate OS constraints
+    _validate_os_constraint(target_os)
+
+    # Validate dual-script requirements
+    is_dual_script = attack_type in DUAL_SCRIPT_TYPES
+    if is_dual_script:
+        if not attacker_code or not attacker_code.strip():
+            raise ValueError(
+                f"attacker_code is required for '{attack_type}' attack type (dual-script)"
+            )
+        _validate_os_constraint(attacker_os)
 
     # Validate and build parameters
     if parameters is None:
         parameters = []
     parameters_json = _validate_and_build_parameters(parameters)
 
-    logger.info(f"Saving draft simulation '{name}' for console: {console} with OS constraint: {os_constraint}, parameters: {len(parameters)}")
+    method_type = VALID_ATTACK_TYPES[attack_type]
+
+    logger.info(f"Saving draft attack '{name}' (type={attack_type}) for console: {console}")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    # Note: Don't set Content-Type header - requests library will set it automatically
-    # for multipart/form-data when files parameter is used
     headers = {"x-apitoken": apitoken}
 
     # Prepare multipart form data
     files = {
         'targetFile': ('target.py', python_code, 'text/x-python-script')
     }
+    if is_dual_script:
+        files['attackerFile'] = ('attacker.py', attacker_code, 'text/x-python-script')
+
+    # Build metadata
+    meta_data = {"targetFileName": "target.py"}
+    if is_dual_script:
+        meta_data["attackerFileName"] = "attacker.py"
 
     data = {
         'name': name,
@@ -374,14 +525,18 @@ def sb_save_studio_draft(
         'description': description,
         'parameters': parameters_json,
         'tags': '[]',
-        'methodType': '5',
+        'methodType': str(method_type),
         'targetFileName': 'target.py',
-        'metaData': '{"targetFileName":"target.py"}'
+        'metaData': json.dumps(meta_data)
     }
 
-    # Add targetConstraints only if os_constraint is not "All"
-    if os_constraint != "All":
-        data['targetConstraints'] = f'{{"os":"{os_constraint}"}}'
+    # Add targetConstraints
+    if target_os != "All":
+        data['targetConstraints'] = json.dumps({"os": target_os})
+
+    # Add attackerConstraints for dual-script
+    if is_dual_script and attacker_os != "All":
+        data['attackerConstraints'] = json.dumps({"os": attacker_os})
 
     # Call save draft API
     api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods"
@@ -399,8 +554,8 @@ def sb_save_studio_draft(
     # Transform response
     result = get_draft_response_mapping(api_response)
 
-    # Add os_constraint and parameters_count to result
-    result['os_constraint'] = os_constraint
+    # Add supplementary fields
+    result['os_constraint'] = target_os
     result['parameters_count'] = len(parameters)
 
     # Cache the result (1-hour TTL)
@@ -411,50 +566,53 @@ def sb_save_studio_draft(
     }
     logger.debug(f"Cached draft with key: {cache_key}")
 
-    logger.info(f"Successfully saved draft with ID: {result['draft_id']} with OS constraint: {os_constraint}, parameters: {len(parameters)}")
+    logger.info(f"Successfully saved draft with ID: {result['draft_id']}")
 
     return result
 
 
-def sb_get_all_studio_simulations(
+def sb_get_all_studio_attacks(
     console: str = "default",
     status_filter: str = "all",
     name_filter: str = None,
-    user_id_filter: int = None
+    user_id_filter: int = None,
+    page_number: int = 0,
 ) -> Dict[str, Any]:
     """
-    Get all Studio simulations (both draft and published) for a console.
+    Get all Studio attacks (both draft and published) for a console, with pagination.
 
     Args:
         console: SafeBreach console identifier (default: "default")
         status_filter: Filter by status - "all", "draft", or "published" (default: "all")
-        name_filter: Filter by simulation name (case-insensitive partial match, optional)
-        user_id_filter: Filter by user ID who created the simulation (optional)
+        name_filter: Filter by attack name (case-insensitive partial match, optional)
+        user_id_filter: Filter by user ID who created the attack (optional)
+        page_number: Zero-based page index (default: 0)
 
     Returns:
         Dictionary containing:
-        - simulations: List of all simulations
-        - total_count: Total number of simulations
-        - draft_count: Number of draft simulations
-        - published_count: Number of published simulations
+        - attacks_in_page: List of attacks for the current page
+        - total_attacks: Total number of filtered attacks
+        - page_number: Current page number
+        - total_pages: Total number of pages
+        - draft_count: Number of draft attacks (in filtered set)
+        - published_count: Number of published attacks (in filtered set)
+        - applied_filters: Dict of active filters
+        - hint_to_agent: Navigation hint or None
 
     Raises:
-        ValueError: If status_filter is invalid
+        ValueError: If status_filter is invalid or page_number is negative
         Exception: For API errors
-
-    Example:
-        >>> result = sb_get_all_studio_simulations(console="demo", status_filter="draft")
-        >>> print(f"Found {result['draft_count']} draft simulations")
-        >>> result = sb_get_all_studio_simulations(console="demo", name_filter="MCP")
-        >>> print(f"Found {result['total_count']} simulations with 'MCP' in name")
     """
     # Validate status_filter
     valid_statuses = ["all", "draft", "published"]
     if status_filter not in valid_statuses:
         raise ValueError(f"status_filter must be one of {valid_statuses}, got: {status_filter}")
 
-    logger.info(f"Getting all Studio simulations for console: {console} (status={status_filter}, "
-                f"name_filter={name_filter}, user_id_filter={user_id_filter})")
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+
+    logger.info(f"Getting all Studio attacks for console: {console} (status={status_filter}, "
+                f"name_filter={name_filter}, user_id_filter={user_id_filter}, page={page_number})")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
@@ -462,118 +620,110 @@ def sb_get_all_studio_simulations(
     account_id = get_api_account_id(console)
     headers = {"x-apitoken": apitoken}
 
-    # Call get all simulations API
+    # Call get all attacks API
     api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all"
-    logger.info(f"Calling get all simulations API: {api_url}")
+    logger.info(f"Calling get all attacks API: {api_url}")
 
     try:
         response = requests.get(api_url, headers=headers, timeout=120)
         response.raise_for_status()
         api_response = response.json()
-        logger.info(f"Get all simulations API call successful")
+        logger.info("Get all attacks API call successful")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Get all simulations API call failed: {e}")
+        logger.error(f"Get all attacks API call failed: {e}")
         raise
 
     # Transform response
-    result = get_all_simulations_response_mapping(api_response)
+    result = get_all_attacks_response_mapping(api_response)
 
     # Apply filters
-    filtered_simulations = result['simulations']
+    filtered_attacks = result['attacks']
 
     # Apply status filter if specified
     if status_filter != "all":
-        filtered_simulations = [
-            sim for sim in filtered_simulations
-            if sim['status'] == status_filter
+        filtered_attacks = [
+            a for a in filtered_attacks
+            if a['status'] == status_filter
         ]
 
     # Apply name filter if specified (case-insensitive partial match)
     if name_filter:
         name_filter_lower = name_filter.lower()
-        filtered_simulations = [
-            sim for sim in filtered_simulations
-            if name_filter_lower in sim['name'].lower()
+        filtered_attacks = [
+            a for a in filtered_attacks
+            if name_filter_lower in a['name'].lower()
         ]
 
     # Apply user ID filter if specified
     if user_id_filter is not None:
-        filtered_simulations = [
-            sim for sim in filtered_simulations
-            if sim.get('user_created') == user_id_filter
+        filtered_attacks = [
+            a for a in filtered_attacks
+            if a.get('user_created') == user_id_filter
         ]
 
-    # Update result with filtered data
-    result['simulations'] = filtered_simulations
-    result['total_count'] = len(filtered_simulations)
+    # Calculate draft/published counts from filtered results
+    draft_count = len([a for a in filtered_attacks if a['status'] == 'draft'])
+    published_count = len([a for a in filtered_attacks if a['status'] == 'published'])
 
-    # Recalculate draft/published counts from filtered results
-    result['draft_count'] = len([s for s in filtered_simulations if s['status'] == 'draft'])
-    result['published_count'] = len([s for s in filtered_simulations if s['status'] == 'published'])
+    # Paginate the filtered results
+    paginated = paginate_studio_attacks(filtered_attacks, page_number)
 
-    logger.info(f"Successfully retrieved {result['total_count']} simulations "
-                f"({result['draft_count']} drafts, {result['published_count']} published)")
+    # Add supplementary fields
+    paginated['draft_count'] = draft_count
+    paginated['published_count'] = published_count
+    paginated['applied_filters'] = {
+        'status_filter': status_filter if status_filter != "all" else None,
+        'name_filter': name_filter,
+        'user_filter': user_id_filter,
+    }
 
-    return result
+    logger.info(f"Successfully retrieved {paginated['total_attacks']} attacks "
+                f"({draft_count} drafts, {published_count} published), "
+                f"page {page_number}/{paginated['total_pages']}")
+
+    return paginated
 
 
-def sb_update_studio_draft(
-    draft_id: int,
+def sb_update_studio_attack_draft(
+    attack_id: int,
     name: str,
     python_code: str,
     description: str = "",
     timeout: int = 300,
-    os_constraint: str = "All",
+    target_os: str = "All",
     parameters: list = None,
-    console: str = "default"
+    console: str = "default",
+    attack_type: str = "host",
+    attacker_code: str = None,
+    attacker_os: str = "All",
 ) -> Dict[str, Any]:
     """
-    Update an existing Studio draft simulation.
+    Update an existing Studio draft attack.
 
     Args:
-        draft_id: ID of the draft to update (required)
-        name: Updated simulation name (required)
-        python_code: Updated Python code content (required)
-        description: Updated simulation description (optional, default: "")
+        attack_id: ID of the draft attack to update (required)
+        name: Updated attack name (required)
+        python_code: Updated target Python code content (required)
+        description: Updated attack description (optional, default: "")
         timeout: Execution timeout in seconds (default: 300, min: 1)
-        os_constraint: OS constraint for simulation execution (default: "All")
-                      Valid values: "All" (no constraint), "WINDOWS", "LINUX", "MAC"
-        parameters: Optional list of parameters accessible in system_data (default: None)
-                   Each parameter is a dict with:
-                   - name (required): Parameter name
-                   - value (required): Parameter value (single value or list of values)
-                   - type (optional): "NOT_CLASSIFIED", "PORT", "URI", or "PROTOCOL" (default: "NOT_CLASSIFIED")
-                     * PROTOCOL type requires value to be one of 52 valid protocols (TCP, HTTP, SSH, etc.)
-                   - display_name (optional): Display name (defaults to name)
-                   - description (optional): Description (defaults to "")
-                   Example single value: {"name": "port", "value": 8080}
-                   Example multiple values: {"name": "paths", "value": ["file1.txt", "file2.txt"]}
+        target_os: OS constraint for target script (default: "All")
+                   Valid values: "All", "WINDOWS", "LINUX", "MAC"
+        parameters: Optional list of parameter dicts (default: None)
         console: SafeBreach console identifier (default: "default")
+        attack_type: Attack type - "host", "exfil", "infil", or "lateral" (default: "host")
+        attacker_code: Python code for attacker script (required for dual-script types)
+        attacker_os: OS constraint for attacker script (default: "All", dual-script only)
 
     Returns:
-        Updated draft metadata including draft_id, name, status, dates, os_constraint, parameters_count, etc.
+        Updated draft metadata including draft_id, name, status, attack_type, dates, etc.
 
     Raises:
-        ValueError: If draft_id, name, python_code is invalid/empty, os_constraint is invalid,
-                   or parameters are invalid
-        Exception: For API errors
-
-    Example:
-        >>> params = [{"name": "port", "value": 8080, "type": "PORT"}]
-        >>> result = sb_update_studio_draft(
-        ...     draft_id=10000298,
-        ...     name="Updated Simulation",
-        ...     python_code=updated_code,
-        ...     description="Updated description",
-        ...     os_constraint="LINUX",
-        ...     parameters=params,
-        ...     console="demo"
-        ... )
-        >>> print(f"Updated draft {result['draft_id']} with {result['parameters_count']} parameters")
+        ValueError: If inputs are invalid
+        requests.HTTPError: For API errors
     """
     # Validate inputs
-    if not draft_id or draft_id <= 0:
-        raise ValueError("draft_id must be a positive integer")
+    if not attack_id or attack_id <= 0:
+        raise ValueError("attack_id must be a positive integer")
     if not name or not name.strip():
         raise ValueError("name parameter is required and cannot be empty")
     if not python_code or not python_code.strip():
@@ -581,31 +731,53 @@ def sb_update_studio_draft(
     if timeout < 1:
         raise ValueError("timeout must be at least 1 second")
 
-    # Validate OS constraint
-    _validate_os_constraint(os_constraint)
+    # Validate attack type
+    if attack_type not in VALID_ATTACK_TYPES:
+        raise ValueError(
+            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
+        )
+
+    # Validate OS constraints
+    _validate_os_constraint(target_os)
+
+    # Validate dual-script requirements
+    is_dual_script = attack_type in DUAL_SCRIPT_TYPES
+    if is_dual_script:
+        if not attacker_code or not attacker_code.strip():
+            raise ValueError(
+                f"attacker_code is required for '{attack_type}' attack type (dual-script)"
+            )
+        _validate_os_constraint(attacker_os)
 
     # Validate and build parameters
     if parameters is None:
         parameters = []
     parameters_json = _validate_and_build_parameters(parameters)
 
-    logger.info(f"Updating draft simulation {draft_id} '{name}' for console: {console} with OS constraint: {os_constraint}, parameters: {len(parameters)}")
+    method_type = VALID_ATTACK_TYPES[attack_type]
+
+    logger.info(f"Updating draft attack {attack_id} '{name}' (type={attack_type}) for console: {console}")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    # Note: Don't set Content-Type header - requests library will set it automatically
-    # for multipart/form-data when files parameter is used
     headers = {"x-apitoken": apitoken}
 
     # Prepare multipart form data
     files = {
         'targetFile': ('target.py', python_code, 'text/x-python-script')
     }
+    if is_dual_script:
+        files['attackerFile'] = ('attacker.py', attacker_code, 'text/x-python-script')
+
+    # Build metadata
+    meta_data = {"targetFileName": "target.py"}
+    if is_dual_script:
+        meta_data["attackerFileName"] = "attacker.py"
 
     data = {
-        'id': str(draft_id),
+        'id': str(attack_id),
         'name': name,
         'timeout': str(timeout),
         'status': 'draft',
@@ -613,17 +785,21 @@ def sb_update_studio_draft(
         'description': description,
         'parameters': parameters_json,
         'tags': '[]',
-        'methodType': '5',
+        'methodType': str(method_type),
         'targetFileName': 'target.py',
-        'metaData': '{"targetFileName":"target.py"}'
+        'metaData': json.dumps(meta_data)
     }
 
-    # Add targetConstraints only if os_constraint is not "All"
-    if os_constraint != "All":
-        data['targetConstraints'] = f'{{"os":"{os_constraint}"}}'
+    # Add targetConstraints
+    if target_os != "All":
+        data['targetConstraints'] = json.dumps({"os": target_os})
+
+    # Add attackerConstraints for dual-script
+    if is_dual_script and attacker_os != "All":
+        data['attackerConstraints'] = json.dumps({"os": attacker_os})
 
     # Call update draft API
-    api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{draft_id}"
+    api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}"
     logger.info(f"Calling update draft API: {api_url}")
 
     try:
@@ -638,8 +814,8 @@ def sb_update_studio_draft(
     # Transform response
     result = get_draft_response_mapping(api_response)
 
-    # Add os_constraint and parameters_count to result
-    result['os_constraint'] = os_constraint
+    # Add supplementary fields
+    result['os_constraint'] = target_os
     result['parameters_count'] = len(parameters)
 
     # Update cache with new values
@@ -650,43 +826,37 @@ def sb_update_studio_draft(
     }
     logger.debug(f"Updated cache with key: {cache_key}")
 
-    logger.info(f"Successfully updated draft with ID: {result['draft_id']} with OS constraint: {os_constraint}, parameters: {len(parameters)}")
+    logger.info(f"Successfully updated draft with ID: {result['draft_id']}")
 
     return result
 
 
-def sb_get_studio_simulation_source(
-    simulation_id: int,
+def sb_get_studio_attack_source(
+    attack_id: int,
     console: str = "default"
 ) -> Dict[str, Any]:
     """
-    Get the target source code for a Studio simulation.
+    Get the source code for a Studio attack (target and optionally attacker).
 
     Args:
-        simulation_id: ID of the simulation (draft or published)
+        attack_id: ID of the attack (draft or published)
         console: SafeBreach console identifier (default: "default")
 
     Returns:
         Dictionary containing:
-        - filename: Name of the source file (typically "target.py")
-        - content: The Python source code as a string
+        - attack_id: The attack ID
+        - target: {"filename": "target.py", "content": "..."} — always present
+        - attacker: {"filename": "attacker.py", "content": "..."} or None
 
     Raises:
-        ValueError: If simulation_id is invalid
-        Exception: For API errors
-
-    Example:
-        >>> result = sb_get_studio_simulation_source(simulation_id=10000298, console="demo")
-        >>> print(result['filename'])
-        'target.py'
-        >>> print(result['content'][:100])
-        '# Author: SafeBreach...'
+        ValueError: If attack_id is invalid
+        Exception: For API errors (target fetch)
     """
     # Validate inputs
-    if not simulation_id or simulation_id <= 0:
-        raise ValueError("simulation_id must be a positive integer")
+    if not attack_id or attack_id <= 0:
+        raise ValueError("attack_id must be a positive integer")
 
-    logger.info(f"Getting source code for simulation {simulation_id} on console: {console}")
+    logger.info(f"Getting source code for attack {attack_id} on console: {console}")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
@@ -694,96 +864,116 @@ def sb_get_studio_simulation_source(
     account_id = get_api_account_id(console)
     headers = {"x-apitoken": apitoken}
 
-    # Call get source code API
-    api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{simulation_id}/files/target"
-    logger.info(f"Calling get source code API: {api_url}")
+    # Fetch target source code (always required)
+    target_api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}/files/target"
+    logger.info(f"Calling get target source API: {target_api_url}")
 
     try:
-        response = requests.get(api_url, headers=headers, timeout=120)
+        response = requests.get(target_api_url, headers=headers, timeout=120)
         response.raise_for_status()
-        api_response = response.json()
-        logger.info("Get source code API call successful")
+        target_response = response.json()
+        logger.info("Get target source API call successful")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Get source code API call failed: {e}")
+        logger.error(f"Get target source API call failed: {e}")
         raise
 
-    # Extract data from response
-    data = api_response.get('data', {})
-    result = {
-        'filename': data.get('filename', 'target.py'),
-        'content': data.get('content', '')
+    target_data = target_response.get('data', {})
+    target_result = {
+        'filename': target_data.get('filename', 'target.py'),
+        'content': target_data.get('content', '')
     }
 
-    logger.info(f"Successfully retrieved source code for simulation {simulation_id} "
-                f"(filename: {result['filename']}, size: {len(result['content'])} bytes)")
+    # Fetch attacker source code (may not exist for host attacks)
+    attacker_result = None
+    attacker_api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}/files/attacker"
+    logger.info(f"Calling get attacker source API: {attacker_api_url}")
+
+    try:
+        attacker_response = requests.get(attacker_api_url, headers=headers, timeout=120)
+        if attacker_response.status_code == 200:
+            attacker_data = attacker_response.json().get('data', {})
+            attacker_content = attacker_data.get('content', '')
+            if attacker_content:
+                attacker_result = {
+                    'filename': attacker_data.get('filename', 'attacker.py'),
+                    'content': attacker_content
+                }
+                logger.info("Get attacker source API call successful")
+            else:
+                logger.info("Attacker file exists but is empty — treating as host attack")
+        elif attacker_response.status_code == 404:
+            logger.info("No attacker file found (host attack)")
+        else:
+            logger.warning(f"Unexpected status {attacker_response.status_code} fetching attacker file")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Failed to fetch attacker source (non-fatal): {e}")
+
+    result = {
+        'attack_id': attack_id,
+        'target': target_result,
+        'attacker': attacker_result,
+    }
+
+    logger.info(f"Successfully retrieved source code for attack {attack_id} "
+                f"(target: {len(target_result['content'])} bytes, "
+                f"attacker: {len(attacker_result['content']) if attacker_result else 0} bytes)")
 
     return result
 
 
-def sb_run_studio_simulation(
-    simulation_id: int,
+def sb_run_studio_attack(
+    attack_id: int,
     console: str = "default",
-    simulator_ids: list = None,
-    test_name: str = None
+    target_simulator_ids: list = None,
+    attacker_simulator_ids: list = None,
+    all_connected: bool = False,
+    test_name: str = None,
 ) -> Dict[str, Any]:
     """
-    Run a Studio draft simulation on simulators.
-
-    This function queues a Studio simulation for execution on either all connected
-    simulators or specific simulator IDs.
+    Run a Studio draft attack on simulators.
 
     Args:
-        simulation_id: ID of the draft simulation to execute
+        attack_id: ID of the draft attack to execute
         console: SafeBreach console identifier (default: "default")
-        simulator_ids: List of specific simulator UUIDs to run on (optional).
-                      If None, runs on all connected simulators.
-        test_name: Custom name for the test execution (optional).
-                  Default: "Studio Simulation Test - {simulation_id}"
+        target_simulator_ids: List of target simulator UUIDs (for explicit selection)
+        attacker_simulator_ids: List of attacker simulator UUIDs (network attacks only)
+        all_connected: If True, run on all connected simulators (overrides simulator IDs)
+        test_name: Custom name for the test execution (optional)
 
     Returns:
-        Dictionary containing:
-        - plan_run_id: ID of the test execution
-        - step_run_id: ID of the step execution
-        - test_name: Name of the test
-        - simulation_id: ID of the simulation
-        - simulator_count: Number of simulators targeted
-        - priority: Execution priority
-        - draft: Always True for draft simulations
+        Dictionary containing test_id, attack_id, test_name, status, etc.
 
     Raises:
-        ValueError: If simulation_id is invalid or simulator_ids is empty list
+        ValueError: If inputs are invalid
         Exception: For API errors
-
-    Example:
-        >>> # Run on all connected simulators
-        >>> result = sb_run_studio_simulation(simulation_id=10000298, console="demo")
-        >>> print(result['plan_run_id'])
-        '1764570357286.4'
-
-        >>> # Run on specific simulators
-        >>> result = sb_run_studio_simulation(
-        ...     simulation_id=10000298,
-        ...     console="demo",
-        ...     simulator_ids=["3b6e04fb-828c-4017-84eb-0a898416f5ad", "82f32590-c51e-403a-9912-579af86fd3b9"]
-        ... )
     """
     # Validate inputs
-    if not simulation_id or simulation_id <= 0:
-        raise ValueError("simulation_id must be a positive integer")
+    if not attack_id or attack_id <= 0:
+        raise ValueError("attack_id must be a positive integer")
 
-    if simulator_ids is not None and len(simulator_ids) == 0:
-        raise ValueError("simulator_ids cannot be an empty list. Use None to run on all connected simulators")
+    if not all_connected and target_simulator_ids is None:
+        raise ValueError(
+            "Either target_simulator_ids must be provided or all_connected must be True"
+        )
+
+    if not all_connected and target_simulator_ids is not None and len(target_simulator_ids) == 0:
+        raise ValueError("target_simulator_ids cannot be an empty list")
+
+    if not all_connected and attacker_simulator_ids is not None and len(attacker_simulator_ids) == 0:
+        raise ValueError("attacker_simulator_ids cannot be an empty list")
 
     # Set default test name if not provided
     if not test_name:
-        test_name = f"Studio Simulation Test - {simulation_id}"
+        test_name = f"Studio Attack Test - {attack_id}"
 
-    logger.info(f"Running simulation {simulation_id} on console: {console} "
-                f"(simulators: {'all connected' if simulator_ids is None else len(simulator_ids)})")
+    logger.info(f"Running attack {attack_id} on console: {console} "
+                f"(all_connected={all_connected}, "
+                f"targets={len(target_simulator_ids) if target_simulator_ids else 'N/A'}, "
+                f"attackers={len(attacker_simulator_ids) if attacker_simulator_ids else 'N/A'})")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
-    base_url = get_api_base_url(console, 'data')  # Use data URL for orchestration API
+    base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
     headers = {
         "x-apitoken": apitoken,
@@ -791,35 +981,32 @@ def sb_run_studio_simulation(
     }
 
     # Build attacker and target filters
-    if simulator_ids is None:
-        # Run on all connected simulators
-        attacker_filter = {
+    if all_connected:
+        connection_filter = {
             "connection": {
                 "operator": "is",
                 "values": [True],
                 "name": "connection"
             }
         }
-        target_filter = {
-            "connection": {
-                "operator": "is",
-                "values": [True],
-                "name": "connection"
-            }
-        }
+        attacker_filter = connection_filter
+        target_filter = connection_filter
     else:
-        # Run on specific simulators
-        attacker_filter = {
+        # Target filter from target_simulator_ids
+        target_filter = {
             "simulators": {
                 "operator": "is",
-                "values": simulator_ids,
+                "values": target_simulator_ids,
                 "name": "simulators"
             }
         }
-        target_filter = {
+        # Attacker filter: use attacker_simulator_ids if provided, else same as target
+        # (host attacks: attacker=target, so use target IDs for both)
+        attacker_ids = attacker_simulator_ids if attacker_simulator_ids else target_simulator_ids
+        attacker_filter = {
             "simulators": {
                 "operator": "is",
-                "values": simulator_ids,
+                "values": attacker_ids,
                 "name": "simulators"
             }
         }
@@ -832,7 +1019,7 @@ def sb_run_studio_simulation(
                 "attacksFilter": {
                     "playbook": {
                         "operator": "is",
-                        "values": [simulation_id],
+                        "values": [attack_id],
                         "name": "playbook"
                     }
                 },
@@ -844,21 +1031,21 @@ def sb_run_studio_simulation(
         }
     }
 
-    # Call run simulation API
+    # Call run attack API
     api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
     params = {
         "enableFeedbackLoop": "true",
         "retrySimulations": "false"
     }
-    logger.info(f"Calling run simulation API: {api_url}")
+    logger.info(f"Calling run attack API: {api_url}")
 
     try:
         response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
         response.raise_for_status()
         api_response = response.json()
-        logger.info("Run simulation API call successful")
+        logger.info("Run attack API call successful")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Run simulation API call failed: {e}")
+        logger.error(f"Run attack API call failed: {e}")
         raise
 
     # Extract data from response
@@ -867,69 +1054,67 @@ def sb_run_studio_simulation(
     step_data = steps[0] if steps else {}
 
     result = {
-        'plan_run_id': data.get('planRunId', ''),
+        'test_id': data.get('planRunId', ''),
         'step_run_id': step_data.get('stepRunId', ''),
         'test_name': data.get('name', test_name),
-        'simulation_id': simulation_id,
-        'simulator_count': len(simulator_ids) if simulator_ids else 'all connected',
-        'priority': data.get('priority', 'low'),
-        'draft': data.get('draft', True),
-        'ran_by': data.get('ranBy'),
-        'retry_simulations': data.get('retrySimulations', False)
+        'attack_id': attack_id,
+        'status': 'queued',
     }
 
-    logger.info(f"Successfully queued simulation {simulation_id} for execution "
-                f"(plan_run_id: {result['plan_run_id']}, step_run_id: {result['step_run_id']})")
+    logger.info(f"Successfully queued attack {attack_id} for execution "
+                f"(test_id: {result['test_id']}, step_run_id: {result['step_run_id']})")
 
     return result
 
 
-def sb_get_studio_simulation_latest_result(
-    simulation_id: int,
+def sb_get_studio_attack_latest_result(
+    attack_id: int,
     console: str = "default",
     max_results: int = 1,
-    page_size: int = 100
+    page_size: int = 100,
+    include_logs: bool = True
 ) -> Dict[str, Any]:
     """
-    Retrieve the latest execution results for a Studio simulation by its playbook ID.
+    Retrieve the latest execution results for a Studio attack by its playbook ID.
 
     This function queries the execution history to find the most recent runs of the specified
-    Studio simulation, ordered by start time (newest first).
+    Studio attack, ordered by start time (newest first).
 
     Args:
-        simulation_id: The playbook ID of the Studio simulation
+        attack_id: The playbook ID of the Studio attack
         console: SafeBreach console identifier (default: "default")
         max_results: Maximum number of results to return (default: 1 for latest only)
         page_size: Number of results per page to request from API (default: 100)
+        include_logs: Whether to include simulation_steps, logs, and output fields (default: True)
 
     Returns:
         Dictionary containing:
-        - executions: List of simulation execution results (most recent first)
+        - executions: List of attack execution results (most recent first)
         - total_found: Total number of executions found
-        - simulation_id: The queried simulation ID
+        - attack_id: The queried attack ID
         - console: Console identifier
 
     Raises:
-        ValueError: If simulation_id is invalid
+        ValueError: If attack_id is invalid
         requests.HTTPError: If API request fails
 
     Example:
         # Get latest execution result
-        result = sb_get_studio_simulation_latest_result(
-            simulation_id=10000291,
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291,
             console="demo"
         )
 
         # Get last 5 execution results
-        results = sb_get_studio_simulation_latest_result(
-            simulation_id=10000291,
+        results = sb_get_studio_attack_latest_result(
+            attack_id=10000291,
             console="demo",
             max_results=5
         )
     """
     # Validate inputs
-    if not simulation_id or simulation_id <= 0:
-        raise ValueError("simulation_id must be a positive integer")
+    if not attack_id or attack_id <= 0:
+        raise ValueError("attack_id must be a positive integer")
 
     if max_results < 1:
         raise ValueError("max_results must be at least 1")
@@ -937,7 +1122,7 @@ def sb_get_studio_simulation_latest_result(
     if page_size < 1 or page_size > 1000:
         raise ValueError("page_size must be between 1 and 1000")
 
-    logger.info(f"Retrieving latest execution results for Studio simulation {simulation_id} from console '{console}'")
+    logger.info(f"Retrieving latest execution results for Studio attack {attack_id} from console '{console}'")
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
@@ -954,7 +1139,7 @@ def sb_get_studio_simulation_latest_result(
         "page": 1,
         "runId": "*",  # Wildcard for any run
         "pageSize": min(page_size, max_results),  # Only request what we need
-        "query": f"Playbook_id:(\"{simulation_id}\")",  # Search for specific playbook ID
+        "query": f"Playbook_id:(\"{attack_id}\")",  # Search for specific playbook ID
         "orderBy": "desc",  # Descending order (newest first)
         "sortBy": "startTime"  # Sort by start time
     }
@@ -980,7 +1165,7 @@ def sb_get_studio_simulation_latest_result(
         simulations = api_response.get('simulations', [])
         total_found = api_response.get('total', 0)
 
-        logger.info(f"Found {total_found} total executions for simulation {simulation_id}")
+        logger.info(f"Found {total_found} total executions for attack {attack_id}")
 
         # Limit to requested max_results
         limited_simulations = simulations[:max_results]
@@ -991,21 +1176,28 @@ def sb_get_studio_simulation_latest_result(
             get_execution_result_mapping(sim) for sim in limited_simulations
         ]
 
+        # Strip debug fields if include_logs is False
+        if not include_logs:
+            for exec_result in transformed_executions:
+                exec_result.pop('simulation_steps', None)
+                exec_result.pop('logs', None)
+                exec_result.pop('output', None)
+
         result = {
             'executions': transformed_executions,
             'returned_count': len(transformed_executions),
             'total_found': total_found,
-            'simulation_id': simulation_id,
+            'attack_id': attack_id,
             'console': console,
             'has_more': total_found > len(transformed_executions)
         }
 
-        logger.info(f"Successfully retrieved {len(transformed_executions)} execution results for simulation {simulation_id}")
+        logger.info(f"Successfully retrieved {len(transformed_executions)} execution results for attack {attack_id}")
 
         return result
 
     except requests.HTTPError as e:
-        error_msg = f"API error retrieving execution results for simulation {simulation_id}: {str(e)}"
+        error_msg = f"API error retrieving execution results for attack {attack_id}: {str(e)}"
         if e.response is not None:
             try:
                 error_details = e.response.json()
@@ -1015,7 +1207,7 @@ def sb_get_studio_simulation_latest_result(
         logger.error(error_msg)
         raise
     except Exception as e:
-        error_msg = f"Error retrieving execution results for simulation {simulation_id} from console '{console}': {str(e)}"
+        error_msg = f"Error retrieving execution results for attack {attack_id} from console '{console}': {str(e)}"
         logger.error(error_msg)
         raise
 

@@ -5,7 +5,60 @@ This module provides functions to transform SafeBreach Breach Studio API respons
 into MCP-compatible formats.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+
+PAGE_SIZE = 10
+
+
+def paginate_studio_attacks(
+    attacks: List[Dict[str, Any]],
+    page_number: int = 0,
+    page_size: int = PAGE_SIZE
+) -> Dict[str, Any]:
+    """
+    Paginate a list of studio attacks.
+
+    Args:
+        attacks: List of attack objects
+        page_number: Page number (0-based)
+        page_size: Number of items per page
+
+    Returns:
+        Dict containing paginated results and metadata
+    """
+    total_attacks = len(attacks)
+    total_pages = (total_attacks + page_size - 1) // page_size if total_attacks > 0 else 0
+
+    # Validate page number
+    if page_number < 0 or (total_pages > 0 and page_number >= total_pages):
+        return {
+            'page_number': page_number,
+            'total_pages': total_pages,
+            'total_attacks': total_attacks,
+            'attacks_in_page': [],
+            'error': f'Invalid page_number {page_number}. Available pages range from 0 to {total_pages - 1} (total {total_pages} pages)'
+        }
+
+    # Calculate slice indices
+    start_idx = page_number * page_size
+    end_idx = min(start_idx + page_size, total_attacks)
+
+    attacks_in_page = attacks[start_idx:end_idx]
+
+    hint = None
+    if page_number + 1 < total_pages:
+        hint = f'You can scan next page by calling with page_number={page_number + 1}'
+    elif total_pages > 0 and page_number == total_pages - 1:
+        hint = 'This is the last page'
+
+    return {
+        'attacks_in_page': attacks_in_page,
+        'total_attacks': total_attacks,
+        'page_number': page_number,
+        'total_pages': total_pages,
+        'hint_to_agent': hint,
+    }
 
 
 def get_validation_response_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
@@ -61,11 +114,17 @@ def get_draft_response_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
             "creation_date": str,           # ISO datetime string
             "update_date": str,             # ISO datetime string
             "target_file_name": str,        # Always "target.py"
-            "method_type": int,             # Always 5
+            "method_type": int,             # Attack type method code
+            "attack_type": str,             # Human-readable attack type
             "origin": str                   # Always "BREACH_STUDIO"
         }
     """
     data = api_response.get('data', {})
+
+    # Reverse-map methodType to attack_type name
+    method_type = data.get('methodType', 5)
+    method_type_to_attack = {5: "host", 0: "exfil", 2: "infil", 1: "lateral"}
+    attack_type = method_type_to_attack.get(method_type, "host")
 
     return {
         "draft_id": data.get('id', 0),
@@ -76,62 +135,85 @@ def get_draft_response_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
         "creation_date": data.get('creationDate', ''),
         "update_date": data.get('updateDate', ''),
         "target_file_name": data.get('targetFileName', 'target.py'),
-        "method_type": data.get('methodType', 5),
+        "method_type": method_type,
+        "attack_type": attack_type,
         "origin": data.get('origin', 'BREACH_STUDIO')
     }
 
 
-def get_simulation_list_item_mapping(simulation: Dict[str, Any]) -> Dict[str, Any]:
+def get_attack_list_item_mapping(attack: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform a single simulation item from the list API response to MCP format.
+    Transform a single attack item from the list API response to MCP format.
 
     Args:
-        simulation: Single simulation object from API response
+        attack: Single attack object from API response
 
     Returns:
-        Transformed simulation summary with key fields
+        Transformed attack summary with key fields
     """
     return {
-        "id": simulation.get('id', 0),
-        "name": simulation.get('name', ''),
-        "description": simulation.get('description', ''),
-        "status": simulation.get('status', 'draft'),
-        "method_type": simulation.get('methodType', 5),
-        "timeout": simulation.get('timeout', 300),
-        "creation_date": simulation.get('creationDate', ''),
-        "update_date": simulation.get('updateDate', ''),
-        "published_date": simulation.get('publishedDate'),
-        "target_file_name": simulation.get('targetFileName', 'target.py'),
-        "origin": simulation.get('origin', 'BREACH_STUDIO'),
-        "user_created": simulation.get('userCreated'),
-        "user_updated": simulation.get('userUpdated')
+        "id": attack.get('id', 0),
+        "name": attack.get('name', ''),
+        "description": attack.get('description', ''),
+        "status": attack.get('status', 'draft'),
+        "method_type": attack.get('methodType', 5),
+        "timeout": attack.get('timeout', 300),
+        "creation_date": attack.get('creationDate', ''),
+        "update_date": attack.get('updateDate', ''),
+        "published_date": attack.get('publishedDate'),
+        "target_file_name": attack.get('targetFileName', 'target.py'),
+        "origin": attack.get('origin', 'BREACH_STUDIO'),
+        "user_created": attack.get('userCreated'),
+        "user_updated": attack.get('userUpdated')
     }
 
 
-def get_all_simulations_response_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+def get_all_attacks_response_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform get all simulations API response to MCP format.
+    Transform get all attacks API response to MCP format.
 
     Args:
         api_response: Raw API response from get all endpoint
 
     Returns:
-        Transformed response with simulations list and metadata
+        Transformed response with attacks list and metadata
     """
     data = api_response.get('data', [])
 
-    simulations = [get_simulation_list_item_mapping(sim) for sim in data]
+    attacks = [get_attack_list_item_mapping(item) for item in data]
 
-    # Separate draft and published simulations
-    draft_simulations = [sim for sim in simulations if sim['status'] == 'draft']
-    published_simulations = [sim for sim in simulations if sim['status'] == 'published']
+    # Separate draft and published attacks
+    draft_attacks = [a for a in attacks if a['status'] == 'draft']
+    published_attacks = [a for a in attacks if a['status'] == 'published']
 
     return {
-        "simulations": simulations,
-        "total_count": len(simulations),
-        "draft_count": len(draft_simulations),
-        "published_count": len(published_simulations)
+        "attacks": attacks,
+        "total_attacks": len(attacks),
+        "draft_count": len(draft_attacks),
+        "published_count": len(published_attacks)
     }
+
+
+def _parse_simulation_steps(simulation_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Parse simulationEvents into structured step list.
+
+    Args:
+        simulation_events: List of simulation event objects from API response
+
+    Returns:
+        List of structured step dictionaries
+    """
+    steps = []
+    for event in simulation_events:
+        steps.append({
+            "step_name": event.get('action', ''),
+            "timing": event.get('timestamp', ''),
+            "status": event.get('type', ''),
+            "node": event.get('nodeNameInMove', event.get('nodeId', '')),
+            "details": event.get('details', ''),
+        })
+    return steps
 
 
 def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
@@ -183,22 +265,28 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
         "details": execution.get('resultDetails', '')
     }
 
+    # Compute is_drifted from originalExecutionId
+    original_exec_id = execution.get('originalExecutionId', '')
+    exec_id = execution.get('id', '')
+    is_drifted = bool(original_exec_id and exec_id and original_exec_id != exec_id)
+
     # Build clean result object
     return {
-        "execution_id": execution.get('id', ''),
+        "simulation_id": execution.get('id', ''),
         "job_id": execution.get('jobId', ''),
-        "original_execution_id": execution.get('originalExecutionId', ''),
+        "drift_tracking_code": original_exec_id,
+        "is_drifted": is_drifted,
 
-        # Simulation identification
-        "simulation_id": execution.get('moveId', 0),
-        "simulation_name": execution.get('moveName', ''),
-        "simulation_description": execution.get('moveDesc', ''),
+        # Attack identification
+        "attack_id": execution.get('moveId', 0),
+        "attack_name": execution.get('moveName', ''),
+        "attack_description": execution.get('moveDesc', ''),
 
         # Test/Plan information
         "test_name": execution.get('testName', ''),
         "plan_name": execution.get('planName', ''),
         "step_name": execution.get('stepName', ''),
-        "plan_run_id": execution.get('planRunId', ''),
+        "test_id": execution.get('planRunId', ''),
         "step_run_id": execution.get('stepRunId', ''),
         "run_id": execution.get('runId', ''),
 
@@ -212,9 +300,9 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
         "target_end_time": execution.get('targetSimulatorEndTime', ''),
 
         # Status and results
-        "status": execution.get('status', ''),  # SUCCESS, FAIL, etc.
-        "final_status": execution.get('finalStatus', ''),  # missed, stopped, prevented, etc.
-        "security_action": execution.get('securityAction', ''),  # not_logged, logged, prevented, etc.
+        "execution_status": execution.get('status', ''),  # SUCCESS, FAIL, etc.
+        "status": execution.get('finalStatus', ''),  # missed, stopped, prevented, etc.
+        "security_action": execution.get('securityAction', ''),
         "result": result_info,
 
         # Nodes
@@ -248,6 +336,8 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
         "simulation_events_count": len(execution.get('simulationEvents', [])),
         "attack_types_counter": execution.get('attackTypesCounter', 0),
 
-        # Optional: Include full simulation events if needed (can be large)
-        # "simulation_events": execution.get('simulationEvents', [])
+        # Enhanced debug fields (Phase 6)
+        "simulation_steps": _parse_simulation_steps(execution.get('simulationEvents', [])),
+        "logs": execution.get('logs', ''),
+        "output": execution.get('output', ''),
     }

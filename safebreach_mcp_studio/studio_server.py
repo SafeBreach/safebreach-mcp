@@ -2,7 +2,7 @@
 SafeBreach MCP Studio Server
 
 This server handles Breach Studio operations for SafeBreach MCP, including
-validation of custom Python simulation code and saving simulations as drafts.
+validation of custom Python attack code and managing attack drafts.
 """
 
 import sys
@@ -16,12 +16,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from safebreach_mcp_core import SafeBreachMCPBase
 from .studio_functions import (
     sb_validate_studio_code,
-    sb_save_studio_draft,
-    sb_get_all_studio_simulations,
-    sb_update_studio_draft,
-    sb_get_studio_simulation_source,
-    sb_run_studio_simulation,
-    sb_get_studio_simulation_latest_result
+    sb_save_studio_attack_draft,
+    sb_get_all_studio_attacks,
+    sb_update_studio_attack_draft,
+    sb_get_studio_attack_source,
+    sb_run_studio_attack,
+    sb_get_studio_attack_latest_result
 )
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class SafeBreachStudioServer(SafeBreachMCPBase):
     def __init__(self):
         super().__init__(
             server_name="SafeBreach MCP Studio Server",
-            description="Handles Breach Studio code validation and draft management"
+            description="Handles Breach Studio code validation and attack draft management"
         )
 
         # Register MCP tools
@@ -44,7 +44,7 @@ class SafeBreachStudioServer(SafeBreachMCPBase):
 
         @self.mcp.tool(
             name="validate_studio_code",
-            description="""Validates custom Python simulation code against SafeBreach Breach Studio requirements.
+            description="""Validates custom Python attack code against SafeBreach Breach Studio requirements.
 
 This tool checks if the Python code contains the required main function signature
 'def main(system_data, asset, proxy, *args, **kwargs):' and validates the code
@@ -59,27 +59,44 @@ Returns validation result with:
 - has_main_function: Whether required main() signature exists (bool)
 - exit_code: Exit code from validator (int)
 - validation_errors: List of validation errors
+- target_validation: Target-specific API validation results
+- attacker_validation: Attacker-specific API validation results (None for host)
+- lint_warnings: SB011/SB012 lint warnings for parameters
 - stderr: Standard error output
 - stdout: Standard output details
 
 Example:
-validate_studio_code(python_code="def main(system_data, asset, proxy, *args, **kwargs):\\n    pass", console="demo")"""
+validate_studio_code(python_code="def main(system_data, asset, proxy, *args, **kwargs):\\n    pass", console="demo")
+validate_studio_code(python_code=target_code, attacker_code=attacker_code, attack_type="exfil", console="demo")"""
         )
         def validate_studio_code(
             python_code: str,
-            console: str = "default"
+            console: str = "default",
+            attack_type: str = "host",
+            attacker_code: str = None,
+            target_os: str = "All",
+            attacker_os: str = "All",
+            parameters: list = None,
         ) -> str:
-            """Validate custom Python simulation code."""
+            """Validate custom Python attack code."""
             try:
-                result = sb_validate_studio_code(python_code, console)
+                result = sb_validate_studio_code(
+                    python_code, console,
+                    attack_type=attack_type,
+                    attacker_code=attacker_code,
+                    target_os=target_os,
+                    attacker_os=attacker_os,
+                    parameters=parameters,
+                )
 
                 # Format response
                 response_parts = [
                     "## Python Code Validation Result",
                     "",
-                    f"**Overall Status:** {'✅ Valid' if result.get('is_valid') else '❌ Invalid'}",
+                    f"**Attack Type:** {attack_type}",
+                    f"**Overall Status:** {'VALID' if result.get('is_valid') else 'INVALID'}",
                     f"**Exit Code:** {result.get('exit_code', -1)}",
-                    f"**Has Required main() Function:** {'✅ Yes' if result.get('has_main_function') else '❌ No'}",
+                    f"**Has Required main() Function:** {'Yes' if result.get('has_main_function') else 'No'}",
                     ""
                 ]
 
@@ -99,6 +116,27 @@ validate_studio_code(python_code="def main(system_data, asset, proxy, *args, **k
                         ""
                     ])
 
+                # Add lint warnings if any
+                lint_warnings = result.get('lint_warnings', [])
+                if lint_warnings:
+                    response_parts.extend([
+                        "## Lint Warnings",
+                        ""
+                    ])
+                    for warning in lint_warnings:
+                        response_parts.append(f"- [{warning['code']}] {warning['message']}")
+                    response_parts.append("")
+
+                # Add attacker validation info for dual-script
+                attacker_validation = result.get('attacker_validation')
+                if attacker_validation:
+                    response_parts.extend([
+                        "## Attacker Script Validation",
+                        "",
+                        f"**Valid:** {'Yes' if attacker_validation.get('is_valid') else 'No'}",
+                        ""
+                    ])
+
                 # Add stderr if present
                 stderr = result.get('stderr', '')
                 if stderr:
@@ -111,12 +149,12 @@ validate_studio_code(python_code="def main(system_data, asset, proxy, *args, **k
 
                 # Add recommendation
                 if result.get('is_valid') and result.get('has_main_function'):
-                    response_parts.append("✅ **Code is valid and ready to be saved as a draft.**")
+                    response_parts.append("**Code is valid and ready to be saved as a draft.**")
                 elif result.get('is_valid') and not result.get('has_main_function'):
-                    response_parts.append("⚠️ **Code syntax is valid but missing required main() function signature.**")
+                    response_parts.append("**Code syntax is valid but missing required main() function signature.**")
                     response_parts.append("   Required: `def main(system_data, asset, proxy, *args, **kwargs):`")
                 else:
-                    response_parts.append("❌ **Code has validation errors. Please fix them before saving as draft.**")
+                    response_parts.append("**Code has validation errors. Please fix them before saving as draft.**")
 
                 return "\n".join(response_parts)
 
@@ -128,72 +166,60 @@ validate_studio_code(python_code="def main(system_data, asset, proxy, *args, **k
                 return f"Error validating code: {str(e)}"
 
         @self.mcp.tool(
-            name="save_studio_draft",
-            description="""Saves a custom Python simulation as a draft in SafeBreach Breach Studio.
+            name="save_studio_attack_draft",
+            description="""Saves a custom Python attack as a draft in SafeBreach Breach Studio.
 
-This tool submits the provided Python code and metadata to create a new draft simulation
+This tool submits the provided Python code and metadata to create a new draft attack
 that can later be published and used in SafeBreach tests.
 
 Parameters:
-- name (required): Simulation name (e.g., "Port Scanner", "Credential Dumper")
-- python_code (required): The Python code content as a string
-- description (optional): Simulation description (default: "")
+- name (required): Attack name (e.g., "Port Scanner", "Credential Dumper")
+- python_code (required): The Python code content as a string (target script)
+- description (optional): Attack description (default: "")
 - timeout (optional): Execution timeout in seconds (default: 300, minimum: 1)
-- os_constraint (optional): OS constraint for simulation execution (default: "All")
-                           Valid values: "All" (no OS constraint), "WINDOWS", "LINUX", "MAC"
-                           - "All": Simulation can run on any operating system (default behavior)
-                           - "WINDOWS": Simulation will only run on Windows simulators
-                           - "LINUX": Simulation will only run on Linux simulators
-                           - "MAC": Simulation will only run on macOS simulators
-- parameters (optional): List of parameters accessible in system_data during execution (default: None)
-                        Each parameter is a dict with:
-                        - name (required): Parameter name for accessing in code
-                        - value (required): Parameter value (single value or list for multiple values)
-                        - type (optional): "NOT_CLASSIFIED", "PORT", "URI", or "PROTOCOL" (default: "NOT_CLASSIFIED")
-                          * PROTOCOL type requires value to be one of 52 valid protocols (TCP, HTTP, SSH, HTTPS, etc.)
-                        - display_name (optional): Display name in UI (defaults to name)
-                        - description (optional): Parameter description (defaults to "")
-                        Examples:
-                          Single value: {"name": "port", "value": 8080, "type": "PORT"}
-                          Multiple values: {"name": "paths", "value": ["c:\\temp\\file1.txt", "c:\\temp\\file2.txt"]}
-                          Protocol: {"name": "proto", "value": "TCP", "type": "PROTOCOL"}
+- target_os (optional): OS constraint for target script (default: "All")
+                        Valid values: "All", "WINDOWS", "LINUX", "MAC"
+- attack_type (optional): Attack type (default: "host")
+                         Valid values: "host" (single script), "exfil", "infil", "lateral" (dual-script)
+- attacker_code (optional): Python code for attacker script (required for dual-script types)
+- attacker_os (optional): OS constraint for attacker script (default: "All", dual-script only)
+- parameters (optional): List of parameters accessible in system_data during execution
 - console (optional): SafeBreach console identifier (default: "default")
 
 Returns draft metadata including:
-- draft_id: ID of the created draft (int)
-- name: Draft name
-- status: Always "draft"
-- creation_date: ISO datetime string
-- update_date: ISO datetime string
-- timeout: Execution timeout
-- os_constraint: OS constraint applied
-- parameters_count: Number of parameters defined
-- target_file_name: Always "target.py"
+- draft_id, name, status, attack_type, creation_date, update_date, timeout, os_constraint, parameters_count
 
 Example:
-save_studio_draft(name="Network Scanner", python_code=code, description="Scans network ports", timeout=300, os_constraint="WINDOWS", parameters=[{"name": "port", "value": 8080, "type": "PORT"}], console="demo")
+save_studio_attack_draft(name="Network Scanner", python_code=code, target_os="WINDOWS", console="demo")
+save_studio_attack_draft(name="Exfil Attack", python_code=target_code, attacker_code=attacker_code, attack_type="exfil", console="demo")
 
 Note: It's recommended to validate the code using validate_studio_code before saving as draft."""
         )
-        def save_studio_draft(
+        def save_studio_attack_draft(
             name: str,
             python_code: str,
             description: str = "",
             timeout: int = 300,
-            os_constraint: str = "All",
+            target_os: str = "All",
             parameters: list = None,
-            console: str = "default"
+            console: str = "default",
+            attack_type: str = "host",
+            attacker_code: str = None,
+            attacker_os: str = "All",
         ) -> str:
-            """Save a custom Python simulation as a draft."""
+            """Save a custom Python attack as a draft."""
             try:
-                result = sb_save_studio_draft(
+                result = sb_save_studio_attack_draft(
                     name=name,
                     python_code=python_code,
                     description=description,
                     timeout=timeout,
-                    os_constraint=os_constraint,
+                    target_os=target_os,
                     parameters=parameters,
-                    console=console
+                    console=console,
+                    attack_type=attack_type,
+                    attacker_code=attacker_code,
+                    attacker_os=attacker_os,
                 )
 
                 # Format response
@@ -206,7 +232,7 @@ Note: It's recommended to validate the code using validate_studio_code before sa
                     f"**Description:** {result.get('description', 'No description') or 'No description'}",
                     "",
                     f"**Timeout:** {result.get('timeout', 300)} seconds",
-                    f"**OS Constraint:** {result.get('os_constraint', 'All')}",
+                    f"**Target OS:** {result.get('os_constraint', 'All')}",
                     f"**Parameters:** {result.get('parameters_count', 0)} parameter(s)",
                     f"**Target File:** {result.get('target_file_name', 'target.py')}",
                     f"**Method Type:** {result.get('method_type', 5)}",
@@ -215,7 +241,7 @@ Note: It's recommended to validate the code using validate_studio_code before sa
                     f"**Created:** {result.get('creation_date', 'Unknown')}",
                     f"**Last Updated:** {result.get('update_date', 'Unknown')}",
                     "",
-                    "✅ **Draft saved successfully and can now be published from SafeBreach console.**"
+                    "**Draft saved successfully and can now be published from SafeBreach console.**"
                 ]
 
                 return "\n".join(response_parts)
@@ -224,159 +250,152 @@ Note: It's recommended to validate the code using validate_studio_code before sa
                 logger.error(f"Save draft error: {e}")
                 return f"Save Draft Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in save_studio_draft: {e}")
+                logger.error(f"Error in save_studio_attack_draft: {e}")
                 return f"Error saving draft: {str(e)}"
 
         @self.mcp.tool(
-            name="get_all_studio_simulations",
-            description="""Retrieves all Studio simulations (both draft and published) from SafeBreach Breach Studio.
+            name="get_all_studio_attacks",
+            description="""Retrieves Studio attacks (both draft and published) from SafeBreach Breach Studio.
 
-This tool lists all custom Python simulations created in Breach Studio, with optional filtering by status, name, and creator.
+Results are paginated with 10 items per page. Supports filtering by status, name, and creator.
 
 Parameters:
 - console (optional): SafeBreach console identifier (default: "default")
+- page_number (optional): Page number, 0-based (default: 0)
 - status_filter (optional): Filter by status - "all", "draft", or "published" (default: "all")
-- name_filter (optional): Filter by simulation name (case-insensitive partial match)
-- user_id_filter (optional): Filter by user ID who created the simulation
+- name_filter (optional): Filter by attack name (case-insensitive partial match)
+- user_id_filter (optional): Filter by user ID who created the attack
 
-Returns a summary including:
-- simulations: List of all simulations with id, name, status, dates, creator, etc.
-- total_count: Total number of simulations
-- draft_count: Number of draft simulations
-- published_count: Number of published simulations
-
-Each simulation includes: id, name, description, status, method_type, timeout, creation_date, update_date, published_date, target_file_name, origin, user_created, user_updated
+Returns paginated attacks with metadata including total_attacks, page_number, total_pages, draft_count, published_count.
 
 Example:
-get_all_studio_simulations(console="demo", status_filter="draft")
-get_all_studio_simulations(console="demo", name_filter="MCP")
-get_all_studio_simulations(console="demo", user_id_filter=347729146100002)"""
+get_all_studio_attacks(console="demo", page_number=0, status_filter="draft")"""
         )
-        def get_all_studio_simulations(
+        def get_all_studio_attacks(
             console: str = "default",
+            page_number: int = 0,
             status_filter: str = "all",
             name_filter: str = None,
-            user_id_filter: int = None
+            user_id_filter: int = None,
         ) -> str:
-            """Get all Studio simulations."""
+            """Get all Studio attacks."""
             try:
-                result = sb_get_all_studio_simulations(
+                result = sb_get_all_studio_attacks(
                     console=console,
                     status_filter=status_filter,
                     name_filter=name_filter,
-                    user_id_filter=user_id_filter
+                    user_id_filter=user_id_filter,
+                    page_number=page_number,
                 )
+
+                # Check for pagination error
+                if 'error' in result:
+                    return f"Pagination Error: {result['error']}"
+
+                page_num = result.get('page_number', 0)
+                total_pages = result.get('total_pages', 0)
 
                 # Format response
                 response_parts = [
-                    "## Studio Simulations",
+                    f"## Studio Attacks - Page {page_num + 1} of {total_pages}" if total_pages > 0 else "## Studio Attacks",
                     "",
-                    f"**Total Simulations:** {result.get('total_count', 0)}",
-                    f"**Draft Simulations:** {result.get('draft_count', 0)}",
-                    f"**Published Simulations:** {result.get('published_count', 0)}",
+                    f"**Total Attacks:** {result.get('total_attacks', 0)}",
+                    f"**Draft Attacks:** {result.get('draft_count', 0)}",
+                    f"**Published Attacks:** {result.get('published_count', 0)}",
                     ""
                 ]
 
-                simulations = result.get('simulations', [])
-                if simulations:
-                    response_parts.append("### Simulations List")
+                attacks = result.get('attacks_in_page', [])
+                if attacks:
+                    response_parts.append("### Attacks List")
                     response_parts.append("")
-                    for sim in simulations[:10]:  # Show first 10
-                        response_parts.append(f"**ID {sim.get('id')}**: {sim.get('name', 'Unnamed')}")
-                        response_parts.append(f"- Status: {sim.get('status', 'unknown')}")
-                        if sim.get('description'):
-                            desc = sim.get('description', '')[:100]
+                    for attack in attacks:
+                        response_parts.append(f"**ID {attack.get('id')}**: {attack.get('name', 'Unnamed')}")
+                        response_parts.append(f"- Status: {attack.get('status', 'unknown')}")
+                        if attack.get('description'):
+                            desc = attack.get('description', '')[:100]
                             response_parts.append(f"- Description: {desc}...")
-                        response_parts.append(f"- Created: {sim.get('creation_date', 'Unknown')}")
-                        if sim.get('user_created'):
-                            response_parts.append(f"- Creator User ID: {sim.get('user_created')}")
-                        response_parts.append("")
-
-                    if len(simulations) > 10:
-                        response_parts.append(f"... and {len(simulations) - 10} more simulations")
+                        response_parts.append(f"- Created: {attack.get('creation_date', 'Unknown')}")
+                        if attack.get('user_created'):
+                            response_parts.append(f"- Creator User ID: {attack.get('user_created')}")
                         response_parts.append("")
                 else:
-                    response_parts.append("No simulations found.")
+                    response_parts.append("No attacks found.")
+                    response_parts.append("")
+
+                # Add hint
+                hint = result.get('hint_to_agent')
+                if hint:
+                    response_parts.append(f"*{hint}*")
                     response_parts.append("")
 
                 return "\n".join(response_parts)
 
             except ValueError as e:
-                logger.error(f"Get all simulations error: {e}")
-                return f"Get All Simulations Error: {str(e)}"
+                logger.error(f"Get all attacks error: {e}")
+                return f"Get All Attacks Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in get_all_studio_simulations: {e}")
-                return f"Error retrieving simulations: {str(e)}"
+                logger.error(f"Error in get_all_studio_attacks: {e}")
+                return f"Error retrieving attacks: {str(e)}"
 
         @self.mcp.tool(
-            name="update_studio_draft",
-            description="""Updates an existing Studio draft simulation in SafeBreach Breach Studio.
+            name="update_studio_attack_draft",
+            description="""Updates an existing Studio draft attack in SafeBreach Breach Studio.
 
-This tool allows you to modify an existing draft simulation's name, code, description, timeout, OS constraint, and parameters.
-Note: Only draft simulations can be updated. Published simulations cannot be modified.
+This tool allows you to modify an existing draft attack's name, code, description, timeout, OS constraint, and parameters.
+Note: Only draft attacks can be updated. Published attacks cannot be modified.
 
 Parameters:
-- draft_id (required): ID of the draft simulation to update
-- name (required): Updated simulation name
-- python_code (required): Updated Python code content as a string
-- description (optional): Updated simulation description (default: "")
+- attack_id (required): ID of the draft attack to update
+- name (required): Updated attack name
+- python_code (required): Updated target Python code content as a string
+- description (optional): Updated attack description (default: "")
 - timeout (optional): Execution timeout in seconds (default: 300, minimum: 1)
-- os_constraint (optional): OS constraint for simulation execution (default: "All")
-                           Valid values: "All" (no OS constraint), "WINDOWS", "LINUX", "MAC"
-                           - "All": Simulation can run on any operating system (default behavior)
-                           - "WINDOWS": Simulation will only run on Windows simulators
-                           - "LINUX": Simulation will only run on Linux simulators
-                           - "MAC": Simulation will only run on macOS simulators
-- parameters (optional): List of parameters accessible in system_data during execution (default: None)
-                        Each parameter is a dict with:
-                        - name (required): Parameter name for accessing in code
-                        - value (required): Parameter value (single value or list for multiple values)
-                        - type (optional): "NOT_CLASSIFIED", "PORT", "URI", or "PROTOCOL" (default: "NOT_CLASSIFIED")
-                          * PROTOCOL type requires value to be one of 52 valid protocols (TCP, HTTP, SSH, HTTPS, etc.)
-                        - display_name (optional): Display name in UI (defaults to name)
-                        - description (optional): Parameter description (defaults to "")
-                        Examples:
-                          Single value: {"name": "port", "value": 8080, "type": "PORT"}
-                          Multiple values: {"name": "paths", "value": ["c:\\temp\\file1.txt", "c:\\temp\\file2.txt"]}
-                          Protocol: {"name": "proto", "value": "TCP", "type": "PROTOCOL"}
+- target_os (optional): OS constraint for target script (default: "All")
+                        Valid values: "All", "WINDOWS", "LINUX", "MAC"
+- attack_type (optional): Attack type (default: "host")
+                         Valid values: "host", "exfil", "infil", "lateral"
+- attacker_code (optional): Python code for attacker script (required for dual-script types)
+- attacker_os (optional): OS constraint for attacker script (default: "All", dual-script only)
+- parameters (optional): List of parameters accessible in system_data during execution
 - console (optional): SafeBreach console identifier (default: "default")
 
 Returns updated draft metadata including:
-- draft_id: ID of the updated draft
-- name: Updated draft name
-- status: Always "draft"
-- creation_date: Original creation date
-- update_date: New update timestamp
-- timeout: Execution timeout
-- os_constraint: OS constraint applied
-- parameters_count: Number of parameters defined
+- draft_id, name, status, attack_type, creation_date, update_date, timeout, os_constraint, parameters_count
 
 Example:
-update_studio_draft(draft_id=10000298, name="Updated Scanner", python_code=updated_code, description="Updated version", os_constraint="LINUX", parameters=[{"name": "port", "value": 443, "type": "PORT"}], console="demo")
+update_studio_attack_draft(attack_id=10000298, name="Updated Scanner", python_code=updated_code, target_os="LINUX", console="demo")
+update_studio_attack_draft(attack_id=10000298, name="Updated Exfil", python_code=target_code, attacker_code=attacker_code, attack_type="exfil", console="demo")
 
-Note: Use get_all_studio_simulations to find the draft_id of simulations you want to update."""
+Note: Use get_all_studio_attacks to find the attack_id of attacks you want to update."""
         )
-        def update_studio_draft(
-            draft_id: int,
+        def update_studio_attack_draft(
+            attack_id: int,
             name: str,
             python_code: str,
             description: str = "",
             timeout: int = 300,
-            os_constraint: str = "All",
+            target_os: str = "All",
             parameters: list = None,
-            console: str = "default"
+            console: str = "default",
+            attack_type: str = "host",
+            attacker_code: str = None,
+            attacker_os: str = "All",
         ) -> str:
-            """Update an existing Studio draft simulation."""
+            """Update an existing Studio draft attack."""
             try:
-                result = sb_update_studio_draft(
-                    draft_id=draft_id,
+                result = sb_update_studio_attack_draft(
+                    attack_id=attack_id,
                     name=name,
                     python_code=python_code,
                     description=description,
                     timeout=timeout,
-                    os_constraint=os_constraint,
+                    target_os=target_os,
                     parameters=parameters,
-                    console=console
+                    console=console,
+                    attack_type=attack_type,
+                    attacker_code=attacker_code,
+                    attacker_os=attacker_os,
                 )
 
                 # Format response
@@ -389,14 +408,14 @@ Note: Use get_all_studio_simulations to find the draft_id of simulations you wan
                     f"**Description:** {result.get('description', 'No description') or 'No description'}",
                     "",
                     f"**Timeout:** {result.get('timeout', 300)} seconds",
-                    f"**OS Constraint:** {result.get('os_constraint', 'All')}",
+                    f"**Target OS:** {result.get('os_constraint', 'All')}",
                     f"**Parameters:** {result.get('parameters_count', 0)} parameter(s)",
                     f"**Target File:** {result.get('target_file_name', 'target.py')}",
                     "",
                     f"**Originally Created:** {result.get('creation_date', 'Unknown')}",
                     f"**Last Updated:** {result.get('update_date', 'Unknown')}",
                     "",
-                    "✅ **Draft updated successfully and ready to be published from SafeBreach console.**"
+                    "**Draft updated successfully and ready to be published from SafeBreach console.**"
                 ]
 
                 return "\n".join(response_parts)
@@ -405,61 +424,73 @@ Note: Use get_all_studio_simulations to find the draft_id of simulations you wan
                 logger.error(f"Update draft error: {e}")
                 return f"Update Draft Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in update_studio_draft: {e}")
+                logger.error(f"Error in update_studio_attack_draft: {e}")
                 return f"Error updating draft: {str(e)}"
 
         @self.mcp.tool(
-            name="get_studio_simulation_source",
-            description="""Retrieves the target Python source code for a Studio simulation.
+            name="get_studio_attack_source",
+            description="""Retrieves the source code for a Studio attack (target and optionally attacker scripts).
 
-This tool downloads the source code file (target.py) for a specific simulation, whether draft or published.
+This tool downloads the source code files for a specific attack, whether draft or published.
+For dual-script attacks (exfil, infil, lateral), both target and attacker scripts are returned.
 
 Parameters:
-- simulation_id (required): ID of the simulation to get source code for
+- attack_id (required): ID of the attack to get source code for
 - console (optional): SafeBreach console identifier (default: "default")
 
 Returns:
-- filename: Name of the source file (typically "target.py")
-- content: The complete Python source code as a string
-
-Use cases:
-- Review simulation code before publishing
-- Download simulation code for local testing or modification
-- Compare different versions of simulation code
-- Learn from existing simulations by reviewing their implementation
+- attack_id: The attack ID
+- target: {filename, content} — always present
+- attacker: {filename, content} or None — present for dual-script attacks
 
 Example:
-get_studio_simulation_source(simulation_id=10000298, console="demo")"""
+get_studio_attack_source(attack_id=10000298, console="demo")"""
         )
-        def get_studio_simulation_source(
-            simulation_id: int,
+        def get_studio_attack_source(
+            attack_id: int,
             console: str = "default"
         ) -> str:
-            """Get the source code for a Studio simulation."""
+            """Get the source code for a Studio attack."""
             try:
-                result = sb_get_studio_simulation_source(
-                    simulation_id=simulation_id,
+                result = sb_get_studio_attack_source(
+                    attack_id=attack_id,
                     console=console
                 )
 
                 # Format response
-                content = result.get('content', '')
-                filename = result.get('filename', 'target.py')
+                target = result.get('target', {})
+                attacker = result.get('attacker')
+                target_content = target.get('content', '')
+                target_filename = target.get('filename', 'target.py')
 
                 response_parts = [
-                    "## Simulation Source Code",
+                    "## Attack Source Code",
                     "",
-                    f"**Simulation ID:** {simulation_id}",
-                    f"**Filename:** {filename}",
-                    f"**Size:** {len(content)} bytes",
-                    f"**Lines:** {len(content.splitlines())} lines",
+                    f"**Attack ID:** {attack_id}",
+                    f"**Type:** {'Dual-script' if attacker else 'Host (single-script)'}",
                     "",
-                    "### Source Code",
+                    f"### Target Script ({target_filename})",
+                    "",
+                    f"**Size:** {len(target_content)} bytes | **Lines:** {len(target_content.splitlines())} lines",
                     "",
                     f"```python",
-                    content,
+                    target_content,
                     "```"
                 ]
+
+                if attacker:
+                    attacker_content = attacker.get('content', '')
+                    attacker_filename = attacker.get('filename', 'attacker.py')
+                    response_parts.extend([
+                        "",
+                        f"### Attacker Script ({attacker_filename})",
+                        "",
+                        f"**Size:** {len(attacker_content)} bytes | **Lines:** {len(attacker_content.splitlines())} lines",
+                        "",
+                        f"```python",
+                        attacker_content,
+                        "```"
+                    ])
 
                 return "\n".join(response_parts)
 
@@ -467,146 +498,132 @@ get_studio_simulation_source(simulation_id=10000298, console="demo")"""
                 logger.error(f"Get source error: {e}")
                 return f"Get Source Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in get_studio_simulation_source: {e}")
+                logger.error(f"Error in get_studio_attack_source: {e}")
                 return f"Error retrieving source code: {str(e)}"
 
         @self.mcp.tool(
-            name="run_studio_simulation",
-            description="""Runs a Studio draft simulation on SafeBreach simulators.
-
-This tool queues a Studio simulation for execution on either all connected simulators
-or specific simulator IDs. The simulation will be executed as a test and results can
-be retrieved using the returned plan_run_id.
+            name="run_studio_attack",
+            description="""Runs a Studio draft attack on SafeBreach simulators.
 
 Parameters:
-- simulation_id (required): ID of the draft simulation to execute
+- attack_id (required): ID of the draft attack to execute
 - console (optional): SafeBreach console identifier (default: "default")
-- simulator_ids (optional): List of specific simulator UUIDs to run on.
-                           If not provided, runs on all connected simulators.
-- test_name (optional): Custom name for the test execution.
-                       Default: "Studio Simulation Test - {simulation_id}"
+- target_simulator_ids (optional): List of target simulator UUIDs
+- attacker_simulator_ids (optional): List of attacker simulator UUIDs (network attacks)
+- all_connected (optional): Run on all connected simulators (default: False)
+- test_name (optional): Custom name for the test execution
 
-Returns:
-- plan_run_id: ID of the test execution (use this to retrieve results)
-- step_run_id: ID of the step execution
-- test_name: Name of the test
-- simulation_id: ID of the simulation
-- simulator_count: Number of simulators targeted
-- priority: Execution priority (typically "low")
-- draft: Always True for draft simulations
+Either target_simulator_ids or all_connected=True must be provided.
 
-Use cases:
-- Test a draft simulation before publishing
-- Run simulations on specific test environments
-- Execute custom attack scenarios on selected simulators
-- Validate simulation behavior across different OS types
+Returns: test_id, attack_id, test_name, status
 
-Example (all connected simulators):
-run_studio_simulation(simulation_id=10000298, console="demo")
-
-Example (specific simulators):
-run_studio_simulation(
-    simulation_id=10000298,
-    console="demo",
-    simulator_ids=["3b6e04fb-828c-4017-84eb-0a898416f5ad", "82f32590-c51e-403a-9912-579af86fd3b9"]
-)
-
-Note: After execution, use get_test_details with the returned plan_run_id to retrieve results."""
+Example:
+run_studio_attack(attack_id=10000298, all_connected=True, console="demo")
+run_studio_attack(attack_id=10000298, target_simulator_ids=["uuid1", "uuid2"], console="demo")"""
         )
-        def run_studio_simulation(
-            simulation_id: int,
+        def run_studio_attack(
+            attack_id: int,
             console: str = "default",
-            simulator_ids: list = None,
-            test_name: str = None
+            target_simulator_ids: list = None,
+            attacker_simulator_ids: list = None,
+            all_connected: bool = False,
+            test_name: str = None,
         ) -> str:
-            """Run a Studio draft simulation on simulators."""
+            """Run a Studio draft attack on simulators."""
             try:
-                result = sb_run_studio_simulation(
-                    simulation_id=simulation_id,
+                result = sb_run_studio_attack(
+                    attack_id=attack_id,
                     console=console,
-                    simulator_ids=simulator_ids,
-                    test_name=test_name
+                    target_simulator_ids=target_simulator_ids,
+                    attacker_simulator_ids=attacker_simulator_ids,
+                    all_connected=all_connected,
+                    test_name=test_name,
                 )
 
                 # Format response
                 response_parts = [
-                    "## Simulation Execution Queued",
+                    "## Attack Execution Queued",
                     "",
                     f"**Test Name:** {result.get('test_name')}",
-                    f"**Simulation ID:** {result.get('simulation_id')}",
-                    f"**Plan Run ID:** `{result.get('plan_run_id')}` ✨",
+                    f"**Attack ID:** {result.get('attack_id')}",
+                    f"**Test ID:** `{result.get('test_id')}`",
                     f"**Step Run ID:** {result.get('step_run_id')}",
-                    "",
-                    f"**Target Simulators:** {result.get('simulator_count')}",
-                    f"**Priority:** {result.get('priority')}",
-                    f"**Draft Mode:** {result.get('draft')}",
+                    f"**Status:** {result.get('status')}",
                     "",
                     "### Next Steps",
                     "",
-                    f"1. Wait for the simulation to complete execution",
-                    f"2. Use `get_test_details` with plan_run_id `{result.get('plan_run_id')}` to retrieve results",
+                    f"1. Wait for the attack to complete execution",
+                    f"2. Use `get_test_details` with test_id `{result.get('test_id')}` to retrieve results",
                     f"3. Use `get_test_simulations` to see detailed simulation results",
                     "",
-                    "✅ **Simulation successfully queued for execution!**"
+                    "**Attack successfully queued for execution!**"
                 ]
 
                 return "\n".join(response_parts)
 
             except ValueError as e:
-                logger.error(f"Run simulation error: {e}")
-                return f"Run Simulation Error: {str(e)}"
+                logger.error(f"Run attack error: {e}")
+                return f"Run Attack Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in run_studio_simulation: {e}")
-                return f"Error running simulation: {str(e)}"
+                logger.error(f"Error in run_studio_attack: {e}")
+                return f"Error running attack: {str(e)}"
 
         @self.mcp.tool(
-            name="get_studio_simulation_latest_result",
-            description="""Retrieves the latest execution results for a Studio simulation by its playbook ID.
+            name="get_studio_attack_latest_result",
+            description="""Retrieves the latest execution results for a Studio attack by its playbook ID.
 
-This tool queries the execution history to find the most recent runs of a specific Studio simulation,
-ordered by start time (newest first). Useful for checking the results of recently executed simulations.
+This tool queries the execution history to find the most recent runs of a specific Studio attack,
+ordered by start time (newest first). Useful for checking the results of recently executed attacks.
 
 Parameters:
-- simulation_id (required): The playbook ID of the Studio simulation
+- attack_id (required): The playbook ID of the Studio attack
 - console (optional): SafeBreach console identifier (default: "default")
 - max_results (optional): Maximum number of results to return (default: 1 for latest only)
+- include_logs (optional): Include simulation_steps, logs, and output fields (default: True)
 
 Returns detailed execution information including:
-- Execution status (SUCCESS/FAIL) and final status (missed, stopped, prevented, etc.)
+- Execution status and status (missed, stopped, prevented, etc.)
 - Test/plan information and timing details
 - Attacker and target simulator details
 - Parameters used in the execution
 - Result codes and security actions
-- Labels (e.g., "Draft")
+- Simulation steps, logs, and output (when include_logs=True)
+- Drift tracking (is_drifted, drift_tracking_code)
 
 Example (get latest result):
-get_studio_simulation_latest_result(simulation_id=10000291, console="demo")
+get_studio_attack_latest_result(attack_id=10000291, console="demo")
 
 Example (get last 5 results):
-get_studio_simulation_latest_result(simulation_id=10000291, console="demo", max_results=5)"""
+get_studio_attack_latest_result(attack_id=10000291, console="demo", max_results=5)
+
+Example (without logs for compact output):
+get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs=False)"""
         )
-        def get_studio_simulation_latest_result(
-            simulation_id: int,
+        def get_studio_attack_latest_result(
+            attack_id: int,
             console: str = "default",
-            max_results: int = 1
+            max_results: int = 1,
+            include_logs: bool = True
         ) -> str:
-            """Get the latest execution results for a Studio simulation."""
+            """Get the latest execution results for a Studio attack."""
             try:
-                result = sb_get_studio_simulation_latest_result(
-                    simulation_id=simulation_id,
+                result = sb_get_studio_attack_latest_result(
+                    attack_id=attack_id,
                     console=console,
-                    max_results=max_results
+                    max_results=max_results,
+                    include_logs=include_logs
                 )
 
                 # Check if any results found
                 if result['total_found'] == 0:
-                    return f"## No Execution Results Found\n\nNo execution history found for simulation ID {simulation_id} on console '{console}'."
+                    return (f"## No Execution Results Found\n\n"
+                            f"No execution history found for attack ID {attack_id} on console '{console}'.")
 
                 # Format response
                 response_parts = [
-                    "## Studio Simulation Execution Results",
+                    "## Studio Attack Execution Results",
                     "",
-                    f"**Simulation ID:** {result['simulation_id']}",
+                    f"**Attack ID:** {result['attack_id']}",
                     f"**Console:** {result['console']}",
                     f"**Total Executions Found:** {result['total_found']}",
                     f"**Showing:** {result['returned_count']} result(s)",
@@ -618,31 +635,37 @@ get_studio_simulation_latest_result(simulation_id=10000291, console="demo", max_
                     response_parts.extend([
                         f"### Execution #{idx}" if max_results > 1 else "### Latest Execution",
                         "",
-                        f"**Execution ID:** {execution['execution_id']}",
+                        f"**Simulation ID:** {execution['simulation_id']}",
                         f"**Job ID:** {execution['job_id']}",
                         "",
                         "#### Status",
-                        f"- **Execution Status:** {execution['status']}",
-                        f"- **Final Status:** {execution['final_status']}",
+                        f"- **Execution Status:** {execution['execution_status']}",
+                        f"- **Status:** {execution['status']}",
                         f"- **Security Action:** {execution['security_action']}",
                         "",
                         "#### Test Information",
                         f"- **Test Name:** {execution['test_name']}",
                         f"- **Plan Name:** {execution['plan_name']}",
                         f"- **Step Name:** {execution['step_name']}",
-                        f"- **Plan Run ID:** {execution['plan_run_id']}",
+                        f"- **Test ID:** {execution['test_id']}",
                         "",
                         "#### Timing",
                         f"- **Start Time:** {execution['start_time']}",
                         f"- **End Time:** {execution['end_time']}",
                         "",
                         "#### Simulators",
-                        f"- **Attacker:** {execution['attacker']['name']} ({execution['attacker']['os_type']} - {execution['attacker']['ip']})",
-                        f"- **Target:** {execution['target']['name']} ({execution['target']['os_type']} - {execution['target']['ip']})",
+                        f"- **Attacker:** {execution['attacker']['name']} "
+                        f"({execution['attacker']['os_type']} - {execution['attacker']['ip']})",
+                        f"- **Target:** {execution['target']['name']} "
+                        f"({execution['target']['os_type']} - {execution['target']['ip']})",
                         "",
                         "#### Result Details",
                         f"- **Result Code:** {execution['result']['code']}",
                         f"- **Details:** {execution['result']['details']}",
+                        "",
+                        "#### Drift Tracking",
+                        f"- **Is Drifted:** {execution['is_drifted']}",
+                        f"- **Drift Tracking Code:** {execution.get('drift_tracking_code', 'N/A')}",
                         "",
                         "#### Additional Info",
                         f"- **Labels:** {', '.join(execution['labels']) if execution['labels'] else 'None'}",
@@ -650,6 +673,42 @@ get_studio_simulation_latest_result(simulation_id=10000291, console="demo", max_
                         f"- **Simulation Events:** {execution['simulation_events_count']} event(s)",
                         ""
                     ])
+
+                    # Add logs/steps/output sections when include_logs is True
+                    if include_logs:
+                        # Simulation steps
+                        steps = execution.get('simulation_steps', [])
+                        if steps:
+                            response_parts.extend(["#### Simulation Steps", ""])
+                            for step in steps:
+                                response_parts.append(
+                                    f"- [{step.get('timing', '')}] **{step.get('step_name', '')}** "
+                                    f"({step.get('status', '')}) on {step.get('node', '')} "
+                                    f"- {step.get('details', '')}"
+                                )
+                            response_parts.append("")
+
+                        # Logs
+                        logs = execution.get('logs', '')
+                        if logs:
+                            response_parts.extend([
+                                "#### Logs",
+                                "```",
+                                logs,
+                                "```",
+                                ""
+                            ])
+
+                        # Output
+                        output = execution.get('output', '')
+                        if output:
+                            response_parts.extend([
+                                "#### Output",
+                                "```",
+                                output,
+                                "```",
+                                ""
+                            ])
 
                 # Add note about more results if available
                 if result['has_more']:
@@ -667,7 +726,7 @@ get_studio_simulation_latest_result(simulation_id=10000291, console="demo", max_
                 logger.error(f"Get latest result error: {e}")
                 return f"Get Latest Result Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in get_studio_simulation_latest_result: {e}")
+                logger.error(f"Error in get_studio_attack_latest_result: {e}")
                 return f"Error retrieving execution results: {str(e)}"
 
 
