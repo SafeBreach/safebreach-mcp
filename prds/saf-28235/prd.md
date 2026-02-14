@@ -232,6 +232,150 @@ Comprehensive test coverage for:
 - Caching behavior
 - Error handling and edge cases
 
+## Implementation Details
+
+### Current State
+
+A working Studio server already exists on the `studio-mcp` branch with Host-only (methodType 5),
+single-script (target.py) support using "simulation" naming. The multi-server launcher
+(`start_all_servers.py`) and `pyproject.toml` are already configured — port 8004, entry point, and
+package discovery are in place. The implementation work is a **refactor and extension**, not a
+greenfield build.
+
+### What Exists (to be renamed and extended)
+
+| Current function | Rename to | What changes |
+|-----------------|-----------|--------------|
+| `sb_validate_studio_code` | (same) | Add `attack_type`, `attacker_code`, `target_os`, `attacker_os`, `parameters` params |
+| `sb_save_studio_draft` | `sb_save_studio_attack_draft` | Add `attack_type`, `attacker_code`, `attacker_os`; rename `os_constraint` → `target_os` |
+| `sb_update_studio_draft` | `sb_update_studio_attack_draft` | Same changes as save |
+| `sb_get_all_studio_simulations` | `sb_get_all_studio_attacks` | Rename only |
+| `sb_get_studio_simulation_source` | `sb_get_studio_attack_source` | Add attacker.py retrieval for dual-script |
+| `sb_run_studio_simulation` | `sb_run_studio_attack` | Split `simulator_ids` into `target_simulator_ids` + `attacker_simulator_ids`; add `all_connected` |
+| `sb_get_studio_simulation_latest_result` | `sb_get_studio_attack_latest_result` | Add `include_logs`; extract SIMULATION_STEPS, LOGS, OUTPUT |
+
+### Existing Constants (reuse as-is)
+
+Already defined in `studio_functions.py`:
+
+```python
+MAIN_FUNCTION_PATTERN = r'(?<!\w)def\s+main\s*\(\s*system_data\s*,\s*asset\s*,\s*proxy\s*,\s*\*args\s*,\s*\*\*kwargs\s*\)\s*:'
+VALID_OS_CONSTRAINTS = {"All", "WINDOWS", "LINUX", "MAC"}
+VALID_PARAMETER_TYPES = {"NOT_CLASSIFIED", "PORT", "URI", "PROTOCOL"}
+VALID_PROTOCOLS = {"BGP", "BITS", "BOOTP", "DHCP", "DNS", "DROPBOX", "DTLS", "FTP",
+    "HTTP", "HTTPS", "ICMP", "IMAP", "IP", "IPSEC", "IRC", "KERBEROS",
+    "LDAP", "LLMNR", "mDNS", "MGCP", "MYSQL", "NBNS", "NNTP", "NTP",
+    "POP3", "RADIUS", "RDP", "RPC", "SCTP", "SIP", "SMB", "SMTP",
+    "SNMP", "SSH", "SSL", "SSDP", "STUN", "SYSLOG", "TCP", "TCPv6",
+    "TDS", "TELNET", "TFTP", "TLS", "UDP", "UTP", "VNC", "WEBSOCKET",
+    "WHOIS", "XMLRPC", "XMPP", "YMSG"}
+```
+
+### New Constants (to add)
+
+```python
+VALID_ATTACK_TYPES = {
+    "host": 5,       # Host — target.py only
+    "exfil": 0,      # Exfiltration — target.py + attacker.py
+    "infil": 2,      # Infiltration — target.py + attacker.py
+    "lateral": 1,    # Lateral Movement — target.py + attacker.py
+}
+DUAL_SCRIPT_TYPES = {"exfil", "infil", "lateral"}
+```
+
+### API Endpoints
+
+All endpoints use `x-apitoken` header for authentication and 120-second timeout.
+
+| Operation | Method | URL |
+|-----------|--------|-----|
+| Validate | PUT | `/api/content/v1/accounts/{account_id}/customMethods/validate` |
+| Save draft | POST | `/api/content/v1/accounts/{account_id}/customMethods` |
+| Update draft | PUT | `/api/content/v1/accounts/{account_id}/customMethods/{id}` |
+| List all | GET | `/api/content/v1/accounts/{account_id}/customMethods?status=all` |
+| Get source (target) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/target` |
+| Get source (attacker) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/attacker` |
+| Run (queue test) | POST | `/api/orch/v4/accounts/{account_id}/queue` |
+| Get results | POST | `/api/data/v1/accounts/{account_id}/executionsHistoryResults` |
+
+### Save/Update API Payload Format
+
+Multipart form-data with these fields:
+
+```
+name:           attack name
+timeout:        seconds (string)
+status:         "draft"
+class:          "python"
+description:    text
+parameters:     JSON string of parameter array
+tags:           "[]"
+methodType:     "0"|"1"|"2"|"5" (from VALID_ATTACK_TYPES)
+targetFileName: "target.py"
+metaData:       JSON string with filenames
+
+# File parts:
+targetFile:     (target.py, code, text/x-python-script)
+attackerFile:   (attacker.py, code, text/x-python-script)  # dual-script only
+
+# OS constraint parts (only if not "All"):
+targetConstraints:    '{"os":"WINDOWS"}'
+attackerConstraints:  '{"os":"LINUX"}'  # dual-script only
+```
+
+### Run API Payload Format
+
+```json
+{
+  "plan": {
+    "name": "test name",
+    "steps": [{
+      "attacksFilter": {
+        "playbook": {"operator": "is", "values": [attack_id], "name": "playbook"}
+      },
+      "attackerFilter": {
+        "simulators": {"operator": "is", "values": ["uuid1"], "name": "simulators"}
+      },
+      "targetFilter": {
+        "simulators": {"operator": "is", "values": ["uuid2"], "name": "simulators"}
+      },
+      "systemFilter": {}
+    }],
+    "draft": true
+  }
+}
+```
+
+For "all connected" mode, replace simulator filters with:
+```json
+{"connection": {"operator": "is", "values": [true], "name": "connection"}}
+```
+
+### Results API Query Format
+
+```json
+{
+  "page": 1,
+  "runId": "*",
+  "pageSize": 100,
+  "query": "Playbook_id:(\"attack_id\")",
+  "orderBy": "desc",
+  "sortBy": "startTime"
+}
+```
+
+### Existing Helpers (reuse as-is)
+
+- `_validate_os_constraint(os_constraint)` — validates against `VALID_OS_CONSTRAINTS`
+- `_validate_and_build_parameters(parameters)` — validates types/values, builds API JSON
+- `_get_draft_from_cache(cache_key)` — cache retrieval with TTL check
+- All `studio_types.py` transformation functions (to be renamed and extended)
+
+### Integration Already Done (no changes needed)
+
+- `start_all_servers.py` — already imports `SafeBreachStudioServer`, port 8004, `--external-studio` flag
+- `pyproject.toml` — already has `safebreach-mcp-studio-server` entry point and `safebreach_mcp_studio*` package
+
 ## Files
 
 | File | Purpose |
@@ -241,5 +385,5 @@ Comprehensive test coverage for:
 | `safebreach_mcp_studio/studio_server.py` | MCP server and tool registration |
 | `safebreach_mcp_studio/studio_types.py` | API response transformations |
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Test suite |
-| `start_all_servers.py` | Multi-server launcher (updated) |
-| `pyproject.toml` | Package and entry point registration (updated) |
+| `start_all_servers.py` | Multi-server launcher (already configured) |
+| `pyproject.toml` | Package and entry point registration (already configured) |
