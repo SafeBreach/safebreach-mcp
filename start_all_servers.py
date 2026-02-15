@@ -19,6 +19,7 @@ from safebreach_mcp_config.config_server import SafeBreachConfigServer
 from safebreach_mcp_data.data_server import SafeBreachDataServer
 from safebreach_mcp_utilities.utilities_server import SafeBreachUtilitiesServer
 from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
+from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
 
 # Configure logging
 logging.basicConfig(
@@ -32,18 +33,20 @@ def parse_external_config() -> dict:
     """Parse external connection configuration for all servers."""
     # Check global flag first
     global_external = os.environ.get('SAFEBREACH_MCP_ALLOW_EXTERNAL', 'false').lower() == 'true'
-    
+
     # Check server-specific flags
     config_external = os.environ.get('SAFEBREACH_MCP_CONFIG_EXTERNAL', 'false').lower() == 'true'
     data_external = os.environ.get('SAFEBREACH_MCP_DATA_EXTERNAL', 'false').lower() == 'true'
     utilities_external = os.environ.get('SAFEBREACH_MCP_UTILITIES_EXTERNAL', 'false').lower() == 'true'
     playbook_external = os.environ.get('SAFEBREACH_MCP_PLAYBOOK_EXTERNAL', 'false').lower() == 'true'
-    
+    studio_external = os.environ.get('SAFEBREACH_MCP_STUDIO_EXTERNAL', 'false').lower() == 'true'
+
     return {
         'config': global_external or config_external,
         'data': global_external or data_external,
         'utilities': global_external or utilities_external,
-        'playbook': global_external or playbook_external
+        'playbook': global_external or playbook_external,
+        'studio': global_external or studio_external
     }
 
 def parse_command_line_args():
@@ -70,10 +73,10 @@ Examples:
   SAFEBREACH_MCP_AUTH_TOKEN="your-secret-token" python start_all_servers.py --external
   
   # Enable external connections for specific servers only
-  SAFEBREACH_MCP_AUTH_TOKEN="your-token" python start_all_servers.py --external-data --external-utilities --external-playbook
+  SAFEBREACH_MCP_AUTH_TOKEN="your-token" python start_all_servers.py --external-data --external-utilities --external-playbook --external-studio
         """
     )
-    
+
     # External connection flags
     parser.add_argument('--external', action='store_true',
                       help='Enable external connections for all servers')
@@ -85,6 +88,8 @@ Examples:
                       help='Enable external connections for Utilities server only')
     parser.add_argument('--external-playbook', action='store_true',
                       help='Enable external connections for Playbook server only')
+    parser.add_argument('--external-studio', action='store_true',
+                      help='Enable external connections for Studio server only')
     
     # Binding configuration
     parser.add_argument('--host', default='127.0.0.1',
@@ -112,21 +117,25 @@ class MultiServerLauncher:
         # Override with command-line arguments if provided
         if hasattr(self.args, 'external') and self.args.external:
             env_config['config'] = True
-            env_config['data'] = True  
+            env_config['data'] = True
             env_config['utilities'] = True
             env_config['playbook'] = True
-        
+            env_config['studio'] = True
+
         if hasattr(self.args, 'external_config') and self.args.external_config:
             env_config['config'] = True
-            
+
         if hasattr(self.args, 'external_data') and self.args.external_data:
             env_config['data'] = True
-            
+
         if hasattr(self.args, 'external_utilities') and self.args.external_utilities:
             env_config['utilities'] = True
-            
+
         if hasattr(self.args, 'external_playbook') and self.args.external_playbook:
             env_config['playbook'] = True
+
+        if hasattr(self.args, 'external_studio') and self.args.external_studio:
+            env_config['studio'] = True
         
         return env_config
     
@@ -196,6 +205,13 @@ class MultiServerLauncher:
                 'port': 8003,
                 'description': 'Playbook attack operations',
                 'server_class': SafeBreachPlaybookServer
+            },
+            {
+                'name': 'Studio Server',
+                'type': 'studio',
+                'port': 8004,
+                'description': 'Breach Studio code validation and draft management',
+                'server_class': SafeBreachStudioServer
             }
         ]
         

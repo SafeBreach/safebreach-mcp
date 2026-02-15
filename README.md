@@ -57,16 +57,17 @@ This project implements comprehensive security measures to prevent API token lea
 
 This MCP server enables AI agents to interact with SafeBreach management consoles to:
 - Retrieve simulator information and status
-- Access test execution history and results  
+- Access test execution history and results
 - Query simulation details and security control effectiveness
 - Retrieve security control events and SIEM logs
 - Access test findings data similar to penetration test reports
 - Analyze attack simulation outcomes and root cause analysis
+- Create, validate, and manage custom attacks in Breach Studio
 
 ## Features
 
 ### 🏗️ Architecture
-- **Multi-Server Architecture**: Specialized servers for different domains (config, data, utilities, playbook)
+- **Multi-Server Architecture**: Specialized servers for different domains (config, data, utilities, playbook, studio)
 - **Domain Separation**: Clear separation of concerns with independent scaling capabilities
 - **Horizontal Scaling**: Each server can be scaled independently based on demand
 
@@ -80,6 +81,7 @@ This MCP server enables AI agents to interact with SafeBreach management console
 - **Test History**: Retrieve paginated test execution history with advanced filtering capabilities
 - **Simulation Analysis**: Access detailed simulation results including security control interactions
 - **Playbook Attacks**: Browse and analyze SafeBreach's comprehensive attack knowledge base
+- **Breach Studio**: Create, validate, and manage custom attack code with dual-script support
 
 ### 🌐 Integration
 - **Multi-Environment Support**: Connect to multiple SafeBreach environments (staging, dev, production)
@@ -102,6 +104,7 @@ This MCP server enables AI agents to interact with SafeBreach management console
 - **`safebreach_mcp_data/`**: Data Server (Port 8001) - Test and simulation data
 - **`safebreach_mcp_utilities/`**: Utilities Server (Port 8002) - Datetime functions
 - **`safebreach_mcp_playbook/`**: Playbook Server (Port 8003) - Playbook attack operations
+- **`safebreach_mcp_studio/`**: Studio Server (Port 8004) - Breach Studio code validation and attack management
 
 **Multi-Server Launchers:**
 - **`start_all_servers.py`**: Concurrent multi-server launcher
@@ -304,6 +307,7 @@ safebreach-mcp-config-server     # Port 8000
 safebreach-mcp-data-server       # Port 8001
 safebreach-mcp-utilities-server  # Port 8002
 safebreach-mcp-playbook-server   # Port 8003
+safebreach-mcp-studio-server    # Port 8004
 
 # Method 2: Install with HTTPS authentication
 # First, configure git credentials or use personal access token
@@ -357,6 +361,7 @@ export SAFEBREACH_MCP_AUTH_TOKEN="your-secure-token"
 export SAFEBREACH_MCP_CONFIG_EXTERNAL=true      # Config server only
 export SAFEBREACH_MCP_DATA_EXTERNAL=true        # Data server only  
 export SAFEBREACH_MCP_UTILITIES_EXTERNAL=true   # Utilities server only
+export SAFEBREACH_MCP_STUDIO_EXTERNAL=true      # Studio server only
 
 # Custom bind host (default: 127.0.0.1)
 export SAFEBREACH_MCP_BIND_HOST=0.0.0.0
@@ -479,6 +484,7 @@ uv run -m safebreach_mcp_config.config_server     # Port 8000
 uv run -m safebreach_mcp_data.data_server         # Port 8001
 uv run -m safebreach_mcp_utilities.utilities_server # Port 8002
 uv run -m safebreach_mcp_playbook.playbook_server # Port 8003
+uv run -m safebreach_mcp_studio.studio_server    # Port 8004
 ```
 
 **External Access:**
@@ -569,6 +575,15 @@ Claude Desktop reads the MCP server configurations from the file:
       "args": [
         "mcp-remote",
         "http://127.0.0.1:8003/sse",
+        "--transport",
+        "http-first"
+      ]
+    },
+    "safebreach-studio": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8004/sse",
         "--transport",
         "http-first"
       ]
@@ -782,9 +797,18 @@ The MCP server exposes the following tools for SafeBreach operations:
 13. **`get_playbook_attacks`** ✨ **NEW** - Filtered and paginated playbook attacks with comprehensive filtering
 14. **`get_playbook_attack_details`** ✨ **NEW** - Detailed attack information with verbosity options
 
+**Studio Server (Port 8004):**
+15. **`validate_studio_code`** ✨ **NEW** - Two-tier code validation with SB011/SB012 lint checks
+16. **`save_studio_attack_draft`** ✨ **NEW** - Create new attack drafts with dual-script support
+17. **`update_studio_attack_draft`** ✨ **NEW** - Update existing attack drafts
+18. **`get_all_studio_attacks`** ✨ **NEW** - Paginated attack listing with status/name/user filtering
+19. **`get_studio_attack_source`** ✨ **NEW** - Retrieve target and attacker source code
+20. **`run_studio_attack`** ✨ **NEW** - Execute attacks with explicit simulator selection
+21. **`get_studio_attack_latest_result`** ✨ **NEW** - Latest execution results with logs and drift tracking
+
 **Utilities Server (Port 8002):**
-15. **`convert_datetime_to_epoch`**
-16. **`convert_epoch_to_datetime`**
+22. **`convert_datetime_to_epoch`**
+23. **`convert_epoch_to_datetime`**
 
 #### Tool Details
 
@@ -1325,19 +1349,20 @@ The project includes a comprehensive test suite with 100% code coverage.
 
 ```bash
 # Run all multi-server tests
-uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ tests/ -v
+uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ safebreach_mcp_studio/tests/ tests/ -v -m "not e2e"
 
 # Run authentication tests
 uv run python tests/run_auth_tests.py --quick --verbose
 
 # Run specific server test suites
-uv run pytest safebreach_mcp_config/tests/ -v  # Config server tests
-uv run pytest safebreach_mcp_data/tests/ -v    # Data server tests  
+uv run pytest safebreach_mcp_config/tests/ -v   # Config server tests
+uv run pytest safebreach_mcp_data/tests/ -v     # Data server tests
 uv run pytest safebreach_mcp_utilities/tests/ -v # Utilities server tests
-uv run pytest safebreach_mcp_playbook/tests/ -v # Playbook server tests
+uv run pytest safebreach_mcp_playbook/tests/ -v  # Playbook server tests
+uv run pytest safebreach_mcp_studio/tests/ -v -m "not e2e"  # Studio server tests
 
 # Run with coverage report
-uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ tests/ --cov=. --cov-report=html
+uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ safebreach_mcp_studio/tests/ tests/ --cov=. --cov-report=html -m "not e2e"
 ```
 
 ### VS Code Integration
@@ -1404,6 +1429,15 @@ Tests are auto-discovered in VS Code Test Explorer.
 │       ├── test_playbook_types.py
 │       ├── test_integration.py
 │       └── test_e2e.py
+├── safebreach_mcp_studio/             # Studio server (Port 8004)
+│   ├── __init__.py
+│   ├── studio_server.py               # Studio MCP server
+│   ├── studio_functions.py            # Studio attack business logic
+│   ├── studio_types.py                # Studio data transformations
+│   └── tests/                         # Studio server tests
+│       ├── __init__.py
+│       ├── test_studio_functions.py
+│       └── test_e2e.py
 ├── tests/                              # Authentication and integration tests
 │   ├── __init__.py
 │   ├── pytest.ini                     # Pytest configuration
@@ -1442,6 +1476,9 @@ When enabled, the multi-server architecture implements server-specific caching w
 
 **Playbook Server:**
 - **Playbook Cache**: Attack playbook data per console
+
+**Studio Server:**
+- **Draft Cache**: Attack draft metadata per console/attack (1-hour TTL)
 
 **Core Components:**
 - **Token Cache**: API tokens per console (safebreach_auth.py)
@@ -1562,6 +1599,7 @@ The project provides multiple installation options with various entry points:
 - **`safebreach-mcp-data-server`**: Data server only (Port 8001)
 - **`safebreach-mcp-utilities-server`**: Utilities server only (Port 8002)
 - **`safebreach-mcp-playbook-server`**: Playbook server only (Port 8003)
+- **`safebreach-mcp-studio-server`**: Studio server only (Port 8004)
 
 **Package Details:**
 - **Package Name**: safebreach-mcp-server
