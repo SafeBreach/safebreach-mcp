@@ -122,6 +122,27 @@ This debug loop — **run → analyze logs → fix code → validate → update 
 inner loop for attack development. The MCP tools must provide enough detail in simulation results
 for the agent to diagnose failures without requiring the user to inspect logs manually.
 
+### Flow 5: Publish or Unpublish an Attack
+
+The agent transitions an attack between DRAFT and PUBLISHED states. This flow requires
+explicit user confirmation before execution due to production impact.
+
+```
+1. get_all_studio_attacks              → list attacks, identify the target attack and its current status
+2. Confirm with user                      (agent MUST get explicit approval before status change)
+3. set_studio_attack_status            → publish or unpublish the attack
+4. Verify transition:
+   - Publish: get_playbook_attacks     → (Playbook Server) confirm attack appears in Playbook
+   - Unpublish: get_studio_attack_source → confirm attack is editable, proceed with modifications
+```
+
+**Publish workflow** (DRAFT → PUBLISHED): After development and testing are complete, the attack
+is promoted to production. It becomes read-only on the console and available in SafeBreach Playbook.
+
+**Unpublish workflow** (PUBLISHED → DRAFT): When a published attack needs modifications, it must
+be unpublished first. After changes are made via `update_studio_attack_draft`, it can be
+re-published.
+
 ## Requirements
 
 ### 1. Attack Types
@@ -217,6 +238,23 @@ The server must support the full lifecycle of attack drafts:
 - **Update** — Modify existing drafts (code, metadata, parameters)
 - **List** — Retrieve all studio attacks with filtering support
 - **Retrieve source** — Fetch the source code of any saved attack (both target and attacker scripts)
+- **Publish/Unpublish** — Transition attacks between DRAFT and PUBLISHED states
+
+#### Attack Status Model
+
+Studio attacks have two statuses:
+
+| Status | Editable | In Playbook | Execution | API Endpoint |
+|--------|----------|-------------|-----------|--------------|
+| **DRAFT** | Yes | No | Requires `"draft": true` flag | `/customMethods/{id}/unpublish` |
+| **PUBLISHED** | No (read-only) | Yes | Standard execution | `/customMethods/{id}/publish` |
+
+- **DRAFT → PUBLISHED**: Attack becomes read-only on the console, appears in SafeBreach Playbook
+  for production test scenarios
+- **PUBLISHED → DRAFT**: Attack becomes editable again, removed from Playbook, requires
+  `"draft": true` flag to execute
+
+Status transitions require explicit user confirmation due to their production impact.
 
 ### 5. Attack Execution
 
@@ -253,7 +291,7 @@ The Studio Server must integrate with the existing multi-server architecture:
 
 ### 7. MCP Tools
 
-Eight tools exposed to AI agents:
+Nine tools exposed to AI agents:
 
 | Tool Name (MCP) | Python Function | Description |
 |------------------|-----------------|-------------|
@@ -265,6 +303,7 @@ Eight tools exposed to AI agents:
 | `get_studio_attack_source` | `sb_get_studio_attack_source` | Retrieve saved attack source code |
 | `run_studio_attack` | `sb_run_studio_attack` | Queue a test for the attack with explicit simulator selection |
 | `get_studio_attack_latest_result` | `sb_get_studio_attack_latest_result` | Get latest simulation results with optional `test_id` filter |
+| `set_studio_attack_status` | `sb_set_studio_attack_status` | Publish or unpublish an attack (DRAFT ↔ PUBLISHED transition) |
 
 > **Naming convention**: Tool names registered with MCP use **no prefix** (e.g., `validate_studio_code`),
 > matching the pattern in Config (`get_console_simulators`), Data (`get_tests_history`), and Playbook
@@ -358,6 +397,8 @@ All endpoints use `x-apitoken` header for authentication and 120-second timeout.
 | List all | GET | `/api/content/v1/accounts/{account_id}/customMethods?status=all` |
 | Get source (target) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/target` |
 | Get source (attacker) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/attacker` |
+| Publish | POST | `/api/content/v1/accounts/{account_id}/customMethods/{id}/publish` |
+| Unpublish | POST | `/api/content/v1/accounts/{account_id}/customMethods/{id}/unpublish` |
 | Run (queue test) | POST | `/api/orch/v4/accounts/{account_id}/queue` |
 | Get results | POST | `/api/data/v1/accounts/{account_id}/executionsHistoryResults` |
 

@@ -23,6 +23,7 @@ from .studio_functions import (
     sb_run_studio_attack,
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
+    sb_set_studio_attack_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -897,6 +898,86 @@ create_new_studio_attack(attack_type="exfil")"""
             except Exception as e:
                 logger.error(f"Error in create_new_studio_attack: {e}")
                 return f"Error retrieving boilerplate: {str(e)}"
+
+        @self.mcp.tool(
+            name="set_studio_attack_status",
+            description="""Publish or unpublish a Studio attack, transitioning between DRAFT and PUBLISHED states.
+
+Status semantics:
+- DRAFT → PUBLISHED: Attack becomes read-only on the console and appears in SafeBreach Playbook
+  for use in production test scenarios. It can be run without the "draft": true flag.
+- PUBLISHED → DRAFT: Attack becomes editable again and is removed from SafeBreach Playbook.
+  Requires "draft": true flag to execute. Use update_studio_attack_draft to make changes.
+
+IMPORTANT: Status transitions have significant impact — publishing makes the attack available
+in production Playbook, unpublishing removes it. ALWAYS confirm with the user before calling
+this tool. Never change attack status without explicit user approval.
+
+Parameters:
+- attack_id (required): ID of the attack to change status for
+- new_status (required): Target status — "draft" or "published" (case-insensitive)
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server
+  to discover available consoles.
+
+Returns attack name, old/new status, and implications of the transition.
+
+Example:
+set_studio_attack_status(attack_id=10000298, new_status="published", console="demo")
+set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")"""
+        )
+        def set_studio_attack_status(
+            attack_id: int,
+            new_status: str,
+            console: str = "default"
+        ) -> str:
+            """Publish or unpublish a Studio attack."""
+            try:
+                result = sb_set_studio_attack_status(
+                    attack_id=attack_id,
+                    new_status=new_status,
+                    console=console
+                )
+
+                # Format response
+                old = result['old_status'].upper()
+                new = result['new_status'].upper()
+                response_parts = [
+                    "## Attack Status Changed Successfully",
+                    "",
+                    f"**Attack ID:** {result['attack_id']}",
+                    f"**Attack Name:** {result['attack_name']}",
+                    f"**Status Transition:** {old} → {new}",
+                    "",
+                    f"**Implications:** {result['implications']}",
+                    "",
+                    "### Next Steps",
+                    "",
+                ]
+
+                if result['new_status'] == "published":
+                    response_parts.extend([
+                        "- Attack is now available in SafeBreach Playbook",
+                        "- Attack is read-only on the console",
+                        "- Use `get_playbook_attacks` (Playbook Server) to verify it appears",
+                        "- Use `set_studio_attack_status` with `new_status='draft'` to unpublish",
+                    ])
+                else:
+                    response_parts.extend([
+                        "- Attack is now editable — use `update_studio_attack_draft` to make changes",
+                        "- Attack has been removed from SafeBreach Playbook",
+                        "- Use `run_studio_attack` to test (runs as draft)",
+                        "- Use `set_studio_attack_status` with `new_status='published'` to re-publish",
+                    ])
+
+                response_parts.append("")
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Set status error: {e}")
+                return f"Set Status Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in set_studio_attack_status: {e}")
+                return f"Error changing attack status: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

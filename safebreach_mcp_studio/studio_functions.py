@@ -1440,3 +1440,213 @@ def _get_draft_from_cache(cache_key: str) -> Dict[str, Any]:
 
     logger.debug(f"Cache miss for key: {cache_key}")
     return None
+
+
+def sb_set_studio_attack_status(
+    attack_id: int, new_status: str, console: str = "default"
+) -> Dict[str, Any]:
+    """
+    Publish or unpublish a Studio attack (transition between DRAFT and PUBLISHED).
+
+    Args:
+        attack_id: ID of the attack to change status for (must be positive)
+        new_status: Target status - "draft" or "published" (case-insensitive)
+        console: SafeBreach console identifier (default: "default")
+
+    Returns:
+        Dictionary containing:
+        - attack_id: The attack ID
+        - attack_name: Name of the attack
+        - old_status: Previous status
+        - new_status: New status after transition
+        - implications: Description of what the status change means
+
+    Raises:
+        ValueError: If attack_id is invalid, new_status is invalid, attack not found,
+                    or attack is already in the target status
+        Exception: For API errors
+    """
+    # Validate attack_id
+    if not isinstance(attack_id, int) or attack_id <= 0:
+        raise ValueError(f"attack_id must be a positive integer, got: {attack_id}")
+
+    # Normalize and validate new_status
+    new_status = new_status.lower().strip()
+    valid_statuses = ["draft", "published"]
+    if new_status not in valid_statuses:
+        raise ValueError(
+            f"new_status must be one of {valid_statuses}, got: '{new_status}'"
+        )
+
+    logger.info(f"Setting attack {attack_id} status to '{new_status}' on console: {console}")
+
+    # Get authentication and base URL
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+    headers = {"x-apitoken": apitoken}
+
+    # Pre-check: get current status via list API
+    list_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all"
+    logger.info(f"Pre-checking attack status via: {list_url}")
+
+    try:
+        list_response = requests.get(list_url, headers=headers, timeout=120)
+        list_response.raise_for_status()
+        api_response = list_response.json()
+        # API returns {"data": [...]} wrapper
+        all_attacks = api_response.get("data", api_response) if isinstance(api_response, dict) else api_response
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to list attacks for pre-check: {e}")
+        raise
+
+    # Find the attack in the list
+    current_attack = None
+    for attack in all_attacks:
+        if attack.get("id") == attack_id:
+            current_attack = attack
+            break
+
+    if current_attack is None:
+        raise ValueError(f"Attack with ID {attack_id} not found on console '{console}'")
+
+    attack_name = current_attack.get("name", "Unknown")
+    current_status = current_attack.get("status", "").lower()
+
+    # Check if already in target status
+    if current_status == new_status:
+        raise ValueError(
+            f"Attack {attack_id} ('{attack_name}') is already {new_status}"
+        )
+
+    old_status = current_status
+
+    # Fetch source code files needed for the PUT payload
+    # Target file (always required)
+    target_url = (
+        f"{base_url}/api/content/v1/accounts/{account_id}"
+        f"/customMethods/{attack_id}/files/target"
+    )
+    logger.info(f"Fetching target source for status update: {target_url}")
+
+    try:
+        target_response = requests.get(target_url, headers=headers, timeout=120)
+        target_response.raise_for_status()
+        target_data = target_response.json().get('data', {})
+        target_content = target_data.get('content', '')
+        target_filename = target_data.get('filename', 'target.py')
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch target source for status update: {e}")
+        raise
+
+    # Attacker file (optional, for dual-script attack types)
+    method_type = current_attack.get("methodType", 5)
+    dual_script_method_types = {0, 1, 2}  # exfil, lateral, infil
+    attacker_content = None
+    attacker_filename = None
+
+    if method_type in dual_script_method_types:
+        attacker_url = (
+            f"{base_url}/api/content/v1/accounts/{account_id}"
+            f"/customMethods/{attack_id}/files/attacker"
+        )
+        logger.info(f"Fetching attacker source for dual-script attack: {attacker_url}")
+        try:
+            attacker_resp = requests.get(attacker_url, headers=headers, timeout=120)
+            if attacker_resp.status_code == 200:
+                attacker_data = attacker_resp.json().get('data', {})
+                attacker_content = attacker_data.get('content', '')
+                attacker_filename = attacker_data.get('filename', 'attacker.py')
+                if attacker_content:
+                    logger.info("Attacker source fetched successfully")
+                else:
+                    attacker_content = None
+            else:
+                logger.info(f"No attacker file found (status {attacker_resp.status_code})")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Failed to fetch attacker source (non-fatal): {e}")
+
+    # Build multipart form-data for PUT update (same format as sb_update_studio_attack_draft)
+    files = {
+        'targetFile': (target_filename, target_content, 'text/x-python-script')
+    }
+    if attacker_content:
+        files['attackerFile'] = (attacker_filename, attacker_content, 'text/x-python-script')
+
+    meta_data = {"targetFileName": target_filename}
+    if attacker_content:
+        meta_data["attackerFileName"] = attacker_filename
+
+    # Extract parameters and tags — ensure they are JSON strings
+    raw_params = current_attack.get('parameters', [])
+    params_json = json.dumps(raw_params) if not isinstance(raw_params, str) else raw_params
+
+    raw_tags = current_attack.get('tags', [])
+    tags_json = json.dumps(raw_tags) if not isinstance(raw_tags, str) else raw_tags
+
+    data = {
+        'id': str(attack_id),
+        'name': current_attack.get('name', ''),
+        'timeout': str(current_attack.get('timeout', 300)),
+        'status': new_status,
+        'class': 'python',
+        'description': current_attack.get('description', ''),
+        'parameters': params_json,
+        'tags': tags_json,
+        'methodType': str(method_type),
+        'targetFileName': target_filename,
+        'metaData': json.dumps(meta_data)
+    }
+
+    # Add constraints if present
+    target_constraints = current_attack.get('targetConstraints')
+    if target_constraints:
+        data['targetConstraints'] = (
+            json.dumps(target_constraints)
+            if isinstance(target_constraints, dict) else target_constraints
+        )
+
+    attacker_constraints = current_attack.get('attackerConstraints')
+    if attacker_constraints:
+        data['attackerConstraints'] = (
+            json.dumps(attacker_constraints)
+            if isinstance(attacker_constraints, dict) else attacker_constraints
+        )
+
+    # PUT update to change status (publish = set status to "published", unpublish = set to "draft")
+    api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}"
+    logger.info(f"Calling PUT update to set status to '{new_status}': {api_url}")
+
+    try:
+        response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
+        response.raise_for_status()
+        logger.info(f"Attack {attack_id} status successfully changed to '{new_status}'")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to change attack {attack_id} status to '{new_status}': {e}")
+        raise
+
+    # Invalidate cache if present
+    cache_key = f"studio_draft_{console}_{attack_id}"
+    if cache_key in studio_draft_cache:
+        del studio_draft_cache[cache_key]
+        logger.debug(f"Invalidated cache for key: {cache_key}")
+
+    # Build implications text
+    if new_status == "published":
+        implications = (
+            "Attack is now read-only on the console and available in SafeBreach Playbook "
+            "for use in production test scenarios."
+        )
+    else:
+        implications = (
+            "Attack is now editable and has been removed from SafeBreach Playbook. "
+            "Use update_studio_attack_draft to make changes."
+        )
+
+    return {
+        "attack_id": attack_id,
+        "attack_name": attack_name,
+        "old_status": old_status,
+        "new_status": new_status,
+        "implications": implications,
+    }

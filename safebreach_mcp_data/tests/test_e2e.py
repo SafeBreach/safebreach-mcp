@@ -396,34 +396,28 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_test_drifts_e2e(self, e2e_console):
         """Test getting real test drift analysis using known test data.
-        
-        This test uses test ID 1762754400605.6 (test name: "Stav - Exfiltration Parallel ") 
-        which has significant drift patterns when compared to its previous test with the same name 
-        (baseline test ID: 1762149600283.2):
-        
+
+        This test uses test ID 1771148836322.15 (test name: "BAS Scheduled Scenario (45~ simulations)")
+        which has drift patterns when compared to its previous test with the same name
+        (baseline test ID: 1770996600455.119):
+
         Actual drift analysis results:
-        - missed-logged: 312 simulations (positive impact)
-        - missed-no_result: 49 simulations (neutral impact)  
-        - logged-no_result: 19 simulations (negative impact)
-        - stopped-no_result: 1 simulations (negative impact)
-        - no_result-stopped: 3 simulations (positive impact)
-        - missed-detected: 2 simulations (positive impact)
-        - detected-logged: 1 simulations (negative impact)
-        - Plus 490 simulations exclusive to baseline, 134 exclusive to current
-        Total: 1011 drifts (387 status changes + 624 exclusive simulations)
+        - detected-logged: 1 simulation (negative impact)
+        - logged-inconsistent: 1 simulation (negative impact)
+        Total: 2 drifts (2 status changes + 0 exclusive simulations)
         """
         # Use specific test ID that has known drift patterns
-        test_id = "1762754400605.6"
-        
+        test_id = "1771148836322.15"
+
         result = sb_get_test_drifts(test_id, console=e2e_console)
-        
+
         # Verify response structure
         assert isinstance(result, dict)
         assert 'total_drifts' in result
         assert 'drifts' in result
         assert '_metadata' in result
         assert isinstance(result['drifts'], dict)
-        
+
         # Verify metadata contains expected fields
         metadata = result['_metadata']
         assert metadata['console'] == e2e_console
@@ -433,69 +427,63 @@ class TestDataServerE2E:
         assert 'baseline_simulations_count' in metadata
         assert 'current_simulations_count' in metadata
         assert 'analyzed_at' in metadata
-        
+
         # Verify expected metadata values based on actual data
-        assert metadata['baseline_test_id'] == "1762149600283.2"
-        assert metadata['test_name'] == "Stav - Exfiltration Parallel "
-        assert metadata['current_simulations_count'] == 1238
-        assert metadata['baseline_simulations_count'] == 1594
-        assert metadata['shared_drift_codes'] == 1104
-        assert metadata['status_drifts'] == 387
-        assert len(metadata['simulations_exclusive_to_baseline']) == 490
-        assert len(metadata['simulations_exclusive_to_current']) == 134
-        
+        assert metadata['baseline_test_id'] == "1770996600455.119"
+        assert metadata['test_name'] == "BAS Scheduled Scenario (45~ simulations)"
+        assert metadata['current_simulations_count'] == 95
+        assert metadata['baseline_simulations_count'] == 95
+        assert metadata['shared_drift_codes'] == 95
+        assert metadata['status_drifts'] == 2
+        assert len(metadata['simulations_exclusive_to_baseline']) == 0
+        assert len(metadata['simulations_exclusive_to_current']) == 0
+
         # Verify we have the expected total number of drifts
-        # Based on actual analysis: 1011 total drifts
         total_drifts = result['total_drifts']
-        assert total_drifts == 1011, f"Expected exactly 1011 drifts, got {total_drifts}"
-        
+        assert total_drifts == 2, f"Expected exactly 2 drifts, got {total_drifts}"
+
         # Count drift types to verify expected patterns
         drift_type_counts = {}
         for drift_type, drift_info in result['drifts'].items():
             assert 'drift_type' in drift_info
             assert 'security_impact' in drift_info
             assert 'drifted_simulations' in drift_info
-            
+
             # Count simulations for this drift type
             drift_type_counts[drift_type] = len(drift_info['drifted_simulations'])
-            
+
             # Verify each drifted simulation has required fields
             for drifted_sim in drift_info['drifted_simulations']:
                 assert 'drift_tracking_code' in drifted_sim
                 assert 'former_simulation_id' in drifted_sim
                 assert 'current_simulation_id' in drifted_sim
-        
-        # Verify the major expected drift patterns exist with expected counts
-        # Based on actual analysis of test ID 1762754400605.6
+
+        # Verify the expected drift patterns exist with expected counts
         expected_drift_counts = {
-            'missed-logged': 312,      # Positive impact: missed → logged  
-            'missed-no_result': 49,    # Neutral impact: missed → no_result
-            'logged-no_result': 19,    # Negative impact: logged → no_result
-            'stopped-no_result': 1,    # Negative impact: stopped → no_result
-            'no_result-stopped': 3,    # Positive impact: no_result → stopped
-            'missed-detected': 2,      # Positive impact: missed → detected
-            'detected-logged': 1,      # Negative impact: detected → logged
+            'detected-logged': 1,        # Negative impact: detected → logged
+            'logged-inconsistent': 1,    # Negative impact: logged → inconsistent
         }
-        
+
         # Verify all expected drift patterns are present with exact counts
         found_patterns = set(drift_type_counts.keys())
         expected_patterns = set(expected_drift_counts.keys())
-        
+
         assert found_patterns == expected_patterns, \
             f"Expected patterns {expected_patterns}, found {found_patterns}. " \
             f"Missing: {expected_patterns - found_patterns}, Extra: {found_patterns - expected_patterns}"
-        
+
         # Verify exact counts for each drift type
         for drift_type, expected_count in expected_drift_counts.items():
             actual_count = drift_type_counts[drift_type]
             assert actual_count == expected_count, \
                 f"Expected {expected_count} simulations for {drift_type}, got {actual_count}"
-        
+
         # Verify security impact classification exists and is valid
         security_impacts = {drift['security_impact'] for drift in result['drifts'].values()}
         valid_impacts = {'positive', 'negative', 'neutral', 'unknown'}
-        assert security_impacts.issubset(valid_impacts), f"Invalid security impacts found: {security_impacts - valid_impacts}"
-        
+        assert security_impacts.issubset(valid_impacts), \
+            f"Invalid security impacts found: {security_impacts - valid_impacts}"
+
         # Log results for debugging
         print(f"\n=== E2E Drift Analysis Results ===")
         print(f"Total drifts found: {total_drifts}")
@@ -508,13 +496,14 @@ class TestDataServerE2E:
     @pytest.mark.e2e
     def test_get_full_simulation_logs_e2e(self):
         """Test getting comprehensive simulation execution logs from SafeBreach console.
-        
-        This test uses simulation ID 1084162 from the pentest01 console as specified.
-        The test first retrieves simulation details to get the test_id, then calls 
-        get_full_simulation_logs to retrieve the comprehensive (~40KB) execution logs.
+
+        This test uses simulation ID 2225626 from the pentest01 console
+        (from BAS Scheduled Scenario test 1771148836322.15, status: prevented).
+        The test first retrieves simulation details to get the test_id, then calls
+        get_full_simulation_logs to retrieve the comprehensive execution logs.
         """
         console = "pentest01"
-        simulation_id = "1084162"
+        simulation_id = "2225626"
         
         print(f"\n=== Testing get_full_simulation_logs for simulation {simulation_id} ===")
         
@@ -628,7 +617,7 @@ class TestDataServerE2E:
         try:
             result = sb_get_full_simulation_logs(
                 simulation_id="invalid-sim-id",
-                test_id="1084162",  # Use a reasonable test_id
+                test_id="1771148836322.15",  # Use a reasonable test_id
                 console=console
             )
             # If no exception, check if we got an error response structure
@@ -646,7 +635,7 @@ class TestDataServerE2E:
         
         try:
             result = sb_get_full_simulation_logs(
-                simulation_id="1084162",  # Use a valid simulation ID
+                simulation_id="2225626",  # Use a valid simulation ID
                 test_id="invalid-test-id",
                 console=console
             )
@@ -665,8 +654,8 @@ class TestDataServerE2E:
         
         try:
             result = sb_get_full_simulation_logs(
-                simulation_id="1084162",
-                test_id="some-test-id", 
+                simulation_id="2225626",
+                test_id="some-test-id",
                 console="invalid-console-name"
             )
             # If no exception, check if we got an error response structure

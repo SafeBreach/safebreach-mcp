@@ -17,6 +17,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_run_studio_attack,
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
+    sb_set_studio_attack_status,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -4737,3 +4738,252 @@ class TestTestIdFilter:
         call_kwargs = mock_post.call_args
         payload = call_kwargs.kwargs.get('json') or call_kwargs[1].get('json')
         assert 'runId:' not in payload['query']
+
+
+class TestSetStudioAttackStatus:
+    """Test the sb_set_studio_attack_status function."""
+
+    def _mock_list_response(self, attack_id=10000298, name="Test Attack",
+                            status="draft", method_type=5):
+        """Helper to build a mock list API response containing a single attack."""
+        return [
+            {
+                "id": attack_id, "name": name, "status": status,
+                "methodType": method_type, "description": "Test description",
+                "timeout": 300, "parameters": [], "tags": [],
+                "targetFileName": "target.py",
+            }
+        ]
+
+    def _mock_target_file_response(self):
+        """Helper to build a mock target file API response."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "data": {"filename": "target.py", "content": "print('hello')"}
+        }
+        return mock_resp
+
+    def _setup_get_side_effect(self, list_data, target_resp=None):
+        """Build side_effect for requests.get: list API, then target file API."""
+        mock_list = MagicMock()
+        mock_list.json.return_value = list_data
+        if target_resp is None:
+            target_resp = self._mock_target_file_response()
+        return [mock_list, target_resp]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_publish_success(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        mock_get, mock_put
+    ):
+        """Test successful DRAFT → PUBLISHED transition."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Mock GET calls: list API (pre-check) then target file
+        mock_get.side_effect = self._setup_get_side_effect(
+            self._mock_list_response(status="draft")
+        )
+
+        # Mock PUT update
+        mock_put_response = MagicMock()
+        mock_put.return_value = mock_put_response
+
+        result = sb_set_studio_attack_status(
+            attack_id=10000298, new_status="published", console="demo"
+        )
+
+        assert result['attack_id'] == 10000298
+        assert result['attack_name'] == "Test Attack"
+        assert result['old_status'] == "draft"
+        assert result['new_status'] == "published"
+        assert "read-only" in result['implications']
+        assert "Playbook" in result['implications']
+
+        # Verify PUT was called with correct URL and status
+        mock_put.assert_called_once()
+        call_kwargs = mock_put.call_args
+        call_url = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get('url', '')
+        assert "/customMethods/10000298" in call_url
+        assert call_kwargs[1]['data']['status'] == 'published'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_unpublish_success(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        mock_get, mock_put
+    ):
+        """Test successful PUBLISHED → DRAFT transition."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Mock GET calls: list API (pre-check) then target file
+        mock_get.side_effect = self._setup_get_side_effect(
+            self._mock_list_response(status="published")
+        )
+
+        # Mock PUT update
+        mock_put_response = MagicMock()
+        mock_put.return_value = mock_put_response
+
+        result = sb_set_studio_attack_status(
+            attack_id=10000298, new_status="draft", console="demo"
+        )
+
+        assert result['attack_id'] == 10000298
+        assert result['attack_name'] == "Test Attack"
+        assert result['old_status'] == "published"
+        assert result['new_status'] == "draft"
+        assert "editable" in result['implications']
+        assert "update_studio_attack_draft" in result['implications']
+
+        # Verify PUT was called with correct URL and status
+        mock_put.assert_called_once()
+        call_kwargs = mock_put.call_args
+        assert call_kwargs[1]['data']['status'] == 'draft'
+
+    def test_invalid_attack_id(self):
+        """Test that attack_id <= 0 raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_set_studio_attack_status(attack_id=0, new_status="published")
+        assert "attack_id must be a positive integer" in str(exc_info.value)
+
+        with pytest.raises(ValueError) as exc_info:
+            sb_set_studio_attack_status(attack_id=-1, new_status="published")
+        assert "attack_id must be a positive integer" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_attack_not_found(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test that a non-existent attack ID raises ValueError."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Mock list API returning attacks that don't include the requested ID
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = self._mock_list_response(
+            attack_id=99999, name="Other Attack"
+        )
+        mock_get.return_value = mock_list_response
+
+        with pytest.raises(ValueError) as exc_info:
+            sb_set_studio_attack_status(
+                attack_id=10000298, new_status="published", console="demo"
+            )
+        assert "not found" in str(exc_info.value)
+        assert "10000298" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_already_target_status(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """Test that setting status to current status raises ValueError."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Mock list API — attack is already published
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = self._mock_list_response(status="published")
+        mock_get.return_value = mock_list_response
+
+        with pytest.raises(ValueError) as exc_info:
+            sb_set_studio_attack_status(
+                attack_id=10000298, new_status="published", console="demo"
+            )
+        assert "already published" in str(exc_info.value)
+        assert "Test Attack" in str(exc_info.value)
+
+    def test_invalid_status_value(self):
+        """Test that an invalid new_status raises ValueError listing valid values."""
+        with pytest.raises(ValueError) as exc_info:
+            sb_set_studio_attack_status(attack_id=10000298, new_status="invalid")
+        assert "new_status must be one of" in str(exc_info.value)
+        assert "draft" in str(exc_info.value)
+        assert "published" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_case_insensitive_status(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        mock_get, mock_put
+    ):
+        """Test that new_status is case-insensitive (e.g., 'PUBLISHED' works)."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_get.side_effect = self._setup_get_side_effect(
+            self._mock_list_response(status="draft")
+        )
+
+        mock_put_response = MagicMock()
+        mock_put.return_value = mock_put_response
+
+        # Use uppercase "PUBLISHED"
+        result = sb_set_studio_attack_status(
+            attack_id=10000298, new_status="PUBLISHED", console="demo"
+        )
+
+        assert result['new_status'] == "published"
+        assert result['old_status'] == "draft"
+
+        # Verify PUT was called with status "published" (normalized)
+        call_kwargs = mock_put.call_args
+        assert call_kwargs[1]['data']['status'] == 'published'
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_cache_invalidation(
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        mock_get, mock_put
+    ):
+        """Test that cache entry is removed after successful status change."""
+        mock_get_secret.return_value = "test-api-token"
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_get.side_effect = self._setup_get_side_effect(
+            self._mock_list_response(status="draft")
+        )
+
+        mock_put_response = MagicMock()
+        mock_put.return_value = mock_put_response
+
+        # Seed the cache with a matching entry
+        cache_key = "studio_draft_demo_10000298"
+        studio_draft_cache[cache_key] = {
+            "timestamp": time.time(),
+            "data": {"name": "Test Attack", "status": "draft"}
+        }
+        assert cache_key in studio_draft_cache
+
+        sb_set_studio_attack_status(
+            attack_id=10000298, new_status="published", console="demo"
+        )
+
+        # Cache entry should be removed
+        assert cache_key not in studio_draft_cache

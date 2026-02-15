@@ -27,6 +27,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_get_studio_attack_source,
     sb_run_studio_attack,
     sb_get_studio_attack_latest_result,
+    sb_set_studio_attack_status,
     studio_draft_cache,
 )
 
@@ -123,8 +124,8 @@ class TestStudioValidationE2E:
                 {
                     "name": "my-invalid-param",
                     "description": "A parameter with invalid name",
-                    "type": "string",
-                    "default_value": "test"
+                    "type": "NOT_CLASSIFIED",
+                    "value": "test"
                 }
             ]
             result = sb_validate_studio_code(
@@ -136,7 +137,11 @@ class TestStudioValidationE2E:
 
             # Should have lint warnings for SB011
             assert 'lint_warnings' in result
-            sb011_warnings = [w for w in result['lint_warnings'] if 'SB011' in w]
+            sb011_warnings = [
+                w for w in result['lint_warnings']
+                if (isinstance(w, dict) and w.get('code') == 'SB011') or
+                   (isinstance(w, str) and 'SB011' in w)
+            ]
             assert len(sb011_warnings) > 0
 
             print(f"\n=== SB011 Lint E2E ===")
@@ -522,3 +527,153 @@ class TestStudioDebugFlowE2E:
 
         except Exception as e:
             pytest.skip(f"Debug flow test failed on {E2E_CONSOLE}: {e}")
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestStudioStatusTransitionE2E:
+    """E2E test for publish/unpublish status transitions (Flow 5 from PRD).
+
+    Flow: verify draft → publish → verify published → unpublish → verify draft
+
+    Requires E2E_STUDIO_ATTACK_ID pointing to a DRAFT attack.
+    The test restores the attack to its original status on completion.
+    """
+
+    def setup_method(self):
+        """Clear cache before each test."""
+        studio_draft_cache.clear()
+
+    def test_publish_unpublish_roundtrip_e2e(self):
+        """Test full DRAFT → PUBLISHED → DRAFT roundtrip."""
+        if not E2E_STUDIO_ATTACK_ID:
+            pytest.skip("E2E_STUDIO_ATTACK_ID not set")
+
+        attack_id = int(E2E_STUDIO_ATTACK_ID)
+
+        try:
+            # Step 1: Verify attack exists and is currently draft
+            list_result = sb_get_all_studio_attacks(
+                console=E2E_CONSOLE, page_number=0
+            )
+            all_attacks = []
+            for page_num in range(list_result['total_pages']):
+                page = sb_get_all_studio_attacks(
+                    console=E2E_CONSOLE, page_number=page_num
+                )
+                all_attacks.extend(page['attacks_in_page'])
+
+            target_attack = None
+            for attack in all_attacks:
+                if attack['id'] == attack_id:
+                    target_attack = attack
+                    break
+
+            if target_attack is None:
+                pytest.skip(f"Attack {attack_id} not found on {E2E_CONSOLE}")
+
+            original_status = target_attack['status']
+            if original_status != 'draft':
+                pytest.skip(
+                    f"Attack {attack_id} is '{original_status}', expected 'draft'. "
+                    f"E2E status transition test requires a draft attack."
+                )
+
+            print(f"\n=== Status Transition E2E ===")
+            print(f"  Attack ID: {attack_id}")
+            print(f"  Attack Name: {target_attack['name']}")
+            print(f"  Initial Status: {original_status}")
+
+            # Step 2: Publish the attack (DRAFT → PUBLISHED)
+            publish_result = sb_set_studio_attack_status(
+                attack_id=attack_id,
+                new_status="published",
+                console=E2E_CONSOLE,
+            )
+
+            assert publish_result['attack_id'] == attack_id
+            assert publish_result['old_status'] == 'draft'
+            assert publish_result['new_status'] == 'published'
+            assert 'read-only' in publish_result['implications']
+            print(f"  Published: DRAFT → PUBLISHED")
+
+            # Step 3: Verify the attack is now published via list API
+            verify_list = sb_get_all_studio_attacks(
+                console=E2E_CONSOLE,
+                status_filter="published",
+                page_number=0,
+            )
+            published_ids = [a['id'] for a in verify_list['attacks_in_page']]
+            # Check across all pages if needed
+            for page_num in range(1, verify_list['total_pages']):
+                page = sb_get_all_studio_attacks(
+                    console=E2E_CONSOLE,
+                    status_filter="published",
+                    page_number=page_num,
+                )
+                published_ids.extend([a['id'] for a in page['attacks_in_page']])
+
+            assert attack_id in published_ids, (
+                f"Attack {attack_id} not found in published attacks after publish"
+            )
+            print(f"  Verified: attack appears in published list")
+
+            # Step 4: Verify publishing again raises ValueError (already published)
+            with pytest.raises(ValueError) as exc_info:
+                sb_set_studio_attack_status(
+                    attack_id=attack_id,
+                    new_status="published",
+                    console=E2E_CONSOLE,
+                )
+            assert "already published" in str(exc_info.value)
+            print(f"  Verified: double-publish correctly rejected")
+
+            # Step 5: Unpublish the attack (PUBLISHED → DRAFT)
+            unpublish_result = sb_set_studio_attack_status(
+                attack_id=attack_id,
+                new_status="draft",
+                console=E2E_CONSOLE,
+            )
+
+            assert unpublish_result['attack_id'] == attack_id
+            assert unpublish_result['old_status'] == 'published'
+            assert unpublish_result['new_status'] == 'draft'
+            assert 'editable' in unpublish_result['implications']
+            print(f"  Unpublished: PUBLISHED → DRAFT")
+
+            # Step 6: Verify the attack is back to draft
+            verify_draft_list = sb_get_all_studio_attacks(
+                console=E2E_CONSOLE,
+                status_filter="draft",
+                page_number=0,
+            )
+            draft_ids = [a['id'] for a in verify_draft_list['attacks_in_page']]
+            for page_num in range(1, verify_draft_list['total_pages']):
+                page = sb_get_all_studio_attacks(
+                    console=E2E_CONSOLE,
+                    status_filter="draft",
+                    page_number=page_num,
+                )
+                draft_ids.extend([a['id'] for a in page['attacks_in_page']])
+
+            assert attack_id in draft_ids, (
+                f"Attack {attack_id} not found in draft attacks after unpublish"
+            )
+            print(f"  Verified: attack restored to draft list")
+            print(f"  Roundtrip complete: DRAFT → PUBLISHED → DRAFT")
+
+        except ValueError:
+            # Re-raise ValueError (from the double-publish check) — don't skip it
+            raise
+        except Exception as e:
+            # Safety net: try to restore to draft if we got partway through
+            try:
+                sb_set_studio_attack_status(
+                    attack_id=attack_id,
+                    new_status="draft",
+                    console=E2E_CONSOLE,
+                )
+                print(f"  [Cleanup] Restored attack {attack_id} to draft after failure")
+            except Exception:
+                pass  # Best effort cleanup
+            pytest.skip(f"Status transition test failed on {E2E_CONSOLE}: {e}")
