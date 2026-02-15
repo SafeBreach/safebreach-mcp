@@ -764,6 +764,25 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
                                 ""
                             ])
 
+                    # Add debug hint for problematic statuses
+                    # Note: "missed" is NOT problematic — it means the attack succeeded
+                    # without being detected/stopped by any security control (best outcome).
+                    # "no-result" is the most problematic — indicates a fundamental issue.
+                    problematic_statuses = {"stopped", "no-result"}
+                    sim_status = execution.get('status', '').lower()
+                    if sim_status in problematic_statuses:
+                        sim_id = execution.get('simulation_id', '')
+                        response_parts.extend([
+                            f"#### Debug Hint",
+                            "",
+                            f"Simulation status is **{execution.get('status')}** — surface logs above may not reveal the root cause.",
+                            f"For detailed execution traces, use `get_full_simulation_logs` from the **Data Server**:",
+                            f"```",
+                            f"get_full_simulation_logs(simulation_id=\"{sim_id}\", console=\"{console}\")",
+                            f"```",
+                            "",
+                        ])
+
                 # Add note about more results if available
                 if result['has_more']:
                     response_parts.extend([

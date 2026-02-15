@@ -253,11 +253,16 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
 
         @self.mcp.tool(
             name="get_full_simulation_logs",
-            description="""Retrieves comprehensive execution logs for a specific simulation including detailed traces (~40KB LOGS field).
-            Primary use case: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation.
-            Returns: logs (full simulator execution logs), simulation_steps (structured execution steps), execution_times, status, attack_info, host_info.
-            Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (default: 'default').
-            Note: Results are cached for 1 hour for performance. Use this for comprehensive log analysis; use get_simulation_details with include_basic_attack_logs for summary-level logs."""
+            description="""Retrieves comprehensive low-level execution logs for a specific simulation (~40KB detailed traces).
+
+IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, returned no-result, or produced unexpected results.
+The logs contain granular execution traces NOT available in get_simulation_details or get_studio_attack_latest_result.
+When a simulation status is "stopped" or "no-result", always retrieve these logs before concluding root cause.
+
+Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation.
+Returns: logs (full simulator execution logs), simulation_steps (structured execution steps), execution_times, status, attack_info, host_info.
+Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (required).
+Note: Results are cached for 1 hour. Use get_simulation_details with include_basic_attack_logs for summary-level logs only."""
         )
         async def get_full_simulation_logs_tool(
             simulation_id: str,

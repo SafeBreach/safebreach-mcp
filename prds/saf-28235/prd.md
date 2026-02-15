@@ -29,17 +29,21 @@ They represent the primary interaction patterns the tool set must support.
 ### Flow 1: Create a New Attack
 
 The agent authors a new custom attack from a natural language description.
+**Always start from the boilerplate** — the recommended paradigm is "start from template, then customize."
 
 ```
-1. Write Python code           (agent generates target.py, and attacker.py if network attack)
-2. validate_studio_code     → validate syntax, signature, OS constraints, parameters
-3. Fix validation errors       (agent iterates on code until validation passes)
-4. save_studio_attack_draft → save as draft with attack type, OS constraints, and parameters
+1. create_new_studio_attack → get boilerplate code for the chosen attack type
+2. Customize the code          (agent modifies boilerplate based on user's scenario)
+3. validate_studio_code     → validate syntax, signature, OS constraints, parameters
+4. Fix validation errors       (agent iterates on code until validation passes)
+5. save_studio_attack_draft → save as draft with attack type, OS constraints, and parameters
 ```
 
 The agent must choose the correct **attack type** (Host, Exfil, Infil, Lateral) based on the scenario.
-For dual-script attacks (Exfil, Infil, Lateral), the agent authors both target and attacker scripts,
-each implementing the `def main(system_data, asset, proxy, *args, **kwargs):` signature.
+Attack type accepts case-insensitive values and aliases (e.g., "exfiltration" → "exfil",
+"lateral_movement" → "lateral"). For dual-script attacks (Exfil, Infil, Lateral), the boilerplate
+provides both target and attacker script templates, each implementing the
+`def main(system_data, asset, proxy, *args, **kwargs):` signature.
 
 ### Flow 2: Edit an Existing Attack
 
@@ -90,15 +94,22 @@ selection** — the agent must choose which simulators to execute on.
 
 The agent uses detailed simulation logs to diagnose issues, fix code, and re-run.
 
+When `get_studio_attack_latest_result` returns a problematic status (`stopped` or `no-result`),
+the response includes a **debug hint** pointing the agent to `get_full_simulation_logs` on the
+Data Server for comprehensive execution traces (~40KB). This breadcrumb pattern prevents the agent
+from satisficing — stopping at surface-level logs and speculating about root cause.
+
 ```
 1. get_studio_attack_latest_result → retrieve detailed results including:
    - SIMULATION_STEPS: step-by-step execution trace with timestamps and log levels
    - LOGS: raw simulator debug logs (contains nodeNameInMove for dual-script attacks)
    - OUTPUT: process stdout/stderr from execution
+   - DEBUG HINT: for "stopped"/"no-result" statuses, a pointer to get_full_simulation_logs
 2. Diagnose the issue:
    - Syntax/runtime errors visible in OUTPUT and LOGS
    - Execution flow visible in SIMULATION_STEPS (STATUS, DEBUG, INFO, WARNING, ERROR levels)
    - For dual-script attacks: identify which node (attacker/target) failed
+   - For "stopped"/"no-result": follow debug hint to get_full_simulation_logs for root cause
 3. get_studio_attack_source         → retrieve current code
 4. Fix the code                        (agent patches based on log analysis)
 5. validate_studio_code             → validate the fix
@@ -139,7 +150,10 @@ for Python code quality (Pylint-style analysis by the SafeBreach backend).
 
 These checks prevent common mistakes before making a round-trip to the backend:
 
-- **Function signature**: Each script must define `def main(system_data, asset, proxy, *args, **kwargs):`
+- **Function signature (AST-based)**: Each script must define `def main(system_data, asset, proxy, *args, **kwargs):`.
+  Validated using `ast.parse()` to verify the exact parameter names, `*args`, and `**kwargs` — not just a regex
+  pattern match. This catches code like `def main(x, y, z, *args, **kwargs):` that matches the regex but fails
+  at runtime.
 - **Syntax**: Verify code compiles without errors (`compile()`)
 - **OS constraints**: Validate target/attacker OS selection — `All`, `WINDOWS`, `LINUX`, `MAC`
 - **Attack type consistency**: Validate that dual-script attacks provide both target and attacker code
@@ -211,9 +225,17 @@ The server must support running attacks and retrieving simulation results:
 - **Execute** — Queue a test comprised of the attack ID and explicit simulator selection:
   - **Host attacks**: accept target simulator ID(s)
   - **Network attacks**: accept attacker simulator ID(s) and target simulator ID(s)
-  - **All connected** mode available as an option but not the default
+  - **All connected** mode available but **actively discouraged** — tool description steers the agent
+    toward explicit simulator selection, and using `all_connected=True` triggers a warning in the response
+    advising the agent to use explicit IDs next time (reduces noise on the SafeBreach platform)
   - Returns a test ID for tracking
-- **Results** — Poll the test ID to completion, then retrieve simulation results and execution logs
+- **Results** — Retrieve simulation results with optional `test_id` filter:
+  - Without `test_id`: queries latest results for the attack across all test runs
+  - With `test_id`: filters to results from a specific test run (returned by `run_studio_attack`)
+  - For problematic statuses (`stopped`, `no-result`), response includes a **debug hint** pointing
+    to `get_full_simulation_logs` on the Data Server for comprehensive execution traces
+  - Note: `missed` is NOT a problematic status — it means the attack achieved its success criteria
+    without being detected or blocked by a security control (best possible outcome)
 
 Simulator discovery is handled by the Config Server's existing `get_console_simulators` tool.
 The agent is expected to query available simulators, filter for **connected** simulators that match
@@ -231,17 +253,18 @@ The Studio Server must integrate with the existing multi-server architecture:
 
 ### 7. MCP Tools
 
-Seven tools exposed to AI agents:
+Eight tools exposed to AI agents:
 
 | Tool Name (MCP) | Python Function | Description |
 |------------------|-----------------|-------------|
+| `create_new_studio_attack` | `sb_get_studio_attack_boilerplate` | Get boilerplate code for a new attack (recommended starting point) |
 | `validate_studio_code` | `sb_validate_studio_code` | Validate Python attack code (two-tier: local + backend) |
 | `save_studio_attack_draft` | `sb_save_studio_attack_draft` | Save a new attack as a Breach Studio draft |
 | `get_all_studio_attacks` | `sb_get_all_studio_attacks` | List studio attacks with filtering and pagination |
 | `update_studio_attack_draft` | `sb_update_studio_attack_draft` | Update an existing draft attack |
 | `get_studio_attack_source` | `sb_get_studio_attack_source` | Retrieve saved attack source code |
 | `run_studio_attack` | `sb_run_studio_attack` | Queue a test for the attack with explicit simulator selection |
-| `get_studio_attack_latest_result` | `sb_get_studio_attack_latest_result` | Get latest simulation results and execution logs |
+| `get_studio_attack_latest_result` | `sb_get_studio_attack_latest_result` | Get latest simulation results with optional `test_id` filter |
 
 > **Naming convention**: Tool names registered with MCP use **no prefix** (e.g., `validate_studio_code`),
 > matching the pattern in Config (`get_console_simulators`), Data (`get_tests_history`), and Playbook
@@ -289,13 +312,12 @@ greenfield build.
 | `sb_run_studio_simulation` | `sb_run_studio_attack` | `run_studio_attack` | Rename `simulation_id` → `attack_id`; split simulators; return `test_id` not `plan_run_id` |
 | `sb_get_studio_simulation_latest_result` | `sb_get_studio_attack_latest_result` | `get_studio_attack_latest_result` | Rename param `simulation_id` → `attack_id`; align result fields with Data server; add LOGS/STEPS/OUTPUT |
 
-### Existing Constants (reuse as-is)
+### Existing Constants
 
 Already defined in `studio_functions.py`:
 
 ```python
-MAIN_FUNCTION_PATTERN = r'(?<!\w)def\s+main\s*\(\s*system_data\s*,\s*asset\s*,\s*proxy\s*,\s*\*args\s*,\s*\*\*kwargs\s*\)\s*:'
-VALID_OS_CONSTRAINTS = {"All", "WINDOWS", "LINUX", "MAC"}
+VALID_OS_CONSTRAINTS = {"All", "WINDOWS", "LINUX", "MAC"}        # Case-insensitive input accepted
 VALID_PARAMETER_TYPES = {"NOT_CLASSIFIED", "PORT", "URI", "PROTOCOL"}
 VALID_PROTOCOLS = {"BGP", "BITS", "BOOTP", "DHCP", "DNS", "DROPBOX", "DTLS", "FTP",
     "HTTP", "HTTPS", "ICMP", "IMAP", "IP", "IPSEC", "IRC", "KERBEROS",
@@ -304,11 +326,7 @@ VALID_PROTOCOLS = {"BGP", "BITS", "BOOTP", "DHCP", "DNS", "DROPBOX", "DTLS", "FT
     "SNMP", "SSH", "SSL", "SSDP", "STUN", "SYSLOG", "TCP", "TCPv6",
     "TDS", "TELNET", "TFTP", "TLS", "UDP", "UTP", "VNC", "WEBSOCKET",
     "WHOIS", "XMLRPC", "XMPP", "YMSG"}
-```
 
-### New Constants (to add)
-
-```python
 VALID_ATTACK_TYPES = {
     "host": 5,       # Host — target.py only
     "exfil": 0,      # Exfiltration — target.py + attacker.py
@@ -316,6 +334,16 @@ VALID_ATTACK_TYPES = {
     "lateral": 1,    # Lateral Movement — target.py + attacker.py
 }
 DUAL_SCRIPT_TYPES = {"exfil", "infil", "lateral"}
+
+# Case-insensitive aliases for attack types — normalized via _normalize_attack_type()
+ATTACK_TYPE_ALIASES = {
+    "exfiltration": "exfil",
+    "infiltration": "infil",
+    "lateral_movement": "lateral",
+    "lateral-movement": "lateral",
+    "host-level": "host",
+    "host_level": "host",
+}
 ```
 
 ### API Endpoints
@@ -399,12 +427,18 @@ For "all connected" mode, replace simulator filters with:
 }
 ```
 
-### Existing Helpers (reuse as-is)
+When `test_id` is provided, the query appends `AND runId:{test_id}` to filter results to a specific
+test execution.
 
-- `_validate_os_constraint(os_constraint)` — validates against `VALID_OS_CONSTRAINTS`
+### Internal Helpers
+
+- `_normalize_attack_type(attack_type)` — lowercases, resolves aliases, validates against `VALID_ATTACK_TYPES`
+- `_validate_os_constraint(os_constraint)` — case-insensitive validation, returns canonical case value
+- `_validate_main_signature_ast(code, label)` — AST-based main function signature validation
 - `_validate_and_build_parameters(parameters)` — validates types/values, builds API JSON
 - `_get_draft_from_cache(cache_key)` — cache retrieval with TTL check
-- All `studio_types.py` transformation functions (to be renamed and extended)
+- All `studio_types.py` transformation functions
+- `studio_templates.py` — boilerplate code templates for all attack types
 
 ### Integration Already Done (no changes needed)
 
@@ -527,6 +561,51 @@ Config server returns `{"error": "...", "console": "..."}` on failure. Data serv
 Studio should follow the **raise exception** pattern (used by most servers) — the server layer catches
 and formats errors. The current Studio already does this correctly.
 
+## UX Improvements (Claude Desktop Feedback)
+
+Based on real Claude Desktop sessions using the Studio MCP tools, the following UX improvements were
+implemented to address AI agent behavior patterns:
+
+### 1. Case-Insensitive Input Normalization
+
+All `attack_type` and OS constraint parameters accept case-insensitive input. Attack types also accept
+common aliases (e.g., `"exfiltration"` → `"exfil"`, `"lateral_movement"` → `"lateral"`). This matches
+the pattern used by Config, Data, and Playbook servers (which all use `.lower()` normalization) and
+eliminates unnecessary validation failures from agent-generated input.
+
+### 2. Boilerplate-First Paradigm
+
+The `create_new_studio_attack` tool (renamed from `get_studio_attack_boilerplate` for tool search
+discoverability) returns ready-to-customize template code for each attack type. The tool name and
+description are designed so that agents searching for "create attack" or "new attack" find it as the
+first step. Cross-references from `save_studio_attack_draft` reinforce the pattern.
+
+### 3. AST-Based Signature Validation
+
+Replaced regex-based main function detection with `ast.parse()` validation that verifies exact parameter
+names (`system_data`, `asset`, `proxy`), `*args`, and `**kwargs`. Catches structurally valid but
+semantically wrong signatures like `def main(x, y, z, *args, **kwargs):` that pass regex but fail at
+runtime.
+
+### 4. Explicit Simulator Selection Steering
+
+Claude Desktop preferred `all_connected=True` over explicit simulator selection, generating noise on the
+SafeBreach platform. The tool description now actively steers agents toward explicit selection with a
+recommended workflow. When `all_connected=True` is used, the response includes a warning advising the
+agent to use explicit IDs next time.
+
+### 5. Debug Hint Breadcrumbs
+
+When `get_studio_attack_latest_result` returns a simulation with status `stopped` or `no-result`, the
+response includes a debug hint pointing to `get_full_simulation_logs` on the Data Server. This addresses
+the agent tendency to satisfice — stopping at surface-level logs and speculating about root cause instead
+of retrieving comprehensive execution traces (~40KB).
+
+### 6. test_id Result Filtering
+
+`run_studio_attack` returns a `test_id` that can be passed to `get_studio_attack_latest_result` to filter
+results to a specific test run, enabling the run → check workflow without ambiguity from prior test runs.
+
 ## Files
 
 | File | Purpose |
@@ -535,6 +614,7 @@ and formats errors. The current Studio already does this correctly.
 | `safebreach_mcp_studio/studio_functions.py` | Core business logic and validation |
 | `safebreach_mcp_studio/studio_server.py` | MCP server and tool registration |
 | `safebreach_mcp_studio/studio_types.py` | API response transformations |
+| `safebreach_mcp_studio/studio_templates.py` | Boilerplate code templates for all attack types |
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Test suite |
 | `start_all_servers.py` | Multi-server launcher (already configured) |
 | `pyproject.toml` | Package and entry point registration (already configured) |
