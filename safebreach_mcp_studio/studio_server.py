@@ -21,7 +21,8 @@ from .studio_functions import (
     sb_update_studio_attack_draft,
     sb_get_studio_attack_source,
     sb_run_studio_attack,
-    sb_get_studio_attack_latest_result
+    sb_get_studio_attack_latest_result,
+    sb_get_studio_attack_boilerplate,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,18 +48,27 @@ class SafeBreachStudioServer(SafeBreachMCPBase):
             description="""Validates custom Python attack code against SafeBreach Breach Studio requirements.
 
 This tool checks if the Python code contains the required main function signature
-'def main(system_data, asset, proxy, *args, **kwargs):' and validates the code
-syntax against the SafeBreach Breach Studio API.
+'def main(system_data, asset, proxy, *args, **kwargs):' using AST-based validation
+(verifies parameter names, *args, **kwargs) and validates the code syntax against
+the SafeBreach Breach Studio API.
 
 Parameters:
 - python_code (required): The Python code content as a string to validate
-- console (optional): SafeBreach console identifier (default: "default")
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
+- attack_type (optional): Attack type (default: "host"). Case-insensitive.
+                         Valid values: "host", "exfil", "infil", "lateral"
+                         Aliases accepted: "exfiltration", "infiltration", "lateral_movement", "host-level"
+- attacker_code (optional): Python code for attacker script (required for exfil/infil/lateral)
+- target_os (optional): OS constraint (default: "All"). Case-insensitive. Valid: "All", "WINDOWS", "LINUX", "MAC"
+- attacker_os (optional): OS constraint for attacker (default: "All", dual-script only)
+- parameters (optional): List of parameter dicts: [{"name": str (required), "value": any (required),
+                         "display_name": str, "description": str, "type": "NOT_CLASSIFIED"|"PORT"|"URI"|"PROTOCOL"}]
 
 Returns validation result with:
 - is_valid: Overall validation status (bool)
 - has_main_function: Whether required main() signature exists (bool)
 - exit_code: Exit code from validator (int)
-- validation_errors: List of validation errors
+- validation_errors: List of validation errors (including signature errors)
 - target_validation: Target-specific API validation results
 - attacker_validation: Attacker-specific API validation results (None for host)
 - lint_warnings: SB011/SB012 lint warnings for parameters
@@ -175,16 +185,21 @@ that can later be published and used in SafeBreach tests.
 Parameters:
 - name (required): Attack name (e.g., "Port Scanner", "Credential Dumper")
 - python_code (required): The Python code content as a string (target script)
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
 - description (optional): Attack description (default: "")
 - timeout (optional): Execution timeout in seconds (default: 300, minimum: 1)
-- target_os (optional): OS constraint for target script (default: "All")
+- target_os (optional): OS constraint for target script (default: "All"). Case-insensitive.
                         Valid values: "All", "WINDOWS", "LINUX", "MAC"
-- attack_type (optional): Attack type (default: "host")
+- attack_type (optional): Attack type (default: "host"). Case-insensitive.
                          Valid values: "host" (single script), "exfil", "infil", "lateral" (dual-script)
+                         Aliases accepted: "exfiltration", "infiltration", "lateral_movement", "host-level"
 - attacker_code (optional): Python code for attacker script (required for dual-script types)
 - attacker_os (optional): OS constraint for attacker script (default: "All", dual-script only)
-- parameters (optional): List of parameters accessible in system_data during execution
-- console (optional): SafeBreach console identifier (default: "default")
+- parameters (optional): List of parameter dicts accessible in system_data during execution.
+                         Each dict: {"name": str (required), "value": any (required),
+                         "display_name": str (optional, defaults to name),
+                         "description": str (optional, defaults to ""),
+                         "type": str (optional, one of: "NOT_CLASSIFIED", "PORT", "URI", "PROTOCOL")}
 
 Returns draft metadata including:
 - draft_id, name, status, attack_type, creation_date, update_date, timeout, os_constraint, parameters_count
@@ -193,7 +208,8 @@ Example:
 save_studio_attack_draft(name="Network Scanner", python_code=code, target_os="WINDOWS", console="demo")
 save_studio_attack_draft(name="Exfil Attack", python_code=target_code, attacker_code=attacker_code, attack_type="exfil", console="demo")
 
-Note: It's recommended to validate the code using validate_studio_code before saving as draft."""
+Note: When creating a new attack from scratch, use create_new_studio_attack first to get
+the template code, then customize it. Always validate the code using validate_studio_code before saving."""
         )
         def save_studio_attack_draft(
             name: str,
@@ -260,7 +276,7 @@ Note: It's recommended to validate the code using validate_studio_code before sa
 Results are paginated with 10 items per page. Supports filtering by status, name, and creator.
 
 Parameters:
-- console (optional): SafeBreach console identifier (default: "default")
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
 - page_number (optional): Page number, 0-based (default: 0)
 - status_filter (optional): Filter by status - "all", "draft", or "published" (default: "all")
 - name_filter (optional): Filter by attack name (case-insensitive partial match)
@@ -349,16 +365,20 @@ Parameters:
 - attack_id (required): ID of the draft attack to update
 - name (required): Updated attack name
 - python_code (required): Updated target Python code content as a string
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
 - description (optional): Updated attack description (default: "")
 - timeout (optional): Execution timeout in seconds (default: 300, minimum: 1)
-- target_os (optional): OS constraint for target script (default: "All")
+- target_os (optional): OS constraint for target script (default: "All"). Case-insensitive.
                         Valid values: "All", "WINDOWS", "LINUX", "MAC"
-- attack_type (optional): Attack type (default: "host")
+- attack_type (optional): Attack type (default: "host"). Case-insensitive.
                          Valid values: "host", "exfil", "infil", "lateral"
+                         Aliases accepted: "exfiltration", "infiltration", "lateral_movement", "host-level"
 - attacker_code (optional): Python code for attacker script (required for dual-script types)
 - attacker_os (optional): OS constraint for attacker script (default: "All", dual-script only)
-- parameters (optional): List of parameters accessible in system_data during execution
-- console (optional): SafeBreach console identifier (default: "default")
+- parameters (optional): List of parameter dicts accessible in system_data during execution.
+                         Each dict: {"name": str (required), "value": any (required),
+                         "display_name": str (optional), "description": str (optional),
+                         "type": str (optional, one of: "NOT_CLASSIFIED", "PORT", "URI", "PROTOCOL")}
 
 Returns updated draft metadata including:
 - draft_id, name, status, attack_type, creation_date, update_date, timeout, os_constraint, parameters_count
@@ -436,7 +456,7 @@ For dual-script attacks (exfil, infil, lateral), both target and attacker script
 
 Parameters:
 - attack_id (required): ID of the attack to get source code for
-- console (optional): SafeBreach console identifier (default: "default")
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
 
 Returns:
 - attack_id: The attack ID
@@ -505,21 +525,32 @@ get_studio_attack_source(attack_id=10000298, console="demo")"""
             name="run_studio_attack",
             description="""Runs a Studio draft attack on SafeBreach simulators.
 
+IMPORTANT: Always prefer explicit simulator selection over all_connected. Running on all
+connected simulators creates excessive noise on the platform. Follow this workflow:
+1. Use get_console_simulators (Config Server) to list available simulators
+2. Select specific simulator UUIDs relevant to the test scenario
+3. Pass them as target_simulator_ids (and attacker_simulator_ids for network attacks)
+
+Only use all_connected=True when the user EXPLICITLY asks to run on all simulators.
+
 Parameters:
 - attack_id (required): ID of the draft attack to execute
-- console (optional): SafeBreach console identifier (default: "default")
-- target_simulator_ids (optional): List of target simulator UUIDs
-- attacker_simulator_ids (optional): List of attacker simulator UUIDs (network attacks)
-- all_connected (optional): Run on all connected simulators (default: False)
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
+- target_simulator_ids (recommended): List of target simulator UUIDs. Get UUIDs from get_console_simulators.
+- attacker_simulator_ids (optional): List of attacker simulator UUIDs (network attacks only)
+- all_connected (optional): Run on ALL connected simulators (default: False). WARNING: creates significant
+                            platform noise. Only use when the user explicitly requests it.
 - test_name (optional): Custom name for the test execution
 
 Either target_simulator_ids or all_connected=True must be provided.
 
-Returns: test_id, attack_id, test_name, status
+Returns: test_id, attack_id, test_name, status. Save the test_id to use with get_studio_attack_latest_result.
 
-Example:
-run_studio_attack(attack_id=10000298, all_connected=True, console="demo")
-run_studio_attack(attack_id=10000298, target_simulator_ids=["uuid1", "uuid2"], console="demo")"""
+Example (recommended - explicit simulators):
+run_studio_attack(attack_id=10000298, target_simulator_ids=["uuid1", "uuid2"], console="demo")
+
+Example (use only when explicitly requested):
+run_studio_attack(attack_id=10000298, all_connected=True, console="demo")"""
         )
         def run_studio_attack(
             attack_id: int,
@@ -550,14 +581,29 @@ run_studio_attack(attack_id=10000298, target_simulator_ids=["uuid1", "uuid2"], c
                     f"**Step Run ID:** {result.get('step_run_id')}",
                     f"**Status:** {result.get('status')}",
                     "",
+                ]
+
+                # Add warning when all_connected was used
+                if all_connected:
+                    response_parts.extend([
+                        "### WARNING: Running on ALL connected simulators",
+                        "",
+                        "This attack was queued on ALL connected simulators, which may generate",
+                        "significant noise on the SafeBreach platform. Next time, prefer using",
+                        "explicit `target_simulator_ids` — use `get_console_simulators` from the",
+                        "Config Server to discover and select specific simulators.",
+                        "",
+                    ])
+
+                response_parts.extend([
                     "### Next Steps",
                     "",
                     f"1. Wait for the attack to complete execution",
-                    f"2. Use `get_test_details` with test_id `{result.get('test_id')}` to retrieve results",
-                    f"3. Use `get_test_simulations` to see detailed simulation results",
+                    f"2. Use `get_studio_attack_latest_result` with attack_id `{result.get('attack_id')}` and test_id `{result.get('test_id')}` to retrieve results",
+                    f"3. Use `get_test_simulations` from the Data Server to see detailed simulation results",
                     "",
                     "**Attack successfully queued for execution!**"
-                ]
+                ])
 
                 return "\n".join(response_parts)
 
@@ -577,9 +623,10 @@ ordered by start time (newest first). Useful for checking the results of recentl
 
 Parameters:
 - attack_id (required): The playbook ID of the Studio attack
-- console (optional): SafeBreach console identifier (default: "default")
+- console (required): SafeBreach console name. Use get_console_simulators from Config Server to discover available consoles.
 - max_results (optional): Maximum number of results to return (default: 1 for latest only)
 - include_logs (optional): Include simulation_steps, logs, and output fields (default: True)
+- test_id (optional): Filter results to a specific test run (planRunId). Use the test_id returned by run_studio_attack.
 
 Returns detailed execution information including:
 - Execution status and status (missed, stopped, prevented, etc.)
@@ -590,11 +637,16 @@ Returns detailed execution information including:
 - Simulation steps, logs, and output (when include_logs=True)
 - Drift tracking (is_drifted, drift_tracking_code)
 
+Typical workflow:
+1. result = run_studio_attack(attack_id=10000298, all_connected=True, console="demo")
+2. # Save result['test_id']
+3. get_studio_attack_latest_result(attack_id=10000298, test_id=result['test_id'], console="demo")
+
 Example (get latest result):
 get_studio_attack_latest_result(attack_id=10000291, console="demo")
 
-Example (get last 5 results):
-get_studio_attack_latest_result(attack_id=10000291, console="demo", max_results=5)
+Example (filter by specific test run):
+get_studio_attack_latest_result(attack_id=10000291, console="demo", test_id="abc-123-def")
 
 Example (without logs for compact output):
 get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs=False)"""
@@ -603,7 +655,8 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
             attack_id: int,
             console: str = "default",
             max_results: int = 1,
-            include_logs: bool = True
+            include_logs: bool = True,
+            test_id: str = None,
         ) -> str:
             """Get the latest execution results for a Studio attack."""
             try:
@@ -611,7 +664,8 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
                     attack_id=attack_id,
                     console=console,
                     max_results=max_results,
-                    include_logs=include_logs
+                    include_logs=include_logs,
+                    test_id=test_id,
                 )
 
                 # Check if any results found
@@ -728,6 +782,102 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
             except Exception as e:
                 logger.error(f"Error in get_studio_attack_latest_result: {e}")
                 return f"Error retrieving execution results: {str(e)}"
+
+        @self.mcp.tool(
+            name="create_new_studio_attack",
+            description="""Returns boilerplate template code and default parameters for creating a new custom attack.
+
+IMPORTANT: When creating a new attack from scratch, ALWAYS start by calling this tool first.
+The boilerplate contains the required SafeBreach framework patterns, main() function signature,
+and parameter structure that attacks must follow. Customize the returned template code rather
+than writing attack code from scratch.
+
+Recommended workflow for new attacks:
+1. create_new_studio_attack(attack_type=...) — get the starter template
+2. Customize the template code to implement the desired attack logic
+3. validate_studio_code(...) — validate the customized code
+4. save_studio_attack_draft(...) — save as draft
+
+No API calls are made — all data is local.
+
+Parameters:
+- attack_type (optional): Attack type (default: "host"). Case-insensitive.
+                         Valid values: "host" (single script), "exfil", "infil", "lateral" (dual-script)
+                         Aliases accepted: "exfiltration", "infiltration", "lateral_movement", "host-level"
+
+Returns boilerplate including:
+- Template target code with full documentation and SafeBreach framework patterns
+- Template attacker code (for dual-script types: exfil, infil, lateral)
+- Default parameters JSON ready for save_studio_attack_draft
+- Attack type description and metadata
+- Next steps guidance
+
+Example:
+create_new_studio_attack(attack_type="host")
+create_new_studio_attack(attack_type="exfil")"""
+        )
+        def create_new_studio_attack(
+            attack_type: str = "host",
+        ) -> str:
+            """Get boilerplate template code for a new custom attack."""
+            try:
+                result = sb_get_studio_attack_boilerplate(
+                    attack_type=attack_type,
+                )
+
+                # Format response
+                response_parts = [
+                    f"## {attack_type.title()} Attack Boilerplate",
+                    "",
+                    f"**Attack Type:** {result['attack_type']}",
+                    f"**Dual-Script:** {'Yes' if result['is_dual_script'] else 'No'}",
+                    f"**Files Needed:** {', '.join(result['files_needed'])}",
+                    f"**Template Version:** {result['template_version']}",
+                    "",
+                    f"**Description:** {result['description']}",
+                    "",
+                    "### Target Script (target.py)",
+                    "",
+                    "```python",
+                    result['target_code'],
+                    "```",
+                ]
+
+                if result['attacker_code']:
+                    response_parts.extend([
+                        "",
+                        "### Attacker Script (attacker.py)",
+                        "",
+                        "```python",
+                        result['attacker_code'],
+                        "```",
+                    ])
+
+                response_parts.extend([
+                    "",
+                    "### Default Parameters (parameters.json)",
+                    "",
+                    "```json",
+                    result['parameters_json'],
+                    "```",
+                    "",
+                    "### Next Steps",
+                    "",
+                ])
+
+                for idx, step in enumerate(result['next_steps'], 1):
+                    response_parts.append(f"{idx}. {step}")
+
+                response_parts.append("")
+
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Get boilerplate error: {e}")
+                return f"Get Boilerplate Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in create_new_studio_attack: {e}")
+                return f"Error retrieving boilerplate: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

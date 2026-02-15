@@ -6,6 +6,7 @@ code and managing attack drafts in SafeBreach Breach Studio.
 """
 
 import re
+import ast
 import time
 import json
 import logging
@@ -20,6 +21,14 @@ from .studio_types import (
     get_all_attacks_response_mapping,
     paginate_studio_attacks,
     PAGE_SIZE
+)
+from .studio_templates import (
+    get_target_template,
+    get_attacker_template,
+    get_parameters_template_json,
+    get_attack_type_description,
+    is_dual_script_type,
+    TEMPLATE_VERSION,
 )
 
 # Configure logging
@@ -47,6 +56,16 @@ VALID_ATTACK_TYPES = {
     "host": 5, "exfil": 0, "infil": 2, "lateral": 1,
 }
 
+# Common aliases for attack types (maps alias → canonical key)
+ATTACK_TYPE_ALIASES = {
+    "exfiltration": "exfil",
+    "infiltration": "infil",
+    "lateral_movement": "lateral",
+    "lateral-movement": "lateral",
+    "host-level": "host",
+    "host_level": "host",
+}
+
 # Attack types that require both target and attacker scripts
 DUAL_SCRIPT_TYPES = {"exfil", "infil", "lateral"}
 
@@ -62,20 +81,65 @@ VALID_PROTOCOLS = {
 }
 
 
-def _validate_os_constraint(os_constraint: str) -> None:
+def _normalize_attack_type(attack_type: str) -> str:
     """
-    Validate that the OS constraint value is one of the allowed values.
+    Normalize attack_type to canonical lowercase key, accepting aliases.
+
+    Case-insensitive matching: "Host" → "host", "EXFIL" → "exfil".
+    Alias resolution: "exfiltration" → "exfil", "lateral_movement" → "lateral".
+
+    Args:
+        attack_type: Attack type string to normalize
+
+    Returns:
+        Canonical lowercase attack type key
+
+    Raises:
+        ValueError: If attack_type is not a valid type or alias
+    """
+    lowered = attack_type.lower()
+
+    # Direct match against canonical keys
+    if lowered in VALID_ATTACK_TYPES:
+        return lowered
+
+    # Check aliases
+    if lowered in ATTACK_TYPE_ALIASES:
+        return ATTACK_TYPE_ALIASES[lowered]
+
+    valid_values = sorted(VALID_ATTACK_TYPES.keys())
+    valid_aliases = sorted(ATTACK_TYPE_ALIASES.keys())
+    raise ValueError(
+        f"attack_type must be one of {valid_values}, got: '{attack_type}'. "
+        f"Also accepts aliases: {valid_aliases}"
+    )
+
+
+def _validate_os_constraint(os_constraint: str) -> str:
+    """
+    Validate and normalize OS constraint to canonical case.
+
+    Case-insensitive matching: "windows" → "WINDOWS", "all" → "All".
 
     Args:
         os_constraint: OS constraint value to validate
 
+    Returns:
+        Canonical case OS constraint value
+
     Raises:
         ValueError: If os_constraint is not one of the valid values
     """
-    if os_constraint not in VALID_OS_CONSTRAINTS:
+    # Build case-insensitive lookup
+    os_lookup = {v.lower(): v for v in VALID_OS_CONSTRAINTS}
+    canonical = os_lookup.get(os_constraint.lower())
+
+    if canonical is None:
         raise ValueError(
             f"os_constraint must be one of {VALID_OS_CONSTRAINTS}, got: '{os_constraint}'"
         )
+
+    return canonical
 
 
 def _validate_and_build_parameters(parameters: list) -> str:
@@ -236,25 +300,101 @@ def _lint_check_parameters(parameters: list) -> list:
     return warnings
 
 
-def _validate_code_locally(code: str, label: str) -> Dict[str, Any]:
+def _validate_main_signature_ast(code: str, label: str) -> Dict[str, Any]:
     """
-    Perform local validation checks on Python code (main function + syntax).
+    AST-based validation of main function signature.
+
+    Parses code and verifies that a function named 'main' exists with exactly
+    the parameters: (system_data, asset, proxy, *args, **kwargs).
 
     Args:
         code: Python source code to validate
         label: Human-readable label for error messages (e.g., "target", "attacker")
 
     Returns:
-        Dictionary with 'has_main_function' and 'syntax_error' fields
+        Dictionary with:
+        - has_main_function: Whether a valid main() exists
+        - signature_errors: List of signature error strings (empty if valid)
     """
-    has_main = bool(re.search(MAIN_FUNCTION_PATTERN, code))
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Syntax errors are handled separately; just report no main found
+        return {"has_main_function": False, "signature_errors": []}
+
+    # Find top-level 'def main(...)' (not async def)
+    main_func = None
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            main_func = node
+            break
+
+    if main_func is None:
+        return {"has_main_function": False, "signature_errors": []}
+
+    # Validate signature
+    errors = []
+    args_node = main_func.args
+
+    # Check positional args: exactly [system_data, asset, proxy]
+    positional_names = [arg.arg for arg in args_node.args]
+    expected_positional = ["system_data", "asset", "proxy"]
+    if positional_names != expected_positional:
+        errors.append(
+            f"{label} main() positional parameters must be {expected_positional}, "
+            f"got {positional_names}"
+        )
+
+    # Check *args
+    if args_node.vararg is None:
+        errors.append(f"{label} main() must have *args parameter")
+    elif args_node.vararg.arg != "args":
+        errors.append(
+            f"{label} main() vararg must be named 'args', got '{args_node.vararg.arg}'"
+        )
+
+    # Check **kwargs
+    if args_node.kwarg is None:
+        errors.append(f"{label} main() must have **kwargs parameter")
+    elif args_node.kwarg.arg != "kwargs":
+        errors.append(
+            f"{label} main() kwarg must be named 'kwargs', got '{args_node.kwarg.arg}'"
+        )
+
+    has_main = len(errors) == 0
+    return {"has_main_function": has_main, "signature_errors": errors}
+
+
+def _validate_code_locally(code: str, label: str) -> Dict[str, Any]:
+    """
+    Perform local validation checks on Python code (main function + syntax).
+
+    Uses AST-based validation for main() signature verification and compile()
+    for syntax checking.
+
+    Args:
+        code: Python source code to validate
+        label: Human-readable label for error messages (e.g., "target", "attacker")
+
+    Returns:
+        Dictionary with 'has_main_function', 'syntax_error', and 'signature_errors' fields
+    """
+    # AST-based main function signature validation
+    ast_result = _validate_main_signature_ast(code, label)
+    has_main = ast_result["has_main_function"]
+    signature_errors = ast_result["signature_errors"]
+
     syntax_error = None
     try:
         compile(code, f"<{label}>", "exec")
     except SyntaxError as e:
         syntax_error = f"{label} code syntax error at line {e.lineno}: {e.msg}"
 
-    return {"has_main_function": has_main, "syntax_error": syntax_error}
+    return {
+        "has_main_function": has_main,
+        "syntax_error": syntax_error,
+        "signature_errors": signature_errors,
+    }
 
 
 def _call_validation_api(
@@ -331,16 +471,13 @@ def sb_validate_studio_code(
     if not python_code or not python_code.strip():
         raise ValueError("python_code parameter is required and cannot be empty")
 
-    # Validate attack type
-    if attack_type not in VALID_ATTACK_TYPES:
-        raise ValueError(
-            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
-        )
+    # Normalize and validate attack type
+    attack_type = _normalize_attack_type(attack_type)
 
-    # Validate OS constraints
-    _validate_os_constraint(target_os)
+    # Validate and normalize OS constraints
+    target_os = _validate_os_constraint(target_os)
     if attack_type in DUAL_SCRIPT_TYPES:
-        _validate_os_constraint(attacker_os)
+        attacker_os = _validate_os_constraint(attacker_os)
 
     # Validate dual-script requirement
     is_dual_script = attack_type in DUAL_SCRIPT_TYPES
@@ -360,12 +497,15 @@ def sb_validate_studio_code(
     if is_dual_script:
         attacker_local = _validate_code_locally(attacker_code, "attacker")
 
-    # Collect local syntax errors as validation errors
+    # Collect local errors (syntax + signature) as validation errors
     local_errors = []
     if target_local["syntax_error"]:
         local_errors.append(target_local["syntax_error"])
+    local_errors.extend(target_local.get("signature_errors", []))
     if attacker_local and attacker_local["syntax_error"]:
         local_errors.append(attacker_local["syntax_error"])
+    if attacker_local:
+        local_errors.extend(attacker_local.get("signature_errors", []))
 
     # SB011/SB012 lint checks on parameters
     lint_warnings = []
@@ -472,14 +612,11 @@ def sb_save_studio_attack_draft(
     if timeout < 1:
         raise ValueError("timeout must be at least 1 second")
 
-    # Validate attack type
-    if attack_type not in VALID_ATTACK_TYPES:
-        raise ValueError(
-            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
-        )
+    # Normalize and validate attack type
+    attack_type = _normalize_attack_type(attack_type)
 
-    # Validate OS constraints
-    _validate_os_constraint(target_os)
+    # Validate and normalize OS constraints
+    target_os = _validate_os_constraint(target_os)
 
     # Validate dual-script requirements
     is_dual_script = attack_type in DUAL_SCRIPT_TYPES
@@ -488,7 +625,7 @@ def sb_save_studio_attack_draft(
             raise ValueError(
                 f"attacker_code is required for '{attack_type}' attack type (dual-script)"
             )
-        _validate_os_constraint(attacker_os)
+        attacker_os = _validate_os_constraint(attacker_os)
 
     # Validate and build parameters
     if parameters is None:
@@ -731,14 +868,11 @@ def sb_update_studio_attack_draft(
     if timeout < 1:
         raise ValueError("timeout must be at least 1 second")
 
-    # Validate attack type
-    if attack_type not in VALID_ATTACK_TYPES:
-        raise ValueError(
-            f"attack_type must be one of {set(VALID_ATTACK_TYPES.keys())}, got: '{attack_type}'"
-        )
+    # Normalize and validate attack type
+    attack_type = _normalize_attack_type(attack_type)
 
-    # Validate OS constraints
-    _validate_os_constraint(target_os)
+    # Validate and normalize OS constraints
+    target_os = _validate_os_constraint(target_os)
 
     # Validate dual-script requirements
     is_dual_script = attack_type in DUAL_SCRIPT_TYPES
@@ -747,7 +881,7 @@ def sb_update_studio_attack_draft(
             raise ValueError(
                 f"attacker_code is required for '{attack_type}' attack type (dual-script)"
             )
-        _validate_os_constraint(attacker_os)
+        attacker_os = _validate_os_constraint(attacker_os)
 
     # Validate and build parameters
     if parameters is None:
@@ -1072,7 +1206,8 @@ def sb_get_studio_attack_latest_result(
     console: str = "default",
     max_results: int = 1,
     page_size: int = 100,
-    include_logs: bool = True
+    include_logs: bool = True,
+    test_id: str = None,
 ) -> Dict[str, Any]:
     """
     Retrieve the latest execution results for a Studio attack by its playbook ID.
@@ -1086,6 +1221,7 @@ def sb_get_studio_attack_latest_result(
         max_results: Maximum number of results to return (default: 1 for latest only)
         page_size: Number of results per page to request from API (default: 100)
         include_logs: Whether to include simulation_steps, logs, and output fields (default: True)
+        test_id: Optional test ID (planRunId) to filter results to a specific test run
 
     Returns:
         Dictionary containing:
@@ -1134,12 +1270,17 @@ def sb_get_studio_attack_latest_result(
         "Content-Type": "application/json"
     }
 
-    # Build request payload with query for specific playbook ID
+    # Build query string for specific playbook ID, optionally filtered by test_id
+    query = f"Playbook_id:(\"{attack_id}\")"
+    if test_id:
+        query += f" AND runId:{test_id}"
+
+    # Build request payload
     payload = {
         "page": 1,
         "runId": "*",  # Wildcard for any run
         "pageSize": min(page_size, max_results),  # Only request what we need
-        "query": f"Playbook_id:(\"{attack_id}\")",  # Search for specific playbook ID
+        "query": query,
         "orderBy": "desc",  # Descending order (newest first)
         "sortBy": "startTime"  # Sort by start time
     }
@@ -1210,6 +1351,69 @@ def sb_get_studio_attack_latest_result(
         error_msg = f"Error retrieving execution results for attack {attack_id} from console '{console}': {str(e)}"
         logger.error(error_msg)
         raise
+
+
+def sb_get_studio_attack_boilerplate(
+    attack_type: str = "host",
+) -> Dict[str, Any]:
+    """
+    Get boilerplate code and parameters for a new custom attack.
+
+    Returns ready-to-use template code, default parameters JSON, and metadata
+    for the specified attack type. No API calls are made — all data is local.
+
+    Args:
+        attack_type: Attack type - "host", "exfil", "infil", or "lateral" (default: "host")
+
+    Returns:
+        Dictionary containing:
+        - attack_type: The requested attack type
+        - is_dual_script: Whether this type requires target + attacker scripts
+        - description: Human-readable description of the attack type
+        - target_code: Template Python code for target.py
+        - attacker_code: Template Python code for attacker.py (None for host)
+        - parameters_json: Default parameters.json content as formatted JSON string
+        - files_needed: List of filenames needed (["target.py"] or ["target.py", "attacker.py"])
+        - template_version: Version of the template set
+        - next_steps: List of suggested next steps for the agent
+
+    Raises:
+        ValueError: If attack_type is not valid
+    """
+    attack_type = _normalize_attack_type(attack_type)
+
+    dual_script = is_dual_script_type(attack_type)
+    target_code = get_target_template(attack_type)
+    attacker_code = get_attacker_template(attack_type) if dual_script else None
+    parameters_json = get_parameters_template_json(attack_type)
+    description = get_attack_type_description(attack_type)
+
+    files_needed = ["target.py", "attacker.py"] if dual_script else ["target.py"]
+
+    next_steps = [
+        "Customize the target code to implement your attack logic",
+    ]
+    if dual_script:
+        next_steps.append("Customize the attacker code for the network-side logic")
+    next_steps.extend([
+        "Modify parameters_json to define your attack parameters",
+        "Use validate_studio_code to check your code before saving",
+        "Use save_studio_attack_draft to save the attack to Breach Studio",
+    ])
+
+    logger.info(f"Returning boilerplate for attack type: {attack_type}")
+
+    return {
+        "attack_type": attack_type,
+        "is_dual_script": dual_script,
+        "description": description,
+        "target_code": target_code,
+        "attacker_code": attacker_code,
+        "parameters_json": parameters_json,
+        "files_needed": files_needed,
+        "template_version": TEMPLATE_VERSION,
+        "next_steps": next_steps,
+    }
 
 
 def _get_draft_from_cache(cache_key: str) -> Dict[str, Any]:
