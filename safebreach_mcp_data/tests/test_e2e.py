@@ -530,78 +530,74 @@ class TestDataServerE2E:
         
         # Verify response structure
         assert isinstance(result, dict), "Response should be a dictionary"
-        
-        # Verify required fields are present
-        required_fields = ['logs', 'simulation_steps', 'details_summary', 'output', 'metadata']
+
+        # Verify required top-level fields
+        required_fields = ['simulation_id', 'test_id', 'execution_times', 'status', 'attack_info', 'target']
         for field in required_fields:
             assert field in result, f"Missing required field: {field}"
-        
-        print(f"  ✅ All required fields present: {required_fields}")
-        
+
+        print(f"  ✅ All required top-level fields present: {required_fields}")
+
+        # Target node should always be present
+        target = result['target']
+        assert isinstance(target, dict), "Target should be a dictionary"
+
+        # Validate target node fields
+        target_fields = ['logs', 'simulation_steps', 'details_summary', 'error', 'output', 'node_id', 'state']
+        for field in target_fields:
+            assert field in target, f"Missing target field: {field}"
+
         # Validate logs field (~40KB of raw, verbose simulator logs)
-        logs = result['logs']
+        logs = target['logs']
         assert isinstance(logs, str), "Logs should be a string"
         assert len(logs) > 1000, f"Logs should be substantial (>1KB), got {len(logs)} characters"
-        print(f"  ✅ Logs field: {len(logs):,} characters of raw execution logs")
-        
+        print(f"  ✅ Target logs: {len(logs):,} characters of raw execution logs")
+
         # Validate simulation_steps (structured execution steps)
-        simulation_steps = result['simulation_steps']
+        simulation_steps = target['simulation_steps']
         assert isinstance(simulation_steps, list), "Simulation steps should be a list"
         if simulation_steps:
-            # Check structure of first step
             first_step = simulation_steps[0]
             assert isinstance(first_step, dict), "Each step should be a dictionary"
-            # Common step fields (may vary by simulation type)
-            expected_step_fields = ['step_name', 'timing', 'status']
-            for field in expected_step_fields:
-                if field in first_step:  # Not all steps may have all fields
-                    assert isinstance(first_step[field], (str, int, float, dict)), f"Step field {field} should have a valid type"
-        print(f"  ✅ Simulation steps: {len(simulation_steps)} structured execution steps")
-        
-        # Validate details_summary (exception traceback summary)
-        details_summary = result['details_summary']
+        print(f"  ✅ Target simulation steps: {len(simulation_steps)} structured execution steps")
+
+        # Validate details_summary
+        details_summary = target['details_summary']
         assert isinstance(details_summary, (str, type(None))), "Details summary should be string or None"
         if details_summary:
-            print(f"  ✅ Details summary: {len(details_summary)} characters of exception/traceback info")
+            print(f"  ✅ Details summary: {len(details_summary)} characters")
         else:
             print(f"  ✅ Details summary: None (no exceptions/errors)")
-        
-        # Validate output (simulation initialization output)
-        output = result['output']
+
+        # Validate output
+        output = target['output']
         assert isinstance(output, (str, type(None))), "Output should be string or None"
         if output:
-            print(f"  ✅ Output: {len(output)} characters of initialization output")
+            print(f"  ✅ Output: {len(output)} characters")
         else:
             print(f"  ✅ Output: None (no initialization output)")
-        
-        # Validate metadata (additional fields)
-        metadata = result['metadata']
-        assert isinstance(metadata, dict), "Metadata should be a dictionary"
-        
-        # Check for expected metadata fields
-        expected_metadata_fields = ['method_id', 'state', 'execution_times']
-        metadata_found = []
-        for field in expected_metadata_fields:
-            if field in metadata:
-                metadata_found.append(field)
-        
-        print(f"  ✅ Metadata: {len(metadata)} fields, including {metadata_found}")
-        
+
+        # Attacker may or may not be present depending on attack type
+        attacker = result.get('attacker')
+        if attacker is not None:
+            assert isinstance(attacker, dict), "Attacker should be a dictionary when present"
+            attacker_logs = attacker.get('logs', '')
+            print(f"  ✅ Attacker node present with {len(attacker_logs):,} characters of logs")
+        else:
+            print(f"  ✅ Attacker: None (host-only attack)")
+
         # Verify this is comprehensive execution logs (not just basic attack logs)
-        # The logs should contain detailed traces and be significantly larger than basic logs
         assert 'trace' in logs.lower() or 'execution' in logs.lower() or 'step' in logs.lower(), \
             "Logs should contain trace/execution details indicating comprehensive logs"
-        
+
         # Print summary for debugging/validation
         print(f"\n📊 Full Simulation Logs Test Summary:")
         print(f"  Console: {console}")
         print(f"  Simulation ID: {simulation_id}")
         print(f"  Test ID: {test_id}")
-        print(f"  Logs size: {len(logs):,} characters")
-        print(f"  Execution steps: {len(simulation_steps)}")
-        print(f"  Has details summary: {details_summary is not None}")
-        print(f"  Has output: {output is not None}")
-        print(f"  Metadata fields: {len(metadata)}")
+        print(f"  Target logs size: {len(logs):,} characters")
+        print(f"  Target execution steps: {len(simulation_steps)}")
+        print(f"  Has attacker node: {attacker is not None}")
         print(f"  Response size: ~{len(str(result)):,} characters")
         print(f"==================================\n")
     

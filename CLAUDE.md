@@ -269,7 +269,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 9. `get_test_findings_counts` - Findings summary by type with filtering
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
 11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
-12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs for a specific simulation including detailed traces (~40KB LOGS field) for deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
+12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
 
 **Playbook Server (Port 8003):**
 13. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination

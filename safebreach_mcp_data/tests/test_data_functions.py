@@ -2560,13 +2560,15 @@ class TestDataFunctions:
         assert result['simulation_id'] == '1477531'
         assert result['test_id'] == '1764165600525.2'
         assert result['run_id'] == '1764165600525.2'
-        assert 'logs' in result
-        assert 'Sample log data here' in result['logs']
+        assert result['target'] is not None
+        assert 'Sample log data here' in result['target']['logs']
         assert result['status']['overall'] == 'SUCCESS'
         assert result['status']['final_status'] == 'logged'
-        assert len(result['simulation_steps']) == 1
-        assert result['simulation_steps'][0]['message'] == 'Simulation started'
+        assert len(result['target']['simulation_steps']) == 1
+        assert result['target']['simulation_steps'][0]['message'] == 'Simulation started'
         assert result['attack_info']['move_name'] == 'Write File to Disk'
+        # Host attack: attacker == target node ID, so attacker should be None
+        assert result['attacker'] is None
 
         # Verify cache was populated
         cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
@@ -2599,8 +2601,9 @@ class TestDataFunctions:
             console='test-console'
         )
 
-        # Verify data came from cache
-        assert result['logs'] == 'Cached log data'
+        # Verify data came from cache (host attack: no attackerNodeId/targetNodeId in cached data)
+        assert result['target'] is not None
+        assert result['target']['logs'] == 'Cached log data'
         assert result['simulation_id'] == 'sim123'
 
     def test_sb_get_full_simulation_logs_empty_simulation_id(self):
@@ -2711,3 +2714,86 @@ class TestDataFunctions:
 
         # Verify duration is calculated (90 seconds between start and end)
         assert result['execution_times']['duration_seconds'] == 90.0
+
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_sb_get_full_simulation_logs_dual_script(self, mock_fetch):
+        """Test full simulation logs with dual-script attack (two distinct nodes)."""
+        target_node_id = 'node-target-111'
+        attacker_node_id = 'node-attacker-222'
+        mock_response = {
+            'id': '9999',
+            'runId': '1764165600525.2',
+            'planRunId': '1764165600525.2',
+            'status': 'SUCCESS',
+            'finalStatus': 'missed',
+            'startTime': '2025-11-26T14:00:00.000Z',
+            'endTime': '2025-11-26T14:01:00.000Z',
+            'attackerNodeId': attacker_node_id,
+            'attackerNodeName': 'linux-attacker',
+            'attackerOSType': 'LINUX',
+            'attackerOSPrettyName': 'Ubuntu 22.04',
+            'targetNodeId': target_node_id,
+            'targetNodeName': 'win-target',
+            'targetOSType': 'WINDOWS',
+            'targetOSPrettyName': 'Windows Server 2022',
+            'moveId': 5000,
+            'moveName': 'Data Exfiltration',
+            'dataObj': {
+                'data': [[
+                    {
+                        'id': target_node_id,
+                        'nodeNameInMove': 'target',
+                        'state': 'finished',
+                        'details': {
+                            'LOGS': 'Target node logs here',
+                            'SIMULATION_STEPS': [{'message': 'target step'}],
+                            'DETAILS': 'Target finished',
+                            'ERROR': '',
+                            'OUTPUT': '',
+                            'STATUS': 'DONE',
+                            'CODE': 0,
+                        }
+                    },
+                    {
+                        'id': attacker_node_id,
+                        'nodeNameInMove': 'attacker',
+                        'state': 'finished',
+                        'details': {
+                            'LOGS': 'Attacker node logs here',
+                            'SIMULATION_STEPS': [{'message': 'attacker step'}],
+                            'DETAILS': 'Attacker finished',
+                            'ERROR': 'connection refused',
+                            'OUTPUT': 'exfil output',
+                            'STATUS': 'DONE',
+                            'CODE': 1,
+                        }
+                    }
+                ]]
+            }
+        }
+        mock_fetch.return_value = mock_response
+
+        result = sb_get_full_simulation_logs(
+            simulation_id='9999',
+            test_id='1764165600525.2',
+            console='test-console'
+        )
+
+        # Both roles should be present
+        assert result['target'] is not None
+        assert result['attacker'] is not None
+
+        # Target node
+        assert result['target']['logs'] == 'Target node logs here'
+        assert result['target']['node_id'] == target_node_id
+        assert result['target']['os_type'] == 'WINDOWS'
+        assert result['target']['os_version'] == 'Windows Server 2022'
+        assert result['target']['simulation_steps'] == [{'message': 'target step'}]
+
+        # Attacker node
+        assert result['attacker']['logs'] == 'Attacker node logs here'
+        assert result['attacker']['node_id'] == attacker_node_id
+        assert result['attacker']['os_type'] == 'LINUX'
+        assert result['attacker']['os_version'] == 'Ubuntu 22.04'
+        assert result['attacker']['error'] == 'connection refused'
+        assert result['attacker']['simulation_steps'] == [{'message': 'attacker step'}]

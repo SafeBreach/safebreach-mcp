@@ -343,19 +343,48 @@ def get_full_security_control_events_mapping(security_control_event_entity, verb
         return map_security_control_event(security_control_event_entity, reduced_security_control_events_mapping)
 
 
+def _build_node_data(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract execution data from a single data_array node entry.
+
+    Args:
+        entry: A single entry from dataObj.data[0], representing one simulator node's execution.
+
+    Returns:
+        Dictionary with the node's logs, steps, error, output, state, and identifiers.
+    """
+    details = entry.get('details', {})
+    return {
+        "node_name": entry.get('nodeNameInMove', ''),
+        "node_id": entry.get('id', ''),
+        "state": entry.get('state', ''),
+        "logs": details.get('LOGS', ''),
+        "simulation_steps": details.get('SIMULATION_STEPS', []),
+        "details_summary": details.get('DETAILS', ''),
+        "error": details.get('ERROR', ''),
+        "output": details.get('OUTPUT', ''),
+        "task_status": details.get('STATUS', ''),
+        "task_code": details.get('CODE', 0),
+        "simulation_start": details.get('SIMULATION_START_TIME', ''),
+        "simulation_end": details.get('SIMULATION_END_TIME', ''),
+        "startup_duration": details.get('STARTUP_DURATION', 0.0),
+    }
+
+
 def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
     """
     Transform SafeBreach API full simulation logs response to MCP tool format.
 
-    Focuses on extracting detailed logs and structured execution information
-    from the nested response structure. The primary feature is exposing the
-    LOGS field (~40KB) that contains timestamped simulator execution logs.
+    Produces a role-based structure with separate 'target' and 'attacker' sections.
+    For host attacks (single-node), 'attacker' is None. For dual-script attacks
+    (exfil, infil, lateral movement), both 'target' and 'attacker' are populated
+    with their respective execution logs and steps.
 
     Args:
         api_response: Raw API response from executionsHistoryResults endpoint
 
     Returns:
-        Transformed dictionary with organized full simulation logs data
+        Transformed dictionary with role-based full simulation logs data
 
     Raises:
         ValueError: If expected fields are missing from response
@@ -368,8 +397,7 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     if not data_array or not data_array[0]:
         raise ValueError("Response missing dataObj.data structure")
 
-    details_obj = data_array[0][0]
-    details = details_obj.get('details', {})
+    entries = data_array[0]
 
     # Helper function to calculate duration
     def calculate_duration(start_time: str, end_time: str) -> float:
@@ -383,6 +411,63 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
             return (end - start).total_seconds()
         except (ValueError, AttributeError):
             return 0.0
+
+    # Role mapping: determine which entry is target and which is attacker
+    attacker_node_id = api_response.get('attackerNodeId', '')
+    target_node_id = api_response.get('targetNodeId', '')
+    is_host_attack = (attacker_node_id == target_node_id)
+
+    # Build node data for each entry and assign roles
+    target_data = None
+    attacker_data = None
+
+    if is_host_attack or len(entries) == 1:
+        # Host attack: single node, attacker == target
+        target_data = _build_node_data(entries[0])
+        target_data["os_type"] = api_response.get('targetOSType', '')
+        target_data["os_version"] = api_response.get('targetOSPrettyName', '') or api_response.get('targetOSVersion', '')
+        target_data["node_name"] = target_data["node_name"] or api_response.get('targetNodeName', '')
+        attacker_data = None
+    else:
+        # Dual-script attack: map each entry to its role by matching node ID
+        for entry in entries:
+            entry_id = entry.get('id', '')
+            node_data = _build_node_data(entry)
+
+            if entry_id == target_node_id:
+                node_data["os_type"] = api_response.get('targetOSType', '')
+                node_data["os_version"] = api_response.get('targetOSPrettyName', '') or api_response.get('targetOSVersion', '')
+                node_data["node_name"] = node_data["node_name"] or api_response.get('targetNodeName', '')
+                target_data = node_data
+            elif entry_id == attacker_node_id:
+                node_data["os_type"] = api_response.get('attackerOSType', '')
+                node_data["os_version"] = api_response.get('attackerOSPrettyName', '') or api_response.get('attackerOSVersion', '')
+                node_data["node_name"] = node_data["node_name"] or api_response.get('attackerNodeName', '')
+                attacker_data = node_data
+
+        # Fallback: if role mapping didn't match (unexpected IDs), assign by position
+        if target_data is None and attacker_data is None:
+            target_data = _build_node_data(entries[0])
+            target_data["os_type"] = api_response.get('targetOSType', '')
+            target_data["os_version"] = api_response.get('targetOSPrettyName', '') or api_response.get('targetOSVersion', '')
+            if len(entries) > 1:
+                attacker_data = _build_node_data(entries[1])
+                attacker_data["os_type"] = api_response.get('attackerOSType', '')
+                attacker_data["os_version"] = api_response.get('attackerOSPrettyName', '') or api_response.get('attackerOSVersion', '')
+        elif target_data is None:
+            # Attacker matched but target didn't — assign remaining entry
+            remaining = [e for e in entries if e.get('id', '') != attacker_node_id]
+            if remaining:
+                target_data = _build_node_data(remaining[0])
+                target_data["os_type"] = api_response.get('targetOSType', '')
+                target_data["os_version"] = api_response.get('targetOSPrettyName', '') or api_response.get('targetOSVersion', '')
+        elif attacker_data is None:
+            # Target matched but attacker didn't — assign remaining entry
+            remaining = [e for e in entries if e.get('id', '') != target_node_id]
+            if remaining:
+                attacker_data = _build_node_data(remaining[0])
+                attacker_data["os_type"] = api_response.get('attackerOSType', '')
+                attacker_data["os_version"] = api_response.get('attackerOSPrettyName', '') or api_response.get('attackerOSVersion', '')
 
     # Build transformed response
     return {
@@ -400,39 +485,13 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
                 api_response.get('startTime', ''),
                 api_response.get('endTime', '')
             ),
-            "simulation_start": details.get('SIMULATION_START_TIME', ''),
-            "simulation_end": details.get('SIMULATION_END_TIME', ''),
-            "startup_duration": details.get('STARTUP_DURATION', 0.0)
         },
 
         # Execution status
         "status": {
             "overall": api_response.get('status', ''),
             "final_status": api_response.get('finalStatus', ''),
-            "task_status": details.get('STATUS', ''),
-            "task_code": details.get('CODE', 0),
             "security_action": api_response.get('securityAction', '')
-        },
-
-        # PRIMARY FEATURE: Detailed logs
-        "logs": details.get('LOGS', ''),
-
-        # Structured execution steps
-        "simulation_steps": details.get('SIMULATION_STEPS', []),
-
-        # Summary information
-        "details_summary": details.get('DETAILS', ''),
-        "error": details.get('ERROR', ''),
-        "output": details.get('OUTPUT', ''),
-
-        # Execution context
-        "metadata": {
-            "job_id": api_response.get('jobId', 0),
-            "task_id": api_response.get('taskId', 0),
-            "method_id": api_response.get('methodId', 0),
-            "node_name_in_move": details_obj.get('nodeNameInMove', ''),
-            "state": details_obj.get('state', ''),
-            "node_id": details_obj.get('id', '')
         },
 
         # Attack information
@@ -447,17 +506,7 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
             "impact": api_response.get('impact', '')
         },
 
-        # Host information
-        "host_info": {
-            "attacker_node_id": api_response.get('attackerNodeId', ''),
-            "attacker_node_name": api_response.get('attackerNodeName', ''),
-            "attacker_os_type": api_response.get('attackerOSType', ''),
-            "attacker_os_version": api_response.get('attackerOSVersion', ''),
-            "target_node_id": api_response.get('targetNodeId', ''),
-            "target_node_name": api_response.get('targetNodeName', ''),
-            "target_os_type": api_response.get('targetOSType', ''),
-            "target_os_version": api_response.get('targetOSVersion', ''),
-            "src_node_id": api_response.get('srcNodeId', ''),
-            "dest_node_id": api_response.get('destNodeId', '')
-        }
+        # Per-role execution data
+        "target": target_data,
+        "attacker": attacker_data,
     }

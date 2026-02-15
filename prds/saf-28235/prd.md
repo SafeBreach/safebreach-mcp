@@ -105,17 +105,21 @@ from satisficing — stopping at surface-level logs and speculating about root c
    - LOGS: raw simulator debug logs (contains nodeNameInMove for dual-script attacks)
    - OUTPUT: process stdout/stderr from execution
    - DEBUG HINT: for "stopped"/"no-result" statuses, a pointer to get_full_simulation_logs
-2. Diagnose the issue:
-   - Syntax/runtime errors visible in OUTPUT and LOGS
+2. get_full_simulation_logs → retrieve role-based comprehensive logs:
+   - Returns `target` node data (always present) and `attacker` node data (dual-script only, null for host)
+   - Each role contains: logs (~40KB), simulation_steps, error, output, os_type, os_version, state
+   - For dual-script attacks: both nodes' logs are available — diagnose which node failed
+3. Diagnose the issue:
+   - Syntax/runtime errors visible in OUTPUT and LOGS per role (target vs attacker)
    - Execution flow visible in SIMULATION_STEPS (STATUS, DEBUG, INFO, WARNING, ERROR levels)
-   - For dual-script attacks: identify which node (attacker/target) failed
-   - For "stopped"/"no-result": follow debug hint to get_full_simulation_logs for root cause
-3. get_studio_attack_source         → retrieve current code
-4. Fix the code                        (agent patches based on log analysis)
-5. validate_studio_code             → validate the fix
-6. update_studio_attack_draft       → save the updated draft
-7. run_studio_attack                → re-run with same simulators to verify the fix
-8. get_studio_attack_latest_result  → confirm improved results
+   - For dual-script attacks: compare target.logs vs attacker.logs to identify which node failed
+   - For "stopped"/"no-result": the failing node's error and logs pinpoint root cause
+4. get_studio_attack_source         → retrieve current code
+5. Fix the code                        (agent patches based on log analysis)
+6. validate_studio_code             → validate the fix
+7. update_studio_attack_draft       → save the updated draft
+8. run_studio_attack                → re-run with same simulators to verify the fix
+9. get_studio_attack_latest_result  → confirm improved results
 ```
 
 This debug loop — **run → analyze logs → fix code → validate → update → re-run** — is the core
