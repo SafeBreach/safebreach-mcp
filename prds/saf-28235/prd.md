@@ -244,15 +244,21 @@ The server must support the full lifecycle of attack drafts:
 
 Studio attacks have two statuses:
 
-| Status | Editable | In Playbook | Execution | API Endpoint |
-|--------|----------|-------------|-----------|--------------|
-| **DRAFT** | Yes | No | Requires `"draft": true` flag | `/customMethods/{id}/unpublish` |
-| **PUBLISHED** | No (read-only) | Yes | Standard execution | `/customMethods/{id}/publish` |
+| Status | Editable | In Playbook | Execution |
+|--------|----------|-------------|-----------|
+| **DRAFT** | Yes | No | Requires `"draft": true` flag |
+| **PUBLISHED** | No (read-only) | Yes | Standard execution |
 
 - **DRAFT → PUBLISHED**: Attack becomes read-only on the console, appears in SafeBreach Playbook
   for production test scenarios
 - **PUBLISHED → DRAFT**: Attack becomes editable again, removed from Playbook, requires
   `"draft": true` flag to execute
+
+**Implementation**: There are no dedicated `/publish` or `/unpublish` API endpoints. Status
+transitions are performed via the standard PUT update endpoint (`/customMethods/{id}`) with the
+`status` field changed in the multipart form-data payload. The function fetches the current attack
+data and source code, then re-submits everything with only the `status` field changed. This matches
+the VS Code extension's implementation.
 
 Status transitions require explicit user confirmation due to their production impact.
 
@@ -309,13 +315,9 @@ Nine tools exposed to AI agents:
 > matching the pattern in Config (`get_console_simulators`), Data (`get_tests_history`), and Playbook
 > (`get_playbook_attacks`). The `sb_` prefix is used only on internal Python function names.
 
-> **Renaming required**: The current implementation on `studio-mcp` uses `simulation`-based naming
-> (e.g., `get_all_studio_simulations`, `run_studio_simulation`). All tool names, internal function names,
-> and test references must be renamed to use `attack`-based terminology as specified above.
-
 ### 8. Testing
 
-Comprehensive test coverage for:
+**245 unit tests** covering:
 
 - All four attack types (Host, Exfil, Infil, Lateral) including dual-script validation
 - Validation logic (syntax, function signatures, OS constraints, attack type consistency)
@@ -323,33 +325,36 @@ Comprehensive test coverage for:
 - Parameter validation (all types: PORT, URI, PROTOCOL, NOT_CLASSIFIED, BINARY/FEED)
 - Simulation permutation logic (multi-value parameter combinations)
 - Draft management operations (save, update, list, retrieve)
+- Status transitions (publish/unpublish via PUT update)
 - Attack execution and simulation result retrieval
 - Pagination for list attacks (page_number, PAGE_SIZE, hint_to_agent)
 - Cross-server entity naming consistency (attack_id, test_id, simulation_id)
-- Caching behavior
+- Caching behavior and cache invalidation on status change
 - Error handling and edge cases
+
+**13 E2E tests** (require real SafeBreach environment) covering:
+
+- Code validation (valid host code, invalid code, SB011 lint check)
+- Attack listing (basic retrieval, pagination, filtering by status/name)
+- Source code retrieval (content structure, target + attacker files)
+- Draft lifecycle (create → update roundtrip)
+- Execution (run attack, retrieve latest result)
+- Debug flow (run → analyze logs → iterate)
+- Status transition (draft → published → verify → unpublished → verify roundtrip)
+
+**497 cross-server tests** (all servers combined, excluding E2E).
 
 ## Implementation Details
 
-### Current State
+### Implementation Status
 
-A working Studio server already exists on the `studio-mcp` branch with Host-only (methodType 5),
-single-script (target.py) support using "simulation" naming. The multi-server launcher
-(`start_all_servers.py`) and `pyproject.toml` are already configured — port 8004, entry point, and
-package discovery are in place. The implementation work is a **refactor and extension**, not a
-greenfield build.
+The Studio Server implementation is **complete** on the `studio-mcp` branch. All 9 MCP tools are
+implemented and tested with 245 unit tests and 13 E2E tests (36 E2E tests across all servers).
 
-### What Exists (to be renamed and extended)
-
-| Current Python function | Rename to | Tool Name | What changes |
-|------------------------|-----------|-----------|--------------|
-| `sb_validate_studio_code` | (same) | `validate_studio_code` | Add `attack_type`, `attacker_code`, `target_os`, `attacker_os`, `parameters`; add SB011/SB012 lint checks |
-| `sb_save_studio_draft` | `sb_save_studio_attack_draft` | `save_studio_attack_draft` | Add `attack_type`, `attacker_code`, `attacker_os`; rename `os_constraint` → `target_os` |
-| `sb_update_studio_draft` | `sb_update_studio_attack_draft` | `update_studio_attack_draft` | Same as save; rename `draft_id` → `attack_id` |
-| `sb_get_all_studio_simulations` | `sb_get_all_studio_attacks` | `get_all_studio_attacks` | Add `page_number` pagination; add `hint_to_agent` |
-| `sb_get_studio_simulation_source` | `sb_get_studio_attack_source` | `get_studio_attack_source` | Rename `simulation_id` → `attack_id`; add attacker.py retrieval |
-| `sb_run_studio_simulation` | `sb_run_studio_attack` | `run_studio_attack` | Rename `simulation_id` → `attack_id`; split simulators; return `test_id` not `plan_run_id` |
-| `sb_get_studio_simulation_latest_result` | `sb_get_studio_attack_latest_result` | `get_studio_attack_latest_result` | Rename param `simulation_id` → `attack_id`; align result fields with Data server; add LOGS/STEPS/OUTPUT |
+All naming has been migrated from the original "simulation"-based naming to "attack"-based
+terminology consistent with the Playbook and Data servers. The multi-server launcher
+(`start_all_servers.py`) and `pyproject.toml` are configured — port 8004, entry point, and
+package discovery are in place.
 
 ### Existing Constants
 
@@ -397,8 +402,7 @@ All endpoints use `x-apitoken` header for authentication and 120-second timeout.
 | List all | GET | `/api/content/v1/accounts/{account_id}/customMethods?status=all` |
 | Get source (target) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/target` |
 | Get source (attacker) | GET | `/api/content/v1/accounts/{account_id}/customMethods/{id}/files/attacker` |
-| Publish | POST | `/api/content/v1/accounts/{account_id}/customMethods/{id}/publish` |
-| Unpublish | POST | `/api/content/v1/accounts/{account_id}/customMethods/{id}/unpublish` |
+| Publish/Unpublish | PUT | `/api/content/v1/accounts/{account_id}/customMethods/{id}` (same as Update, with `status` field changed) |
 | Run (queue test) | POST | `/api/orch/v4/accounts/{account_id}/queue` |
 | Get results | POST | `/api/data/v1/accounts/{account_id}/executionsHistoryResults` |
 
@@ -409,7 +413,7 @@ Multipart form-data with these fields:
 ```
 name:           attack name
 timeout:        seconds (string)
-status:         "draft"
+status:         "draft" | "published"  (used for publish/unpublish transitions)
 class:          "python"
 description:    text
 parameters:     JSON string of parameter array
@@ -481,19 +485,19 @@ test execution.
 - All `studio_types.py` transformation functions
 - `studio_templates.py` — boilerplate code templates for all attack types
 
-### Integration Already Done (no changes needed)
+### Integration
 
-- `start_all_servers.py` — already imports `SafeBreachStudioServer`, port 8004, `--external-studio` flag
-- `pyproject.toml` — already has `safebreach-mcp-studio-server` entry point and `safebreach_mcp_studio*` package
+- `start_all_servers.py` — imports `SafeBreachStudioServer`, port 8004, `--external-studio` flag
+- `pyproject.toml` — `safebreach-mcp-studio-server` entry point and `safebreach_mcp_studio*` package
 
 ## Cross-Server Consistency Alignment
 
-The Studio Server must be consistent with the vocabulary, naming conventions, and patterns used by the
-existing Config, Data, Playbook, and Utilities servers. The existing servers are the **source of truth**.
+The Studio Server is consistent with the vocabulary, naming conventions, and patterns used by the
+existing Config, Data, Playbook, and Utilities servers.
 
 ### 1. Tool Name Convention (no `sb_` prefix)
 
-All existing servers register tools **without** the `sb_` prefix. The `sb_` prefix is only for internal
+All servers register tools **without** the `sb_` prefix. The `sb_` prefix is only for internal
 Python function names.
 
 | Server | Tool Name | Python Function |
@@ -505,47 +509,39 @@ Python function names.
 
 ### 2. Entity ID Naming — `attack_id` not `simulation_id`
 
-The current Studio code uses `simulation_id` for the custom method ID. This conflicts with the Data
-server where `simulation_id` means a runtime execution result. The correct term per PRD terminology is
-`attack_id`, consistent with Playbook server's `attack_id: int`.
+Studio uses `attack_id` for the custom method ID, consistent with Playbook server's `attack_id: int`
+and avoiding conflict with Data server's `simulation_id` (which means a runtime execution result).
 
-| Context | Correct Name | Type | Why |
-|---------|-------------|------|-----|
+| Context | Name | Type | Rationale |
+|---------|------|------|-----------|
 | Custom method (authored artifact) | `attack_id` | `int` | Matches Playbook `attack_id`; avoids Data `simulation_id` clash |
 | Test execution run | `test_id` | `str` | Matches Data `test_id` (same as API `planRunId`) |
 | Runtime simulation result | `simulation_id` | `str` | Matches Data `simulation_id` |
 | Draft to update | `attack_id` | `int` | Not `draft_id` — the status is a property, not part of the ID |
 
-**Current `draft_id` parameter → rename to `attack_id`** in `update_studio_attack_draft`.
+### 3. Run Result Returns `test_id`
 
-### 3. Run Result Must Return `test_id` Not `plan_run_id`
+`run_studio_attack` returns `test_id`, matching the Data server's parameter name in `get_test_details`,
+`get_test_simulations`, and `get_full_simulation_logs`. This enables seamless cross-server workflows:
 
-The `run_studio_attack` tool currently returns `plan_run_id`. The Data server calls this entity
-`test_id` (parameter name in `get_test_details`, `get_test_simulations`, `get_full_simulation_logs`).
-
-The agent uses the Studio run result to call Data server tools:
 ```
 run_studio_attack → returns test_id
 get_test_details(test_id=...) → Data server
 get_test_simulations(test_id=...) → Data server
 ```
 
-If Studio returns `plan_run_id` and Data expects `test_id`, the agent must mentally translate. Using
-`test_id` consistently eliminates this friction.
-
-**Change**: `run_studio_attack` returns `test_id` (not `plan_run_id`).
-
 ### 4. Pagination for List Tool
 
-All existing list tools use consistent pagination:
+All list tools use consistent pagination with `page_number: int = 0`, `PAGE_SIZE = 10`, and
+`hint_to_agent`:
 
 | Server | Tool | Pattern |
 |--------|------|---------|
 | Data | `get_tests_history` | `page_number: int = 0`, `PAGE_SIZE = 10`, returns `hint_to_agent` |
 | Playbook | `get_playbook_attacks` | `page_number: int = 0`, `PAGE_SIZE = 10`, returns `hint_to_agent` |
-| **Studio** | `get_all_studio_attacks` | ❌ No pagination (returns all) |
+| **Studio** | `get_all_studio_attacks` | `page_number: int = 0`, `PAGE_SIZE = 10`, returns `hint_to_agent` |
 
-**Change**: Add `page_number: int = 0` parameter with `PAGE_SIZE = 10`. Return structure:
+Return structure:
 ```python
 {
     "attacks_in_page": [...],
@@ -562,45 +558,39 @@ All existing list tools use consistent pagination:
 ### 5. Simulation Result Field Names
 
 The `get_studio_attack_latest_result` tool returns execution results from the **same API** as the Data
-server (`executionsHistoryResults`). The output fields must use the same vocabulary.
+server (`executionsHistoryResults`). Shared fields use the same vocabulary:
 
-| Concept | Data Server Field | Studio Current | Studio Required |
-|---------|------------------|----------------|-----------------|
-| Result ID | `simulation_id` | `execution_id` | `simulation_id` |
-| Attack/playbook ID | `playbook_attack_id` | `simulation_id` | `attack_id` |
-| Attack name | `playbook_attack_name` | `simulation_name` | `attack_name` |
-| Test run ID | `test_id` | `plan_run_id` | `test_id` |
-| Result status | `status` (finalStatus) | `final_status` | `status` |
-| Drift tracking | `drift_tracking_code` | `original_execution_id` | `drift_tracking_code` |
-| Security action | `security_control_action` | `security_action` | `security_action` |
-| Attack description | `attack_plan` | `simulation_description` | `attack_description` |
-| Is drifted | `is_drifted` | (missing) | `is_drifted` |
+| Concept | Data Server Field | Studio Field |
+|---------|------------------|--------------|
+| Result ID | `simulation_id` | `simulation_id` |
+| Attack/playbook ID | `playbook_attack_id` | `attack_id` |
+| Attack name | `playbook_attack_name` | `attack_name` |
+| Test run ID | `test_id` | `test_id` |
+| Result status | `status` (finalStatus) | `status` |
+| Drift tracking | `drift_tracking_code` | `drift_tracking_code` |
+| Security action | `security_control_action` | `security_action` |
+| Attack description | `attack_plan` | `attack_description` |
+| Is drifted | `is_drifted` | `is_drifted` |
 
-The Studio result tool adds fields not present in Data (LOGS, SIMULATION_STEPS, OUTPUT) — this is
-expected since it serves the debug use case. But shared fields must match Data server naming.
+The Studio result tool adds fields not present in Data (LOGS, SIMULATION_STEPS, OUTPUT) for the
+debug use case.
 
 ### 6. `console` Parameter Position
 
-Existing pattern: when there is a required entity ID, it comes **first** and `console` comes **second**.
-When it's a list/search operation, `console` comes first.
+Follows the existing pattern: entity ID **first**, `console` **second** for entity operations;
+`console` first for list/search operations.
 
 | Pattern | Example |
 |---------|---------|
-| List operations | `get_tests_history(console, page_number, ...)` |
-| Entity operations | `get_simulator_details(simulator_id, console)` |
-| Entity operations | `get_playbook_attack_details(attack_id, console, ...)` |
-
-Studio tools should follow the same pattern:
-- `get_all_studio_attacks(console, page_number, ...)` — list, console first
-- `get_studio_attack_source(attack_id, console)` — entity, ID first
-- `run_studio_attack(attack_id, console, ...)` — entity, ID first
-- `save_studio_attack_draft(name, python_code, ..., console)` — creation, console after required params
+| List operations | `get_all_studio_attacks(console, page_number, ...)` |
+| Entity operations | `get_studio_attack_source(attack_id, console)` |
+| Entity operations | `run_studio_attack(attack_id, console, ...)` |
+| Creation operations | `save_studio_attack_draft(name, python_code, ..., console)` |
 
 ### 7. Error Return Pattern
 
-Config server returns `{"error": "...", "console": "..."}` on failure. Data server raises exceptions.
-Studio should follow the **raise exception** pattern (used by most servers) — the server layer catches
-and formats errors. The current Studio already does this correctly.
+Studio follows the **raise exception** pattern (used by Data, Playbook, and most servers) — the
+server layer catches and formats errors into user-facing messages.
 
 ## UX Improvements (Claude Desktop Feedback)
 
@@ -656,6 +646,7 @@ results to a specific test run, enabling the run → check workflow without ambi
 | `safebreach_mcp_studio/studio_server.py` | MCP server and tool registration |
 | `safebreach_mcp_studio/studio_types.py` | API response transformations |
 | `safebreach_mcp_studio/studio_templates.py` | Boilerplate code templates for all attack types |
-| `safebreach_mcp_studio/tests/test_studio_functions.py` | Test suite |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Unit test suite (245 tests) |
+| `safebreach_mcp_studio/tests/test_e2e.py` | End-to-end test suite (13 tests) |
 | `start_all_servers.py` | Multi-server launcher (already configured) |
 | `pyproject.toml` | Package and entry point registration (already configured) |
