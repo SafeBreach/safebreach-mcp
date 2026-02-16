@@ -97,7 +97,7 @@ def get_api_base_url(console:str, endpoint:str) -> str:
     
     Args:
         console: Console name (e.g., 'demo-console', 'example-console')
-        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook'
+        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook', 'orchestrator'
 
     Returns:
         Base URL as a string

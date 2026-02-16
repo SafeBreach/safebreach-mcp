@@ -1107,7 +1107,7 @@ def sb_run_studio_attack(
 
     # Get authentication and base URL
     apitoken = get_secret_for_console(console)
-    base_url = get_api_base_url(console, 'data')
+    base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
     headers = {
         "x-apitoken": apitoken,
