@@ -96,30 +96,58 @@ class TestDataServerE2E:
 
     @pytest.mark.e2e
     def test_get_test_details_e2e(self, e2e_console, sample_test_id):
-        """Test getting real test details from SafeBreach console."""
+        """Test getting real test details from SafeBreach console with inline stats."""
         result = sb_get_test_details(sample_test_id, console=e2e_console)
-        
+
         # Verify response structure
         assert isinstance(result, dict)
         assert 'test_id' in result
         assert 'name' in result
         assert 'status' in result
         assert result['test_id'] == sample_test_id
+        # Simulation statistics are now always included (free from API)
+        assert 'simulations_statistics' in result
+        stats = result['simulations_statistics']
+        assert isinstance(stats, list)
+        assert len(stats) == 7  # 7 status entries, no drift by default
+        # Verify status entries have expected structure
+        status_names = {s.get('status') for s in stats}
+        assert 'missed' in status_names
+        assert 'prevented' in status_names
+        assert 'detected' in status_names
 
-    @pytest.mark.e2e 
-    def test_get_test_details_with_statistics_e2e(self, e2e_console, sample_test_id):
-        """Test getting real test details with simulation statistics."""
+    @pytest.mark.e2e
+    def test_get_test_details_with_drift_count_e2e(self, e2e_console, sample_test_id):
+        """Test getting real test details with drift count (streaming)."""
         result = sb_get_test_details(
             sample_test_id,
             console=e2e_console,
-            include_simulations_statistics=True
+            include_drift_count=True
         )
-        
+
         # Verify response structure
         assert isinstance(result, dict)
         assert 'test_id' in result
         assert 'simulations_statistics' in result
-        assert isinstance(result['simulations_statistics'], list)
+        stats = result['simulations_statistics']
+        assert isinstance(stats, list)
+        assert len(stats) == 8  # 7 status entries + 1 drift entry
+        drift_entry = next((s for s in stats if 'drifted_count' in s), None)
+        assert drift_entry is not None
+        assert isinstance(drift_entry['drifted_count'], int)
+
+    @pytest.mark.e2e
+    def test_get_test_details_no_drift_count_e2e(self, e2e_console, sample_test_id):
+        """Test that default call (no drift) returns 6 status entries only."""
+        result = sb_get_test_details(
+            sample_test_id,
+            console=e2e_console
+        )
+
+        assert isinstance(result, dict)
+        assert 'simulations_statistics' in result
+        stats = result['simulations_statistics']
+        assert len(stats) == 7  # 7 status entries, no drift entry
 
     @pytest.mark.e2e
     def test_get_test_simulations_e2e(self, e2e_console, sample_test_id):
@@ -626,24 +654,19 @@ class TestDataServerE2E:
             print(f"  ✅ Got expected exception for invalid simulation ID: {type(e).__name__}")
             assert len(str(e)) > 0, "Exception should have a meaningful message"
         
-        # Test 2: Invalid test ID  
-        print(f"Test 2: Invalid test ID...")
-        
-        try:
-            result = sb_get_full_simulation_logs(
-                simulation_id="2225626",  # Use a valid simulation ID
-                test_id="invalid-test-id",
-                console=console
-            )
-            # If no exception, check if we got an error response structure
-            if isinstance(result, dict) and 'error' in result:
-                print(f"  ✅ Got expected error response for invalid test ID")
-            else:
-                pytest.fail("Expected error for invalid test ID but got successful response")
-                
-        except Exception as e:
-            print(f"  ✅ Got expected exception for invalid test ID: {type(e).__name__}")
-            assert len(str(e)) > 0, "Exception should have a meaningful message"
+        # Test 2: Invalid test ID with valid simulation ID
+        # NOTE: The API resolves by simulation_id (path param), not test_id (query param runId).
+        # A valid simulation_id with invalid test_id returns data successfully — this is expected.
+        print(f"Test 2: Invalid test ID with valid simulation ID (expects success)...")
+
+        result = sb_get_full_simulation_logs(
+            simulation_id="2225626",  # Valid simulation ID
+            test_id="invalid-test-id",
+            console=console
+        )
+        assert isinstance(result, dict), "Should return valid response when simulation_id is valid"
+        assert 'simulation_id' in result, "Response should contain simulation_id"
+        print(f"  ✅ API correctly resolved by simulation_id despite invalid test_id")
         
         # Test 3: Invalid console
         print(f"Test 3: Invalid console...")

@@ -13,6 +13,7 @@ from safebreach_mcp_data.data_types import (
     reduced_security_control_events_mapping,
     full_security_control_events_mapping,
     get_full_simulation_logs_mapping,
+    get_reduced_test_summary_mapping,
     _build_node_data,
 )
 
@@ -504,3 +505,116 @@ class TestFullSimulationLogsDualScript:
         assert node['output'] == 'out'
         assert node['task_status'] == 'DONE'
         assert node['task_code'] == 0
+
+
+class TestTestSummaryMapping:
+    """Tests for get_reduced_test_summary_mapping including inline stats and propagate findings."""
+
+    def test_always_includes_simulation_statistics(self):
+        """Test that simulations_statistics is always present even without requesting it."""
+        entity = {
+            "planName": "Test Plan",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": [],
+            "finalStatus": {"missed": 3, "stopped": 1, "prevented": 5, "detected": 2, "logged": 0, "no-result": 1, "inconsistent": 0}
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        assert "simulations_statistics" in result
+        stats = result["simulations_statistics"]
+        assert len(stats) == 7
+        assert next(s for s in stats if s["status"] == "missed")["count"] == 3
+        assert next(s for s in stats if s["status"] == "prevented")["count"] == 5
+        assert next(s for s in stats if s["status"] == "detected")["count"] == 2
+
+    def test_missing_final_status_defaults_to_zero(self):
+        """Test that missing finalStatus defaults all counts to 0."""
+        entity = {
+            "planName": "Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": []
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        stats = result["simulations_statistics"]
+        for stat in stats:
+            assert stat["count"] == 0
+
+    def test_propagate_test_includes_findings(self):
+        """Test that Propagate (ALM) tests include findings_count and compromised_hosts."""
+        entity = {
+            "planName": "Propagate Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": ["ALM"],
+            "finalStatus": {},
+            "findingsCount": 42,
+            "compromisedHosts": 7
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        assert result["findings_count"] == 42
+        assert result["compromised_hosts"] == 7
+        assert "Propagate" in result["test_type"]
+
+    def test_validate_test_excludes_findings(self):
+        """Test that Validate (BAS) tests do not include findings fields."""
+        entity = {
+            "planName": "Validate Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": [],
+            "finalStatus": {},
+            "findingsCount": 10,
+            "compromisedHosts": 3
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        assert "findings_count" not in result
+        assert "compromised_hosts" not in result
+        assert "Validate" in result["test_type"]
+
+    def test_propagate_test_missing_findings_fields(self):
+        """Test graceful handling when ALM test is missing findings fields in API response."""
+        entity = {
+            "planName": "Propagate Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": ["ALM"],
+            "finalStatus": {}
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        assert "findings_count" not in result
+        assert "compromised_hosts" not in result
+        assert "Propagate" in result["test_type"]
+
+    def test_propagate_test_zero_findings(self):
+        """Test that zero findings are still included (not omitted)."""
+        entity = {
+            "planName": "Propagate Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "completed",
+            "systemTags": ["ALM"],
+            "finalStatus": {},
+            "findingsCount": 0,
+            "compromisedHosts": 0
+        }
+        result = get_reduced_test_summary_mapping(entity)
+        assert result["findings_count"] == 0
+        assert result["compromised_hosts"] == 0

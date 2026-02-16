@@ -74,14 +74,87 @@ def map_entity(full_entity, mapping):
     return full_entity
 
 
+def _build_simulation_status_counts(final_status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Build simulation status counts from the finalStatus dict in the test summary API response.
+    These counts come free from the API — no simulation fetch needed.
+    """
+    return [
+        {
+            "status": "missed",
+            "explanation": (
+                "Simulations that were not stopped and were also not detected by any deployed security control "
+                "(No logs, no blocking, no alerting)"
+            ),
+            "count": final_status.get('missed', 0)
+        },
+        {
+            "status": "stopped",
+            "explanation": (
+                "Simulations where the attack was not successful but not logged nor detected by a security control"
+            ),
+            "count": final_status.get('stopped', 0)
+        },
+        {
+            "status": "prevented",
+            "explanation": (
+                "Simulations where the attack was evidently prevented as well as reported by a security control"
+            ),
+            "count": final_status.get('prevented', 0)
+        },
+        {
+            "status": "detected",
+            "explanation": (
+                "Simulations where the attack was not stopped but detected and reported by a security control"
+            ),
+            "count": final_status.get('detected', 0)
+        },
+        {
+            "status": "logged",
+            "explanation": (
+                "Simulations where the attack was not stopped yet logged by a security control"
+            ),
+            "count": final_status.get('logged', 0)
+        },
+        {
+            "status": "no-result",
+            "explanation": (
+                "Simulations that could not be completed due to technical issues"
+            ),
+            "count": final_status.get('no-result', 0)
+        },
+        {
+            "status": "inconsistent",
+            "explanation": (
+                "Simulations where the attack was not blocked yet a correlated security control event "
+                "asserts the attack was prevented"
+            ),
+            "count": final_status.get('inconsistent', 0)
+        }
+    ]
+
+
 def get_reduced_test_summary_mapping(test_summary_entity):
     """
     Returns a reduced test summary entity with only the relevant fields.
-    EXACT copy from original safebreach_types.py
+    Always includes simulation status counts (free from the API response).
     """
     reduced_test_summary_entity = map_reduced_entity(test_summary_entity, reduced_test_summary_mapping)
     system_tags = test_summary_entity.get('systemTags', [])
-    reduced_test_summary_entity['test_type'] = "Breach And Attack Simulation (aka BAS aks Validate)" if "ALM" not in system_tags else "Automated Lateral Movement (aka ALM aka Propagate)"
+    is_propagate = "ALM" in system_tags
+    reduced_test_summary_entity['test_type'] = "Automated Lateral Movement (aka ALM aka Propagate)" if is_propagate else "Breach And Attack Simulation (aka BAS aks Validate)"
+
+    # Always include simulation status counts — these come free from the test summary API
+    final_status = test_summary_entity.get('finalStatus', {})
+    reduced_test_summary_entity['simulations_statistics'] = _build_simulation_status_counts(final_status)
+
+    # For Propagate (ALM) tests, include findings counts from the test summary API (saves a separate API call)
+    if is_propagate:
+        if 'findingsCount' in test_summary_entity:
+            reduced_test_summary_entity['findings_count'] = test_summary_entity['findingsCount']
+        if 'compromisedHosts' in test_summary_entity:
+            reduced_test_summary_entity['compromised_hosts'] = test_summary_entity['compromisedHosts']
+
     return reduced_test_summary_entity
 
 

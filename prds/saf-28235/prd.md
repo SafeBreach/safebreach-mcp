@@ -73,7 +73,7 @@ selection** — the agent must choose which simulators to execute on.
 3. run_studio_attack              → queue a test with attack ID + simulator IDs; obtain a test ID
 4. get_studio_attack_latest_result → poll the test ID to completion, then retrieve simulation results
 5. Analyze results:
-   a. Check finalStatus per simulation (missed, stopped, prevented, reported, logged, no-result)
+   a. Check finalStatus per simulation (missed, stopped, prevented, detected, logged, no-result, inconsistent)
    b. Review resultDetails for outcome descriptions
    c. For multi-parameter attacks: compare results across parameter permutations
    d. For dual-script attacks: examine per-node results (attacker vs target)

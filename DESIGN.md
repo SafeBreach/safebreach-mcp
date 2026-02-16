@@ -161,7 +161,7 @@ def sb_get_test_simulations(
 
 1. **Status Filtering:**
    - Filter by simulation execution status
-   - Common values: "missed", "stopped", "prevented", "reported", "logged", "no-result"
+   - Common values: "missed", "stopped", "prevented", "detected", "logged", "no-result", "inconsistent"
    - Case-insensitive exact match
 
 2. **Time Window Filtering:**
@@ -253,7 +253,7 @@ Beyond the filtering capabilities described in this design document, the followi
 ### Enhanced get_test_details (Data Server)
 - **Optional Simulation Statistics**: Include detailed breakdown of simulation results by status
 - **Backward Compatibility**: Statistics not included by default
-- **Comprehensive Status Breakdown**: missed, stopped, prevented, reported, logged, no-result
+- **Comprehensive Status Breakdown**: missed, stopped, prevented, detected, logged, no-result, inconsistent
 
 ### Enhanced get_simulation_details (Data Server)
 - **Optional MITRE Techniques**: Include MITRE ATT&CK technique details

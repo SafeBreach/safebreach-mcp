@@ -5,11 +5,13 @@ Base class for all SafeBreach MCP servers providing common functionality.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
 import sys
 import time
+import uuid
 from typing import Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from .cache_config import is_caching_enabled
@@ -30,6 +32,12 @@ from mcp_server_bug_423_hotfix import apply_patch
 from .safebreach_auth import SafeBreachAuth
 
 logger = logging.getLogger(__name__)
+
+# Concurrency limiter state — shared across all server instances
+_mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('mcp_session_id', default=None)
+_session_semaphores: Dict[str, asyncio.Semaphore] = {}
+_concurrency_limit = int(os.environ.get('SAFEBREACH_MCP_CONCURRENCY_LIMIT', '2'))
+
 
 class SafeBreachMCPBase:
     """Base class for SafeBreach MCP servers."""
@@ -139,6 +147,11 @@ class SafeBreachMCPBase:
             self._log_external_binding_warning(port)
         else:
             logger.info("🏠 Local-only server - no authentication wrapper applied")
+
+        # Wrap with concurrency limiter (applies to all servers)
+        app = self._create_concurrency_limited_app(app)
+        logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
+
         config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
         await server.serve()
@@ -441,7 +454,72 @@ class SafeBreachMCPBase:
         logger.warning(f"🚨 SECURITY WARNING: Server binding to 0.0.0.0:{port} - accessible from external networks!")
         logger.warning("🔒 HTTP Authorization required for external connections")
         logger.warning("🔑 Set SAFEBREACH_MCP_AUTH_TOKEN environment variable for authentication")
-    
+
+    def _create_concurrency_limited_app(self, original_app):
+        """Create an ASGI wrapper that limits concurrent requests per SSE session."""
+
+        async def concurrency_limited_app(scope, receive, send):
+            if scope["type"] != "http":
+                return await original_app(scope, receive, send)
+
+            path = scope.get("path", "/")
+
+            # SSE connection establishment — assign a new session ID
+            if path.endswith("/sse"):
+                session_id = str(uuid.uuid4())
+                _mcp_session_id.set(session_id)
+                _session_semaphores[session_id] = asyncio.Semaphore(_concurrency_limit)
+                logger.info(f"🆔 New SSE session: {session_id[:8]}...")
+
+                async def cleanup_send(message):
+                    await send(message)
+                    # Clean up semaphore when SSE connection ends
+                    if message.get("type") == "http.response.body" and not message.get("more_body", False):
+                        _session_semaphores.pop(session_id, None)
+                        logger.info(f"🧹 Cleaned up session: {session_id[:8]}...")
+
+                return await original_app(scope, receive, cleanup_send)
+
+            # Message endpoint — apply concurrency limit
+            if path.endswith("/messages/") or path.endswith("/messages"):
+                session_id = _mcp_session_id.get()
+                if session_id and session_id in _session_semaphores:
+                    sem = _session_semaphores[session_id]
+                    if sem.locked() and sem._value == 0:  # noqa: SLF001
+                        logger.warning(
+                            f"⚠️ Concurrency limit ({_concurrency_limit}) exceeded for session {session_id[:8]}..."
+                        )
+                        response_body = json.dumps({
+                            "error": "Too Many Requests",
+                            "message": f"Concurrency limit of {_concurrency_limit} exceeded. Please retry.",
+                            "retry_after": 5
+                        }).encode()
+                        await send({
+                            "type": "http.response.start",
+                            "status": 429,
+                            "headers": [
+                                [b"content-type", b"application/json"],
+                                [b"content-length", str(len(response_body)).encode()],
+                                [b"retry-after", b"5"],
+                            ],
+                        })
+                        await send({
+                            "type": "http.response.body",
+                            "body": response_body,
+                        })
+                        return
+
+                    async with sem:
+                        return await original_app(scope, receive, send)
+
+                # No session tracking — pass through (shouldn't happen in normal flow)
+                return await original_app(scope, receive, send)
+
+            # All other paths — pass through without limiting
+            return await original_app(scope, receive, send)
+
+        return concurrency_limited_app
+
     def create_main_function(self, port: int = 8000):
         """
         Create a main function for the server.

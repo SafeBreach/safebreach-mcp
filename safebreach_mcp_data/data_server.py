@@ -76,14 +76,17 @@ Note: Use convert_datetime_to_epoch tool to get timestamps in the correct millis
         
         @self.mcp.tool(
             name="get_test_details",
-            description="Returns the full details for a specific test by id executed on a given Safebreach management console. Optionally includes detailed simulation statistics."
+            description="""Returns the full details for a specific test by id executed on a given Safebreach management console.
+Always includes simulation status counts (missed, stopped, prevented, detected, logged, no-result, inconsistent) at no extra cost.
+Optionally includes drift count via include_drift_count parameter.
+WARNING: include_drift_count=True may take a significant amount of time for large tests (proportional to the number of simulations) as it must scan all simulation pages. Only request drift count when specifically needed."""
         )
         async def get_test_details_tool(
             test_id: str,
             console: str = "default",
-            include_simulations_statistics: bool = False
+            include_drift_count: bool = False
         ) -> dict:
-            return sb_get_test_details(test_id, console, include_simulations_statistics)
+            return sb_get_test_details(test_id, console, include_drift_count)
         
         @self.mcp.tool(
             name="get_test_simulations",

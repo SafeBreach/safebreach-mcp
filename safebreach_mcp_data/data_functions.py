@@ -380,141 +380,160 @@ def _find_previous_test_by_name(
     return matching_tests[0]
 
 
-def sb_get_test_details(test_id: str, console: str = "default", include_simulations_statistics: bool = False) -> Dict[str, Any]:
+def sb_get_test_details(test_id: str, console: str = "default",
+                        include_drift_count: bool = False) -> Dict[str, Any]:
     """
     Returns the details of a specific test executed on a given SafeBreach management console.
+    Always includes simulation status counts (free from the API).
+    Optionally includes drift count (requires fetching simulations page-by-page).
+
+    Uses the list endpoint (/testsummaries?size=1000) via cache, which returns richer data
+    (including findingsCount and compromisedHosts for Propagate tests) compared to the
+    single-test endpoint (/testsummaries/{test_id}) which omits those fields.
+    Falls back to the single-test endpoint if the test is not found in the list.
     """
     # Validate required parameters
     if not test_id or not test_id.strip():
         raise ValueError("test_id parameter is required and cannot be empty")
-    
+
     # Validate boolean parameter - handle None gracefully
-    if include_simulations_statistics is None:
-        include_simulations_statistics = False
-    elif not isinstance(include_simulations_statistics, bool):
-        raise ValueError(f"Invalid include_simulations_statistics parameter '{include_simulations_statistics}'. Must be a boolean value (True/False)")
-    
+    if include_drift_count is None:
+        include_drift_count = False
+    elif not isinstance(include_drift_count, bool):
+        raise ValueError(f"Invalid include_drift_count parameter '{include_drift_count}'. Must be a boolean value (True/False)")
+
     try:
-        apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'data')
-        account_id = get_api_account_id(console)
+        # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
+        return_details = _find_test_in_cached_list(test_id, console)
 
-        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        if return_details is None:
+            # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
+            logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
+            return_details = _fetch_single_test(test_id, console)
 
-        headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
-
-        response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
-        
-        test_summary = response.json()
-        
-        # Validate that we got a meaningful test response
-        # Check for essential fields that should be present in a valid test
-        if not test_summary or not isinstance(test_summary, dict):
-            raise ValueError(f"Invalid test response for test_id '{test_id}': response is empty or not a dictionary")
-        
-        # Check for key identifiers that indicate this is a real test
-        # Only check for planRunId as the essential field - planName may be optional
-        if 'planRunId' not in test_summary:
-            raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
-        
-        return_details = get_reduced_test_summary_mapping(test_summary)
-               
-        if include_simulations_statistics:
-            return_details['simulations_statistics'] = _get_simulation_statistics(test_id, test_summary, console)
+        if include_drift_count:
+            drift_count = _count_drifted_simulations(test_id, console)
+            return_details['simulations_statistics'].append({
+                "explanation": (
+                    "Simulations that completed with different results compared to "
+                    "previous executions with exact same parameters"
+                ),
+                "drifted_count": drift_count
+            })
 
         return return_details
-        
+
     except Exception as e:
         logger.error("Error getting test details for test '%s' from console '%s': %s", test_id, console, str(e))
         raise
 
 
-def _get_simulation_statistics(test_id: str, test_summary: Dict[str, Any], console: str = "default") -> List[Dict[str, Any]]:
+def _find_test_in_cached_list(test_id: str, console: str) -> Optional[Dict[str, Any]]:
     """
-    Get simulation statistics for a test.
-    
-    Args:
-        console: SafeBreach console name
-        test_id: Test ID
-        test_summary: Test summary information
-
-    Returns:
-        Dict containing simulation statistics
+    Look up a test by ID from the cached test list (list endpoint).
+    Returns the mapped test dict if found, None otherwise.
+    The list endpoint includes fields like findingsCount/compromisedHosts
+    that the single-test endpoint omits.
     """
     try:
-        # To coung drifts - get all simulations for the test
-        all_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
+        all_tests = _get_all_tests_from_cache_or_api(console)
+        for test in all_tests:
+            if test.get('test_id') == test_id:
+                # Return a copy so callers can mutate without affecting the cache
+                return dict(test)
+    except Exception as e:
+        logger.warning("Failed to search cached test list for '%s': %s", test_id, e)
+    return None
+
+
+def _fetch_single_test(test_id: str, console: str) -> Dict[str, Any]:
+    """
+    Fetch a single test from the /testsummaries/{test_id} endpoint.
+    This endpoint omits findingsCount/compromisedHosts but works for any test ID.
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    test_summary = response.json()
+
+    if not test_summary or not isinstance(test_summary, dict):
+        raise ValueError(f"Invalid test response for test_id '{test_id}': response is empty or not a dictionary")
+
+    if 'planRunId' not in test_summary:
+        raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
+
+    return get_reduced_test_summary_mapping(test_summary)
+
+
+def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
+    """
+    Count drifted simulations for a test using streaming page-by-page counting.
+    Each page is counted and discarded — memory stays at O(page_size) regardless of total simulations.
+
+    Args:
+        test_id: Test ID
+        console: SafeBreach console name
+
+    Returns:
+        Number of drifted simulations
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
         drifts = 0
-        for sim in all_simulations:
-            is_drift = sim.get('is_drifted', False)
-            if is_drift:
-                if isinstance(is_drift, str):
-                    # this is for debugging purposes, this should never happen
-                    logging.error("Simulation %s has unexpected drift type: %s", sim.get('id', 'unknown'), is_drift)
-                    continue
+        page = 1
+        page_size = 100
 
-                drifts += 1
+        while True:
+            data = {
+                "runId": f"{test_id}",
+                "query": f"!labels:Ignore AND (!labels:Draft) AND (runId:{test_id})",
+                "page": page,
+                "pageSize": page_size,
+                "orderBy": "desc",
+                "sortBy": "executionTime"
+            }
 
-        # Get finalStatus safely, default to empty dict if not present
-        final_status = test_summary.get('finalStatus', {})
-        stats = [{
-                    "status": "missed",
-                    "explanation": (
-                        "Simulations that were not stopped and were also not detected by any deployed security control "
-                        "(No logs, no blocking, no alerting)"
-                    ),
-                    "count": final_status.get('missed', 0)
-                },
-                {
-                    "status": "stopped",
-                    "explanation": (
-                        "Simulations where the attack was not successful but not logged nor detected by a security control"
-                    ),
-                    "count": final_status.get('stopped', 0)
-                },
-                {
-                    "status": "prevented",
-                    "explanation": (
-                        "Simulations where the attack was evidently prevented as well as reportedby a security control"
-                    ),
-                    "count": final_status.get('prevented', 0)
-                },
-                {
-                    "status": "reported",
-                    "explanation": (
-                        "Simulations where the attack was not stopped but detected and reported by a security control"
-                    ),
-                    "count": final_status.get('reported', 0)
-                },
-                {
-                    "status": "logged",
-                    "explanation": (
-                        "Simulations where the attack was not stopped yet logged by a security control"
-                    ),
-                    "count": final_status.get('logged', 0)
-                },
-                {
-                    "status": "no-result",
-                    "explanation": (
-                        "Simulations that could not be completed due to technical issues"
-                    ),
-                    "count": final_status.get('no-result', 0)
-                },
-                {
-                    "explanation": (
-                        "Simulations that completed with different results compared to previous executions with exact same parameters"
-                    ),
-                    "drifted_count": drifts
-                }
-            ]
-        
-        return stats
-        
-    except Exception as e:  # pylint: disable=broad-exception-caught  # Graceful error handling for statistics
-        logger.error("Error getting simulation statistics for test '%s': %s", test_id, str(e))
-        return [{"error": f"Failed to get simulation statistics: {str(e)}"}]
+            response = requests.post(api_url, headers=headers, json=data, timeout=120)
+            response.raise_for_status()
+
+            try:
+                response_data = response.json()
+                page_simulations = response_data.get("simulations", [])
+            except ValueError:
+                break
+
+            if not page_simulations:
+                break
+
+            # Count drifts in this page, then discard the page
+            for sim in page_simulations:
+                drift_type = sim.get('driftType')
+                if drift_type and drift_type != 'no_drift':
+                    drifts += 1
+
+            if len(page_simulations) < page_size:
+                break
+
+            page += 1
+
+        return drifts
+
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Graceful error handling for drift counting
+        logger.error("Error counting drifted simulations for test '%s': %s", test_id, str(e))
+        return 0
 
 
 def sb_get_test_simulations(
