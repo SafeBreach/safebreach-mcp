@@ -133,11 +133,19 @@ def get_reduced_test_summary_mapping(test_summary_entity):
     """
     reduced_test_summary_entity = map_reduced_entity(test_summary_entity, reduced_test_summary_mapping)
     system_tags = test_summary_entity.get('systemTags', [])
-    reduced_test_summary_entity['test_type'] = "Breach And Attack Simulation (aka BAS aks Validate)" if "ALM" not in system_tags else "Automated Lateral Movement (aka ALM aka Propagate)"
+    is_propagate = "ALM" in system_tags
+    reduced_test_summary_entity['test_type'] = "Automated Lateral Movement (aka ALM aka Propagate)" if is_propagate else "Breach And Attack Simulation (aka BAS aks Validate)"
 
     # Always include simulation status counts — these come free from the test summary API
     final_status = test_summary_entity.get('finalStatus', {})
     reduced_test_summary_entity['simulations_statistics'] = _build_simulation_status_counts(final_status)
+
+    # For Propagate (ALM) tests, include findings counts from the test summary API (saves a separate API call)
+    if is_propagate:
+        if 'findingsCount' in test_summary_entity:
+            reduced_test_summary_entity['findings_count'] = test_summary_entity['findingsCount']
+        if 'compromisedHosts' in test_summary_entity:
+            reduced_test_summary_entity['compromised_hosts'] = test_summary_entity['compromisedHosts']
 
     return reduced_test_summary_entity
 
