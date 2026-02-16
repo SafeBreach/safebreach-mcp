@@ -417,7 +417,7 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
     def test_sb_get_test_details_success(self, mock_get, mock_secret, mock_base_url, mock_account_id):
-        """Test successful test details retrieval."""
+        """Test successful test details retrieval with inline simulation statistics."""
         # Setup mocks
         mock_secret.return_value = "test-token"
         mock_response = Mock()
@@ -428,18 +428,36 @@ class TestDataFunctions:
             "endTime": 1640995800,
             "duration": 600,
             "status": "completed",
-            "systemTags": []
+            "systemTags": [],
+            "finalStatus": {
+                "missed": 5,
+                "stopped": 3,
+                "prevented": 10,
+                "reported": 2,
+                "logged": 1,
+                "no-result": 0
+            }
         }
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
-        
+
         result = sb_get_test_details("test1", "test-console")
-        
+
         assert "test_id" in result
         assert result["test_id"] == "test1"
         assert "name" in result
         assert result["name"] == "Test Plan"
+        # Simulation status counts are always included (free from API)
+        assert "simulations_statistics" in result
+        stats = result["simulations_statistics"]
+        assert isinstance(stats, list)
+        assert len(stats) == 6  # 6 status entries, no drift entry by default
+        # Verify counts match finalStatus
+        missed_stat = next(s for s in stats if s.get("status") == "missed")
+        assert missed_stat["count"] == 5
+        prevented_stat = next(s for s in stats if s.get("status") == "prevented")
+        assert prevented_stat["count"] == 10
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
     
@@ -1215,26 +1233,24 @@ class TestDataFunctions:
     
     def test_sb_get_test_details_boolean_parameter_validation(self):
         """Test boolean parameter validation in get_test_details (Bug #8)."""
-        
+
         with patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123') as mock_account_id, \
              patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com') as mock_base_url, \
              patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret, \
              patch('requests.get') as mock_get:
-            
+
             mock_secret.return_value = "fake-token"
             mock_response = mock_get.return_value
             mock_response.status_code = 200
             mock_response.json.return_value = {"planRunId": "test123", "name": "Test"}
-            
+
             # Test None (should be handled gracefully by defaulting to False)
             result = sb_get_test_details("test123", include_simulations_statistics=None)
             # Should succeed without error
-            
-            # Test invalid type (should raise error)
-            with pytest.raises(ValueError) as exc_info:
-                sb_get_test_details("test123", include_simulations_statistics="invalid")
-            assert "Invalid include_simulations_statistics parameter" in str(exc_info.value)
-            assert "Must be a boolean value" in str(exc_info.value)
+
+            # Test backward compat: old parameter still works
+            result = sb_get_test_details("test123", include_drift_count=None)
+            # Should succeed without error
 
     # Test findings functions
     
@@ -2056,9 +2072,9 @@ class TestDataFunctions:
         assert result["drift_info"]["drift_tracking_code"] == "track123"
 
     def test_drift_statistics_counting(self):
-        """Test that drift statistics are properly counted in simulation statistics."""
-        from safebreach_mcp_data.data_functions import _get_simulation_statistics
-        
+        """Test that drift count is properly calculated."""
+        from safebreach_mcp_data.data_functions import _count_drifted_simulations
+
         # Mock simulation data with drifts
         mock_simulations = [
             {"id": "sim1", "is_drifted": True},
@@ -2066,28 +2082,12 @@ class TestDataFunctions:
             {"id": "sim3", "is_drifted": True},
             {"id": "sim4"},  # No drift info - should not count
         ]
-        
-        test_summary = {
-            "finalStatus": {
-                "missed": 1,
-                "stopped": 1,
-                "prevented": 1,
-                "reported": 1,
-                "logged": 0,
-                "no-result": 0
-            }
-        }
-        
+
         with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
             mock_get_sims.return_value = mock_simulations
-            
-            stats = _get_simulation_statistics("test1", test_summary, "test-console")
-            
-            # Find the drift statistics entry
-            drift_stat = next((stat for stat in stats if "drifted_count" in stat), None)
-            assert drift_stat is not None
-            assert drift_stat["drifted_count"] == 2  # Only sim1 and sim3 are drifted
-            assert "different results compared to previous executions" in drift_stat["explanation"]
+
+            drift_count = _count_drifted_simulations("test1", "test-console")
+            assert drift_count == 2  # Only sim1 and sim3 are drifted
 
     # Test cases for sb_get_test_drifts function
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
