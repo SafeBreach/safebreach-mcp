@@ -261,7 +261,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 
 **Data Server (Port 8001):**
 3. `get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
-4. `get_test_details` ✨ **Enhanced** - Full details for specific tests with optional simulation statistics including drift counts
+4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings
 5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering, and drift analysis filtering
 6. `get_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques, attack logs, and drift analysis information
 7. `get_security_controls_events` - Security control events with filtering
@@ -300,10 +300,10 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 
 **Enhanced Test Details (`get_test_details`):**
-- **Basic Details**: Returns standard test information (name, ID, start/end times, duration, status)
-- **Optional Simulation Statistics**: Set `include_simulations_statistics=True` to get detailed breakdown of simulation results by status (missed, stopped, prevented, reported, logged, no-result) and drift counts
-- **Drift Analysis**: Statistics include count of simulations that completed with different results compared to previous executions with identical parameters
-- **Backward Compatibility**: Statistics are not included by default to maintain existing behavior
+- **Inline Status Counts**: Always returns simulation status breakdown (missed, stopped, prevented, reported, logged, no-result) at zero cost — extracted from the test summary API
+- **Optional Drift Count**: Set `include_drift_count=True` to count drifted simulations via streaming page-by-page counting (WARNING: may be slow for large tests)
+- **Propagate Findings**: For ALM (Propagate) tests, includes `findings_count` and `compromised_hosts` from the test summary API
+- **Backward Compatibility**: `include_simulations_statistics=True` still works (maps to `include_drift_count`)
 
 **Enhanced Simulation Filtering (`get_test_simulations`):**
 - **Status**: Filter by simulation status ("missed", "stopped", "prevented", "reported", "logged", "no-result")
@@ -355,6 +355,9 @@ export SAFEBREACH_MCP_UTILITIES_EXTERNAL=true   # Utilities server only
 
 # Custom bind host (default: 127.0.0.1)
 export SAFEBREACH_MCP_BIND_HOST=0.0.0.0
+
+# Per-agent concurrency limit (default: 2)
+export SAFEBREACH_MCP_CONCURRENCY_LIMIT=3
 ```
 
 **Command-Line Arguments:**

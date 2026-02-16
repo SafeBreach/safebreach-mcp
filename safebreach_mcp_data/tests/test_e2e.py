@@ -96,30 +96,58 @@ class TestDataServerE2E:
 
     @pytest.mark.e2e
     def test_get_test_details_e2e(self, e2e_console, sample_test_id):
-        """Test getting real test details from SafeBreach console."""
+        """Test getting real test details from SafeBreach console with inline stats."""
         result = sb_get_test_details(sample_test_id, console=e2e_console)
-        
+
         # Verify response structure
         assert isinstance(result, dict)
         assert 'test_id' in result
         assert 'name' in result
         assert 'status' in result
         assert result['test_id'] == sample_test_id
+        # Simulation statistics are now always included (free from API)
+        assert 'simulations_statistics' in result
+        stats = result['simulations_statistics']
+        assert isinstance(stats, list)
+        assert len(stats) == 6  # 6 status entries, no drift by default
+        # Verify status entries have expected structure
+        status_names = {s.get('status') for s in stats}
+        assert 'missed' in status_names
+        assert 'prevented' in status_names
 
-    @pytest.mark.e2e 
-    def test_get_test_details_with_statistics_e2e(self, e2e_console, sample_test_id):
-        """Test getting real test details with simulation statistics."""
+    @pytest.mark.e2e
+    def test_get_test_details_with_drift_count_e2e(self, e2e_console, sample_test_id):
+        """Test getting real test details with drift count (streaming)."""
+        result = sb_get_test_details(
+            sample_test_id,
+            console=e2e_console,
+            include_drift_count=True
+        )
+
+        # Verify response structure
+        assert isinstance(result, dict)
+        assert 'test_id' in result
+        assert 'simulations_statistics' in result
+        stats = result['simulations_statistics']
+        assert isinstance(stats, list)
+        assert len(stats) == 7  # 6 status entries + 1 drift entry
+        drift_entry = next((s for s in stats if 'drifted_count' in s), None)
+        assert drift_entry is not None
+        assert isinstance(drift_entry['drifted_count'], int)
+
+    @pytest.mark.e2e
+    def test_get_test_details_backward_compat_e2e(self, e2e_console, sample_test_id):
+        """Test backward compatibility: include_simulations_statistics still works."""
         result = sb_get_test_details(
             sample_test_id,
             console=e2e_console,
             include_simulations_statistics=True
         )
-        
-        # Verify response structure
+
         assert isinstance(result, dict)
-        assert 'test_id' in result
         assert 'simulations_statistics' in result
-        assert isinstance(result['simulations_statistics'], list)
+        stats = result['simulations_statistics']
+        assert len(stats) == 7  # includes drift entry via backward compat
 
     @pytest.mark.e2e
     def test_get_test_simulations_e2e(self, e2e_console, sample_test_id):
