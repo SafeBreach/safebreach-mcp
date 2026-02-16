@@ -108,7 +108,10 @@ def sb_get_playbook_attacks(
     modified_date_start: Optional[str] = None,
     modified_date_end: Optional[str] = None,
     published_date_start: Optional[str] = None,
-    published_date_end: Optional[str] = None
+    published_date_end: Optional[str] = None,
+    include_mitre_techniques: bool = False,
+    mitre_technique_filter: Optional[str] = None,
+    mitre_tactic_filter: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated playbook attacks.
@@ -124,6 +127,9 @@ def sb_get_playbook_attacks(
         modified_date_end: End date for modified date range (ISO format)
         published_date_start: Start date for published date range (ISO format)
         published_date_end: End date for published date range (ISO format)
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
+        mitre_technique_filter: Comma-separated technique IDs/names (OR, case-insensitive partial)
+        mitre_tactic_filter: Comma-separated tactic names (OR, case-insensitive partial)
 
     Returns:
         Dict containing paginated attacks and metadata
@@ -150,9 +156,12 @@ def sb_get_playbook_attacks(
         # Get all attacks from cache or API
         all_attacks = _get_all_attacks_from_cache_or_api(console)
 
+        # Auto-enable MITRE when filters need it
+        needs_mitre = include_mitre_techniques or bool(mitre_technique_filter) or bool(mitre_tactic_filter)
+
         # Transform to reduced format
         reduced_attacks = [
-            transform_reduced_playbook_attack(attack)
+            transform_reduced_playbook_attack(attack, include_mitre_techniques=needs_mitre)
             for attack in all_attacks
         ]
 
@@ -166,7 +175,9 @@ def sb_get_playbook_attacks(
             modified_date_start=modified_date_start,
             modified_date_end=modified_date_end,
             published_date_start=published_date_start,
-            published_date_end=published_date_end
+            published_date_end=published_date_end,
+            mitre_technique_filter=mitre_technique_filter,
+            mitre_tactic_filter=mitre_tactic_filter
         )
 
         # Paginate results
@@ -190,6 +201,10 @@ def sb_get_playbook_attacks(
             applied_filters['published_date_start'] = published_date_start
         if published_date_end:
             applied_filters['published_date_end'] = published_date_end
+        if mitre_technique_filter:
+            applied_filters['mitre_technique_filter'] = mitre_technique_filter
+        if mitre_tactic_filter:
+            applied_filters['mitre_tactic_filter'] = mitre_tactic_filter
 
         paginated_result['applied_filters'] = applied_filters
 
@@ -207,7 +222,8 @@ def sb_get_playbook_attack_details(
     console: str = "default",
     include_fix_suggestions: bool = False,
     include_tags: bool = False,
-    include_parameters: bool = False
+    include_parameters: bool = False,
+    include_mitre_techniques: bool = False
 ) -> Dict[str, Any]:
     """
     Get detailed information for a specific playbook attack.
@@ -218,6 +234,7 @@ def sb_get_playbook_attack_details(
         include_fix_suggestions: Whether to include fix suggestions
         include_tags: Whether to include tags
         include_parameters: Whether to include parameters
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
 
     Returns:
         Dict containing detailed attack information
@@ -251,7 +268,8 @@ def sb_get_playbook_attack_details(
             attack_data,
             include_fix_suggestions=include_fix_suggestions,
             include_tags=include_tags,
-            include_parameters=include_parameters
+            include_parameters=include_parameters,
+            include_mitre_techniques=include_mitre_techniques
         )
 
         return detailed_attack

@@ -62,6 +62,76 @@ def _transform_tags(tags_data: Any) -> List[str]:
     return formatted_tags
 
 
+def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
+    """
+    Extract MITRE ATT&CK data from the tags array.
+
+    Looks for tag items with names: MITRE_Tactic, MITRE_Technique, MITRE_Sub_Technique.
+    Constructs ATT&CK URLs from technique IDs.
+
+    Args:
+        tags_data: Raw tags list from SafeBreach API
+
+    Returns:
+        Dict with keys: mitre_tactics, mitre_techniques, mitre_sub_techniques (each a list)
+    """
+    result = {
+        'mitre_tactics': [],
+        'mitre_techniques': [],
+        'mitre_sub_techniques': []
+    }
+
+    if not tags_data or not isinstance(tags_data, list):
+        return result
+
+    for tag_item in tags_data:
+        if not isinstance(tag_item, dict):
+            continue
+
+        tag_name = tag_item.get('name', '')
+        values = tag_item.get('values', [])
+
+        if not isinstance(values, list):
+            continue
+
+        if tag_name == 'MITRE_Tactic':
+            for val in values:
+                if isinstance(val, dict):
+                    name = val.get('displayName') or val.get('value', '')
+                    if name:
+                        result['mitre_tactics'].append({'name': name})
+
+        elif tag_name == 'MITRE_Technique':
+            for val in values:
+                if isinstance(val, dict):
+                    tech_id = val.get('value', '')
+                    display_name = val.get('displayName', '')
+                    if tech_id:
+                        url = f"https://attack.mitre.org/techniques/{tech_id}/"
+                        result['mitre_techniques'].append({
+                            'id': tech_id,
+                            'display_name': display_name,
+                            'url': url
+                        })
+
+        elif tag_name == 'MITRE_Sub_Technique':
+            for val in values:
+                if isinstance(val, dict):
+                    tech_id = val.get('value', '')
+                    display_name = val.get('displayName', '')
+                    if tech_id:
+                        # Sub-technique IDs use '.' (e.g., T1021.001) -> URL uses '/' (T1021/001)
+                        url_path = tech_id.replace('.', '/')
+                        url = f"https://attack.mitre.org/techniques/{url_path}/"
+                        result['mitre_sub_techniques'].append({
+                            'id': tech_id,
+                            'display_name': display_name,
+                            'url': url
+                        })
+
+    return result
+
+
 def get_reduced_playbook_attack_mapping() -> Dict[str, str]:
     """
     Get mapping for reduced playbook attack objects.
@@ -95,19 +165,21 @@ def get_full_playbook_attack_mapping() -> Dict[str, str]:
     return full_mapping
 
 
-def transform_reduced_playbook_attack(attack_data: Dict[str, Any]) -> Dict[str, Any]:
+def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
+                                      include_mitre_techniques: bool = False) -> Dict[str, Any]:
     """
     Transform a playbook attack to reduced format.
-    
+
     Args:
         attack_data: Raw attack data from SafeBreach API
-        
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
+
     Returns:
         Transformed attack data in reduced format
     """
     mapping = get_reduced_playbook_attack_mapping()
     result = {}
-    
+
     for output_key, source_key in mapping.items():
         if '.' in source_key:
             # Handle nested keys like 'metadata.fix_suggestions'
@@ -122,28 +194,34 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any]) -> Dict[str, 
             result[output_key] = value
         else:
             result[output_key] = attack_data.get(source_key)
-    
+
+    if include_mitre_techniques:
+        mitre_data = _extract_mitre_data(attack_data.get('tags', []))
+        result.update(mitre_data)
+
     return result
 
 
-def transform_full_playbook_attack(attack_data: Dict[str, Any], 
+def transform_full_playbook_attack(attack_data: Dict[str, Any],
                                    include_fix_suggestions: bool = True,
                                    include_tags: bool = True,
-                                   include_parameters: bool = True) -> Dict[str, Any]:
+                                   include_parameters: bool = True,
+                                   include_mitre_techniques: bool = False) -> Dict[str, Any]:
     """
     Transform a playbook attack to full format with verbosity options.
-    
+
     Args:
         attack_data: Raw attack data from SafeBreach API
         include_fix_suggestions: Whether to include fix suggestions
         include_tags: Whether to include tags
         include_parameters: Whether to include parameters
-        
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
+
     Returns:
         Transformed attack data in full format
     """
-    # Start with reduced format
-    result = transform_reduced_playbook_attack(attack_data)
+    # Start with reduced format (with MITRE if requested)
+    result = transform_reduced_playbook_attack(attack_data, include_mitre_techniques=include_mitre_techniques)
     
     # Add optional fields based on verbosity settings
     if include_fix_suggestions:
@@ -165,7 +243,7 @@ def transform_full_playbook_attack(attack_data: Dict[str, Any],
     return result
 
 
-def filter_attacks_by_criteria(attacks: List[Dict[str, Any]], 
+def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                name_filter: Optional[str] = None,
                                description_filter: Optional[str] = None,
                                id_min: Optional[int] = None,
@@ -173,10 +251,12 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                modified_date_start: Optional[str] = None,
                                modified_date_end: Optional[str] = None,
                                published_date_start: Optional[str] = None,
-                               published_date_end: Optional[str] = None) -> List[Dict[str, Any]]:
+                               published_date_end: Optional[str] = None,
+                               mitre_technique_filter: Optional[str] = None,
+                               mitre_tactic_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
-    
+
     Args:
         attacks: List of attack objects
         name_filter: Partial match on name (case-insensitive)
@@ -187,7 +267,9 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
         modified_date_end: End date for modified date range (ISO format)
         published_date_start: Start date for published date range (ISO format)
         published_date_end: End date for published date range (ISO format)
-        
+        mitre_technique_filter: Comma-separated technique IDs or names (OR logic, case-insensitive partial match)
+        mitre_tactic_filter: Comma-separated tactic names (OR logic, case-insensitive partial match)
+
     Returns:
         Filtered list of attacks
     """
@@ -247,8 +329,58 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             attack for attack in filtered_attacks
             if attack.get('publishedDate') and attack['publishedDate'] <= published_date_end
         ]
-    
+
+    # Filter by MITRE technique ID or name (comma-separated OR logic, case-insensitive partial match)
+    if mitre_technique_filter:
+        filter_values = [v.strip().lower() for v in mitre_technique_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_mitre_technique(attack, filter_values)
+        ]
+
+    # Filter by MITRE tactic name (comma-separated OR logic, case-insensitive partial match)
+    if mitre_tactic_filter:
+        filter_values = [v.strip().lower() for v in mitre_tactic_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_mitre_tactic(attack, filter_values)
+        ]
+
     return filtered_attacks
+
+
+def _attack_matches_mitre_technique(attack: Dict[str, Any], filter_values: List[str]) -> bool:
+    """Check if an attack matches any of the MITRE technique filter values."""
+    techniques = attack.get('mitre_techniques', [])
+    sub_techniques = attack.get('mitre_sub_techniques', [])
+
+    if not techniques and not sub_techniques:
+        return False
+
+    for fv in filter_values:
+        for tech in techniques:
+            if fv in tech.get('id', '').lower() or fv in tech.get('display_name', '').lower():
+                return True
+        for tech in sub_techniques:
+            if fv in tech.get('id', '').lower() or fv in tech.get('display_name', '').lower():
+                return True
+
+    return False
+
+
+def _attack_matches_mitre_tactic(attack: Dict[str, Any], filter_values: List[str]) -> bool:
+    """Check if an attack matches any of the MITRE tactic filter values."""
+    tactics = attack.get('mitre_tactics', [])
+
+    if not tactics:
+        return False
+
+    for fv in filter_values:
+        for tactic in tactics:
+            if fv in tactic.get('name', '').lower():
+                return True
+
+    return False
 
 
 def paginate_attacks(attacks: List[Dict[str, Any]], 

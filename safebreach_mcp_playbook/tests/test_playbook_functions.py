@@ -507,3 +507,156 @@ class TestCacheFunctionality:
         # Clear cache using the function
         clear_playbook_cache()
         assert len(playbook_cache) == 0, f"Cache should be empty after clear but has: {list(playbook_cache.keys())}"
+
+
+# MITRE-specific fixtures and tests
+
+@pytest.fixture
+def sample_attack_data_with_mitre():
+    """Sample attack data with MITRE tags in real API structure."""
+    return [
+        {
+            "id": 1027,
+            "name": "DNS queries of malicious URLs",
+            "description": "Verify DNS resolution of malicious domains.",
+            "modifiedDate": "2024-10-07T07:28:05.000Z",
+            "publishedDate": "2019-05-29T15:18:44.000Z",
+            "metadata": {"fix_suggestions": []},
+            "tags": [
+                {"id": 1, "name": "category",
+                 "values": [{"id": 1, "value": "network", "displayName": "Network"}]},
+                {"id": 10, "name": "MITRE_Tactic",
+                 "values": [{"id": 1, "sort": 1, "value": "Discovery", "displayName": "Discovery"}]},
+                {"id": 11, "name": "MITRE_Technique",
+                 "values": [{"id": 1, "sort": 1, "value": "T1046",
+                              "displayName": "(T1046) Network Service Discovery"}]}
+            ],
+            "content": {"params": []}
+        },
+        {
+            "id": 2048,
+            "name": "Remote Desktop lateral movement",
+            "description": "Attempt RDP connection.",
+            "modifiedDate": "2024-01-15T10:30:00.000Z",
+            "publishedDate": "2020-03-10T12:00:00.000Z",
+            "metadata": {"fix_suggestions": []},
+            "tags": [
+                {"id": 10, "name": "MITRE_Tactic",
+                 "values": [{"id": 2, "sort": 1, "value": "Lateral Movement",
+                              "displayName": "Lateral Movement"}]},
+                {"id": 11, "name": "MITRE_Technique",
+                 "values": [{"id": 2, "sort": 1, "value": "T1021",
+                              "displayName": "(T1021) Remote Services"}]},
+                {"id": 12, "name": "MITRE_Sub_Technique",
+                 "values": [{"id": 1, "sort": 1, "value": "T1021.001",
+                              "displayName": "(T1021.001) Remote Desktop Protocol"}]}
+            ],
+            "content": {"params": []}
+        }
+    ]
+
+
+class TestMitreGetPlaybookAttacks:
+    """Test MITRE functionality in sb_get_playbook_attacks."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_inclusion(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test include_mitre_techniques=True returns MITRE data."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks('test-console', include_mitre_techniques=True)
+
+        attacks = result['attacks_in_page']
+        assert len(attacks) == 2
+
+        # First attack should have MITRE data
+        assert 'mitre_tactics' in attacks[0]
+        assert 'mitre_techniques' in attacks[0]
+        assert attacks[0]['mitre_techniques'][0]['id'] == 'T1046'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_technique_filter(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test mitre_technique_filter filters correctly."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks('test-console', mitre_technique_filter="T1046")
+
+        assert result['total_attacks'] == 1
+        assert result['attacks_in_page'][0]['id'] == 1027
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_tactic_filter(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test mitre_tactic_filter filters correctly."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks('test-console', mitre_tactic_filter="Discovery")
+
+        assert result['total_attacks'] == 1
+        assert result['attacks_in_page'][0]['id'] == 1027
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_auto_enable_with_filter(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test MITRE auto-enabled when filter is used without include_mitre_techniques."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks(
+            'test-console',
+            include_mitre_techniques=False,
+            mitre_technique_filter="T1046"
+        )
+
+        # MITRE data should be present (auto-enabled for filtering)
+        assert 'mitre_techniques' in result['attacks_in_page'][0]
+        assert result['attacks_in_page'][0]['mitre_techniques'][0]['id'] == 'T1046'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_filter_in_applied_filters(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test MITRE filter values appear in applied_filters metadata."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks(
+            'test-console',
+            mitre_technique_filter="T1046",
+            mitre_tactic_filter="Discovery"
+        )
+
+        assert result['applied_filters']['mitre_technique_filter'] == 'T1046'
+        assert result['applied_filters']['mitre_tactic_filter'] == 'Discovery'
+
+
+class TestMitreGetPlaybookAttackDetails:
+    """Test MITRE functionality in sb_get_playbook_attack_details."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_with_mitre_techniques(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test include_mitre_techniques=True returns MITRE data."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attack_details(1027, 'test-console', include_mitre_techniques=True)
+
+        assert 'mitre_tactics' in result
+        assert 'mitre_techniques' in result
+        assert result['mitre_tactics'][0]['name'] == 'Discovery'
+        assert result['mitre_techniques'][0]['id'] == 'T1046'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_without_mitre_techniques(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test default (False) does not include MITRE data."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attack_details(1027, 'test-console')
+
+        assert 'mitre_tactics' not in result
+        assert 'mitre_techniques' not in result

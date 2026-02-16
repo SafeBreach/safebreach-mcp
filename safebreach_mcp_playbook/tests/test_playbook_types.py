@@ -12,7 +12,8 @@ from safebreach_mcp_playbook.playbook_types import (
     transform_full_playbook_attack,
     filter_attacks_by_criteria,
     paginate_attacks,
-    _transform_tags
+    _transform_tags,
+    _extract_mitre_data
 )
 
 
@@ -531,3 +532,307 @@ class TestPaginationFunction:
         
         result = paginate_attacks(large_dataset, page_number=2, page_size=10)
         assert len(result['attacks_in_page']) == 5  # Last page
+
+
+# MITRE test fixtures
+
+@pytest.fixture
+def sample_mitre_tags():
+    """Tags array with MITRE data matching real API structure."""
+    return [
+        {
+            "id": 1,
+            "name": "category",
+            "values": [{"id": 1, "value": "network", "displayName": "Network"}]
+        },
+        {
+            "id": 10,
+            "name": "MITRE_Tactic",
+            "values": [
+                {"id": 1, "sort": 1, "value": "Discovery", "displayName": "Discovery"}
+            ]
+        },
+        {
+            "id": 11,
+            "name": "MITRE_Technique",
+            "values": [
+                {"id": 1, "sort": 1, "value": "T1046", "displayName": "(T1046) Network Service Discovery"}
+            ]
+        },
+        {
+            "id": 12,
+            "name": "MITRE_Sub_Technique",
+            "values": [
+                {"id": 1, "sort": 1, "value": "T1021.001", "displayName": "(T1021.001) Remote Desktop Protocol"}
+            ]
+        }
+    ]
+
+
+@pytest.fixture
+def sample_attack_with_mitre(sample_mitre_tags):
+    """Raw attack with MITRE tags."""
+    return {
+        "id": 1027,
+        "name": "DNS queries of malicious URLs",
+        "description": "Verify DNS resolution of malicious domains.",
+        "modifiedDate": "2024-10-07T07:28:05.000Z",
+        "publishedDate": "2019-05-29T15:18:44.000Z",
+        "metadata": {"fix_suggestions": []},
+        "tags": sample_mitre_tags,
+        "content": {"params": []}
+    }
+
+
+@pytest.fixture
+def sample_attacks_with_mitre_list():
+    """List of transformed attacks with MITRE data for filter tests."""
+    return [
+        {
+            "id": 1027,
+            "name": "DNS queries of malicious URLs",
+            "description": "Verify DNS resolution",
+            "modifiedDate": "2024-10-07T07:28:05.000Z",
+            "publishedDate": "2019-05-29T15:18:44.000Z",
+            "mitre_tactics": [{"name": "Discovery"}],
+            "mitre_techniques": [{"id": "T1046", "display_name": "(T1046) Network Service Discovery",
+                                  "url": "https://attack.mitre.org/techniques/T1046/"}],
+            "mitre_sub_techniques": []
+        },
+        {
+            "id": 2048,
+            "name": "Remote Desktop lateral movement",
+            "description": "Attempt RDP connection",
+            "modifiedDate": "2024-01-15T10:30:00.000Z",
+            "publishedDate": "2020-03-10T12:00:00.000Z",
+            "mitre_tactics": [{"name": "Lateral Movement"}],
+            "mitre_techniques": [{"id": "T1021", "display_name": "(T1021) Remote Services",
+                                  "url": "https://attack.mitre.org/techniques/T1021/"}],
+            "mitre_sub_techniques": [{"id": "T1021.001",
+                                      "display_name": "(T1021.001) Remote Desktop Protocol",
+                                      "url": "https://attack.mitre.org/techniques/T1021/001/"}]
+        },
+        {
+            "id": 3141,
+            "name": "SSH brute force attack",
+            "description": "Attempt SSH brute force",
+            "modifiedDate": "2023-12-01T14:22:00.000Z",
+            "publishedDate": "2018-11-05T09:15:30.000Z"
+            # No MITRE data
+        }
+    ]
+
+
+class TestMitreExtraction:
+    """Test MITRE ATT&CK data extraction."""
+
+    def test_extract_complete_mitre_data(self, sample_mitre_tags):
+        """Test extraction with all three MITRE categories present."""
+        result = _extract_mitre_data(sample_mitre_tags)
+
+        assert len(result['mitre_tactics']) == 1
+        assert result['mitre_tactics'][0]['name'] == 'Discovery'
+
+        assert len(result['mitre_techniques']) == 1
+        assert result['mitre_techniques'][0]['id'] == 'T1046'
+        assert result['mitre_techniques'][0]['display_name'] == '(T1046) Network Service Discovery'
+        assert result['mitre_techniques'][0]['url'] == 'https://attack.mitre.org/techniques/T1046/'
+
+        assert len(result['mitre_sub_techniques']) == 1
+        assert result['mitre_sub_techniques'][0]['id'] == 'T1021.001'
+        assert result['mitre_sub_techniques'][0]['url'] == 'https://attack.mitre.org/techniques/T1021/001/'
+
+    def test_extract_partial_mitre_data(self):
+        """Test extraction with technique only, no sub-technique."""
+        tags = [
+            {
+                "id": 11,
+                "name": "MITRE_Technique",
+                "values": [{"id": 1, "value": "T1046", "displayName": "(T1046) Network Service Discovery"}]
+            }
+        ]
+        result = _extract_mitre_data(tags)
+
+        assert len(result['mitre_techniques']) == 1
+        assert result['mitre_tactics'] == []
+        assert result['mitre_sub_techniques'] == []
+
+    def test_extract_no_mitre_tags(self):
+        """Test extraction when no MITRE tags present."""
+        tags = [
+            {"id": 1, "name": "category", "values": [{"id": 1, "value": "network", "displayName": "Network"}]}
+        ]
+        result = _extract_mitre_data(tags)
+
+        assert result['mitre_tactics'] == []
+        assert result['mitre_techniques'] == []
+        assert result['mitre_sub_techniques'] == []
+
+    def test_extract_none_and_empty_tags(self):
+        """Test extraction with None, empty, and non-list tags."""
+        assert _extract_mitre_data(None) == {'mitre_tactics': [], 'mitre_techniques': [], 'mitre_sub_techniques': []}
+        assert _extract_mitre_data([]) == {'mitre_tactics': [], 'mitre_techniques': [], 'mitre_sub_techniques': []}
+        assert _extract_mitre_data("not a list") == {'mitre_tactics': [], 'mitre_techniques': [],
+                                                      'mitre_sub_techniques': []}
+
+    def test_url_construction_technique(self):
+        """Test URL construction for techniques."""
+        tags = [
+            {"name": "MITRE_Technique", "values": [{"value": "T1046", "displayName": "(T1046) Test"}]}
+        ]
+        result = _extract_mitre_data(tags)
+        assert result['mitre_techniques'][0]['url'] == 'https://attack.mitre.org/techniques/T1046/'
+
+    def test_url_construction_sub_technique(self):
+        """Test URL construction for sub-techniques (dot to slash conversion)."""
+        tags = [
+            {"name": "MITRE_Sub_Technique", "values": [{"value": "T1021.001", "displayName": "(T1021.001) RDP"}]}
+        ]
+        result = _extract_mitre_data(tags)
+        assert result['mitre_sub_techniques'][0]['url'] == 'https://attack.mitre.org/techniques/T1021/001/'
+
+    def test_multiple_techniques_on_one_attack(self):
+        """Test extraction of multiple techniques from one attack."""
+        tags = [
+            {
+                "name": "MITRE_Technique",
+                "values": [
+                    {"value": "T1046", "displayName": "(T1046) Network Service Discovery"},
+                    {"value": "T1021", "displayName": "(T1021) Remote Services"}
+                ]
+            }
+        ]
+        result = _extract_mitre_data(tags)
+        assert len(result['mitre_techniques']) == 2
+        assert result['mitre_techniques'][0]['id'] == 'T1046'
+        assert result['mitre_techniques'][1]['id'] == 'T1021'
+
+
+class TestMitreTransformation:
+    """Test MITRE integration with transform functions."""
+
+    def test_transform_reduced_mitre_disabled(self, sample_attack_with_mitre):
+        """Test reduced transform with MITRE disabled (default)."""
+        result = transform_reduced_playbook_attack(sample_attack_with_mitre)
+        assert 'mitre_tactics' not in result
+        assert 'mitre_techniques' not in result
+        assert 'mitre_sub_techniques' not in result
+
+    def test_transform_reduced_mitre_enabled(self, sample_attack_with_mitre):
+        """Test reduced transform with MITRE enabled."""
+        result = transform_reduced_playbook_attack(sample_attack_with_mitre, include_mitre_techniques=True)
+
+        # Basic fields still present
+        assert result['id'] == 1027
+        assert result['name'] == "DNS queries of malicious URLs"
+
+        # MITRE fields present
+        assert 'mitre_tactics' in result
+        assert 'mitre_techniques' in result
+        assert 'mitre_sub_techniques' in result
+        assert len(result['mitre_techniques']) == 1
+        assert result['mitre_techniques'][0]['id'] == 'T1046'
+
+    def test_transform_full_mitre_enabled(self, sample_attack_with_mitre):
+        """Test full transform with MITRE enabled alongside other options."""
+        result = transform_full_playbook_attack(
+            sample_attack_with_mitre,
+            include_tags=True,
+            include_mitre_techniques=True
+        )
+
+        # Basic fields present
+        assert result['id'] == 1027
+
+        # Tags still work
+        assert 'tags' in result
+
+        # MITRE fields present
+        assert len(result['mitre_tactics']) == 1
+        assert result['mitre_tactics'][0]['name'] == 'Discovery'
+
+    def test_transform_mitre_no_mitre_tags(self):
+        """Test MITRE enabled but attack has no MITRE tags."""
+        attack = {
+            "id": 999,
+            "name": "Test",
+            "description": "Test",
+            "modifiedDate": "2024-01-01T00:00:00.000Z",
+            "publishedDate": "2024-01-01T00:00:00.000Z",
+            "tags": [{"name": "category", "values": [{"value": "test", "displayName": "Test"}]}]
+        }
+        result = transform_reduced_playbook_attack(attack, include_mitre_techniques=True)
+
+        assert result['mitre_tactics'] == []
+        assert result['mitre_techniques'] == []
+        assert result['mitre_sub_techniques'] == []
+
+
+class TestMitreFiltering:
+    """Test MITRE-based filtering."""
+
+    def test_filter_by_technique_id(self, sample_attacks_with_mitre_list):
+        """Test filtering by technique ID."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="T1046")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_by_technique_name(self, sample_attacks_with_mitre_list):
+        """Test filtering by technique display name."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="Network Service")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_by_sub_technique(self, sample_attacks_with_mitre_list):
+        """Test filtering by sub-technique ID via technique filter."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="T1021.001")
+        assert len(result) == 1
+        assert result[0]['id'] == 2048
+
+    def test_filter_by_tactic(self, sample_attacks_with_mitre_list):
+        """Test filtering by tactic name."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="Discovery")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_multi_technique(self, sample_attacks_with_mitre_list):
+        """Test comma-separated multi-value technique filter (OR logic)."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="T1046,T1021")
+        assert len(result) == 2
+        ids = {a['id'] for a in result}
+        assert ids == {1027, 2048}
+
+    def test_filter_multi_tactic(self, sample_attacks_with_mitre_list):
+        """Test comma-separated multi-value tactic filter (OR logic)."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_mitre_list, mitre_tactic_filter="Discovery,Lateral Movement"
+        )
+        assert len(result) == 2
+        ids = {a['id'] for a in result}
+        assert ids == {1027, 2048}
+
+    def test_filter_multi_with_spaces(self, sample_attacks_with_mitre_list):
+        """Test multi-value filter with spaces after commas."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="T1046, T1021")
+        assert len(result) == 2
+
+    def test_filter_combined_mitre_and_name(self, sample_attacks_with_mitre_list):
+        """Test MITRE filter combined with name filter."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_mitre_list,
+            name_filter="DNS",
+            mitre_technique_filter="T1046"
+        )
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_mitre_no_matches(self, sample_attacks_with_mitre_list):
+        """Test MITRE filter with no matches."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_technique_filter="T9999")
+        assert len(result) == 0
+
+    def test_filter_excludes_attacks_without_mitre(self, sample_attacks_with_mitre_list):
+        """Test that MITRE filter excludes attacks without MITRE data."""
+        # Attack 3141 has no MITRE data - a broad tactic filter should not include it
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="Discovery")
+        assert all(a['id'] != 3141 for a in result)

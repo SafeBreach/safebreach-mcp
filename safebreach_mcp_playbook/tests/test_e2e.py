@@ -313,32 +313,106 @@ class TestPlaybookE2E:
             # Get an attack ID
             attacks_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
             attack_id = attacks_result['attacks_in_page'][0]['id']
-            
-            # Test different verbosity combinations
+
+            # Test different verbosity combinations (including MITRE)
             verbosity_tests = [
                 {'include_fix_suggestions': True, 'include_tags': False, 'include_parameters': False},
                 {'include_fix_suggestions': False, 'include_tags': True, 'include_parameters': False},
                 {'include_fix_suggestions': False, 'include_tags': False, 'include_parameters': True},
                 {'include_fix_suggestions': True, 'include_tags': True, 'include_parameters': True},
+                {'include_mitre_techniques': True},
             ]
-            
+
             for verbosity_options in verbosity_tests:
                 details = sb_get_playbook_attack_details(attack_id, console=E2E_CONSOLE, **verbosity_options)
-                
+
                 # Basic fields should always be present
                 basic_fields = ['id', 'name', 'description', 'modifiedDate', 'publishedDate']
                 for field in basic_fields:
                     assert field in details
-                
+
                 # Check verbosity-specific fields
-                if verbosity_options['include_fix_suggestions']:
+                if verbosity_options.get('include_fix_suggestions'):
                     assert 'fix_suggestions' in details
-                if verbosity_options['include_tags']:
+                if verbosity_options.get('include_tags'):
                     assert 'tags' in details
-                if verbosity_options['include_parameters']:
+                if verbosity_options.get('include_parameters'):
                     assert 'params' in details
-            
+                if verbosity_options.get('include_mitre_techniques'):
+                    assert 'mitre_tactics' in details
+                    assert 'mitre_techniques' in details
+                    assert 'mitre_sub_techniques' in details
+
             print(f"✅ Verbosity levels working correctly for attack {attack_id}")
-            
+
+        except Exception as e:
+            pytest.fail(f"E2E test failed: {str(e)}")
+
+    def test_mitre_data_real_api(self):
+        """Test MITRE data retrieval from real SafeBreach API."""
+        try:
+            result = sb_get_playbook_attacks(
+                console=E2E_CONSOLE, page_number=0, include_mitre_techniques=True
+            )
+
+            attacks = result['attacks_in_page']
+            assert len(attacks) > 0
+
+            # All attacks should have MITRE keys (even if empty lists)
+            for attack in attacks:
+                assert 'mitre_tactics' in attack
+                assert 'mitre_techniques' in attack
+                assert 'mitre_sub_techniques' in attack
+
+            # Check multiple pages to find at least some with MITRE data
+            found_mitre = False
+            for page in range(min(5, result['total_pages'])):
+                page_result = sb_get_playbook_attacks(
+                    console=E2E_CONSOLE, page_number=page, include_mitre_techniques=True
+                )
+                for attack in page_result['attacks_in_page']:
+                    if attack.get('mitre_techniques'):
+                        found_mitre = True
+                        # Verify structure
+                        tech = attack['mitre_techniques'][0]
+                        assert 'id' in tech
+                        assert 'display_name' in tech
+                        assert 'url' in tech
+                        assert tech['url'].startswith('https://attack.mitre.org/techniques/')
+                        break
+                if found_mitre:
+                    break
+
+            assert found_mitre, "Expected at least some attacks with MITRE technique data"
+            print(f"✅ MITRE data verified from {E2E_CONSOLE}")
+
+        except Exception as e:
+            pytest.fail(f"E2E test failed: {str(e)}")
+
+    def test_mitre_filtering_real_api(self):
+        """Test MITRE filtering with real SafeBreach API."""
+        try:
+            # Test tactic filter
+            discovery_result = sb_get_playbook_attacks(
+                console=E2E_CONSOLE, mitre_tactic_filter="Discovery"
+            )
+            assert discovery_result['total_attacks'] > 0
+
+            # Verify all returned attacks have Discovery tactic
+            for attack in discovery_result['attacks_in_page']:
+                tactic_names = [t['name'].lower() for t in attack.get('mitre_tactics', [])]
+                assert any('discovery' in name for name in tactic_names), \
+                    f"Attack {attack['id']} missing Discovery tactic"
+
+            # Test technique filter
+            technique_result = sb_get_playbook_attacks(
+                console=E2E_CONSOLE, mitre_technique_filter="T1046"
+            )
+            # T1046 may or may not be present, but the call should succeed
+            assert 'total_attacks' in technique_result
+            assert technique_result['applied_filters']['mitre_technique_filter'] == 'T1046'
+
+            print(f"✅ MITRE filtering verified on {E2E_CONSOLE}")
+
         except Exception as e:
             pytest.fail(f"E2E test failed: {str(e)}")
