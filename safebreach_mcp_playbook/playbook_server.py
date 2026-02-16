@@ -37,11 +37,15 @@ class SafeBreachPlaybookServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="get_playbook_attacks",
-            description="""Returns a filtered and paginated list of SafeBreach playbook attacks. 
-Supports filtering by name, description, ID range, and date ranges. Results are paginated with 10 items per page.
-Parameters: console (required), page_number (default 0), name_filter (partial match), description_filter (partial match), 
-id_min (minimum ID), id_max (maximum ID), modified_date_start (ISO date), modified_date_end (ISO date), 
-published_date_start (ISO date), published_date_end (ISO date)"""
+            description="""Returns a filtered and paginated list of SafeBreach playbook attacks.
+Supports filtering by name, description, ID range, date ranges, and MITRE ATT&CK techniques/tactics.
+Results are paginated with 10 items per page.
+Parameters: console (required), page_number (default 0), name_filter (partial match), description_filter (partial match),
+id_min (minimum ID), id_max (maximum ID), modified_date_start (ISO date), modified_date_end (ISO date),
+published_date_start (ISO date), published_date_end (ISO date),
+include_mitre_techniques (default False - include MITRE ATT&CK tactics/techniques/sub-techniques),
+mitre_technique_filter (comma-separated technique IDs or names, OR logic, case-insensitive partial match),
+mitre_tactic_filter (comma-separated tactic names, OR logic, case-insensitive partial match)"""
         )
         def get_playbook_attacks(
             console: str = "default",
@@ -53,7 +57,10 @@ published_date_start (ISO date), published_date_end (ISO date)"""
             modified_date_start: Optional[str] = None,
             modified_date_end: Optional[str] = None,
             published_date_start: Optional[str] = None,
-            published_date_end: Optional[str] = None
+            published_date_end: Optional[str] = None,
+            include_mitre_techniques: bool = False,
+            mitre_technique_filter: Optional[str] = None,
+            mitre_tactic_filter: Optional[str] = None
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -67,7 +74,10 @@ published_date_start (ISO date), published_date_end (ISO date)"""
                     modified_date_start=modified_date_start,
                     modified_date_end=modified_date_end,
                     published_date_start=published_date_start,
-                    published_date_end=published_date_end
+                    published_date_end=published_date_end,
+                    include_mitre_techniques=include_mitre_techniques,
+                    mitre_technique_filter=mitre_technique_filter,
+                    mitre_tactic_filter=mitre_tactic_filter
                 )
                 
                 if 'error' in result:
@@ -98,9 +108,25 @@ published_date_start (ISO date), published_date_end (ISO date)"""
                         f"### {attack.get('name', 'Unknown')} (ID: {attack.get('id', 'Unknown')})",
                         f"**Description:** {attack.get('description', 'No description available')[:200]}{'...' if len(str(attack.get('description', ''))) > 200 else ''}",
                         f"**Modified:** {attack.get('modifiedDate', 'Unknown')}",
-                        f"**Published:** {attack.get('publishedDate', 'Unknown')}",
-                        ""
+                        f"**Published:** {attack.get('publishedDate', 'Unknown')}"
                     ])
+
+                    # Render MITRE data if present
+                    mitre_tactics = attack.get('mitre_tactics', [])
+                    mitre_techniques = attack.get('mitre_techniques', [])
+                    mitre_sub_techniques = attack.get('mitre_sub_techniques', [])
+
+                    if mitre_tactics:
+                        tactic_names = ', '.join(t.get('name', '') for t in mitre_tactics)
+                        response_parts.append(f"**MITRE Tactics:** {tactic_names}")
+                    if mitre_techniques:
+                        tech_names = ', '.join(t.get('display_name', t.get('id', '')) for t in mitre_techniques)
+                        response_parts.append(f"**MITRE Techniques:** {tech_names}")
+                    if mitre_sub_techniques:
+                        sub_names = ', '.join(t.get('display_name', t.get('id', '')) for t in mitre_sub_techniques)
+                        response_parts.append(f"**MITRE Sub-Techniques:** {sub_names}")
+
+                    response_parts.append("")
                 
                 if result.get('hint_to_agent'):
                     response_parts.append(f"**Hint:** {result['hint_to_agent']}")
@@ -113,17 +139,19 @@ published_date_start (ISO date), published_date_end (ISO date)"""
         
         @self.mcp.tool(
             name="get_playbook_attack_details",
-            description="""Returns detailed information for a specific SafeBreach playbook attack by ID. 
-Supports verbosity options to include additional details like fix suggestions, tags, and parameters.
-Parameters: console (required), attack_id (required), include_fix_suggestions (default False), 
-include_tags (default False), include_parameters (default False)"""
+            description="""Returns detailed information for a specific SafeBreach playbook attack by ID.
+Supports verbosity options to include additional details like fix suggestions, tags, parameters, and MITRE ATT&CK data.
+Parameters: console (required), attack_id (required), include_fix_suggestions (default False),
+include_tags (default False), include_parameters (default False),
+include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniques, and sub-techniques with URLs)"""
         )
         def get_playbook_attack_details(
             attack_id: int,
             console: str = "default",
             include_fix_suggestions: bool = False,
             include_tags: bool = False,
-            include_parameters: bool = False
+            include_parameters: bool = False,
+            include_mitre_techniques: bool = False
         ) -> str:
             """Get detailed information for a specific playbook attack."""
             try:
@@ -132,7 +160,8 @@ include_tags (default False), include_parameters (default False)"""
                     console=console,
                     include_fix_suggestions=include_fix_suggestions,
                     include_tags=include_tags,
-                    include_parameters=include_parameters
+                    include_parameters=include_parameters,
+                    include_mitre_techniques=include_mitre_techniques
                 )
                 
                 # Format response
@@ -192,7 +221,34 @@ include_tags (default False), include_parameters (default False)"""
                                 ])
                     else:
                         response_parts.append(f"Parameters data: {str(params)}")
-                
+
+                if include_mitre_techniques:
+                    mitre_tactics = result.get('mitre_tactics', [])
+                    mitre_techniques = result.get('mitre_techniques', [])
+                    mitre_sub_techniques = result.get('mitre_sub_techniques', [])
+
+                    if mitre_tactics or mitre_techniques or mitre_sub_techniques:
+                        response_parts.extend(["", "## MITRE ATT&CK Mapping", ""])
+
+                        if mitre_tactics:
+                            response_parts.append("**Tactics:**")
+                            for t in mitre_tactics:
+                                response_parts.append(f"- {t.get('name', 'Unknown')}")
+
+                        if mitre_techniques:
+                            response_parts.append("**Techniques:**")
+                            for t in mitre_techniques:
+                                response_parts.append(
+                                    f"- [{t.get('display_name', t.get('id', ''))}]({t.get('url', '')})"
+                                )
+
+                        if mitre_sub_techniques:
+                            response_parts.append("**Sub-Techniques:**")
+                            for t in mitre_sub_techniques:
+                                response_parts.append(
+                                    f"- [{t.get('display_name', t.get('id', ''))}]({t.get('url', '')})"
+                                )
+
                 return "\n".join(response_parts)
                 
             except Exception as e:
