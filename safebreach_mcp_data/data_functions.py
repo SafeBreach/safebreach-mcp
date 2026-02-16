@@ -445,8 +445,8 @@ def sb_get_test_details(test_id: str, console: str = "default",
 
 def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
     """
-    Count drifted simulations for a test.
-    Uses the existing bulk fetch for now — Phase 2 will replace with streaming page-by-page counting.
+    Count drifted simulations for a test using streaming page-by-page counting.
+    Each page is counted and discarded — memory stays at O(page_size) regardless of total simulations.
 
     Args:
         test_id: Test ID
@@ -456,15 +456,50 @@ def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
         Number of drifted simulations
     """
     try:
-        all_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
         drifts = 0
-        for sim in all_simulations:
-            is_drift = sim.get('is_drifted', False)
-            if is_drift:
-                if isinstance(is_drift, str):
-                    logging.error("Simulation %s has unexpected drift type: %s", sim.get('id', 'unknown'), is_drift)
-                    continue
-                drifts += 1
+        page = 1
+        page_size = 100
+
+        while True:
+            data = {
+                "runId": f"{test_id}",
+                "query": f"!labels:Ignore AND (!labels:Draft) AND (runId:{test_id})",
+                "page": page,
+                "pageSize": page_size,
+                "orderBy": "desc",
+                "sortBy": "executionTime"
+            }
+
+            response = requests.post(api_url, headers=headers, json=data, timeout=120)
+            response.raise_for_status()
+
+            try:
+                response_data = response.json()
+                page_simulations = response_data.get("simulations", [])
+            except ValueError:
+                break
+
+            if not page_simulations:
+                break
+
+            # Count drifts in this page, then discard the page
+            for sim in page_simulations:
+                drift_type = sim.get('driftType')
+                if drift_type and drift_type != 'no_drift':
+                    drifts += 1
+
+            if len(page_simulations) < page_size:
+                break
+
+            page += 1
+
         return drifts
 
     except Exception as e:  # pylint: disable=broad-exception-caught  # Graceful error handling for drift counting
