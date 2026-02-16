@@ -62,6 +62,76 @@ def _transform_tags(tags_data: Any) -> List[str]:
     return formatted_tags
 
 
+def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
+    """
+    Extract MITRE ATT&CK data from the tags array.
+
+    Looks for tag items with names: MITRE_Tactic, MITRE_Technique, MITRE_Sub_Technique.
+    Constructs ATT&CK URLs from technique IDs.
+
+    Args:
+        tags_data: Raw tags list from SafeBreach API
+
+    Returns:
+        Dict with keys: mitre_tactics, mitre_techniques, mitre_sub_techniques (each a list)
+    """
+    result = {
+        'mitre_tactics': [],
+        'mitre_techniques': [],
+        'mitre_sub_techniques': []
+    }
+
+    if not tags_data or not isinstance(tags_data, list):
+        return result
+
+    for tag_item in tags_data:
+        if not isinstance(tag_item, dict):
+            continue
+
+        tag_name = tag_item.get('name', '')
+        values = tag_item.get('values', [])
+
+        if not isinstance(values, list):
+            continue
+
+        if tag_name == 'MITRE_Tactic':
+            for val in values:
+                if isinstance(val, dict):
+                    name = val.get('displayName') or val.get('value', '')
+                    if name:
+                        result['mitre_tactics'].append({'name': name})
+
+        elif tag_name == 'MITRE_Technique':
+            for val in values:
+                if isinstance(val, dict):
+                    tech_id = val.get('value', '')
+                    display_name = val.get('displayName', '')
+                    if tech_id:
+                        url = f"https://attack.mitre.org/techniques/{tech_id}/"
+                        result['mitre_techniques'].append({
+                            'id': tech_id,
+                            'display_name': display_name,
+                            'url': url
+                        })
+
+        elif tag_name == 'MITRE_Sub_Technique':
+            for val in values:
+                if isinstance(val, dict):
+                    tech_id = val.get('value', '')
+                    display_name = val.get('displayName', '')
+                    if tech_id:
+                        # Sub-technique IDs use '.' (e.g., T1021.001) -> URL uses '/' (T1021/001)
+                        url_path = tech_id.replace('.', '/')
+                        url = f"https://attack.mitre.org/techniques/{url_path}/"
+                        result['mitre_sub_techniques'].append({
+                            'id': tech_id,
+                            'display_name': display_name,
+                            'url': url
+                        })
+
+    return result
+
+
 def get_reduced_playbook_attack_mapping() -> Dict[str, str]:
     """
     Get mapping for reduced playbook attack objects.
@@ -95,19 +165,21 @@ def get_full_playbook_attack_mapping() -> Dict[str, str]:
     return full_mapping
 
 
-def transform_reduced_playbook_attack(attack_data: Dict[str, Any]) -> Dict[str, Any]:
+def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
+                                      include_mitre_techniques: bool = False) -> Dict[str, Any]:
     """
     Transform a playbook attack to reduced format.
-    
+
     Args:
         attack_data: Raw attack data from SafeBreach API
-        
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
+
     Returns:
         Transformed attack data in reduced format
     """
     mapping = get_reduced_playbook_attack_mapping()
     result = {}
-    
+
     for output_key, source_key in mapping.items():
         if '.' in source_key:
             # Handle nested keys like 'metadata.fix_suggestions'
@@ -122,28 +194,34 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any]) -> Dict[str, 
             result[output_key] = value
         else:
             result[output_key] = attack_data.get(source_key)
-    
+
+    if include_mitre_techniques:
+        mitre_data = _extract_mitre_data(attack_data.get('tags', []))
+        result.update(mitre_data)
+
     return result
 
 
-def transform_full_playbook_attack(attack_data: Dict[str, Any], 
+def transform_full_playbook_attack(attack_data: Dict[str, Any],
                                    include_fix_suggestions: bool = True,
                                    include_tags: bool = True,
-                                   include_parameters: bool = True) -> Dict[str, Any]:
+                                   include_parameters: bool = True,
+                                   include_mitre_techniques: bool = False) -> Dict[str, Any]:
     """
     Transform a playbook attack to full format with verbosity options.
-    
+
     Args:
         attack_data: Raw attack data from SafeBreach API
         include_fix_suggestions: Whether to include fix suggestions
         include_tags: Whether to include tags
         include_parameters: Whether to include parameters
-        
+        include_mitre_techniques: Whether to include MITRE ATT&CK data
+
     Returns:
         Transformed attack data in full format
     """
-    # Start with reduced format
-    result = transform_reduced_playbook_attack(attack_data)
+    # Start with reduced format (with MITRE if requested)
+    result = transform_reduced_playbook_attack(attack_data, include_mitre_techniques=include_mitre_techniques)
     
     # Add optional fields based on verbosity settings
     if include_fix_suggestions:
