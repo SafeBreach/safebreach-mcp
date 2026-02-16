@@ -243,7 +243,7 @@ def transform_full_playbook_attack(attack_data: Dict[str, Any],
     return result
 
 
-def filter_attacks_by_criteria(attacks: List[Dict[str, Any]], 
+def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                name_filter: Optional[str] = None,
                                description_filter: Optional[str] = None,
                                id_min: Optional[int] = None,
@@ -251,10 +251,12 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                modified_date_start: Optional[str] = None,
                                modified_date_end: Optional[str] = None,
                                published_date_start: Optional[str] = None,
-                               published_date_end: Optional[str] = None) -> List[Dict[str, Any]]:
+                               published_date_end: Optional[str] = None,
+                               mitre_technique_filter: Optional[str] = None,
+                               mitre_tactic_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
-    
+
     Args:
         attacks: List of attack objects
         name_filter: Partial match on name (case-insensitive)
@@ -265,7 +267,9 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
         modified_date_end: End date for modified date range (ISO format)
         published_date_start: Start date for published date range (ISO format)
         published_date_end: End date for published date range (ISO format)
-        
+        mitre_technique_filter: Comma-separated technique IDs or names (OR logic, case-insensitive partial match)
+        mitre_tactic_filter: Comma-separated tactic names (OR logic, case-insensitive partial match)
+
     Returns:
         Filtered list of attacks
     """
@@ -325,8 +329,58 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             attack for attack in filtered_attacks
             if attack.get('publishedDate') and attack['publishedDate'] <= published_date_end
         ]
-    
+
+    # Filter by MITRE technique ID or name (comma-separated OR logic, case-insensitive partial match)
+    if mitre_technique_filter:
+        filter_values = [v.strip().lower() for v in mitre_technique_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_mitre_technique(attack, filter_values)
+        ]
+
+    # Filter by MITRE tactic name (comma-separated OR logic, case-insensitive partial match)
+    if mitre_tactic_filter:
+        filter_values = [v.strip().lower() for v in mitre_tactic_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_mitre_tactic(attack, filter_values)
+        ]
+
     return filtered_attacks
+
+
+def _attack_matches_mitre_technique(attack: Dict[str, Any], filter_values: List[str]) -> bool:
+    """Check if an attack matches any of the MITRE technique filter values."""
+    techniques = attack.get('mitre_techniques', [])
+    sub_techniques = attack.get('mitre_sub_techniques', [])
+
+    if not techniques and not sub_techniques:
+        return False
+
+    for fv in filter_values:
+        for tech in techniques:
+            if fv in tech.get('id', '').lower() or fv in tech.get('display_name', '').lower():
+                return True
+        for tech in sub_techniques:
+            if fv in tech.get('id', '').lower() or fv in tech.get('display_name', '').lower():
+                return True
+
+    return False
+
+
+def _attack_matches_mitre_tactic(attack: Dict[str, Any], filter_values: List[str]) -> bool:
+    """Check if an attack matches any of the MITRE tactic filter values."""
+    tactics = attack.get('mitre_tactics', [])
+
+    if not tactics:
+        return False
+
+    for fv in filter_values:
+        for tactic in tactics:
+            if fv in tactic.get('name', '').lower():
+                return True
+
+    return False
 
 
 def paginate_attacks(attacks: List[Dict[str, Any]], 
