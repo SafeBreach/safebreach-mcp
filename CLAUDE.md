@@ -272,8 +272,12 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
 
 **Playbook Server (Port 8003):**
-13. `get_playbook_attacks` ✨ **NEW** - Filtered and paginated playbook attacks from SafeBreach attack knowledge base with comprehensive filtering (name, description, ID range, date ranges) and pagination
-14. `get_playbook_attack_details` ✨ **NEW** - Detailed attack information with verbosity options (fix suggestions, tags, parameters) for specific attack techniques
+13. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
+  (name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics) and pagination.
+  Supports `include_mitre_techniques`, `mitre_technique_filter` (comma-separated, OR logic),
+  and `mitre_tactic_filter` (comma-separated, OR logic)
+14. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
+  (fix suggestions, tags, parameters, MITRE ATT&CK data with URLs) for specific attack techniques
 
 **Utilities Server (Port 8002):**
 15. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
@@ -318,6 +322,17 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 - **Robust Error Handling**: Improved handling of different data structure formats
 
 All filters work in combination and include pagination support. The response includes metadata about applied filters and total result counts.
+
+**MITRE ATT&CK Filtering (`get_playbook_attacks`):**
+- **MITRE Techniques**: Filter by technique ID or name via `mitre_technique_filter` (e.g., "T1046" or
+  "Network Service Discovery"). Supports comma-separated multi-value with OR logic (e.g., "T1046,T1021").
+  Searches both techniques and sub-techniques.
+- **MITRE Tactics**: Filter by tactic name via `mitre_tactic_filter` (e.g., "Discovery" or
+  "Lateral Movement"). Supports comma-separated multi-value with OR logic.
+- **MITRE Data Inclusion**: Set `include_mitre_techniques=True` to include MITRE ATT&CK tactics,
+  techniques, and sub-techniques with ATT&CK URLs in responses.
+  Auto-enabled when MITRE filters are active.
+- **Coverage**: ~42.6% of playbook attacks have MITRE technique/tactic mappings.
 
 ## Drift Analysis
 
