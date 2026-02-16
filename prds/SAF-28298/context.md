@@ -33,7 +33,7 @@ from the entire dataset.
 **Key code path:**
 - `sb_get_test_details(include_simulations_statistics=True)` → `_get_simulation_statistics()` →
   `_get_all_simulations_from_cache_or_api()` → N API calls (100/page) → buffer all → iterate → count drifts
-- The `finalStatus` dict (missed/stopped/prevented/reported/logged/no-result counts) already comes from the test
+- The `finalStatus` dict (missed/stopped/prevented/detected/logged/no-result/inconsistent counts) already comes from the test
   summary API — only drift count requires the simulation fetch
 - `is_drifted` is computed from the presence of `driftType` field in each simulation's API response (data_types.py:94)
 - Cache (1hr TTL) mitigates repeated calls, but first call on large tests is expensive + high memory
@@ -81,7 +81,7 @@ and include them in the returned entity, saving the agent a separate API call.
 
 ### Item 1: Drift Count — Approach C (Hybrid)
 
-**Always inline `finalStatus` counts** (missed/stopped/prevented/reported/logged/no-result) in test details — these come
+**Always inline `finalStatus` counts** (missed/stopped/prevented/detected/logged/no-result/inconsistent) in test details — these come
 free from the test summary API, no simulation fetch needed.
 
 **Rename parameter** from `include_simulations_statistics` to `include_drift_count` (default `False`). When `True`, use

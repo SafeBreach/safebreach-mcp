@@ -103,11 +103,11 @@ def _build_simulation_status_counts(final_status: Dict[str, Any]) -> List[Dict[s
             "count": final_status.get('prevented', 0)
         },
         {
-            "status": "reported",
+            "status": "detected",
             "explanation": (
                 "Simulations where the attack was not stopped but detected and reported by a security control"
             ),
-            "count": final_status.get('reported', 0)
+            "count": final_status.get('detected', 0)
         },
         {
             "status": "logged",
@@ -122,6 +122,14 @@ def _build_simulation_status_counts(final_status: Dict[str, Any]) -> List[Dict[s
                 "Simulations that could not be completed due to technical issues"
             ),
             "count": final_status.get('no-result', 0)
+        },
+        {
+            "status": "inconsistent",
+            "explanation": (
+                "Simulations where the attack was not blocked yet a correlated security control event "
+                "asserts the attack was prevented"
+            ),
+            "count": final_status.get('inconsistent', 0)
         }
     ]
 

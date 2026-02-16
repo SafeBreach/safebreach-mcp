@@ -858,7 +858,7 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `console` (string, required) - SafeBreach console name
      - `test_id` (string, required) - Test ID to get simulations for
      - `page_number` (int, default 0) - Page number (0-based)
-     - `status_filter` (string, optional) - Filter by simulation status (e.g., "missed", "stopped", "prevented", "reported", "logged")
+     - `status_filter` (string, optional) - Filter by simulation status (e.g., "missed", "stopped", "prevented", "detected", "logged", "no-result", "inconsistent")
      - `start_time` (int, optional) - Filter simulations with end_time >= start_time (Unix timestamp)
      - `end_time` (int, optional) - Filter simulations with end_time <= end_time (Unix timestamp)
      - `playbook_attack_id_filter` (string, optional) - Filter by exact playbook attack ID match

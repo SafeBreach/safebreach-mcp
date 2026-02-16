@@ -300,13 +300,11 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 
 **Enhanced Test Details (`get_test_details`):**
-- **Inline Status Counts**: Always returns simulation status breakdown (missed, stopped, prevented, reported, logged, no-result) at zero cost — extracted from the test summary API
+- **Inline Status Counts**: Always returns simulation status breakdown (missed, stopped, prevented, detected, logged, no-result, inconsistent) at zero cost — extracted from the test summary API
 - **Optional Drift Count**: Set `include_drift_count=True` to count drifted simulations via streaming page-by-page counting (WARNING: may be slow for large tests)
-- **Propagate Findings**: For ALM (Propagate) tests, includes `findings_count` and `compromised_hosts` from the test summary API
-- **Backward Compatibility**: `include_simulations_statistics=True` still works (maps to `include_drift_count`)
 
 **Enhanced Simulation Filtering (`get_test_simulations`):**
-- **Status**: Filter by simulation status ("missed", "stopped", "prevented", "reported", "logged", "no-result")
+- **Status**: Filter by simulation status ("missed", "stopped", "prevented", "detected", "logged", "no-result", "inconsistent")
 - **Time Windows**: Filter by start/end times (Unix timestamps) with safe type conversion for end_time field
 - **Playbook Attack ID**: Filter by exact playbook attack ID match
 - **Playbook Attack Name**: Case-insensitive partial matching on playbook attack names (e.g., "file", "network", "credential")

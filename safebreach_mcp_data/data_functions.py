@@ -381,52 +381,37 @@ def _find_previous_test_by_name(
 
 
 def sb_get_test_details(test_id: str, console: str = "default",
-                        include_drift_count: bool = False,
-                        include_simulations_statistics: bool = False) -> Dict[str, Any]:
+                        include_drift_count: bool = False) -> Dict[str, Any]:
     """
     Returns the details of a specific test executed on a given SafeBreach management console.
     Always includes simulation status counts (free from the API).
     Optionally includes drift count (requires fetching simulations page-by-page).
+
+    Uses the list endpoint (/testsummaries?size=1000) via cache, which returns richer data
+    (including findingsCount and compromisedHosts for Propagate tests) compared to the
+    single-test endpoint (/testsummaries/{test_id}) which omits those fields.
+    Falls back to the single-test endpoint if the test is not found in the list.
     """
     # Validate required parameters
     if not test_id or not test_id.strip():
         raise ValueError("test_id parameter is required and cannot be empty")
 
-    # Backward compat: old parameter name maps to new
-    effective_drift = include_drift_count or include_simulations_statistics
-
-    # Validate boolean parameters - handle None gracefully
-    if effective_drift is None:
-        effective_drift = False
-    elif not isinstance(effective_drift, bool):
-        raise ValueError(f"Invalid include_drift_count parameter '{effective_drift}'. Must be a boolean value (True/False)")
+    # Validate boolean parameter - handle None gracefully
+    if include_drift_count is None:
+        include_drift_count = False
+    elif not isinstance(include_drift_count, bool):
+        raise ValueError(f"Invalid include_drift_count parameter '{include_drift_count}'. Must be a boolean value (True/False)")
 
     try:
-        apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'data')
-        account_id = get_api_account_id(console)
+        # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
+        return_details = _find_test_in_cached_list(test_id, console)
 
-        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        if return_details is None:
+            # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
+            logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
+            return_details = _fetch_single_test(test_id, console)
 
-        headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
-
-        response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
-
-        test_summary = response.json()
-
-        # Validate that we got a meaningful test response
-        if not test_summary or not isinstance(test_summary, dict):
-            raise ValueError(f"Invalid test response for test_id '{test_id}': response is empty or not a dictionary")
-
-        if 'planRunId' not in test_summary:
-            raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
-
-        # Status counts are always included via the mapping (free from the API)
-        return_details = get_reduced_test_summary_mapping(test_summary)
-
-        if effective_drift:
+        if include_drift_count:
             drift_count = _count_drifted_simulations(test_id, console)
             return_details['simulations_statistics'].append({
                 "explanation": (
@@ -441,6 +426,50 @@ def sb_get_test_details(test_id: str, console: str = "default",
     except Exception as e:
         logger.error("Error getting test details for test '%s' from console '%s': %s", test_id, console, str(e))
         raise
+
+
+def _find_test_in_cached_list(test_id: str, console: str) -> Optional[Dict[str, Any]]:
+    """
+    Look up a test by ID from the cached test list (list endpoint).
+    Returns the mapped test dict if found, None otherwise.
+    The list endpoint includes fields like findingsCount/compromisedHosts
+    that the single-test endpoint omits.
+    """
+    try:
+        all_tests = _get_all_tests_from_cache_or_api(console)
+        for test in all_tests:
+            if test.get('test_id') == test_id:
+                # Return a copy so callers can mutate without affecting the cache
+                return dict(test)
+    except Exception as e:
+        logger.warning("Failed to search cached test list for '%s': %s", test_id, e)
+    return None
+
+
+def _fetch_single_test(test_id: str, console: str) -> Dict[str, Any]:
+    """
+    Fetch a single test from the /testsummaries/{test_id} endpoint.
+    This endpoint omits findingsCount/compromisedHosts but works for any test ID.
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    test_summary = response.json()
+
+    if not test_summary or not isinstance(test_summary, dict):
+        raise ValueError(f"Invalid test response for test_id '{test_id}': response is empty or not a dictionary")
+
+    if 'planRunId' not in test_summary:
+        raise ValueError(f"Invalid test_id '{test_id}': test does not exist or response is missing essential identifier (planRunId)")
+
+    return get_reduced_test_summary_mapping(test_summary)
 
 
 def _count_drifted_simulations(test_id: str, console: str = "default") -> int:

@@ -520,14 +520,15 @@ class TestTestSummaryMapping:
             "duration": 1000,
             "status": "completed",
             "systemTags": [],
-            "finalStatus": {"missed": 3, "stopped": 1, "prevented": 5, "reported": 2, "logged": 0, "no-result": 1}
+            "finalStatus": {"missed": 3, "stopped": 1, "prevented": 5, "detected": 2, "logged": 0, "no-result": 1, "inconsistent": 0}
         }
         result = get_reduced_test_summary_mapping(entity)
         assert "simulations_statistics" in result
         stats = result["simulations_statistics"]
-        assert len(stats) == 6
+        assert len(stats) == 7
         assert next(s for s in stats if s["status"] == "missed")["count"] == 3
         assert next(s for s in stats if s["status"] == "prevented")["count"] == 5
+        assert next(s for s in stats if s["status"] == "detected")["count"] == 2
 
     def test_missing_final_status_defaults_to_zero(self):
         """Test that missing finalStatus defaults all counts to 0."""

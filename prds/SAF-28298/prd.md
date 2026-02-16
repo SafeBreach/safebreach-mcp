@@ -16,10 +16,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-02-15 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-02-16 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Complete |
 
 ## 2. Solution Description
 
@@ -58,7 +58,7 @@ Three targeted changes to the Data Server and shared core:
 - **Purpose**: Modify existing `get_test_details` tool to always return simulation status breakdown (free from API)
   and optionally count drifts via streaming pagination
 - **Key Features**:
-  - Always include `finalStatus` counts (missed/stopped/prevented/reported/logged/no-result) in test details — no
+  - Always include `finalStatus` counts (missed/stopped/prevented/detected/logged/no-result/inconsistent) in test details — no
     parameter needed, zero extra API cost
   - Rename `include_simulations_statistics` parameter to `include_drift_count` (default `False`)
   - When `include_drift_count=True`, iterate simulation pages (100/page), count `is_drifted=True` entries per page,
@@ -153,19 +153,20 @@ Three targeted changes to the Data Server and shared core:
 
 ## 9. Implementation Phases
 
-| Phase | Status | Completed | Commit SHA | Notes |
-|-------|--------|-----------|------------|-------|
-| Phase 1: Inline finalStatus counts | ⏳ Pending | - | - | |
-| Phase 2: Streaming drift count | ⏳ Pending | - | - | |
-| Phase 3: Propagate findings | ⏳ Pending | - | - | |
-| Phase 4: Concurrency limiter | ⏳ Pending | - | - | |
-| Phase 5: E2E verification | ⏳ Pending | - | - | |
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Inline finalStatus counts | ✅ Complete | |
+| Phase 2: Streaming drift count | ✅ Complete | |
+| Phase 3: Propagate findings | ✅ Complete | |
+| Phase 4: Concurrency limiter | ✅ Complete | |
+| Phase 5: E2E verification | ✅ Complete | 36 passed, 1 skipped (cache disabled) |
+| Phase 6: Manual testing fixes | ✅ Complete | 5 bugs fixed, 521 unit + 16 E2E tests passing |
 
 ### Phase 1: Inline `finalStatus` Counts
 
 **Semantic Change**: Always include simulation status breakdown in `get_test_details` output.
 
-**Deliverables**: `finalStatus` counts (missed/stopped/prevented/reported/logged/no-result) returned for every
+**Deliverables**: `finalStatus` counts (missed/stopped/prevented/detected/logged/no-result/inconsistent) returned for every
 `get_test_details` call regardless of parameters.
 
 **Implementation Details**:
@@ -343,15 +344,24 @@ Three targeted changes to the Data Server and shared core:
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| `findingsCount`/`compromisedHosts` field names differ across API versions | Medium | Verify field names in E2E against real console. Graceful omission if missing. |
-| SSE connection identity not propagated to tool handlers via `contextvars` | High | Investigate FastMCP SSE internals early in Phase 4. Fallback to client IP if needed. |
+| `findingsCount`/`compromisedHosts` field names differ across API versions | Medium | **RESOLVED**: Fields exist in list endpoint but NOT in single-test endpoint. Fixed by using list endpoint via cache. |
+| SSE connection identity not propagated to tool handlers via `contextvars` | High | **RESOLVED**: Works correctly with ASGI middleware approach. |
 | Streaming drift count still slow for very large tests (100 API calls) | Low | Acceptable — explicit opt-in via `include_drift_count`, parameter name communicates cost. |
+| API `finalStatus` key names differ from documentation | Medium | **RESOLVED**: API uses `detected` not `reported`, and includes `inconsistent` (7 statuses, not 6). Fixed across codebase. |
 
 ### Assumptions
 
-- `findingsCount` and `compromisedHosts` are present in the `/testsummaries/{test_id}` API response for ALM tests
-- `contextvars` propagate correctly within FastMCP's SSE connection handling (async context)
+- ~~`findingsCount` and `compromisedHosts` are present in the `/testsummaries/{test_id}` API response for ALM tests~~ **INVALIDATED**: These fields are only in the list endpoint (`/testsummaries?size=1000`), not the single-test endpoint (`/testsummaries/{test_id}`). Fixed by looking up tests from the cached list first.
+- `contextvars` propagate correctly within FastMCP's SSE connection handling (async context) — **CONFIRMED**
 - Agents retry on HTTP 429 (standard behavior for LLM tool-calling frameworks)
+
+### Bugs Found During Manual Testing (Phase 6)
+
+1. **Status key mismatch**: API `finalStatus` dict uses `detected` not `reported` — 73 simulations were silently dropped to 0. Fixed across `data_types.py` and all documentation.
+2. **Missing `inconsistent` status**: API returns 7 statuses (not 6) — `inconsistent` = attack not blocked but security control asserts prevention. Added as 7th status entry.
+3. **Propagate findings missing**: `/testsummaries/{test_id}` endpoint omits `findingsCount`/`compromisedHosts` that the list endpoint includes. Fixed by using cached list data first, falling back to single endpoint.
+4. **`include_simulations_statistics` confusion**: Backward-compat parameter caused agents to pass both params. Removed entirely since stats are now always included.
+5. **Pre-existing E2E failure**: `test_get_full_simulation_logs_error_handling_e2e` assumed API rejects invalid `test_id` when `simulation_id` is valid — but API resolves by `simulation_id` only. Fixed test expectation.
 
 ## 12. Executive Summary
 

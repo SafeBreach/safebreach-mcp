@@ -10,7 +10,7 @@ Three performance and resiliency improvements for safebreach-mcp servers to deli
 drifted ones. A test with 10,000 simulations triggers 100 API calls and ~10MB+ buffered data for a single integer.
 
 **Solution:**
-- **Always inline `finalStatus` counts** (missed/stopped/prevented/reported/logged/no-result) in test details output —
+- **Always inline `finalStatus` counts** (missed/stopped/prevented/detected/logged/no-result/inconsistent) in test details output —
   these come free from the test summary API with zero extra cost
 - **Rename parameter** from `include_simulations_statistics` to `include_drift_count` (default `False`)
 - **Stream page-by-page** when drift count requested — iterate simulation pages, count `is_drifted=True`, discard each

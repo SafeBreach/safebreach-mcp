@@ -412,13 +412,62 @@ class TestDataFunctions:
         
         assert "API Error" in str(exc_info.value)
     
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_success(self, mock_get_all_tests):
+        """Test successful test details retrieval via cached list with inline simulation statistics."""
+        # Mock the cached list with already-mapped test data (as returned by get_reduced_test_summary_mapping)
+        mock_get_all_tests.return_value = [
+            {
+                "name": "Test Plan",
+                "test_id": "test1",
+                "start_time": 1640995200,
+                "end_time": 1640995800,
+                "duration": 600,
+                "status": "completed",
+                "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+                "simulations_statistics": [
+                    {"status": "missed", "explanation": "...", "count": 5},
+                    {"status": "stopped", "explanation": "...", "count": 3},
+                    {"status": "prevented", "explanation": "...", "count": 10},
+                    {"status": "detected", "explanation": "...", "count": 2},
+                    {"status": "logged", "explanation": "...", "count": 1},
+                    {"status": "no-result", "explanation": "...", "count": 0},
+                    {"status": "inconsistent", "explanation": "...", "count": 0},
+                ]
+            }
+        ]
+
+        result = sb_get_test_details("test1", "test-console")
+
+        assert "test_id" in result
+        assert result["test_id"] == "test1"
+        assert "name" in result
+        assert result["name"] == "Test Plan"
+        # Simulation status counts are always included (free from API)
+        assert "simulations_statistics" in result
+        stats = result["simulations_statistics"]
+        assert isinstance(stats, list)
+        assert len(stats) == 7  # 7 status entries, no drift entry by default
+        # Verify counts match finalStatus
+        missed_stat = next(s for s in stats if s.get("status") == "missed")
+        assert missed_stat["count"] == 5
+        prevented_stat = next(s for s in stats if s.get("status") == "prevented")
+        assert prevented_stat["count"] == 10
+        detected_stat = next(s for s in stats if s.get("status") == "detected")
+        assert detected_stat["count"] == 2
+
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_success(self, mock_get, mock_secret, mock_base_url, mock_account_id):
-        """Test successful test details retrieval with inline simulation statistics."""
-        # Setup mocks
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_fallback_to_single_endpoint(self, mock_get_all_tests, mock_get,
+                                                              mock_secret, mock_base_url, mock_account_id):
+        """Test fallback to single-test endpoint when test is not in cached list."""
+        # Cached list doesn't contain this test
+        mock_get_all_tests.return_value = []
+
+        # Single endpoint returns the test
         mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {
@@ -433,9 +482,10 @@ class TestDataFunctions:
                 "missed": 5,
                 "stopped": 3,
                 "prevented": 10,
-                "reported": 2,
+                "detected": 2,
                 "logged": 1,
-                "no-result": 0
+                "no-result": 0,
+                "inconsistent": 0
             }
         }
         mock_response.status_code = 200
@@ -444,36 +494,30 @@ class TestDataFunctions:
 
         result = sb_get_test_details("test1", "test-console")
 
-        assert "test_id" in result
         assert result["test_id"] == "test1"
-        assert "name" in result
         assert result["name"] == "Test Plan"
-        # Simulation status counts are always included (free from API)
-        assert "simulations_statistics" in result
         stats = result["simulations_statistics"]
-        assert isinstance(stats, list)
-        assert len(stats) == 6  # 6 status entries, no drift entry by default
-        # Verify counts match finalStatus
-        missed_stat = next(s for s in stats if s.get("status") == "missed")
-        assert missed_stat["count"] == 5
-        prevented_stat = next(s for s in stats if s.get("status") == "prevented")
-        assert prevented_stat["count"] == 10
+        assert len(stats) == 7
+        # Single endpoint was called as fallback
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_error(self, mock_get, mock_secret, mock_base_url, mock_account_id):
-        """Test error handling in test details retrieval."""
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_error(self, mock_get_all_tests, mock_get,
+                                        mock_secret, mock_base_url, mock_account_id):
+        """Test error handling when both cached list and single endpoint fail."""
+        # Cached list returns empty (test not found)
+        mock_get_all_tests.return_value = []
+        # Single endpoint also fails
         mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
-        
-        # Should now raise exception
+
         with pytest.raises(Exception) as exc_info:
             sb_get_test_details("test1", "test-console")
-        
+
         assert "API Error" in str(exc_info.value)
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
@@ -1231,26 +1275,29 @@ class TestDataFunctions:
             assert "Invalid drifted_only parameter" in str(exc_info.value)
             assert "Must be a boolean value" in str(exc_info.value)
     
-    def test_sb_get_test_details_boolean_parameter_validation(self):
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_boolean_parameter_validation(self, mock_get_all_tests):
         """Test boolean parameter validation in get_test_details (Bug #8)."""
+        mock_get_all_tests.return_value = [
+            {
+                "name": "Test", "test_id": "test123", "start_time": 1000, "end_time": 2000,
+                "duration": 1000, "status": "completed",
+                "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+                "simulations_statistics": [
+                    {"status": "missed", "explanation": "...", "count": 0},
+                    {"status": "stopped", "explanation": "...", "count": 0},
+                    {"status": "prevented", "explanation": "...", "count": 0},
+                    {"status": "detected", "explanation": "...", "count": 0},
+                    {"status": "logged", "explanation": "...", "count": 0},
+                    {"status": "no-result", "explanation": "...", "count": 0},
+                    {"status": "inconsistent", "explanation": "...", "count": 0},
+                ]
+            }
+        ]
 
-        with patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123') as mock_account_id, \
-             patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com') as mock_base_url, \
-             patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret, \
-             patch('requests.get') as mock_get:
-
-            mock_secret.return_value = "fake-token"
-            mock_response = mock_get.return_value
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"planRunId": "test123", "name": "Test"}
-
-            # Test None (should be handled gracefully by defaulting to False)
-            result = sb_get_test_details("test123", include_simulations_statistics=None)
-            # Should succeed without error
-
-            # Test backward compat: old parameter still works
-            result = sb_get_test_details("test123", include_drift_count=None)
-            # Should succeed without error
+        # Test None (should be handled gracefully by defaulting to False)
+        result = sb_get_test_details("test123", include_drift_count=None)
+        # Should succeed without error
 
     # Test findings functions
     
