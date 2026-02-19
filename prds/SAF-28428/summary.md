@@ -6,7 +6,8 @@
 ## Summary
 Replace all 8 unbounded `dict` caches with `cachetools.TTLCache` instances that have per-type
 `maxsize` and `ttl` settings. Add per-server cache enable/disable env vars, fix orphaned SSE
-session semaphore leak, and add periodic cache stats monitoring.
+session semaphore leak, and add periodic cache stats monitoring. With these changes the MCP server will
+automatically release used memory to the system and ensure that extra memory is not consumed when idle.
 
 ## Root Cause
 Cache dictionaries grow unbounded because:
@@ -27,13 +28,13 @@ Each cache gets per-type `maxsize` (LRU eviction) and `ttl`:
 | Cache | File | maxsize | TTL | Rationale |
 |-------|------|---------|-----|-----------|
 | `simulators_cache` | config_functions.py | 5 | 3600s | Bounded by console count |
-| `tests_cache` | data_functions.py | 5 | 1800s | Bounded by console count |
+| `tests_cache` | data_functions.py | 5 | 600s | Bounded by console count |
 | `simulations_cache` | data_functions.py | 3 | 600s | Medium cardinality (console×test) |
 | `sec_ctrl_events_cache` | data_functions.py | 3 | 600s | High cardinality (C×T×S) |
 | `findings_cache` | data_functions.py | 3 | 600s | Medium cardinality (console×test) |
 | `full_sim_logs_cache` | data_functions.py | 2 | 300s | High cardinality, ~40KB/entry |
-| `playbook_cache` | playbook_functions.py | 5 | 1800s | Bounded, large singleton |
-| `studio_draft_cache` | studio_functions.py | 5 | 1800s | Medium cardinality (console×draft) |
+| `playbook_cache` | playbook_functions.py | 2 | 600s | Bounded, large singleton |
+| `studio_draft_cache` | studio_functions.py | 5 | 600s | Medium cardinality (console×draft) |
 
 ### 3. Thread-safe wrapper
 Wrap `TTLCache` with `threading.Lock` since multiple agents share the same server process.
