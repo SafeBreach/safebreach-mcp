@@ -197,7 +197,7 @@ cache migration.
 | Phase 5: Playbook Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; playbook_cache migrated |
 | Phase 6: Studio Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; studio_draft_cache migrated |
 | Phase 7: Base Server + SSE Fix | ✅ Complete | 2026-02-19 | - | 601 tests pass; base cache + SSE semaphore tuple + stale cleanup |
-| Phase 8: Cache Monitoring | ⏳ Pending | - | - | |
+| Phase 8: Cache Monitoring | ✅ Complete | 2026-02-19 | - | 610 tests pass; registry + stats logging + capacity warnings + monitoring task |
 | Phase 9: Memory Stress Tests | ⏳ Pending | - | - | |
 | Phase 10: Documentation + Cleanup | ⏳ Pending | - | - | |
 

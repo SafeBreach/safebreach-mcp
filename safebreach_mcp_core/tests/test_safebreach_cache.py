@@ -2,15 +2,25 @@
 Tests for SafeBreachCache wrapper class.
 
 Covers functional operations, memory safety (LRU eviction and TTL expiration
-release references), and thread safety under concurrent access.
+release references), thread safety under concurrent access, and cache monitoring.
 """
 
+import asyncio
 import gc
+import logging
 import threading
 import time
 import weakref
 
-from safebreach_mcp_core.safebreach_cache import SafeBreachCache
+import pytest
+
+from safebreach_mcp_core.safebreach_cache import (
+    SafeBreachCache,
+    _cache_registry,
+    get_all_cache_stats,
+    log_cache_stats,
+    start_cache_monitoring,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -369,3 +379,123 @@ class TestSafeBreachCacheThreadSafety:
             assert not t.is_alive(), f"Thread {t.name} appears deadlocked"
 
         assert not errors, f"Thread errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Registry and monitoring tests
+# ---------------------------------------------------------------------------
+
+class TestCacheRegistry:
+    """Test auto-registration of SafeBreachCache instances."""
+
+    def setup_method(self):
+        _cache_registry.clear()
+
+    def teardown_method(self):
+        _cache_registry.clear()
+
+    def test_cache_auto_registers(self):
+        cache = SafeBreachCache("reg_test", maxsize=5, ttl=60)
+        assert cache in _cache_registry
+
+    def test_multiple_caches_all_registered(self):
+        c1 = SafeBreachCache("c1", maxsize=5, ttl=60)
+        c2 = SafeBreachCache("c2", maxsize=3, ttl=30)
+        c3 = SafeBreachCache("c3", maxsize=10, ttl=120)
+        assert len(_cache_registry) == 3
+        assert c1 in _cache_registry
+        assert c2 in _cache_registry
+        assert c3 in _cache_registry
+
+    def test_get_all_cache_stats_returns_all(self):
+        SafeBreachCache("s1", maxsize=5, ttl=60)
+        SafeBreachCache("s2", maxsize=3, ttl=30)
+        stats = get_all_cache_stats()
+        assert len(stats) == 2
+        names = {s["name"] for s in stats}
+        assert names == {"s1", "s2"}
+
+    def test_stats_dict_has_expected_fields(self):
+        SafeBreachCache("fields_test", maxsize=5, ttl=60)
+        stats = get_all_cache_stats()
+        assert len(stats) == 1
+        s = stats[0]
+        for field in ("name", "size", "maxsize", "ttl", "hits", "misses", "hit_rate", "full_consecutive"):
+            assert field in s, f"Missing field: {field}"
+
+
+class TestLogCacheStats:
+    """Test cache stats logging and capacity warnings."""
+
+    def setup_method(self):
+        _cache_registry.clear()
+
+    def teardown_method(self):
+        _cache_registry.clear()
+
+    def test_log_cache_stats_produces_info_log(self, caplog):
+        cache = SafeBreachCache("log_test", maxsize=5, ttl=60)
+        cache.set("a", 1)
+        cache.get("a")
+        with caplog.at_level(logging.INFO, logger="safebreach_mcp_core.safebreach_cache"):
+            log_cache_stats()
+        assert any("log_test" in rec.message and "1/5 entries" in rec.message for rec in caplog.records)
+
+    def test_capacity_warning_after_3_consecutive(self, caplog):
+        cache = SafeBreachCache("warn_test", maxsize=2, ttl=60)
+        cache.set("a", 1)
+        cache.set("b", 2)  # Now at capacity
+        with caplog.at_level(logging.WARNING, logger="safebreach_mcp_core.safebreach_cache"):
+            log_cache_stats()  # full_consecutive = 1
+            log_cache_stats()  # full_consecutive = 2
+            log_cache_stats()  # full_consecutive = 3 → warning
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) >= 1
+        assert "at capacity" in warnings[0].message
+
+    def test_capacity_warning_resets_when_below_capacity(self, caplog):
+        cache = SafeBreachCache("reset_test", maxsize=2, ttl=60)
+        cache.set("a", 1)
+        cache.set("b", 2)
+        with caplog.at_level(logging.WARNING, logger="safebreach_mcp_core.safebreach_cache"):
+            log_cache_stats()  # full_consecutive = 1
+            log_cache_stats()  # full_consecutive = 2
+            # Remove an item — now below capacity
+            cache.delete("a")
+            log_cache_stats()  # full_consecutive resets to 0
+            log_cache_stats()  # full_consecutive = 0
+            log_cache_stats()  # full_consecutive = 0
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 0
+
+
+class TestCacheMonitoringTask:
+    """Test the async monitoring background task."""
+
+    def setup_method(self):
+        _cache_registry.clear()
+
+    def teardown_method(self):
+        _cache_registry.clear()
+
+    def test_start_cache_monitoring_creates_task(self):
+        async def run():
+            task = asyncio.create_task(start_cache_monitoring(interval_seconds=1))
+            assert not task.done()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        asyncio.run(run())
+
+    def test_monitoring_handles_exception_gracefully(self, caplog):
+        """Monitoring task logs exceptions but doesn't crash."""
+        async def run():
+            SafeBreachCache("monitor_test", maxsize=5, ttl=60)
+            task = asyncio.create_task(start_cache_monitoring(interval_seconds=0))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        asyncio.run(run())

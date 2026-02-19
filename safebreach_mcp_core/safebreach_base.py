@@ -15,7 +15,7 @@ import uuid
 from typing import Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from .cache_config import is_caching_enabled
-from .safebreach_cache import SafeBreachCache
+from .safebreach_cache import SafeBreachCache, start_cache_monitoring
 # FastAPI imports - only needed for external connections
 try:
     from fastapi import Request
@@ -156,8 +156,9 @@ class SafeBreachMCPBase:
         app = self._create_concurrency_limited_app(app)
         logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
 
-        # Start background cleanup for stale SSE semaphores
+        # Start background tasks
         cleanup_task = asyncio.create_task(_cleanup_stale_semaphores())
+        monitoring_task = asyncio.create_task(start_cache_monitoring())
 
         config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
@@ -165,6 +166,7 @@ class SafeBreachMCPBase:
             await server.serve()
         finally:
             cleanup_task.cancel()
+            monitoring_task.cancel()
     
     def _determine_bind_host(self, host: str, allow_external: bool) -> str:
         """Determine the appropriate bind host based on configuration."""
