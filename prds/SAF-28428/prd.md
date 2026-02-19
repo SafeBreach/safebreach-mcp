@@ -189,7 +189,7 @@ cache migration.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 0: Quality & Memory Baseline | ✅ Complete | 2026-02-19 | - | 539 tests pass, +54MB RSS with buggy cache |
+| Phase 0: Quality & Memory Baseline | ✅ Complete | 2026-02-19 | f37d670 | 539 unit + 39 E2E pass; +590MB RSS (real API), 301MB cache overhead |
 | Phase 1: Foundation | ⏳ Pending | - | - | |
 | Phase 2: Per-Server Cache Config | ⏳ Pending | - | - | |
 | Phase 3: Config Server Migration | ⏳ Pending | - | - | |
