@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Iterable
 
 import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
+from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .data_types import (
@@ -24,14 +25,13 @@ from .drifts_metadata import drift_types_mapping
 
 logger = logging.getLogger(__name__)
 
-# Global caches
-tests_cache = {}
-simulations_cache = {}
-security_control_events_cache = {}
+# Bounded caches with TTL (SafeBreachCache wraps cachetools.TTLCache)
+tests_cache = SafeBreachCache(name="tests", maxsize=5, ttl=1800)
+simulations_cache = SafeBreachCache(name="simulations", maxsize=3, ttl=600)
+security_control_events_cache = SafeBreachCache(name="security_control_events", maxsize=3, ttl=600)
 
 # Configuration constants
 PAGE_SIZE = 10
-CACHE_TTL = 3600  # 1 hour in seconds
 
 
 def _normalize_numeric(value: Any) -> Optional[float]:
@@ -193,14 +193,13 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
         List of test dictionaries
     """
     cache_key = f"tests_{console}"
-    current_time = time.time()
 
     # Check cache first (only if caching is enabled)
-    if use_cache and is_caching_enabled() and cache_key in tests_cache:
-        data, timestamp = tests_cache[cache_key]
-        if current_time - timestamp < CACHE_TTL:
-            logger.info("Retrieved %d tests from cache for console '%s'", len(data), console)
-            return data
+    if use_cache and is_caching_enabled("data"):
+        cached = tests_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Retrieved %d tests from cache for console '%s'", len(cached), console)
+            return cached
     
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
@@ -230,8 +229,8 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
             tests.append(get_reduced_test_summary_mapping(test_summary))
 
         # Cache the result so subsequent calls can reuse it (only if caching is enabled)
-        if is_caching_enabled():
-            tests_cache[cache_key] = (tests, current_time)
+        if is_caching_enabled("data"):
+            tests_cache.set(cache_key, tests)
         
         logger.info("Retrieved %d tests from API for console '%s'", len(tests), console)
         return tests
@@ -643,14 +642,13 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
         List of simulation dictionaries
     """
     cache_key = f"simulations_{console}_{test_id}"
-    current_time = time.time()
 
     # Check cache first (only if caching is enabled)
-    if is_caching_enabled() and cache_key in simulations_cache:
-        data, timestamp = simulations_cache[cache_key]
-        if current_time - timestamp < CACHE_TTL:
-            logger.info("Retrieved %d simulations from cache for test '%s'", len(data), test_id)
-            return data
+    if is_caching_enabled("data"):
+        cached = simulations_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Retrieved %d simulations from cache for test '%s'", len(cached), test_id)
+            return cached
     
     # Cache miss or expired - proceed to fetch from API with proper pagination
     try:
@@ -715,8 +713,8 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
             simulations.append(get_reduced_simulation_result_entity(simulation_result))
 
         # Cache the result (only if caching is enabled)
-        if is_caching_enabled():
-            simulations_cache[cache_key] = (simulations, current_time)
+        if is_caching_enabled("data"):
+            simulations_cache.set(cache_key, simulations)
         
         logger.info("Retrieved %d simulations total from %d pages for test '%s'", len(simulations), page - 1, test_id)
         return simulations
@@ -907,14 +905,13 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
         List of security control events
     """
     cache_key = f"{console}:{test_id}:{simulation_id}"
-    current_time = time.time()
 
     # Check cache first (only if caching is enabled)
-    if is_caching_enabled() and cache_key in security_control_events_cache:
-        cache_entry = security_control_events_cache[cache_key]
-        if current_time - cache_entry['timestamp'] < CACHE_TTL:
+    if is_caching_enabled("data"):
+        cached = security_control_events_cache.get(cache_key)
+        if cached is not None:
             logger.info("Using cached security control events for %s:%s:%s", console, test_id, simulation_id)
-            return cache_entry['data']
+            return cached
     
     # Fetch from API
     try:
@@ -938,11 +935,8 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
             security_events = response_data['result']['siemLogs']
 
         # Cache the result (only if caching is enabled)
-        if is_caching_enabled():
-            security_control_events_cache[cache_key] = {
-                'data': security_events,
-                'timestamp': current_time
-            }
+        if is_caching_enabled("data"):
+            security_control_events_cache.set(cache_key, security_events)
             logger.info("Cached %d security control events for %s:%s:%s", len(security_events), console, test_id, simulation_id)
         return security_events
         
@@ -1207,8 +1201,8 @@ def sb_get_security_control_event_details(
         raise
 
 
-# Global cache for findings
-findings_cache = {}
+# Bounded cache for findings
+findings_cache = SafeBreachCache(name="findings", maxsize=3, ttl=600)
 
 
 def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") -> List[Dict[str, Any]]:
@@ -1226,13 +1220,13 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
         List of findings data for the entire test
     """
     cache_key = f"{console}:{test_id}"
-    current_time = time.time()
 
     # Check if we have valid cached data (only if caching is enabled)
-    if (is_caching_enabled() and cache_key in findings_cache and
-        current_time - findings_cache[cache_key]['timestamp'] < CACHE_TTL):
-        logger.info("Using cached findings data for %s", cache_key)
-        return findings_cache[cache_key]['data']
+    if is_caching_enabled("data"):
+        cached = findings_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Using cached findings data for %s", cache_key)
+            return cached
     
     try:
         apitoken = get_secret_for_console(console)
@@ -1250,11 +1244,8 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
         findings_data = data.get('findings', [])
 
         # Cache the data (only if caching is enabled)
-        if is_caching_enabled():
-            findings_cache[cache_key] = {
-                'data': findings_data,
-                'timestamp': current_time
-            }
+        if is_caching_enabled("data"):
+            findings_cache.set(cache_key, findings_data)
             logger.info("Cached %d findings for %s", len(findings_data), cache_key)
         return findings_data
         
@@ -1657,8 +1648,8 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
         raise
 
 
-# Global cache for full simulation logs
-full_simulation_logs_cache = {}
+# Bounded cache for full simulation logs
+full_simulation_logs_cache = SafeBreachCache(name="full_simulation_logs", maxsize=2, ttl=300)
 
 
 def sb_get_full_simulation_logs(
@@ -1747,14 +1738,13 @@ def _get_full_simulation_logs_from_cache_or_api(
         Raw API response dictionary
     """
     cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}"
-    current_time = time.time()
 
     # Check cache first (only if caching is enabled)
-    if is_caching_enabled() and cache_key in full_simulation_logs_cache:
-        data, timestamp = full_simulation_logs_cache[cache_key]
-        if current_time - timestamp < CACHE_TTL:
+    if is_caching_enabled("data"):
+        cached = full_simulation_logs_cache.get(cache_key)
+        if cached is not None:
             logger.info("Retrieved full simulation logs from cache: %s", cache_key)
-            return data
+            return cached
 
     # Cache miss or expired - fetch from API
     logger.info("Fetching full simulation logs from API for simulation '%s', test '%s' from console '%s'",
@@ -1762,8 +1752,8 @@ def _get_full_simulation_logs_from_cache_or_api(
     data = _fetch_full_simulation_logs_from_api(simulation_id, test_id, console)
 
     # Cache the result (only if caching is enabled)
-    if is_caching_enabled():
-        full_simulation_logs_cache[cache_key] = (data, current_time)
+    if is_caching_enabled("data"):
+        full_simulation_logs_cache.set(cache_key, data)
         logger.info("Cached full simulation logs: %s", cache_key)
 
     return data
