@@ -15,6 +15,7 @@ import uuid
 from typing import Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from .cache_config import is_caching_enabled
+from .safebreach_cache import SafeBreachCache
 # FastAPI imports - only needed for external connections
 try:
     from fastapi import Request
@@ -35,8 +36,25 @@ logger = logging.getLogger(__name__)
 
 # Concurrency limiter state — shared across all server instances
 _mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('mcp_session_id', default=None)
-_session_semaphores: Dict[str, asyncio.Semaphore] = {}
+# Stores (semaphore, creation_timestamp) tuples to enable stale entry cleanup
+_session_semaphores: Dict[str, tuple[asyncio.Semaphore, float]] = {}
 _concurrency_limit = int(os.environ.get('SAFEBREACH_MCP_CONCURRENCY_LIMIT', '2'))
+_SEMAPHORE_MAX_AGE = 3600  # 1 hour — stale semaphores are cleaned up after this
+
+
+async def _cleanup_stale_semaphores() -> None:
+    """Periodically remove SSE session semaphores older than _SEMAPHORE_MAX_AGE."""
+    while True:
+        await asyncio.sleep(600)  # Run every 10 minutes
+        now = time.time()
+        stale = [
+            sid for sid, (_, created) in _session_semaphores.items()
+            if now - created > _SEMAPHORE_MAX_AGE
+        ]
+        for sid in stale:
+            _session_semaphores.pop(sid, None)
+        if stale:
+            logger.info(f"🧹 Cleaned up {len(stale)} stale SSE semaphore(s), {len(_session_semaphores)} remaining")
 
 
 class SafeBreachMCPBase:
@@ -60,11 +78,7 @@ class SafeBreachMCPBase:
         
         self.mcp = FastMCP(server_name)
         self.auth = SafeBreachAuth()
-        self._cache = {}
-        self._cache_timestamps = {}
-        
-        # Cache TTL in seconds (1 hour)  
-        self.CACHE_TTL = 3600
+        self._cache = SafeBreachCache(name=f"{server_name}_base", maxsize=10, ttl=3600)
     
     def get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """
@@ -78,16 +92,8 @@ class SafeBreachMCPBase:
         """
         if not is_caching_enabled():
             return None
-        if key in self._cache:
-            timestamp = self._cache_timestamps.get(key, 0)
-            if time.time() - timestamp < self.CACHE_TTL:
-                return self._cache[key]
-            else:
-                # Remove expired entry
-                del self._cache[key]
-                del self._cache_timestamps[key]
-        return None
-    
+        return self._cache.get(key)
+
     def set_cache(self, key: str, data: Dict[str, Any]) -> None:
         """
         Set data in cache.
@@ -98,13 +104,11 @@ class SafeBreachMCPBase:
         """
         if not is_caching_enabled():
             return
-        self._cache[key] = data
-        self._cache_timestamps[key] = time.time()
-    
+        self._cache.set(key, data)
+
     def clear_cache(self) -> None:
         """Clear all cache data."""
         self._cache.clear()
-        self._cache_timestamps.clear()
     
     async def run_server(self, port: int = 8000, host: str = "127.0.0.1", allow_external: bool = False) -> None:
         """
@@ -152,9 +156,15 @@ class SafeBreachMCPBase:
         app = self._create_concurrency_limited_app(app)
         logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
 
+        # Start background cleanup for stale SSE semaphores
+        cleanup_task = asyncio.create_task(_cleanup_stale_semaphores())
+
         config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            cleanup_task.cancel()
     
     def _determine_bind_host(self, host: str, allow_external: bool) -> str:
         """Determine the appropriate bind host based on configuration."""
@@ -468,7 +478,7 @@ class SafeBreachMCPBase:
             if path.endswith("/sse"):
                 session_id = str(uuid.uuid4())
                 _mcp_session_id.set(session_id)
-                _session_semaphores[session_id] = asyncio.Semaphore(_concurrency_limit)
+                _session_semaphores[session_id] = (asyncio.Semaphore(_concurrency_limit), time.time())
                 logger.info(f"🆔 New SSE session: {session_id[:8]}...")
 
                 async def cleanup_send(message):
@@ -484,7 +494,7 @@ class SafeBreachMCPBase:
             if path.endswith("/messages/") or path.endswith("/messages"):
                 session_id = _mcp_session_id.get()
                 if session_id and session_id in _session_semaphores:
-                    sem = _session_semaphores[session_id]
+                    sem, _ = _session_semaphores[session_id]
                     if sem.locked() and sem._value == 0:  # noqa: SLF001
                         logger.warning(
                             f"⚠️ Concurrency limit ({_concurrency_limit}) exceeded for session {session_id[:8]}..."

@@ -4,6 +4,7 @@ Tests for the per-agent concurrency limiter in SafeBreachMCPBase.
 
 import asyncio
 import json
+import time
 import pytest
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,8 @@ from safebreach_mcp_core.safebreach_base import (
     _session_semaphores,
     _mcp_session_id,
     _concurrency_limit,
+    _cleanup_stale_semaphores,
+    _SEMAPHORE_MAX_AGE,
 )
 
 
@@ -88,10 +91,11 @@ class TestConcurrencyLimiter:
             app, _ = _make_app()
             # Create a session with limit=1
             session_id = "test-session-429"
-            _session_semaphores[session_id] = asyncio.Semaphore(1)
+            sem = asyncio.Semaphore(1)
+            _session_semaphores[session_id] = (sem, time.time())
             _mcp_session_id.set(session_id)
             # Exhaust the semaphore
-            await _session_semaphores[session_id].acquire()
+            await sem.acquire()
             # Second request should get 429
             msg_scope = make_scope(path="/messages/")
             send = AsyncMock()
@@ -104,7 +108,7 @@ class TestConcurrencyLimiter:
             body_call = send.call_args_list[1][0][0]
             body_json = json.loads(body_call["body"])
             assert body_json["error"] == "Too Many Requests"
-            _session_semaphores[session_id].release()
+            sem.release()
         asyncio.run(run())
 
     def test_different_sessions_independent_limits(self):
@@ -113,16 +117,18 @@ class TestConcurrencyLimiter:
             app, original = _make_app()
             session_a = "session-a"
             session_b = "session-b"
-            _session_semaphores[session_a] = asyncio.Semaphore(1)
-            _session_semaphores[session_b] = asyncio.Semaphore(1)
+            sem_a = asyncio.Semaphore(1)
+            sem_b = asyncio.Semaphore(1)
+            _session_semaphores[session_a] = (sem_a, time.time())
+            _session_semaphores[session_b] = (sem_b, time.time())
             # Exhaust session A
-            await _session_semaphores[session_a].acquire()
+            await sem_a.acquire()
             # Session B should still work
             _mcp_session_id.set(session_b)
             msg_scope = make_scope(path="/messages/")
             await app(msg_scope, AsyncMock(), AsyncMock())
             original.assert_awaited_once()
-            _session_semaphores[session_a].release()
+            sem_a.release()
         asyncio.run(run())
 
     def test_no_session_passes_through(self):
@@ -169,14 +175,102 @@ class TestConcurrencyLimiter:
         async def run():
             app, _ = _make_app()
             session_id = "test-retry"
-            _session_semaphores[session_id] = asyncio.Semaphore(1)
+            sem = asyncio.Semaphore(1)
+            _session_semaphores[session_id] = (sem, time.time())
             _mcp_session_id.set(session_id)
-            await _session_semaphores[session_id].acquire()
+            await sem.acquire()
             send = AsyncMock()
             await app(make_scope(path="/messages/"), AsyncMock(), send)
             start_call = send.call_args_list[0][0][0]
             headers_dict = dict(start_call["headers"])
             assert b"retry-after" in headers_dict
             assert headers_dict[b"retry-after"] == b"5"
-            _session_semaphores[session_id].release()
+            sem.release()
         asyncio.run(run())
+
+    def test_sse_stores_semaphore_as_tuple(self):
+        """SSE endpoint stores (Semaphore, timestamp) tuple."""
+        async def run():
+            app, _ = _make_app()
+            scope = make_scope(path="/sse")
+            await app(scope, AsyncMock(), AsyncMock())
+            assert len(_session_semaphores) == 1
+            session_id = list(_session_semaphores.keys())[0]
+            entry = _session_semaphores[session_id]
+            assert isinstance(entry, tuple)
+            assert len(entry) == 2
+            sem, created_at = entry
+            assert isinstance(sem, asyncio.Semaphore)
+            assert isinstance(created_at, float)
+            assert created_at <= time.time()
+        asyncio.run(run())
+
+
+class TestStaleSemaphoreCleanup:
+    """Tests for stale semaphore cleanup logic."""
+
+    @pytest.fixture(autouse=True)
+    def cleanup(self):
+        _session_semaphores.clear()
+        yield
+        _session_semaphores.clear()
+
+    def test_cleanup_removes_stale_semaphores(self):
+        """Semaphores older than _SEMAPHORE_MAX_AGE are removed."""
+        _session_semaphores["fresh"] = (asyncio.Semaphore(1), time.time())
+        _session_semaphores["stale"] = (asyncio.Semaphore(1), time.time() - _SEMAPHORE_MAX_AGE - 1)
+
+        now = time.time()
+        stale = [
+            sid for sid, (_, created) in _session_semaphores.items()
+            if now - created > _SEMAPHORE_MAX_AGE
+        ]
+        for sid in stale:
+            _session_semaphores.pop(sid, None)
+
+        assert "fresh" in _session_semaphores
+        assert "stale" not in _session_semaphores
+        assert len(_session_semaphores) == 1
+
+    def test_cleanup_preserves_fresh_semaphores(self):
+        """Semaphores newer than _SEMAPHORE_MAX_AGE are preserved."""
+        _session_semaphores["s1"] = (asyncio.Semaphore(1), time.time())
+        _session_semaphores["s2"] = (asyncio.Semaphore(1), time.time() - 100)
+
+        now = time.time()
+        stale = [
+            sid for sid, (_, created) in _session_semaphores.items()
+            if now - created > _SEMAPHORE_MAX_AGE
+        ]
+        for sid in stale:
+            _session_semaphores.pop(sid, None)
+
+        assert len(_session_semaphores) == 2
+
+    def test_cleanup_handles_empty_dict(self):
+        """Cleanup is a no-op when there are no semaphores."""
+        now = time.time()
+        stale = [
+            sid for sid, (_, created) in _session_semaphores.items()
+            if now - created > _SEMAPHORE_MAX_AGE
+        ]
+        for sid in stale:
+            _session_semaphores.pop(sid, None)
+        assert len(_session_semaphores) == 0
+
+    def test_cleanup_all_stale(self):
+        """All stale entries are removed."""
+        for i in range(5):
+            _session_semaphores[f"stale_{i}"] = (
+                asyncio.Semaphore(1), time.time() - _SEMAPHORE_MAX_AGE - i - 1
+            )
+
+        now = time.time()
+        stale = [
+            sid for sid, (_, created) in _session_semaphores.items()
+            if now - created > _SEMAPHORE_MAX_AGE
+        ]
+        for sid in stale:
+            _session_semaphores.pop(sid, None)
+
+        assert len(_session_semaphores) == 0
