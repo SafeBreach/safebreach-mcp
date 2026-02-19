@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.26.0",
+    "cachetools>=5.3.0",
     "requests>=2.25.0",
     "mcp>=1.10.0",
 ]
