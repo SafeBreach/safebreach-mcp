@@ -242,10 +242,22 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 
 **Factory Pattern**: `secret_utils.py` acts as a factory facade, automatically selecting the appropriate provider based on environment configuration and providing a simple `get_secret_for_console(console)` interface.
 
-**Caching Strategy**: The system implements intelligent caching with separate caches per server:
-- **Config Server**: Simulator data cached per console (1-hour TTL)
-- **Data Server**: Test history and simulation data cached per console/test (1-hour TTL)
-- **Cache Isolation**: Each server maintains its own cache to prevent interference
+**Caching Strategy**: All caches use bounded `SafeBreachCache` (wraps `cachetools.TTLCache`) with
+per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to bound memory:
+- **Config Server**: `simulators` — maxsize=5, TTL=3600s
+- **Data Server**: `tests` (5/1800s), `simulations` (3/600s), `security_control_events` (3/600s),
+  `findings` (3/600s), `full_simulation_logs` (2/300s)
+- **Playbook Server**: `playbook_attacks` — maxsize=5, TTL=1800s
+- **Studio Server**: `studio_drafts` — maxsize=5, TTL=1800s
+- **Cache Monitoring**: Background task logs stats every 5 minutes, warns when caches are at capacity
+
+**Cache Configuration Environment Variables**:
+- `SB_MCP_ENABLE_LOCAL_CACHING=true|false` — Global toggle (default: false)
+- `SB_MCP_CACHE_CONFIG=true|false` — Override for Config server
+- `SB_MCP_CACHE_DATA=true|false` — Override for Data server
+- `SB_MCP_CACHE_PLAYBOOK=true|false` — Override for Playbook server
+- `SB_MCP_CACHE_STUDIO=true|false` — Override for Studio server
+- Per-server overrides take precedence over the global toggle
 
 **Error Handling**: Functions include timeout configurations (120 seconds for API calls) and comprehensive logging for debugging SafeBreach API interactions.
 
