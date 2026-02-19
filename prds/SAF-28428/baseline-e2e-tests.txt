@@ -1,0 +1,50 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.8, pytest-8.4.1, pluggy-1.6.0 -- /Users/yossiattas/Public/safebreach-mcp/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/yossiattas/Public/safebreach-mcp
+configfile: pyproject.toml
+plugins: anyio-4.9.0, cov-6.2.1, mock-3.14.1
+collecting ... collected 579 items / 539 deselected / 40 selected
+
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_tests_history_e2e PASSED [  2%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_details_e2e PASSED [  5%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_details_with_drift_count_e2e PASSED [  7%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_details_no_drift_count_e2e PASSED [ 10%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_simulations_e2e PASSED [ 12%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_simulation_details_basic_e2e PASSED [ 15%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_simulation_details_with_mitre_e2e PASSED [ 17%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_simulation_details_with_attack_logs_e2e PASSED [ 20%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_simulation_details_full_e2e PASSED [ 22%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_attack_logs_across_multiple_simulations_e2e PASSED [ 25%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_security_controls_events_e2e PASSED [ 27%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_findings_counts_e2e PASSED [ 30%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_findings_details_e2e PASSED [ 32%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_test_drifts_e2e PASSED [ 35%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_full_simulation_logs_e2e PASSED [ 37%]
+safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_full_simulation_logs_error_handling_e2e PASSED [ 40%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_get_playbook_attacks_real_api PASSED [ 42%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_get_playbook_attack_details_real_api PASSED [ 45%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_filtering_real_api PASSED [ 47%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_id_range_filtering_real_api PASSED [ 50%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_pagination_real_api PASSED [ 52%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_cache_behavior_real_api SKIPPED [ 55%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_error_handling_real_api PASSED [ 57%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_data_quality_real_api PASSED [ 60%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_verbosity_levels_real_api PASSED [ 62%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_mitre_data_real_api PASSED [ 65%]
+safebreach_mcp_playbook/tests/test_e2e.py::TestPlaybookE2E::test_mitre_filtering_real_api PASSED [ 67%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioValidationE2E::test_validate_valid_host_code_e2e PASSED [ 70%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioValidationE2E::test_validate_invalid_code_e2e PASSED [ 72%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioValidationE2E::test_validate_lint_sb011_e2e PASSED [ 75%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioListE2E::test_get_all_studio_attacks_e2e PASSED [ 77%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioListE2E::test_get_all_studio_attacks_pagination_e2e PASSED [ 80%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioListE2E::test_get_all_studio_attacks_filtering_e2e PASSED [ 82%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioSourceE2E::test_get_studio_attack_source_e2e PASSED [ 85%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioSourceE2E::test_get_studio_attack_source_structure_e2e PASSED [ 87%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioDraftLifecycleE2E::test_create_and_update_draft_e2e PASSED [ 90%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioExecutionE2E::test_run_studio_attack_e2e PASSED [ 92%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioExecutionE2E::test_get_studio_attack_latest_result_e2e PASSED [ 95%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioDebugFlowE2E::test_debug_flow_e2e PASSED [ 97%]
+safebreach_mcp_studio/tests/test_e2e.py::TestStudioStatusTransitionE2E::test_publish_unpublish_roundtrip_e2e PASSED [100%]
+
+========== 39 passed, 1 skipped, 539 deselected in 434.13s (0:07:14) ===========

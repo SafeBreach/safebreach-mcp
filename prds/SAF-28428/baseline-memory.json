@@ -56,5 +56,23 @@
     "max_rss_growth_disabled_mb": 10,
     "max_rss_growth_enabled_fixed_mb": 50,
     "max_peak_rss_above_baseline_mb": 100
+  },
+  "test_suite_baseline": {
+    "unit_integration": {
+      "passed": 539,
+      "failed": 0,
+      "deselected": 40,
+      "duration_seconds": 1.17
+    },
+    "e2e": {
+      "passed": 39,
+      "skipped": 1,
+      "failed": 0,
+      "deselected": 539,
+      "duration_seconds": 434.13,
+      "console": "pentest01",
+      "skipped_tests": ["test_cache_behavior_real_api"]
+    },
+    "total_tests": 578
   }
 }
