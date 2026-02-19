@@ -190,9 +190,9 @@ cache migration.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase 0: Quality & Memory Baseline | ✅ Complete | 2026-02-19 | f37d670 | 539 unit + 39 E2E pass; +590MB RSS (real API), 301MB cache overhead |
-| Phase 1: Foundation | ⏳ Pending | - | - | |
-| Phase 2: Per-Server Cache Config | ⏳ Pending | - | - | |
-| Phase 3: Config Server Migration | ⏳ Pending | - | - | |
+| Phase 1: Foundation | ✅ Complete | 2026-02-19 | ebc7c96 | SafeBreachCache + 28 tests (567 total pass) |
+| Phase 2: Per-Server Cache Config | ✅ Complete | 2026-02-19 | a26731f | 19 tests, per-server env var overrides (586 total) |
+| Phase 3: Config Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; SafeBreachCache(maxsize=5, ttl=3600) |
 | Phase 4: Data Server Migration | ⏳ Pending | - | - | |
 | Phase 5: Playbook Server Migration | ⏳ Pending | - | - | |
 | Phase 6: Studio Server Migration | ⏳ Pending | - | - | |
