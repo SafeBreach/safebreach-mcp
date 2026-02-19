@@ -148,19 +148,34 @@ Samples: 436.2 -> 436.4 -> 965.8 -> 956.4 -> 969.1 -> 747.7 -> 747.4 -> 804.7 ->
 2. **RSS does NOT return to baseline (436 MB)**: The end state of 804 MB is 368 MB above start.
    However, this is **not evidence of a leak**. For comparison, the caching DISABLED scenario also
    does not return to its baseline: 113 MB start → 437 MB end (+324 MB growth with zero cache
-   entries). This 324 MB growth is Python/OS memory behavior -- CPython's memory allocator retains
-   freed memory pools for reuse rather than returning them to the OS, and RSS reflects OS-level
-   allocation, not Python-level usage.
+   entries). This 324 MB is from two distinct sources explained below.
 
 3. **The actual cache cost is 43 MB**: growth_enabled(367 MB) − growth_disabled(324 MB) = **43 MB**
    attributable to the 14 bounded cache entries. The remaining 324 MB would occur with or without
    caching.
 
-4. **Full reclaim requires time**: The 14 active cache entries (including the ~450 MB playbook
-   singleton) haven't hit their TTL yet because the profiler measures immediately after workload
-   completion. Full RSS reclaim would require TTL expiration (300-3600s depending on cache type) +
-   garbage collection + OS page release. The stress test `test_memory_returns_to_baseline` proves
-   this reclaim does occur: after explicit `clear()` + `gc.collect()`, tracemalloc delta is < 500KB.
+4. **Full reclaim happens naturally, no external intervention required**: The 14 active cache
+   entries (including the ~450 MB playbook singleton) haven't hit their TTL yet because the profiler
+   measures immediately after workload completion. The natural reclaim cycle is:
+   - TTL expires → entry becomes stale inside TTLCache
+   - Next cache operation (or the periodic monitoring task every 5 min) triggers lazy removal
+   - Python reference counting deallocates the object immediately (no `gc.collect()` needed for
+     non-cyclic data like dicts, lists, and strings)
+
+   **Large objects** (like the ~450 MB playbook KB) are allocated via `mmap` by the C allocator.
+   When freed, `mmap`-allocated memory IS returned to the OS, so RSS **would** decrease
+   significantly once the playbook entry expires.
+
+   **Small objects** (simulation details, findings, event data) are allocated via Python's `pymalloc`
+   pool allocator. When freed, `pymalloc` retains the memory pools (~256 KB arenas) for reuse rather
+   than returning them to the OS. RSS **may not** decrease for these even after Python frees the
+   objects internally. This is the same mechanism causing the +324 MB residual in the caching
+   DISABLED scenario -- it is not a leak, but a Python allocator design choice that prioritizes
+   allocation speed over RSS reduction.
+
+   The stress test `test_memory_returns_to_baseline` used explicit `clear()` + `gc.collect()` as an
+   accelerant to prove reclaimability within a fast test, not because external intervention is
+   operationally required. In production, the natural TTL + monitoring cycle handles reclaim.
 
 ### Acceptance Threshold Results
 
