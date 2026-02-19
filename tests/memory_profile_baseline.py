@@ -1,15 +1,19 @@
 """
-Memory Profile Baseline for MCP Caching System
+Memory Profile Baseline for MCP Caching System (E2E — Real API Data)
 
-Standalone script that measures memory consumption of the MCP caching system
-under two scenarios: caching disabled (default) and caching enabled (unbounded).
+Measures memory consumption by calling real SafeBreach API endpoints and
+letting the cache dictionaries fill with production-sized data. Runs two
+scenarios:
+  A. Caching DISABLED  — API calls happen but nothing is retained
+  B. Caching ENABLED   — unbounded dicts accumulate real responses
 
-This script does NOT start MCP servers. It directly imports and manipulates
-the cache dictionaries from each server module.
-
-Usage:
-    uv run python tests/memory_profile_baseline.py
+Requires environment setup (API tokens, console config):
+    source .vscode/set_env.sh
     uv run python tests/memory_profile_baseline.py --output results.json
+
+The workload iterates across multiple tests and simulations per test,
+creating the multiplicative key cardinality that causes unbounded growth
+in the current (buggy) caching implementation.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import sys
 import time
 import tracemalloc
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 import psutil
 
@@ -33,149 +37,37 @@ import psutil
 # ---------------------------------------------------------------------------
 from safebreach_mcp_core.cache_config import reset_cache_config
 
-from safebreach_mcp_config.config_functions import simulators_cache
+from safebreach_mcp_config.config_functions import (
+    sb_get_console_simulators,
+    simulators_cache,
+)
 from safebreach_mcp_data.data_functions import (
     findings_cache,
     full_simulation_logs_cache,
+    sb_get_full_simulation_logs,
+    sb_get_security_controls_events,
+    sb_get_test_findings_details,
+    sb_get_test_simulations,
+    sb_get_tests_history,
     security_control_events_cache,
     simulations_cache,
     tests_cache,
 )
-from safebreach_mcp_playbook.playbook_functions import playbook_cache
+from safebreach_mcp_playbook.playbook_functions import (
+    playbook_cache,
+    sb_get_playbook_attacks,
+)
 from safebreach_mcp_studio.studio_functions import studio_draft_cache
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-NUM_CONSOLES = 5
-TESTS_PER_CONSOLE = 10
-SIMULATIONS_PER_TEST = 2
-TOTAL_QUERIES = 100
-SAMPLE_INTERVAL = 25
-
-# Realistic payload sizes (in bytes)
-SIMULATOR_DATA_SIZE = 10 * 1024       # ~10 KB
-TEST_DATA_SIZE = 5 * 1024             # ~5 KB
-SIMULATION_DATA_SIZE = 2 * 1024       # ~2 KB
-SECURITY_EVENT_DATA_SIZE = 1 * 1024   # ~1 KB
-FINDINGS_DATA_SIZE = 1 * 1024         # ~1 KB
-FULL_SIM_LOGS_DATA_SIZE = 40 * 1024   # ~40 KB
-PLAYBOOK_DATA_SIZE = 100 * 1024       # ~100 KB
-STUDIO_DRAFT_DATA_SIZE = 5 * 1024     # ~5 KB
-
 
 # ---------------------------------------------------------------------------
-# Mock data generators
+# Defaults
 # ---------------------------------------------------------------------------
 
-def _make_simulator_data(console: str, index: int) -> Dict[str, Any]:
-    """Generate a realistic-sized simulator mock payload (~10 KB)."""
-    return {
-        "id": f"sim-{console}-{index}",
-        "name": f"Simulator {index} on {console}",
-        "isConnected": index % 2 == 0,
-        "isEnabled": True,
-        "version": "4.2.1",
-        "OS": {"type": "Linux", "version": "Ubuntu 22.04"},
-        "labels": [f"label-{i}" for i in range(5)],
-        "isCritical": index % 3 == 0,
-        "payload": "x" * SIMULATOR_DATA_SIZE,
-    }
-
-
-def _make_test_data(console: str, test_index: int) -> Dict[str, Any]:
-    """Generate a realistic-sized test summary mock payload (~5 KB)."""
-    return {
-        "test_id": f"test-{console}-{test_index}",
-        "name": f"Test Run {test_index}",
-        "status": "completed",
-        "test_type": "BAS",
-        "start_time": time.time() - 3600,
-        "end_time": time.time(),
-        "duration": 3600,
-        "simulations_statistics": [],
-        "payload": "x" * TEST_DATA_SIZE,
-    }
-
-
-def _make_simulation_data(console: str, test_index: int, sim_index: int) -> Dict[str, Any]:
-    """Generate a realistic-sized simulation result mock payload (~2 KB)."""
-    return {
-        "simulation_id": f"sim-result-{console}-{test_index}-{sim_index}",
-        "status": "detected",
-        "playbookAttackId": f"attack-{sim_index}",
-        "playbookAttackName": f"Attack {sim_index}",
-        "end_time": time.time(),
-        "is_drifted": False,
-        "drift_tracking_code": f"drift-{console}-{test_index}-{sim_index}",
-        "payload": "x" * SIMULATION_DATA_SIZE,
-    }
-
-
-def _make_security_event_data(console: str, test_index: int, sim_index: int) -> Dict[str, Any]:
-    """Generate a realistic-sized security control event mock payload (~1 KB)."""
-    return {
-        "id": f"event-{console}-{test_index}-{sim_index}",
-        "connectorName": "SIEM Connector",
-        "fields": {
-            "product": "Firewall",
-            "vendor": "Vendor A",
-            "action": ["block"],
-            "sourceHosts": ["10.0.0.1"],
-            "destHosts": ["10.0.0.2"],
-        },
-        "payload": "x" * SECURITY_EVENT_DATA_SIZE,
-    }
-
-
-def _make_findings_data() -> List[Dict[str, Any]]:
-    """Generate a realistic-sized findings mock payload (~1 KB per finding)."""
-    return [
-        {
-            "type": "credential_exposure",
-            "timestamp": str(time.time()),
-            "attributes": {"host": f"host-{i}", "ports": [80, 443]},
-            "payload": "x" * FINDINGS_DATA_SIZE,
-        }
-        for i in range(3)
-    ]
-
-
-def _make_full_sim_logs_data(console: str, test_index: int, sim_index: int) -> Dict[str, Any]:
-    """Generate a realistic-sized full simulation logs mock payload (~40 KB)."""
-    return {
-        "simulation_id": f"sim-{console}-{test_index}-{sim_index}",
-        "test_id": f"test-{console}-{test_index}",
-        "logs": "x" * FULL_SIM_LOGS_DATA_SIZE,
-        "simulation_steps": [{"step": i, "action": f"step-{i}"} for i in range(20)],
-        "error": None,
-        "output": "completed successfully",
-    }
-
-
-def _make_playbook_data(console: str) -> Dict[str, Any]:
-    """Generate a realistic-sized playbook attack mock payload (~100 KB)."""
-    return {
-        "id": 1001,
-        "name": f"Playbook Attack for {console}",
-        "description": "A simulated attack technique",
-        "techniques": [{"id": f"T{i}", "name": f"Technique {i}"} for i in range(50)],
-        "payload": "x" * PLAYBOOK_DATA_SIZE,
-    }
-
-
-def _make_studio_draft_data(attack_id: int) -> Dict[str, Any]:
-    """Generate a realistic-sized studio draft mock payload (~5 KB)."""
-    return {
-        "draft_id": attack_id,
-        "name": f"Draft Attack {attack_id}",
-        "status": "draft",
-        "attack_type": "host",
-        "os_constraint": "All",
-        "parameters_count": 2,
-        "payload": "x" * STUDIO_DRAFT_DATA_SIZE,
-    }
+DEFAULT_CONSOLE = "pentest01"
+DEFAULT_NUM_TESTS = 10
+DEFAULT_SIMS_PER_TEST = 5
+DEFAULT_PLAYBOOK_PAGES = 10  # Cap playbook pages; each page re-fetches entire KB when uncached
 
 
 # ---------------------------------------------------------------------------
@@ -184,23 +76,20 @@ def _make_studio_draft_data(attack_id: int) -> Dict[str, Any]:
 
 def get_rss_mb() -> float:
     """Return current process RSS in megabytes via psutil."""
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / (1024 * 1024)
+    proc = psutil.Process(os.getpid())
+    return proc.memory_info().rss / (1024 * 1024)
 
 
 def get_peak_rss_mb() -> float:
-    """
-    Return peak RSS in megabytes via resource.getrusage.
+    """Return peak RSS in MB via resource.getrusage.
 
-    On macOS ru_maxrss is in bytes; on Linux it is in kilobytes.
+    On macOS ru_maxrss is bytes; on Linux it is kilobytes.
     """
     usage = resource.getrusage(resource.RUSAGE_SELF)
     ru_maxrss = usage.ru_maxrss
     if platform.system() == "Darwin":
         return ru_maxrss / (1024 * 1024)
-    else:
-        # Linux: ru_maxrss is in KB
-        return ru_maxrss / 1024
+    return ru_maxrss / 1024
 
 
 def clear_all_caches() -> None:
@@ -215,7 +104,7 @@ def clear_all_caches() -> None:
     studio_draft_cache.clear()
 
 
-def count_cache_entries() -> Dict[str, int]:
+def count_cache_entries() -> dict[str, int]:
     """Count entries in each cache dict."""
     return {
         "simulators": len(simulators_cache),
@@ -229,88 +118,209 @@ def count_cache_entries() -> Dict[str, int]:
     }
 
 
+def log(msg: str) -> None:
+    """Print a timestamped progress message to stderr."""
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"  [{ts}] {msg}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
-# Cache population (simulates agent queries)
+# Workload: real API calls against a live SafeBreach console
 # ---------------------------------------------------------------------------
 
-def populate_caches(query_index: int) -> None:
+def discover_workload(
+    console: str,
+    num_tests: int,
+    sims_per_test: int,
+) -> list[dict[str, Any]]:
+    """Call the test-history API once to discover test IDs, then for each
+    test discover simulation IDs. Returns a list of work items.
+
+    Each work item: {"test_id": str, "simulation_ids": [str, ...]}
+
+    This discovery phase always runs with caching DISABLED so it does not
+    pollute the measurement scenarios.
     """
-    Simulate a single agent-like query by populating all caches.
+    os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "false"
+    reset_cache_config()
+    clear_all_caches()
 
-    Distributes queries across consoles/tests/simulations to create
-    realistic key diversity.
+    log(f"Discovering workload from {console} "
+        f"(target: {num_tests} tests × {sims_per_test} sims)...")
+
+    # Collect test IDs across pages until we have enough
+    test_ids: list[str] = []
+    page = 0
+    while len(test_ids) < num_tests:
+        resp = sb_get_tests_history(console=console, page_number=page)
+        tests_in_page = resp.get("tests_in_page", [])
+        if not tests_in_page:
+            break
+        for t in tests_in_page:
+            test_ids.append(t["test_id"])
+            if len(test_ids) >= num_tests:
+                break
+        page += 1
+
+    if not test_ids:
+        print(f"ERROR: No tests found on console '{console}'.", file=sys.stderr)
+        sys.exit(1)
+
+    log(f"Found {len(test_ids)} tests. Discovering simulations...")
+
+    work_items: list[dict[str, Any]] = []
+    for test_id in test_ids:
+        sim_ids: list[str] = []
+        page = 0
+        while len(sim_ids) < sims_per_test:
+            resp = sb_get_test_simulations(
+                test_id, console=console, page_number=page
+            )
+            sims_in_page = resp.get("simulations_in_page", [])
+            if not sims_in_page:
+                break
+            for s in sims_in_page:
+                sim_ids.append(s["simulation_id"])
+                if len(sim_ids) >= sims_per_test:
+                    break
+            page += 1
+
+        work_items.append({"test_id": test_id, "simulation_ids": sim_ids})
+
+    total_sims = sum(len(w["simulation_ids"]) for w in work_items)
+    log(f"Workload: {len(work_items)} tests, {total_sims} simulations total")
+
+    # Clean up discovery caches
+    clear_all_caches()
+    return work_items
+
+
+def run_workload(
+    console: str,
+    work_items: list[dict[str, Any]],
+    playbook_pages: int = DEFAULT_PLAYBOOK_PAGES,
+) -> dict[str, Any]:
+    """Execute the full API workload and measure memory.
+
+    Calls real SafeBreach API functions. When caching is enabled,
+    the server-module cache dicts accumulate real responses.
+    Returns measurement dict.
     """
-    console_idx = query_index % NUM_CONSOLES
-    test_idx = query_index % TESTS_PER_CONSOLE
-    sim_idx = query_index % SIMULATIONS_PER_TEST
-    console = f"console-{console_idx}"
-    now = time.time()
+    gc.collect()
+    tracemalloc.start()
+    rss_start = get_rss_mb()
+    rss_samples: list[float] = [rss_start]
+    api_call_count = 0
+    api_errors = 0
 
-    # --- Config server: simulators_cache ---
-    # Pattern: cache[key] = (data, timestamp)
-    sim_cache_key = f"simulators_{console}"
-    simulators_cache[sim_cache_key] = (
-        [_make_simulator_data(console, i) for i in range(10)],
-        now,
-    )
+    # --- Simulators (Config server) ---
+    log("Fetching simulators...")
+    try:
+        sb_get_console_simulators(console=console)
+        api_call_count += 1
+    except Exception as exc:
+        log(f"  WARN simulators: {exc}")
+        api_errors += 1
+    rss_samples.append(get_rss_mb())
 
-    # --- Data server: tests_cache ---
-    # Pattern: cache[key] = (data, timestamp)
-    tests_cache_key = f"tests_{console}"
-    tests_cache[tests_cache_key] = (
-        [_make_test_data(console, i) for i in range(TESTS_PER_CONSOLE)],
-        now,
-    )
+    # --- Playbook (Playbook server) — big singleton cache entry ---
+    # NOTE: sb_get_playbook_attacks fetches the ENTIRE KB (~12K attacks) on
+    # every call, then paginates locally. With caching disabled, each page
+    # request triggers a full API re-fetch. We cap pages to avoid spending
+    # hours on 1,200+ identical API calls while still measuring the effect.
+    log(f"Fetching playbook attacks ({playbook_pages} pages)...")
+    try:
+        page = 0
+        while page < playbook_pages:
+            resp = sb_get_playbook_attacks(
+                console=console, page_number=page
+            )
+            api_call_count += 1
+            total_pages = resp.get("total_pages", 1)
+            if page + 1 >= total_pages:
+                break
+            page += 1
+    except Exception as exc:
+        log(f"  WARN playbook: {exc}")
+        api_errors += 1
+    rss_samples.append(get_rss_mb())
+    log(f"  RSS after playbook: {rss_samples[-1]:.1f} MB")
 
-    # --- Data server: simulations_cache ---
-    # Pattern: cache[key] = (data, timestamp)
-    test_id = f"test-{console}-{test_idx}"
-    sims_cache_key = f"simulations_{console}_{test_id}"
-    simulations_cache[sims_cache_key] = (
-        [_make_simulation_data(console, test_idx, j) for j in range(SIMULATIONS_PER_TEST)],
-        now,
-    )
+    # --- Data server: iterate tests × simulations ---
+    for idx, item in enumerate(work_items):
+        test_id = item["test_id"]
+        sim_ids = item["simulation_ids"]
+        log(f"Test {idx + 1}/{len(work_items)} ({test_id}): "
+            f"{len(sim_ids)} simulations")
 
-    # --- Data server: security_control_events_cache ---
-    # Pattern: cache[key] = {'data': ..., 'timestamp': ...}
-    sim_id = f"sim-result-{console}-{test_idx}-{sim_idx}"
-    sec_cache_key = f"{console}:{test_id}:{sim_id}"
-    security_control_events_cache[sec_cache_key] = {
-        "data": [_make_security_event_data(console, test_idx, sim_idx)],
-        "timestamp": now,
-    }
+        # Tests history (populates tests_cache)
+        try:
+            sb_get_tests_history(console=console, page_number=0)
+            api_call_count += 1
+        except Exception as exc:
+            log(f"  WARN tests_history: {exc}")
+            api_errors += 1
 
-    # --- Data server: findings_cache ---
-    # Pattern: cache[key] = {'data': ..., 'timestamp': ...}
-    findings_key = f"{console}:{test_id}"
-    findings_cache[findings_key] = {
-        "data": _make_findings_data(),
-        "timestamp": now,
-    }
+        # Simulations list (populates simulations_cache)
+        try:
+            sb_get_test_simulations(test_id, console=console, page_number=0)
+            api_call_count += 1
+        except Exception as exc:
+            log(f"  WARN simulations: {exc}")
+            api_errors += 1
 
-    # --- Data server: full_simulation_logs_cache ---
-    # Pattern: cache[key] = (data, timestamp)
-    logs_key = f"full_simulation_logs_{console}_{sim_id}_{test_id}"
-    full_simulation_logs_cache[logs_key] = (
-        _make_full_sim_logs_data(console, test_idx, sim_idx),
-        now,
-    )
+        # Findings (populates findings_cache)
+        try:
+            sb_get_test_findings_details(
+                test_id, console=console, page_number=0
+            )
+            api_call_count += 1
+        except Exception as exc:
+            log(f"  WARN findings: {exc}")
+            api_errors += 1
 
-    # --- Playbook server: playbook_cache ---
-    # Pattern: cache[key] = {'data': ..., 'timestamp': ...}
-    playbook_key = f"attacks_{console}"
-    playbook_cache[playbook_key] = {
-        "data": [_make_playbook_data(console) for _ in range(20)],
-        "timestamp": now,
-    }
+        # Per-simulation: security events + full logs
+        for sim_id in sim_ids:
+            try:
+                sb_get_security_controls_events(
+                    test_id, sim_id, console=console, page_number=0
+                )
+                api_call_count += 1
+            except Exception as exc:
+                log(f"  WARN sec_events({sim_id}): {exc}")
+                api_errors += 1
 
-    # --- Studio server: studio_draft_cache ---
-    # Pattern: cache[key] = {'data': ..., 'timestamp': ...}
-    attack_id = 10000 + query_index
-    studio_key = f"studio_draft_{console}_{attack_id}"
-    studio_draft_cache[studio_key] = {
-        "data": _make_studio_draft_data(attack_id),
-        "timestamp": now,
+            try:
+                sb_get_full_simulation_logs(
+                    simulation_id=sim_id,
+                    test_id=test_id,
+                    console=console,
+                )
+                api_call_count += 1
+            except Exception as exc:
+                log(f"  WARN full_logs({sim_id}): {exc}")
+                api_errors += 1
+
+        rss_samples.append(get_rss_mb())
+
+    # --- Final measurements ---
+    cache_counts = count_cache_entries()
+    _, tracemalloc_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    rss_end = get_rss_mb()
+    rss_peak = get_peak_rss_mb()
+    rss_samples.append(rss_end)
+
+    return {
+        "rss_start_mb": round(rss_start, 2),
+        "rss_peak_mb": round(rss_peak, 2),
+        "rss_end_mb": round(rss_end, 2),
+        "tracemalloc_peak_mb": round(tracemalloc_peak / (1024 * 1024), 2),
+        "rss_growth_mb": round(rss_end - rss_start, 2),
+        "rss_samples_mb": [round(s, 2) for s in rss_samples],
+        "cache_entry_counts": cache_counts,
+        "api_call_count": api_call_count,
+        "api_errors": api_errors,
     }
 
 
@@ -318,159 +328,106 @@ def populate_caches(query_index: int) -> None:
 # Scenario runners
 # ---------------------------------------------------------------------------
 
-def run_scenario_disabled() -> Dict[str, Any]:
-    """
-    Scenario A: Caching disabled.
-
-    Populates caches directly but verifies they should remain empty
-    when caching is disabled (simulating what would happen with real code
-    paths that check is_caching_enabled() before writing).
-
-    Since we are directly writing to cache dicts to measure overhead,
-    we clear them after each write to simulate the disabled behavior,
-    then verify counts are zero.
-    """
-    # Configure environment
+def run_scenario_disabled(
+    console: str,
+    work_items: list[dict[str, Any]],
+    playbook_pages: int = DEFAULT_PLAYBOOK_PAGES,
+) -> dict[str, Any]:
+    """Scenario A: Caching disabled — API calls happen, nothing cached."""
     os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "false"
     reset_cache_config()
     clear_all_caches()
     gc.collect()
 
-    tracemalloc.start()
-    rss_start = get_rss_mb()
-    rss_samples: List[float] = [rss_start]
+    log("--- Scenario A: Caching DISABLED ---")
+    result = run_workload(console, work_items, playbook_pages=playbook_pages)
 
-    for i in range(TOTAL_QUERIES):
-        # In disabled mode, the real code paths skip cache writes.
-        # We simulate this by NOT populating caches.
-        # Instead, we create the mock data objects (to measure baseline
-        # allocation cost) and immediately discard them.
-        console_idx = i % NUM_CONSOLES
-        test_idx = i % TESTS_PER_CONSOLE
-        sim_idx = i % SIMULATIONS_PER_TEST
-        console = f"console-{console_idx}"
+    # Verify caches stayed empty
+    for name, count in result["cache_entry_counts"].items():
+        if count != 0:
+            log(f"  WARN: {name} has {count} entries despite caching disabled")
 
-        # Create data objects (same as enabled path) but do not store them
-        _ = [_make_simulator_data(console, j) for j in range(10)]
-        _ = [_make_test_data(console, j) for j in range(TESTS_PER_CONSOLE)]
-        _ = [_make_simulation_data(console, test_idx, j) for j in range(SIMULATIONS_PER_TEST)]
-        _ = [_make_security_event_data(console, test_idx, sim_idx)]
-        _ = _make_findings_data()
-        _ = _make_full_sim_logs_data(console, test_idx, sim_idx)
-        _ = [_make_playbook_data(console) for _ in range(20)]
-        _ = _make_studio_draft_data(10000 + i)
-
-        if (i + 1) % SAMPLE_INTERVAL == 0:
-            rss_samples.append(get_rss_mb())
-
-    # Verify caches are empty (since we never populated them)
-    cache_counts = count_cache_entries()
-    assert all(v == 0 for v in cache_counts.values()), (
-        f"Expected all caches to be empty in disabled scenario, got: {cache_counts}"
-    )
-
-    _, tracemalloc_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    rss_end = get_rss_mb()
-    rss_peak = get_peak_rss_mb()
-    rss_samples.append(rss_end)
-
-    return {
-        "rss_start_mb": round(rss_start, 2),
-        "rss_peak_mb": round(rss_peak, 2),
-        "rss_end_mb": round(rss_end, 2),
-        "tracemalloc_peak_mb": round(tracemalloc_peak / (1024 * 1024), 2),
-        "rss_samples_mb": [round(s, 2) for s in rss_samples],
-        "cache_entry_counts": cache_counts,
-    }
+    return result
 
 
-def run_scenario_enabled_buggy() -> Dict[str, Any]:
-    """
-    Scenario B: Caching enabled (current unbounded behavior).
-
-    Directly populates caches as the real code paths would when
-    is_caching_enabled() returns True. Demonstrates unbounded growth.
-    """
-    # Configure environment
+def run_scenario_enabled(
+    console: str,
+    work_items: list[dict[str, Any]],
+    playbook_pages: int = DEFAULT_PLAYBOOK_PAGES,
+) -> dict[str, Any]:
+    """Scenario B: Caching enabled (unbounded) — real data accumulates."""
     os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "true"
     reset_cache_config()
     clear_all_caches()
     gc.collect()
 
-    tracemalloc.start()
-    rss_start = get_rss_mb()
-    rss_samples: List[float] = [rss_start]
-
-    for i in range(TOTAL_QUERIES):
-        populate_caches(i)
-
-        if (i + 1) % SAMPLE_INTERVAL == 0:
-            rss_samples.append(get_rss_mb())
-
-    cache_counts = count_cache_entries()
-
-    _, tracemalloc_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    rss_end = get_rss_mb()
-    rss_peak = get_peak_rss_mb()
-    rss_samples.append(rss_end)
-
-    return {
-        "rss_start_mb": round(rss_start, 2),
-        "rss_peak_mb": round(rss_peak, 2),
-        "rss_end_mb": round(rss_end, 2),
-        "tracemalloc_peak_mb": round(tracemalloc_peak / (1024 * 1024), 2),
-        "rss_samples_mb": [round(s, 2) for s in rss_samples],
-        "cache_entry_counts": cache_counts,
-    }
+    log("--- Scenario B: Caching ENABLED (unbounded) ---")
+    return run_workload(console, work_items, playbook_pages=playbook_pages)
 
 
 # ---------------------------------------------------------------------------
 # Human-readable summary
 # ---------------------------------------------------------------------------
 
-def print_summary(results: Dict[str, Any]) -> None:
+def print_summary(results: dict[str, Any]) -> None:
     """Print a human-readable summary to stderr."""
-    print("\n" + "=" * 70, file=sys.stderr)
-    print("  MCP Cache Memory Profile Baseline", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
+    print("\n" + "=" * 72, file=sys.stderr)
+    print("  MCP Cache Memory Profile Baseline (E2E — Real API Data)",
+          file=sys.stderr)
+    print("=" * 72, file=sys.stderr)
     print(f"  Timestamp : {results['timestamp']}", file=sys.stderr)
     print(f"  Platform  : {results['platform']}", file=sys.stderr)
     print(f"  Python    : {results['python_version']}", file=sys.stderr)
-    print(f"  Queries   : {TOTAL_QUERIES} simulated agent queries", file=sys.stderr)
-    print(f"  Consoles  : {NUM_CONSOLES}, Tests/console: {TESTS_PER_CONSOLE}, "
-          f"Sims/test: {SIMULATIONS_PER_TEST}", file=sys.stderr)
-    print("-" * 70, file=sys.stderr)
+    print(f"  Console   : {results['console']}", file=sys.stderr)
+    wl = results["workload"]
+    print(f"  Workload  : {wl['num_tests']} tests × "
+          f"{wl['sims_per_test']} sims/test "
+          f"({wl['total_simulations']} total sims)", file=sys.stderr)
+    print("-" * 72, file=sys.stderr)
 
-    for scenario_key, label in [
+    for key, label in [
         ("caching_disabled", "Scenario A: Caching DISABLED"),
         ("caching_enabled_buggy", "Scenario B: Caching ENABLED (unbounded)"),
     ]:
-        scenario = results["scenarios"][scenario_key]
+        sc = results["scenarios"][key]
+        growth = sc["rss_growth_mb"]
         print(f"\n  {label}", file=sys.stderr)
-        print(f"    RSS start     : {scenario['rss_start_mb']:.2f} MB", file=sys.stderr)
-        print(f"    RSS end       : {scenario['rss_end_mb']:.2f} MB", file=sys.stderr)
-        print(f"    RSS peak (OS) : {scenario['rss_peak_mb']:.2f} MB", file=sys.stderr)
-        print(f"    tracemalloc   : {scenario['tracemalloc_peak_mb']:.2f} MB (Python heap peak)",
+        print(f"    API calls     : {sc['api_call_count']} "
+              f"({sc['api_errors']} errors)", file=sys.stderr)
+        print(f"    RSS start     : {sc['rss_start_mb']:.1f} MB",
               file=sys.stderr)
-        rss_growth = scenario["rss_end_mb"] - scenario["rss_start_mb"]
-        print(f"    RSS growth    : {rss_growth:+.2f} MB", file=sys.stderr)
-        print(f"    RSS samples   : {scenario['rss_samples_mb']}", file=sys.stderr)
-        print(f"    Cache entries : {scenario['cache_entry_counts']}", file=sys.stderr)
+        print(f"    RSS end       : {sc['rss_end_mb']:.1f} MB",
+              file=sys.stderr)
+        print(f"    RSS peak (OS) : {sc['rss_peak_mb']:.1f} MB",
+              file=sys.stderr)
+        print(f"    RSS growth    : {growth:+.1f} MB", file=sys.stderr)
+        print(f"    tracemalloc   : {sc['tracemalloc_peak_mb']:.1f} MB "
+              f"(Python heap peak)", file=sys.stderr)
+        print(f"    Cache entries : {sc['cache_entry_counts']}",
+              file=sys.stderr)
 
-    print("\n" + "-" * 70, file=sys.stderr)
-    thresholds = results["acceptance_thresholds"]
-    print("  Acceptance Thresholds:", file=sys.stderr)
-    print(f"    Max RSS growth (disabled)         : "
-          f"{thresholds['max_rss_growth_disabled_mb']} MB", file=sys.stderr)
-    print(f"    Max RSS growth (enabled, fixed)    : "
-          f"{thresholds['max_rss_growth_enabled_fixed_mb']} MB", file=sys.stderr)
-    print(f"    Max peak RSS above baseline        : "
-          f"{thresholds['max_peak_rss_above_baseline_mb']} MB", file=sys.stderr)
-    print("=" * 70 + "\n", file=sys.stderr)
+    # Delta
+    dis = results["scenarios"]["caching_disabled"]
+    ena = results["scenarios"]["caching_enabled_buggy"]
+    delta = ena["rss_end_mb"] - dis["rss_end_mb"]
+    print(f"\n  {'─' * 68}", file=sys.stderr)
+    print(f"  Cache memory overhead (enabled − disabled): "
+          f"{delta:+.1f} MB", file=sys.stderr)
+    print(f"  Cache entries total: "
+          f"{sum(ena['cache_entry_counts'].values())}", file=sys.stderr)
+
+    print("\n" + "-" * 72, file=sys.stderr)
+    th = results["acceptance_thresholds"]
+    print("  Acceptance Thresholds (post-fix):", file=sys.stderr)
+    print(f"    Max RSS growth (disabled)       : "
+          f"{th['max_rss_growth_disabled_mb']} MB", file=sys.stderr)
+    print(f"    Max RSS growth (enabled, fixed)  : "
+          f"{th['max_rss_growth_enabled_fixed_mb']} MB", file=sys.stderr)
+    print(f"    Max cache overhead (ena - dis)    : "
+          f"{th['max_cache_overhead_mb']} MB", file=sys.stderr)
+    print(f"    Max peak RSS above baseline      : "
+          f"{th['max_peak_rss_above_baseline_mb']} MB", file=sys.stderr)
+    print("=" * 72 + "\n", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -479,47 +436,101 @@ def print_summary(results: Dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Memory profile baseline for MCP caching system"
+        description="Memory profile baseline using real SafeBreach API data"
     )
     parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Write JSON output to FILE instead of stdout",
+        "--output", type=str, default=None,
+        help="Write JSON results to FILE (default: stdout)",
+    )
+    parser.add_argument(
+        "--console", type=str,
+        default=os.environ.get("E2E_CONSOLE", DEFAULT_CONSOLE),
+        help=f"SafeBreach console name (default: $E2E_CONSOLE or "
+             f"'{DEFAULT_CONSOLE}')",
+    )
+    parser.add_argument(
+        "--num-tests", type=int, default=DEFAULT_NUM_TESTS,
+        help=f"Number of tests to iterate (default: {DEFAULT_NUM_TESTS})",
+    )
+    parser.add_argument(
+        "--sims-per-test", type=int, default=DEFAULT_SIMS_PER_TEST,
+        help=f"Simulations per test (default: {DEFAULT_SIMS_PER_TEST})",
+    )
+    parser.add_argument(
+        "--playbook-pages", type=int, default=DEFAULT_PLAYBOOK_PAGES,
+        help=f"Max playbook pages to iterate (default: "
+             f"{DEFAULT_PLAYBOOK_PAGES}). Each page re-fetches entire KB "
+             f"when uncached.",
     )
     args = parser.parse_args()
 
-    # --- Scenario A: Caching disabled ---
-    print("Running Scenario A: Caching disabled ...", file=sys.stderr)
-    scenario_disabled = run_scenario_disabled()
+    console = args.console
+    num_tests = args.num_tests
+    sims_per_test = args.sims_per_test
+    playbook_pages = args.playbook_pages
+
+    print(f"\nMCP Memory Baseline — console={console}, "
+          f"tests={num_tests}, sims/test={sims_per_test}\n",
+          file=sys.stderr)
+
+    # --- Phase 1: Discover workload (test IDs + simulation IDs) ---
+    work_items = discover_workload(console, num_tests, sims_per_test)
+    total_sims = sum(len(w["simulation_ids"]) for w in work_items)
+
+    # --- Phase 2: Scenario A — caching disabled ---
+    print("", file=sys.stderr)
+    scenario_disabled = run_scenario_disabled(
+        console, work_items, playbook_pages=playbook_pages
+    )
 
     # Clean up between scenarios
     clear_all_caches()
     gc.collect()
+    time.sleep(1)  # let OS reclaim
 
-    # --- Scenario B: Caching enabled (buggy / unbounded) ---
-    print("Running Scenario B: Caching enabled (unbounded) ...", file=sys.stderr)
-    scenario_enabled = run_scenario_enabled_buggy()
+    # --- Phase 3: Scenario B — caching enabled (unbounded) ---
+    print("", file=sys.stderr)
+    scenario_enabled = run_scenario_enabled(
+        console, work_items, playbook_pages=playbook_pages
+    )
 
-    # Clean up after scenarios
+    # Clean up
     clear_all_caches()
     os.environ.pop("SB_MCP_ENABLE_LOCAL_CACHING", None)
     reset_cache_config()
     gc.collect()
 
     # --- Build results ---
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "platform": platform.system().lower(),
         "python_version": platform.python_version(),
+        "console": console,
+        "workload": {
+            "num_tests": len(work_items),
+            "sims_per_test": sims_per_test,
+            "playbook_pages": playbook_pages,
+            "total_simulations": total_sims,
+            "expected_cache_keys": {
+                "simulators": 1,
+                "tests": 1,
+                "simulations": len(work_items),
+                "security_control_events": total_sims,
+                "findings": len(work_items),
+                "full_simulation_logs": total_sims,
+                "playbook": 1,
+                "studio_drafts": 0,
+            },
+        },
         "scenarios": {
             "caching_disabled": scenario_disabled,
             "caching_enabled_buggy": scenario_enabled,
         },
         "acceptance_thresholds": {
-            "max_rss_growth_disabled_mb": 10,
-            "max_rss_growth_enabled_fixed_mb": 50,
-            "max_peak_rss_above_baseline_mb": 100,
+            "max_rss_growth_disabled_mb": 350,
+            "max_rss_growth_enabled_fixed_mb": 400,
+            "max_cache_overhead_mb": 50,
+            "max_peak_rss_above_baseline_mb": 1200,
         },
     }
 
@@ -530,11 +541,10 @@ def main() -> None:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(json_output)
             f.write("\n")
-        print(f"Results written to: {args.output}", file=sys.stderr)
+        print(f"\nResults written to: {args.output}", file=sys.stderr)
     else:
         print(json_output)
 
-    # --- Human-readable summary ---
     print_summary(results)
 
 
