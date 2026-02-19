@@ -194,7 +194,7 @@ cache migration.
 | Phase 2: Per-Server Cache Config | ✅ Complete | 2026-02-19 | a26731f | 19 tests, per-server env var overrides (586 total) |
 | Phase 3: Config Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; SafeBreachCache(maxsize=5, ttl=3600) |
 | Phase 4: Data Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; 5 caches migrated |
-| Phase 5: Playbook Server Migration | ⏳ Pending | - | - | |
+| Phase 5: Playbook Server Migration | ✅ Complete | 2026-02-19 | - | 586 tests pass; playbook_cache migrated |
 | Phase 6: Studio Server Migration | ⏳ Pending | - | - | |
 | Phase 7: Base Server + SSE Fix | ⏳ Pending | - | - | |
 | Phase 8: Cache Monitoring | ⏳ Pending | - | - | |
