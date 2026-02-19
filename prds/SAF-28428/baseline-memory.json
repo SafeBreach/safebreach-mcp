@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-02-19T08:30:55.916793+00:00",
+  "platform": "darwin",
+  "python_version": "3.12.8",
+  "scenarios": {
+    "caching_disabled": {
+      "rss_start_mb": 70.48,
+      "rss_peak_mb": 89.81,
+      "rss_end_mb": 89.81,
+      "tracemalloc_peak_mb": 2.28,
+      "rss_samples_mb": [
+        70.48,
+        83.47,
+        86.36,
+        89.55,
+        89.81,
+        89.81
+      ],
+      "cache_entry_counts": {
+        "simulators": 0,
+        "tests": 0,
+        "simulations": 0,
+        "security_control_events": 0,
+        "findings": 0,
+        "full_simulation_logs": 0,
+        "playbook": 0,
+        "studio_drafts": 0
+      }
+    },
+    "caching_enabled_buggy": {
+      "rss_start_mb": 89.81,
+      "rss_peak_mb": 144.22,
+      "rss_end_mb": 144.22,
+      "tracemalloc_peak_mb": 15.34,
+      "rss_samples_mb": [
+        89.81,
+        127.44,
+        135.17,
+        141.44,
+        144.22,
+        144.22
+      ],
+      "cache_entry_counts": {
+        "simulators": 5,
+        "tests": 5,
+        "simulations": 10,
+        "security_control_events": 10,
+        "findings": 10,
+        "full_simulation_logs": 10,
+        "playbook": 5,
+        "studio_drafts": 100
+      }
+    }
+  },
+  "acceptance_thresholds": {
+    "max_rss_growth_disabled_mb": 10,
+    "max_rss_growth_enabled_fixed_mb": 50,
+    "max_peak_rss_above_baseline_mb": 100
+  }
+}
