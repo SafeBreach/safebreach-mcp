@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-02-19T12:18:27.107132+00:00",
+  "platform": "darwin",
+  "python_version": "3.12.8",
+  "console": "pentest01",
+  "workload": {
+    "num_tests": 5,
+    "sims_per_test": 3,
+    "playbook_pages": 10,
+    "total_simulations": 15,
+    "expected_cache_keys": {
+      "simulators": 1,
+      "tests": 1,
+      "simulations": 5,
+      "security_control_events": 15,
+      "findings": 5,
+      "full_simulation_logs": 15,
+      "playbook": 1,
+      "studio_drafts": 0
+    }
+  },
+  "scenarios": {
+    "caching_disabled": {
+      "rss_start_mb": 112.94,
+      "rss_peak_mb": 958.77,
+      "rss_end_mb": 436.95,
+      "tracemalloc_peak_mb": 499.54,
+      "rss_growth_mb": 324.02,
+      "rss_samples_mb": [
+        112.94,
+        114.06,
+        592.31,
+        592.77,
+        613.73,
+        584.42,
+        447.06,
+        451.09,
+        436.95
+      ],
+      "cache_entry_counts": {
+        "simulators": 0,
+        "tests": 0,
+        "simulations": 0,
+        "security_control_events": 0,
+        "findings": 0,
+        "full_simulation_logs": 0,
+        "playbook": 0,
+        "studio_drafts": 0
+      },
+      "api_call_count": 53,
+      "api_errors": 3
+    },
+    "caching_enabled_buggy": {
+      "rss_start_mb": 436.2,
+      "rss_peak_mb": 993.38,
+      "rss_end_mb": 803.59,
+      "tracemalloc_peak_mb": 499.54,
+      "rss_growth_mb": 367.39,
+      "rss_samples_mb": [
+        436.2,
+        436.39,
+        965.75,
+        956.42,
+        969.12,
+        747.66,
+        747.41,
+        804.69,
+        803.59
+      ],
+      "cache_entry_counts": {
+        "simulators": 1,
+        "tests": 1,
+        "simulations": 3,
+        "security_control_events": 3,
+        "findings": 3,
+        "full_simulation_logs": 2,
+        "playbook": 1,
+        "studio_drafts": 0
+      },
+      "api_call_count": 53,
+      "api_errors": 3
+    }
+  },
+  "acceptance_thresholds": {
+    "max_rss_growth_disabled_mb": 350,
+    "max_rss_growth_enabled_fixed_mb": 400,
+    "max_cache_overhead_mb": 50,
+    "max_peak_rss_above_baseline_mb": 1200
+  }
+}

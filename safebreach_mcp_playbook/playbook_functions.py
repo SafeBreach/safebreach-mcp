@@ -6,11 +6,11 @@ specifically for accessing playbook attack data and details.
 """
 
 import logging
-import time
 from typing import Dict, List, Optional, Any
 
 import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
+from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url
 from .playbook_types import (
@@ -22,12 +22,11 @@ from .playbook_types import (
 
 logger = logging.getLogger(__name__)
 
-# Global cache for playbook data
-playbook_cache = {}
+# Bounded cache for playbook data: max 5 consoles, 30-minute TTL
+playbook_cache = SafeBreachCache(name="playbook_attacks", maxsize=5, ttl=1800)
 
 # Configuration constants
 PAGE_SIZE = 10
-CACHE_TTL = 3600  # 1 hour in seconds
 
 
 def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
@@ -46,12 +45,12 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
     # Check cache first (only if caching is enabled)
     cache_key = f"attacks_{console}"
-    current_time = time.time()
 
-    if (is_caching_enabled() and cache_key in playbook_cache and
-        current_time - playbook_cache[cache_key]['timestamp'] < CACHE_TTL):
-        logger.info("Cache hit for console %s playbook attacks", console)
-        return playbook_cache[cache_key]['data']
+    if is_caching_enabled("playbook"):
+        cached = playbook_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Cache hit for console %s playbook attacks", console)
+            return cached
 
     # Cache miss - fetch from API
     logger.info("Cache miss for console %s playbook attacks - fetching from API", console)
@@ -82,11 +81,8 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         attacks_data = response_data['data']
 
         # Cache the results (only if caching is enabled)
-        if is_caching_enabled():
-            playbook_cache[cache_key] = {
-                'data': attacks_data,
-                'timestamp': current_time
-            }
+        if is_caching_enabled("playbook"):
+            playbook_cache.set(cache_key, attacks_data)
             logger.info("Successfully cached %d attacks for console %s", len(attacks_data), console)
         return attacks_data
 

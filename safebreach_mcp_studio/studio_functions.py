@@ -7,12 +7,13 @@ code and managing attack drafts in SafeBreach Breach Studio.
 
 import re
 import ast
-import time
 import json
 import logging
 import requests
 from typing import Dict, Any
 
+from safebreach_mcp_core.cache_config import is_caching_enabled
+from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .studio_types import (
@@ -34,9 +35,8 @@ from .studio_templates import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Cache for draft metadata (1-hour TTL)
-studio_draft_cache = {}
-CACHE_TTL = 3600  # 1 hour in seconds
+# Bounded cache for draft metadata: max 5 drafts, 30-minute TTL
+studio_draft_cache = SafeBreachCache(name="studio_drafts", maxsize=5, ttl=1800)
 
 # Required main function signature pattern
 # Use negative lookbehind to ensure 'def' is not preceded by word characters (e.g., 'async')
@@ -695,13 +695,11 @@ def sb_save_studio_attack_draft(
     result['os_constraint'] = target_os
     result['parameters_count'] = len(parameters)
 
-    # Cache the result (1-hour TTL)
-    cache_key = f"studio_draft_{console}_{result['draft_id']}"
-    studio_draft_cache[cache_key] = {
-        'data': result,
-        'timestamp': time.time()
-    }
-    logger.debug(f"Cached draft with key: {cache_key}")
+    # Cache the result (only if caching is enabled)
+    if is_caching_enabled("studio"):
+        cache_key = f"studio_draft_{console}_{result['draft_id']}"
+        studio_draft_cache.set(cache_key, result)
+        logger.debug(f"Cached draft with key: {cache_key}")
 
     logger.info(f"Successfully saved draft with ID: {result['draft_id']}")
 
@@ -952,13 +950,11 @@ def sb_update_studio_attack_draft(
     result['os_constraint'] = target_os
     result['parameters_count'] = len(parameters)
 
-    # Update cache with new values
-    cache_key = f"studio_draft_{console}_{result['draft_id']}"
-    studio_draft_cache[cache_key] = {
-        'data': result,
-        'timestamp': time.time()
-    }
-    logger.debug(f"Updated cache with key: {cache_key}")
+    # Update cache with new values (only if caching is enabled)
+    if is_caching_enabled("studio"):
+        cache_key = f"studio_draft_{console}_{result['draft_id']}"
+        studio_draft_cache.set(cache_key, result)
+        logger.debug(f"Updated cache with key: {cache_key}")
 
     logger.info(f"Successfully updated draft with ID: {result['draft_id']}")
 
@@ -1426,17 +1422,14 @@ def _get_draft_from_cache(cache_key: str) -> Dict[str, Any]:
     Returns:
         Cached draft metadata or None if not found or expired
     """
-    if cache_key in studio_draft_cache:
-        cached_item = studio_draft_cache[cache_key]
-        cache_age = time.time() - cached_item['timestamp']
+    if not is_caching_enabled("studio"):
+        logger.debug(f"Caching disabled, cache miss for key: {cache_key}")
+        return None
 
-        if cache_age < CACHE_TTL:
-            logger.debug(f"Cache hit for key: {cache_key} (age: {cache_age:.1f}s)")
-            return cached_item['data']
-        else:
-            # Cache expired, remove it
-            logger.debug(f"Cache expired for key: {cache_key} (age: {cache_age:.1f}s)")
-            del studio_draft_cache[cache_key]
+    cached = studio_draft_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"Cache hit for key: {cache_key}")
+        return cached
 
     logger.debug(f"Cache miss for key: {cache_key}")
     return None
@@ -1627,8 +1620,7 @@ def sb_set_studio_attack_status(
 
     # Invalidate cache if present
     cache_key = f"studio_draft_{console}_{attack_id}"
-    if cache_key in studio_draft_cache:
-        del studio_draft_cache[cache_key]
+    if studio_draft_cache.delete(cache_key):
         logger.debug(f"Invalidated cache for key: {cache_key}")
 
     # Build implications text

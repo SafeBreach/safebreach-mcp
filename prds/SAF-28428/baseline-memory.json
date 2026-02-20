@@ -1,0 +1,109 @@
+{
+  "timestamp": "2026-02-19T10:25:46.541643+00:00",
+  "platform": "darwin",
+  "python_version": "3.12.8",
+  "console": "pentest01",
+  "workload": {
+    "num_tests": 5,
+    "sims_per_test": 3,
+    "playbook_pages": 10,
+    "total_simulations": 13,
+    "expected_cache_keys": {
+      "simulators": 1,
+      "tests": 1,
+      "simulations": 5,
+      "security_control_events": 13,
+      "findings": 5,
+      "full_simulation_logs": 13,
+      "playbook": 1,
+      "studio_drafts": 0
+    }
+  },
+  "scenarios": {
+    "caching_disabled": {
+      "rss_start_mb": 255.28,
+      "rss_peak_mb": 1121.73,
+      "rss_end_mb": 544.7,
+      "tracemalloc_peak_mb": 499.54,
+      "rss_growth_mb": 289.42,
+      "rss_samples_mb": [
+        255.28,
+        255.28,
+        807.53,
+        807.53,
+        802.77,
+        620.36,
+        625.34,
+        620.44,
+        544.7
+      ],
+      "cache_entry_counts": {
+        "simulators": 0,
+        "tests": 0,
+        "simulations": 0,
+        "security_control_events": 0,
+        "findings": 0,
+        "full_simulation_logs": 0,
+        "playbook": 0,
+        "studio_drafts": 0
+      },
+      "api_call_count": 52,
+      "api_errors": 0
+    },
+    "caching_enabled_buggy": {
+      "rss_start_mb": 544.72,
+      "rss_peak_mb": 1662.33,
+      "rss_end_mb": 1134.75,
+      "tracemalloc_peak_mb": 655.54,
+      "rss_growth_mb": 590.03,
+      "rss_samples_mb": [
+        544.72,
+        544.72,
+        993.2,
+        993.56,
+        1005.14,
+        1362.42,
+        1329.05,
+        1260.2,
+        1134.75
+      ],
+      "cache_entry_counts": {
+        "simulators": 1,
+        "tests": 1,
+        "simulations": 5,
+        "security_control_events": 13,
+        "findings": 5,
+        "full_simulation_logs": 13,
+        "playbook": 1,
+        "studio_drafts": 0
+      },
+      "api_call_count": 52,
+      "api_errors": 0
+    }
+  },
+  "acceptance_thresholds": {
+    "max_rss_growth_disabled_mb": 350,
+    "max_rss_growth_enabled_fixed_mb": 400,
+    "max_cache_overhead_mb": 50,
+    "max_peak_rss_above_baseline_mb": 1200
+  },
+  "cache_overhead_mb": 300.61,
+  "test_suite_baseline": {
+    "unit_integration": {
+      "passed": 539,
+      "failed": 0,
+      "deselected": 40,
+      "duration_seconds": 1.17
+    },
+    "e2e": {
+      "passed": 39,
+      "skipped": 1,
+      "failed": 0,
+      "deselected": 539,
+      "duration_seconds": 434.13,
+      "console": "pentest01",
+      "skipped_tests": ["test_cache_behavior_real_api"]
+    },
+    "total_tests": 578
+  }
+}

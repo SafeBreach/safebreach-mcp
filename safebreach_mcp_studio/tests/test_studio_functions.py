@@ -6,7 +6,6 @@ This module tests the core business logic functions for Studio operations.
 
 import pytest
 import json
-import time
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_studio.studio_functions import (
     sb_validate_studio_code,
@@ -605,7 +604,7 @@ class TestSaveStudioAttackDraft:
 
         assert "API Error" in str(exc_info.value)
 
-    @patch('safebreach_mcp_studio.studio_functions.time.time')
+    @patch('safebreach_mcp_studio.studio_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -616,15 +615,12 @@ class TestSaveStudioAttackDraft:
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
-        mock_time,
+        mock_cache_enabled,
         sample_valid_python_code,
         mock_draft_response,
         clear_cache
     ):
         """Test that draft metadata is cached correctly."""
-        # Setup mocks
-        mock_time.return_value = 1000.0
-
         mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
@@ -643,9 +639,8 @@ class TestSaveStudioAttackDraft:
         # Verify cache was populated
         cache_key = f"studio_draft_demo_{result['draft_id']}"
         assert cache_key in studio_draft_cache
-        cached_item = studio_draft_cache[cache_key]
-        assert cached_item['data']['draft_id'] == result['draft_id']
-        assert cached_item['timestamp'] == 1000.0
+        cached_item = studio_draft_cache.get(cache_key)
+        assert cached_item['draft_id'] == result['draft_id']
 
 
 class TestGetAllStudioAttacks:
@@ -1244,7 +1239,7 @@ class TestUpdateStudioAttackDraft:
 
         assert "API Error" in str(exc_info.value)
 
-    @patch('safebreach_mcp_studio.studio_functions.time.time')
+    @patch('safebreach_mcp_studio.studio_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -1255,15 +1250,12 @@ class TestUpdateStudioAttackDraft:
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
-        mock_time,
+        mock_cache_enabled,
         sample_valid_python_code,
         mock_update_response,
         clear_cache
     ):
         """Test that updated draft metadata is cached correctly."""
-        # Setup mocks
-        mock_time.return_value = 2000.0
-
         mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
@@ -1283,10 +1275,9 @@ class TestUpdateStudioAttackDraft:
         # Verify cache was updated
         cache_key = f"studio_draft_demo_{result['draft_id']}"
         assert cache_key in studio_draft_cache
-        cached_item = studio_draft_cache[cache_key]
-        assert cached_item['data']['draft_id'] == result['draft_id']
-        assert cached_item['data']['name'] == "Updated Simulation"
-        assert cached_item['timestamp'] == 2000.0
+        cached_item = studio_draft_cache.get(cache_key)
+        assert cached_item['draft_id'] == result['draft_id']
+        assert cached_item['name'] == "Updated Simulation"
 
 
 class TestGetStudioAttackSource:
@@ -3207,20 +3198,19 @@ class TestDualScriptUpdate:
             )
         assert "attack_type must be one of" in str(exc_info.value)
 
-    @patch('safebreach_mcp_studio.studio_functions.time.time')
+    @patch('safebreach_mcp_studio.studio_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_cache_includes_attack_type_info(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put, mock_time,
+        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put, mock_cache_enabled,
         sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
     ):
         """Test that cache update includes attack type related info."""
         mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
-        mock_time.return_value = 1700000000.0
         mock_response = MagicMock()
         mock_response.json.return_value = mock_update_response
         mock_put.return_value = mock_response
@@ -3234,8 +3224,8 @@ class TestDualScriptUpdate:
         # Verify cache was updated
         cache_key = f"studio_draft_demo_{result['draft_id']}"
         assert cache_key in studio_draft_cache
-        cached = studio_draft_cache[cache_key]
-        assert cached['timestamp'] == 1700000000.0
+        cached = studio_draft_cache.get(cache_key)
+        assert cached['draft_id'] == result['draft_id']
 
 
 class TestDualScriptSource:
@@ -4975,10 +4965,7 @@ class TestSetStudioAttackStatus:
 
         # Seed the cache with a matching entry
         cache_key = "studio_draft_demo_10000298"
-        studio_draft_cache[cache_key] = {
-            "timestamp": time.time(),
-            "data": {"name": "Test Attack", "status": "draft"}
-        }
+        studio_draft_cache.set(cache_key, {"name": "Test Attack", "status": "draft"})
         assert cache_key in studio_draft_cache
 
         sb_set_studio_attack_status(

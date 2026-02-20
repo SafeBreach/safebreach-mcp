@@ -5,7 +5,6 @@ This module tests the core business logic functions for playbook operations.
 """
 
 import pytest
-import time
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_playbook.playbook_functions import (
     sb_get_playbook_attacks,
@@ -161,20 +160,8 @@ class TestGetAllAttacksFromCacheOrApi:
         mock_base_url.return_value = 'https://test-console.safebreach.com'
         mock_get_secret.return_value = "test-token"
 
-        # Setup cache mock to simulate cache hit
-        cache_key = "attacks_test-console"
-        current_timestamp = time.time()
-        cache_data = {
-            cache_key: {
-                'data': sample_attack_data,
-                'timestamp': current_timestamp
-            }
-        }
-
-        # Configure cache mock behaviors
-        mock_cache.__contains__ = Mock(side_effect=lambda key: key in cache_data)
-        mock_cache.__getitem__ = Mock(side_effect=lambda key: cache_data[key])
-        mock_cache.get = Mock(side_effect=lambda key, default=None: cache_data.get(key, default))
+        # Configure SafeBreachCache mock to return data on .get()
+        mock_cache.get = Mock(return_value=sample_attack_data)
 
         # Call function
         result = _get_all_attacks_from_cache_or_api('test-console')
@@ -200,20 +187,15 @@ class TestGetAllAttacksFromCacheOrApi:
         mock_response.json.return_value = {'data': sample_attack_data}
         mock_requests_get.return_value = mock_response
         
-        # Pre-populate cache with expired timestamp
-        cache_key = "attacks_test-console"
-        playbook_cache[cache_key] = {
-            'data': [],
-            'timestamp': time.time() - 7200  # 2 hours ago (expired)
-        }
-        
+        # Cache is empty (simulates expired/missing - TTLCache handles real expiry internally)
+
         # Call function
         result = _get_all_attacks_from_cache_or_api('test-console')
-        
+
         # Verify results
         assert result == sample_attack_data
-        
-        # Verify API call was made due to cache expiration
+
+        # Verify API call was made due to cache miss
         mock_requests_get.assert_called_once()
 
 
@@ -498,15 +480,15 @@ class TestCacheFunctionality:
         """Test cache clearing functionality."""
         # Ensure we start with a completely empty cache
         playbook_cache.clear()
-        assert len(playbook_cache) == 0, f"Cache should be empty at start but has: {list(playbook_cache.keys())}"
-        
+        assert len(playbook_cache) == 0
+
         # Add something to cache
-        playbook_cache['test_key'] = {'data': 'test', 'timestamp': time.time()}
-        assert len(playbook_cache) == 1, f"Cache should have 1 item but has: {len(playbook_cache)} items: {list(playbook_cache.keys())}"
-        
+        playbook_cache.set('test_key', 'test')
+        assert len(playbook_cache) == 1
+
         # Clear cache using the function
         clear_playbook_cache()
-        assert len(playbook_cache) == 0, f"Cache should be empty after clear but has: {list(playbook_cache.keys())}"
+        assert len(playbook_cache) == 0
 
 
 # MITRE-specific fixtures and tests

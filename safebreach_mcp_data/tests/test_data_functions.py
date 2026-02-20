@@ -6,7 +6,6 @@ This module tests the data functions that handle test and simulation operations.
 
 import pytest
 import json
-import time
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_data.data_functions import (
     sb_get_tests_history,
@@ -37,7 +36,6 @@ from safebreach_mcp_data.data_functions import (
     security_control_events_cache,
     findings_cache,
     full_simulation_logs_cache,
-    CACHE_TTL,
     PAGE_SIZE
 )
 
@@ -206,8 +204,7 @@ class TestDataFunctions:
         """Test retrieval of tests from cache when caching is enabled."""
         # Setup cache
         cache_key = "tests_test-console"
-        current_time = time.time()
-        tests_cache[cache_key] = (mock_test_data, current_time)
+        tests_cache.set(cache_key, mock_test_data)
 
         # Test
         result = _get_all_tests_from_cache_or_api("test-console")
@@ -794,12 +791,11 @@ class TestDataFunctions:
         
         # First call - should hit API
         result1 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
-        
-        # Manually expire cache
-        cache_key = "test-console:test1:sim1"
-        security_control_events_cache[cache_key]['timestamp'] = time.time() - CACHE_TTL - 1
-        
-        # Second call - should hit API again due to expired cache
+
+        # Clear cache to simulate expiration (TTLCache handles real expiry internally)
+        security_control_events_cache.clear()
+
+        # Second call - should hit API again due to cache miss
         result2 = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
         
         # Assertions
@@ -1400,28 +1396,29 @@ class TestDataFunctions:
             mock_requests.get.assert_called_once()
             assert result1 == result2
     
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    def test_get_all_findings_cache_expired(self, mock_base_url, mock_account_id):
-        """Test findings cache expiration."""
+    def test_get_all_findings_cache_miss_fetches_api(self, mock_base_url, mock_account_id, mock_cache_enabled):
+        """Test that cache miss (expired or empty) triggers API fetch."""
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
-             patch('safebreach_mcp_data.data_functions.requests') as mock_requests, \
-             patch('time.time') as mock_time:
-            
+             patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
+
             mock_get_secret.return_value = "test-token"
             mock_response = Mock()
             mock_response.json.return_value = {"findings": [{"type": "test"}]}
             mock_response.raise_for_status.return_value = None
             mock_requests.get.return_value = mock_response
-            
-            # First call at time 0
-            mock_time.return_value = 0
+
+            # First call - should hit API
             _get_all_findings_from_cache_or_api("test-id", "test-console")
-            
-            # Second call after cache expiry
-            mock_time.return_value = CACHE_TTL + 1
+
+            # Clear cache to simulate expiration (TTLCache handles real expiry internally)
+            findings_cache.clear()
+
+            # Second call - should hit API again due to cache miss
             _get_all_findings_from_cache_or_api("test-id", "test-console")
-            
+
             # API should be called twice
             assert mock_requests.get.call_count == 2
     
@@ -2670,7 +2667,7 @@ class TestDataFunctions:
                 }]]
             }
         }
-        full_simulation_logs_cache[cache_key] = (cached_data, time.time())
+        full_simulation_logs_cache.set(cache_key, cached_data)
 
         # Call the function
         result = sb_get_full_simulation_logs(
