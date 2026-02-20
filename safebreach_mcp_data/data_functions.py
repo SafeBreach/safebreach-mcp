@@ -5,6 +5,7 @@ This module provides functions for SafeBreach data operations,
 specifically for test and simulation data management.
 """
 
+import copy
 import logging
 import time
 from typing import Dict, List, Optional, Any, Iterable
@@ -438,8 +439,8 @@ def _find_test_in_cached_list(test_id: str, console: str) -> Optional[Dict[str, 
         all_tests = _get_all_tests_from_cache_or_api(console)
         for test in all_tests:
             if test.get('test_id') == test_id:
-                # Return a copy so callers can mutate without affecting the cache
-                return dict(test)
+                # Return a deep copy so callers can mutate without affecting the cache
+                return copy.deepcopy(test)
     except Exception as e:
         logger.warning("Failed to search cached test list for '%s': %s", test_id, e)
     return None
