@@ -218,10 +218,10 @@ class TestPlaybookE2E:
     def test_cache_behavior_real_api(self):
         """Test cache behavior with real API calls.
 
-        This test only runs when caching is enabled via SB_MCP_ENABLE_LOCAL_CACHING.
+        This test only runs when caching is enabled via SB_MCP_CACHE_PLAYBOOK.
         """
-        if not is_caching_enabled():
-            pytest.skip("Caching is disabled (SB_MCP_ENABLE_LOCAL_CACHING not set to truthy value)")
+        if not is_caching_enabled("playbook"):
+            pytest.skip("Caching is disabled (SB_MCP_CACHE_PLAYBOOK not set to truthy value)")
 
         try:
             # Clear cache to ensure clean state

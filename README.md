@@ -230,15 +230,14 @@ safebreach_envs = {
 
 ### Local Caching Configuration
 
-By default, local caching is **disabled** to prevent unbounded memory growth in long-running sessions. You can enable caching to improve performance and reduce API calls:
+By default, local caching is **disabled** to prevent unbounded memory growth in long-running sessions. You can enable caching per server to improve performance and reduce API calls:
 
 ```bash
-# Enable local caching (disabled by default)
-export SB_MCP_ENABLE_LOCAL_CACHING=true
-
-# Disable caching (default behavior)
-export SB_MCP_ENABLE_LOCAL_CACHING=false
-# Or simply don't set the variable
+# Enable caching for specific servers (disabled by default)
+export SB_MCP_CACHE_CONFIG=true      # Config server
+export SB_MCP_CACHE_DATA=true        # Data server
+export SB_MCP_CACHE_PLAYBOOK=true    # Playbook server
+export SB_MCP_CACHE_STUDIO=true      # Studio server
 ```
 
 **Truthy values**: `true`, `1`, `yes`, `on` (case-insensitive)
@@ -1458,7 +1457,7 @@ Tests are auto-discovered in VS Code Test Explorer.
 
 ### Caching Behavior
 
-**Caching is disabled by default** to prevent unbounded memory growth. Set `SB_MCP_ENABLE_LOCAL_CACHING=true` to enable.
+**Caching is disabled by default** to prevent unbounded memory growth. Enable per server with `SB_MCP_CACHE_{SERVER}=true`.
 
 When enabled, the multi-server architecture implements server-specific caching with 1-hour TTL:
 
