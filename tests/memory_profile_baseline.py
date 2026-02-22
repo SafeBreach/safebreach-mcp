@@ -141,7 +141,10 @@ def discover_workload(
     This discovery phase always runs with caching DISABLED so it does not
     pollute the measurement scenarios.
     """
-    os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "false"
+    os.environ.pop("SB_MCP_CACHE_CONFIG", None)
+    os.environ.pop("SB_MCP_CACHE_DATA", None)
+    os.environ.pop("SB_MCP_CACHE_PLAYBOOK", None)
+    os.environ.pop("SB_MCP_CACHE_STUDIO", None)
     reset_cache_config()
     clear_all_caches()
 
@@ -334,7 +337,10 @@ def run_scenario_disabled(
     playbook_pages: int = DEFAULT_PLAYBOOK_PAGES,
 ) -> dict[str, Any]:
     """Scenario A: Caching disabled — API calls happen, nothing cached."""
-    os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "false"
+    os.environ.pop("SB_MCP_CACHE_CONFIG", None)
+    os.environ.pop("SB_MCP_CACHE_DATA", None)
+    os.environ.pop("SB_MCP_CACHE_PLAYBOOK", None)
+    os.environ.pop("SB_MCP_CACHE_STUDIO", None)
     reset_cache_config()
     clear_all_caches()
     gc.collect()
@@ -356,7 +362,10 @@ def run_scenario_enabled(
     playbook_pages: int = DEFAULT_PLAYBOOK_PAGES,
 ) -> dict[str, Any]:
     """Scenario B: Caching enabled (unbounded) — real data accumulates."""
-    os.environ["SB_MCP_ENABLE_LOCAL_CACHING"] = "true"
+    os.environ["SB_MCP_CACHE_CONFIG"] = "true"
+    os.environ["SB_MCP_CACHE_DATA"] = "true"
+    os.environ["SB_MCP_CACHE_PLAYBOOK"] = "true"
+    os.environ["SB_MCP_CACHE_STUDIO"] = "true"
     reset_cache_config()
     clear_all_caches()
     gc.collect()
@@ -496,7 +505,8 @@ def main() -> None:
 
     # Clean up
     clear_all_caches()
-    os.environ.pop("SB_MCP_ENABLE_LOCAL_CACHING", None)
+    for suffix in ("CONFIG", "DATA", "PLAYBOOK", "STUDIO"):
+        os.environ.pop(f"SB_MCP_CACHE_{suffix}", None)
     reset_cache_config()
     gc.collect()
 

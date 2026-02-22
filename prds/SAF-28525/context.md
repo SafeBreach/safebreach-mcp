@@ -1,6 +1,6 @@
 # SAF-28525: Simplify the enablement control for the MCP cache
 
-**Status**: Phase 6: Summary Created
+**Status**: Phase 6: PRD Created
 
 ## Ticket Information
 

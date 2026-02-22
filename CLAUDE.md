@@ -251,13 +251,11 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 - **Studio Server**: `studio_drafts` — maxsize=5, TTL=1800s
 - **Cache Monitoring**: Background task logs stats every 5 minutes, warns when caches are at capacity
 
-**Cache Configuration Environment Variables**:
-- `SB_MCP_ENABLE_LOCAL_CACHING=true|false` — Global toggle (default: false)
-- `SB_MCP_CACHE_CONFIG=true|false` — Override for Config server
-- `SB_MCP_CACHE_DATA=true|false` — Override for Data server
-- `SB_MCP_CACHE_PLAYBOOK=true|false` — Override for Playbook server
-- `SB_MCP_CACHE_STUDIO=true|false` — Override for Studio server
-- Per-server overrides take precedence over the global toggle
+**Cache Configuration Environment Variables** (per-server, default: false):
+- `SB_MCP_CACHE_CONFIG=true|false` — Config server
+- `SB_MCP_CACHE_DATA=true|false` — Data server
+- `SB_MCP_CACHE_PLAYBOOK=true|false` — Playbook server
+- `SB_MCP_CACHE_STUDIO=true|false` — Studio server
 
 **Error Handling**: Functions include timeout configurations (120 seconds for API calls) and comprehensive logging for debugging SafeBreach API interactions.
 
