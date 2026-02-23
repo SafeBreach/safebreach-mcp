@@ -14,6 +14,7 @@ import weakref
 
 import pytest
 
+import safebreach_mcp_core.safebreach_cache as _cache_mod
 from safebreach_mcp_core.safebreach_cache import (
     SafeBreachCache,
     _cache_registry,
@@ -486,9 +487,11 @@ class TestCacheMonitoringTask:
 
     def setup_method(self):
         _cache_registry.clear()
+        _cache_mod._monitoring_started = False
 
     def teardown_method(self):
         _cache_registry.clear()
+        _cache_mod._monitoring_started = False
 
     def test_start_cache_monitoring_creates_task(self):
         async def run():
@@ -497,6 +500,22 @@ class TestCacheMonitoringTask:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+        asyncio.run(run())
+
+    def test_duplicate_monitoring_is_noop(self):
+        """Second call to start_cache_monitoring returns immediately."""
+        async def run():
+            task1 = asyncio.create_task(start_cache_monitoring(interval_seconds=100))
+            await asyncio.sleep(0)  # let task1 set the flag
+            task2 = asyncio.create_task(start_cache_monitoring(interval_seconds=100))
+            await asyncio.sleep(0)  # let task2 run
+            assert task2.done(), "Second monitoring task should return immediately"
+            assert not task1.done(), "First monitoring task should still be running"
+            task1.cancel()
+            try:
+                await task1
+            except asyncio.CancelledError:
+                pass
         asyncio.run(run())
 
     def test_monitoring_handles_exception_gracefully(self, caplog):

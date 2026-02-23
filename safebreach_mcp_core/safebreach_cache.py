@@ -150,11 +150,27 @@ def log_cache_stats() -> None:
             )
 
 
+_monitoring_started = False
+
+
 async def start_cache_monitoring(interval_seconds: int = 300) -> None:
-    """Background task that periodically logs cache stats."""
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            log_cache_stats()
-        except Exception:
-            logger.exception("Error in cache monitoring")
+    """Background task that periodically logs cache stats.
+
+    Only one monitoring loop runs per process.  When multiple servers share
+    the same process (e.g. under mcp-proxy), subsequent calls return
+    immediately so the summary line is emitted once per cycle, not N times.
+    """
+    global _monitoring_started
+    if _monitoring_started:
+        return
+    _monitoring_started = True
+
+    try:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                log_cache_stats()
+            except Exception:
+                logger.exception("Error in cache monitoring")
+    finally:
+        _monitoring_started = False
