@@ -171,7 +171,8 @@ class SafeBreachMCPBase:
         cleanup_task = asyncio.create_task(_cleanup_stale_semaphores())
         monitoring_task = asyncio.create_task(start_cache_monitoring())
 
-        config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info")
+        config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info",
+                                timeout_graceful_shutdown=3)
         server = uvicorn.Server(config)
         self._uvicorn_server = server
         try:

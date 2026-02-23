@@ -126,8 +126,20 @@ def get_all_cache_stats() -> list[dict]:
 
 def log_cache_stats() -> None:
     """Log stats for all registered caches. Warn when a cache is persistently at capacity."""
-    for s in get_all_cache_stats():
-        logger.info(
+    all_stats = get_all_cache_stats()
+    if not all_stats:
+        return
+
+    total_entries = sum(s["size"] for s in all_stats)
+    total_capacity = sum(s["maxsize"] for s in all_stats)
+    avg_hit_rate = sum(s["hit_rate"] for s in all_stats) / len(all_stats)
+    logger.info(
+        "Cache summary: %d caches, %d/%d total entries, %.1f%% avg hit rate",
+        len(all_stats), total_entries, total_capacity, avg_hit_rate,
+    )
+
+    for s in all_stats:
+        logger.debug(
             "Cache '%s': %d/%d entries, %.1f%% hit rate, TTL=%ds",
             s["name"], s["size"], s["maxsize"], s["hit_rate"], s["ttl"],
         )
