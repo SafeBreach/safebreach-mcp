@@ -255,6 +255,42 @@ trigger a feature flag change and confirm the server restarts without port confl
 
 **Git Commit**: `fix(base): add uvicorn graceful shutdown timeout to prevent port release stall (SAF-28543)`
 
+## 10. Production Observations (wandering-gharial, 2026-02-23)
+
+### Duplicate Cache Summary Lines
+
+After deploying the condensed `log_cache_stats()` fix (Fix A), production logs on wandering-gharial revealed that
+the summary line is emitted **N times per cycle** instead of once. Each MCP server (config, utilities, data,
+playbook, studio) runs its own `start_cache_monitoring()` task, but they all share the same global
+`_cache_registry`. Result: 3-5 identical "Cache summary" lines per monitoring cycle.
+
+Example from 14:02:42 UTC:
+```
+14:02:42.648 - Cache summary: 20 caches, 3/151 total entries, 8.7% avg hit rate
+14:02:42.649 - Cache summary: 20 caches, 3/151 total entries, 8.7% avg hit rate
+14:02:42.651 - Cache summary: 20 caches, 3/151 total entries, 8.7% avg hit rate
+```
+
+**Root Cause**: `start_cache_monitoring()` is called once per server in `_run_server_managed()`. Since the cache
+registry is process-global (all servers run in the same Python process under mcp-proxy), each monitoring task
+iterates the same registry and emits the same summary.
+
+**Recommended Fix**: Guard `start_cache_monitoring()` so it only starts one monitoring task per process (e.g.,
+use an `asyncio.Event` or module-level flag to prevent duplicate monitoring loops). Alternatively, move the
+`start_cache_monitoring()` call out of `run_server()` and into mcp-proxy's startup sequence so it runs exactly
+once.
+
+### Cache Capacity Warnings
+
+Two caches have persistently small `maxsize` values, generating continuous WARNING lines:
+
+| Cache | maxsize | Consecutive checks at capacity |
+|-------|---------|-------------------------------|
+| `simulations` | 3 | 10+ |
+| `full_simulation_logs` | 2 | 5+ |
+
+These should have their `maxsize` increased in `safebreach_mcp_core`.
+
 ## 12. Executive Summary
 
 - **Issue**: Two problems discovered on wandering-gharial during SAF-28436 feature flag work: (1) cache
