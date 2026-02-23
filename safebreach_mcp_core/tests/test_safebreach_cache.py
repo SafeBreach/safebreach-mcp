@@ -433,13 +433,25 @@ class TestLogCacheStats:
     def teardown_method(self):
         _cache_registry.clear()
 
-    def test_log_cache_stats_produces_info_log(self, caplog):
+    def test_log_cache_stats_produces_summary_info(self, caplog):
         cache = SafeBreachCache("log_test", maxsize=5, ttl=60)
         cache.set("a", 1)
         cache.get("a")
-        with caplog.at_level(logging.INFO, logger="safebreach_mcp_core.safebreach_cache"):
+        with caplog.at_level(logging.DEBUG, logger="safebreach_mcp_core.safebreach_cache"):
             log_cache_stats()
-        assert any("log_test" in rec.message and "1/5 entries" in rec.message for rec in caplog.records)
+        # Single summary line at INFO
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(info_records) == 1
+        assert "Cache summary: 1 caches" in info_records[0].message
+        assert "1/5 total entries" in info_records[0].message
+        # Per-cache detail at DEBUG
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("log_test" in r.message and "1/5 entries" in r.message for r in debug_records)
+
+    def test_log_cache_stats_empty_registry(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="safebreach_mcp_core.safebreach_cache"):
+            log_cache_stats()
+        assert len(caplog.records) == 0
 
     def test_capacity_warning_after_3_consecutive(self, caplog):
         cache = SafeBreachCache("warn_test", maxsize=2, ttl=60)
