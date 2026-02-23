@@ -79,6 +79,7 @@ class SafeBreachMCPBase:
         self.mcp = FastMCP(server_name)
         self.auth = SafeBreachAuth()
         self._cache = SafeBreachCache(name=f"{server_name}_base", maxsize=10, ttl=3600)
+        self._uvicorn_server: Optional[Any] = None
     
     def get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """
@@ -109,7 +110,17 @@ class SafeBreachMCPBase:
     def clear_cache(self) -> None:
         """Clear all cache data."""
         self._cache.clear()
-    
+
+    def request_shutdown(self) -> None:
+        """Signal the uvicorn server to exit gracefully.
+
+        This causes uvicorn to exit its main_loop, run its shutdown sequence
+        (which closes the listening socket), and return from serve().
+        Safe to call even if the server is not running.
+        """
+        if self._uvicorn_server is not None:
+            self._uvicorn_server.should_exit = True
+
     async def run_server(self, port: int = 8000, host: str = "127.0.0.1", allow_external: bool = False) -> None:
         """
         Run the MCP server.
@@ -162,9 +173,11 @@ class SafeBreachMCPBase:
 
         config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info")
         server = uvicorn.Server(config)
+        self._uvicorn_server = server
         try:
             await server.serve()
         finally:
+            self._uvicorn_server = None
             cleanup_task.cancel()
             monitoring_task.cancel()
     
