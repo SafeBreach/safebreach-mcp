@@ -2652,20 +2652,23 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     def test_sb_get_full_simulation_logs_cache_hit(self, mock_cache_enabled):
         """Test full simulation logs retrieval from cache when caching is enabled."""
-        # Populate cache with mock data
+        # Populate cache with TRANSFORMED data (validate-then-cache pattern)
         cache_key = 'full_simulation_logs_test-console_sim123_test456'
         cached_data = {
-            'id': 'sim123',
-            'runId': 'test456',
-            'planRunId': 'test456',
-            'dataObj': {
-                'data': [[{
-                    'details': {
-                        'LOGS': 'Cached log data',
-                        'SIMULATION_STEPS': []
-                    }
-                }]]
-            }
+            'simulation_id': 'sim123',
+            'test_id': 'test456',
+            'run_id': 'test456',
+            'execution_times': {'start_time': '', 'end_time': '', 'execution_time': '', 'duration_seconds': 0.0},
+            'status': {'overall': 'SUCCESS', 'final_status': 'logged', 'security_action': ''},
+            'attack_info': {'move_id': 0, 'move_name': '', 'move_description': '', 'protocol': '',
+                            'approach': '', 'opponent': '', 'noise_level': '', 'impact': ''},
+            'target': {'logs': 'Cached log data', 'simulation_steps': [], 'details_summary': '',
+                       'error': '', 'output': '', 'status': '', 'task_code': 0,
+                       'simulation_start': '', 'simulation_end': '', 'startup_duration': 0.0,
+                       'node_name': '', 'os_type': '', 'os_version': ''},
+            'attacker': None,
+            'logs_available': True,
+            'logs_status': None,
         }
         full_simulation_logs_cache.set(cache_key, cached_data)
 
@@ -2676,10 +2679,11 @@ class TestDataFunctions:
             console='test-console'
         )
 
-        # Verify data came from cache (host attack: no attackerNodeId/targetNodeId in cached data)
+        # Verify data came from cache (already transformed)
         assert result['target'] is not None
         assert result['target']['logs'] == 'Cached log data'
         assert result['simulation_id'] == 'sim123'
+        assert result['logs_available'] is True
 
     def test_sb_get_full_simulation_logs_empty_simulation_id(self):
         """Test that empty simulation_id raises ValueError."""
@@ -2763,6 +2767,129 @@ class TestDataFunctions:
         assert isinstance(result['logs_status'], str)
         assert result['target'] is None
         assert result['attacker'] is None
+
+    # --- Phase 2 (SAF-28582): Validate-then-cache pattern tests ---
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_cache_stores_transformed_not_raw(self, mock_fetch, mock_cache_enabled):
+        """After cache miss, verify cached value is transformed (has logs_available), not raw (has dataObj)."""
+        mock_response = {
+            'id': '1477531',
+            'runId': '1764165600525.2',
+            'planRunId': '1764165600525.2',
+            'status': 'SUCCESS',
+            'finalStatus': 'logged',
+            'startTime': '',
+            'endTime': '',
+            'executionTime': '',
+            'securityAction': 'log_only',
+            'moveId': 11318,
+            'moveName': 'Write File',
+            'attackerNodeId': 'node-aaa',
+            'targetNodeId': 'node-aaa',
+            'dataObj': {
+                'data': [[{
+                    'id': 'node-aaa',
+                    'nodeNameInMove': 'sim-node',
+                    'state': 'finished',
+                    'details': {
+                        'LOGS': 'Test logs',
+                        'SIMULATION_STEPS': [],
+                        'DETAILS': '',
+                        'ERROR': '',
+                        'OUTPUT': '',
+                        'STATUS': 'DONE',
+                        'CODE': 0,
+                        'SIMULATION_START_TIME': '',
+                        'SIMULATION_END_TIME': '',
+                        'STARTUP_DURATION': 0.0,
+                    }
+                }]]
+            }
+        }
+        mock_fetch.return_value = mock_response
+
+        # Clear cache before test
+        full_simulation_logs_cache.clear()
+
+        sb_get_full_simulation_logs(
+            simulation_id='1477531',
+            test_id='1764165600525.2',
+            console='test-console'
+        )
+
+        # Verify cache contains TRANSFORMED data (not raw)
+        cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
+        cached = full_simulation_logs_cache.get(cache_key)
+        assert cached is not None, "Expected data to be cached"
+        assert 'logs_available' in cached, "Cache should store transformed data with logs_available"
+        assert 'dataObj' not in cached, "Cache should NOT store raw API response"
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    def test_cache_hit_returns_transformed_directly(self, mock_cache_enabled):
+        """Cache hit should return transformed data directly without re-transforming."""
+        cache_key = 'full_simulation_logs_test-console_sim789_test012'
+        # Pre-populate cache with TRANSFORMED data
+        transformed_data = {
+            'simulation_id': 'sim789',
+            'test_id': 'test012',
+            'run_id': 'test012',
+            'execution_times': {'start_time': '', 'end_time': '', 'execution_time': '', 'duration_seconds': 0.0},
+            'status': {'overall': 'SUCCESS', 'final_status': 'logged', 'security_action': ''},
+            'attack_info': {'move_id': 0, 'move_name': 'Test', 'move_description': '', 'protocol': '',
+                            'approach': '', 'opponent': '', 'noise_level': '', 'impact': ''},
+            'target': {'logs': 'cached logs', 'simulation_steps': [], 'details_summary': '',
+                       'error': '', 'output': '', 'status': '', 'task_code': 0,
+                       'simulation_start': '', 'simulation_end': '', 'startup_duration': 0.0,
+                       'node_name': 'sim-node', 'os_type': '', 'os_version': ''},
+            'attacker': None,
+            'logs_available': True,
+            'logs_status': None,
+        }
+        full_simulation_logs_cache.set(cache_key, transformed_data)
+
+        result = sb_get_full_simulation_logs(
+            simulation_id='sim789',
+            test_id='test012',
+            console='test-console'
+        )
+
+        # Should return EXACTLY what was cached (no re-transformation)
+        assert result['logs_available'] is True
+        assert result['target']['logs'] == 'cached logs'
+        assert result['simulation_id'] == 'sim789'
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
+    def test_empty_data_response_is_cached(self, mock_fetch, mock_cache_enabled):
+        """Graceful empty-data response should be cached (it's a valid transformed response)."""
+        mock_response = {
+            'id': '3213805',
+            'runId': '1771853252399.2',
+            'planRunId': '1771853252399.2',
+            'status': 'INTERNAL_FAIL',
+            'finalStatus': 'stopped',
+            'dataObj': {'data': [[]]},
+        }
+        mock_fetch.return_value = mock_response
+
+        # Clear cache before test
+        full_simulation_logs_cache.clear()
+
+        result = sb_get_full_simulation_logs(
+            simulation_id='3213805',
+            test_id='1771853252399.2',
+            console='test-console'
+        )
+
+        assert result['logs_available'] is False
+
+        # Verify the graceful response IS cached
+        cache_key = 'full_simulation_logs_test-console_3213805_1771853252399.2'
+        cached = full_simulation_logs_cache.get(cache_key)
+        assert cached is not None, "Empty-data graceful response should be cached"
+        assert cached['logs_available'] is False, "Cached value should be the transformed response"
 
     @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
     def test_sb_get_full_simulation_logs_duration_calculation(self, mock_fetch):
