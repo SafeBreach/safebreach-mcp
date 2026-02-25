@@ -9,6 +9,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -492,28 +493,85 @@ class SafeBreachMCPBase:
 
             # SSE connection establishment — assign a new session ID
             if path.endswith("/sse"):
-                session_id = str(uuid.uuid4())
-                _mcp_session_id.set(session_id)
-                _session_semaphores[session_id] = (asyncio.Semaphore(_concurrency_limit), time.time())
-                logger.info(f"🆔 New SSE session: {session_id[:8]}...")
+                middleware_session_id = str(uuid.uuid4())
+                _mcp_session_id.set(middleware_session_id)
+                sem = asyncio.Semaphore(_concurrency_limit)
+                _session_semaphores[middleware_session_id] = (sem, time.time())
+                logger.info(
+                    f"🆔 New SSE session: {middleware_session_id[:8]}... "
+                    f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
+                )
+
+                real_session_id = None
 
                 async def cleanup_send(message):
+                    nonlocal real_session_id
                     await send(message)
+
+                    # Capture the real session_id from FastMCP's endpoint event
+                    # and migrate the semaphore so POST lookups find it.
+                    if real_session_id is None and message.get("type") == "http.response.body":
+                        body = message.get("body", b"")
+                        text = body.decode("utf-8", errors="replace")
+                        match = re.search(r"session_id=([a-f0-9]+)", text)
+                        if match:
+                            real_session_id = match.group(1)
+                            _session_semaphores.pop(middleware_session_id, None)
+                            _session_semaphores[real_session_id] = (sem, time.time())
+                            logger.info(
+                                f"🔄 Session migrated: {middleware_session_id[:8]}... "
+                                f"→ {real_session_id[:8]}..."
+                            )
+                        else:
+                            logger.debug(
+                                f"SSE body chunk for {middleware_session_id[:8]}... "
+                                f"— no session_id found (len={len(body)})"
+                            )
+
                     # Clean up semaphore when SSE connection ends
                     if message.get("type") == "http.response.body" and not message.get("more_body", False):
-                        _session_semaphores.pop(session_id, None)
-                        logger.info(f"🧹 Cleaned up session: {session_id[:8]}...")
+                        cleanup_id = real_session_id or middleware_session_id
+                        _session_semaphores.pop(cleanup_id, None)
+                        logger.info(
+                            f"🧹 Cleaned up session: {cleanup_id[:8]}... "
+                            f"(migrated={'yes' if real_session_id else 'no'}, "
+                            f"remaining={len(_session_semaphores)})"
+                        )
 
                 return await original_app(scope, receive, cleanup_send)
 
             # Message endpoint — apply concurrency limit
             if path.endswith("/messages/") or path.endswith("/messages"):
+                # Try ContextVar first (works within same async task)
                 session_id = _mcp_session_id.get()
-                if session_id and session_id in _session_semaphores:
+                lookup_source = "contextvar"
+
+                # Fallback: parse session_id from URL query string.
+                # ContextVar does NOT propagate across separate HTTP request
+                # tasks in uvicorn (root cause of SAF-28585).
+                if not session_id or session_id not in _session_semaphores:
+                    qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
+                    for param in qs.split("&"):
+                        if param.startswith("session_id="):
+                            session_id = param[len("session_id="):]
+                            lookup_source = "query_string"
+                            break
+
+                if session_id:
+                    # Lazy semaphore creation for sessions first seen via query string
+                    if session_id not in _session_semaphores:
+                        _session_semaphores[session_id] = (
+                            asyncio.Semaphore(_concurrency_limit), time.time()
+                        )
+                        logger.info(
+                            f"🆔 Session registered (from query): {session_id[:8]}..."
+                        )
+
                     sem, _ = _session_semaphores[session_id]
-                    if sem.locked() and sem._value == 0:  # noqa: SLF001
+                    if sem.locked():
                         logger.warning(
-                            f"⚠️ Concurrency limit ({_concurrency_limit}) exceeded for session {session_id[:8]}..."
+                            f"⚠️ Rate limited session {session_id[:8]}... "
+                            f"(limit={_concurrency_limit}, lookup={lookup_source})"
                         )
                         response_body = json.dumps({
                             "error": "Too Many Requests",
@@ -535,10 +593,15 @@ class SafeBreachMCPBase:
                         })
                         return
 
+                    logger.debug(
+                        f"🔓 Acquired semaphore for {session_id[:8]}... "
+                        f"(slots={sem._value}/{_concurrency_limit}, lookup={lookup_source})"  # noqa: SLF001
+                    )
                     async with sem:
                         return await original_app(scope, receive, send)
 
-                # No session tracking — pass through (shouldn't happen in normal flow)
+                # No session tracking — pass through
+                logger.debug(f"⏩ No session_id found — pass through (path={path})")
                 return await original_app(scope, receive, send)
 
             # All other paths — pass through without limiting
