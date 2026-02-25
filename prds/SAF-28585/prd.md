@@ -310,7 +310,133 @@ Problem: Semaphore count growing (remaining > 0 after disconnect)
 
 ---
 
-## 8. Future Considerations
+## 8. Staging Validation Results (2026-02-25)
+
+### 8.1 Deployment
+
+- **Environment**: staging.safebreach.com (`i-05fe824175e5d416c`)
+- **Image**: `feature_SAF-28436-Add-cache-environment-variables-to-mcp-proxy-latest` (SHA `7d8269cb4ae1`)
+- **Service**: `sbmcp-proxy` — confirmed running at 08:36:54 UTC
+- **Servers**: All 5 MCP servers initialized with concurrency limiter (limit=2)
+
+### 8.2 Fix Verification
+
+Session lifecycle confirmed working end-to-end via disk log file (`sbmcp-proxy.log`):
+
+1. **SSE session creation**: 3 sessions created with `active_sessions` counter
+2. **Session ID migration**: All 3 migrated from middleware UUID to FastMCP session ID
+   (e.g., `a82498cc → 5af78873`)
+3. **Query string lookup**: All rate limit events logged with `lookup=query_string`
+   (not broken ContextVar path)
+4. **Session cleanup**: Previous sessions cleaned up with `migrated=yes, remaining=0`
+
+**Comparison with broken image (SHA `67d0d7d5`):** A console redeploy at 08:19 overwrote our image
+with the default image. That deployment showed zero session migrations and zero 429s during the same
+pressure test — confirming the fix is not in the default image and the query-string path is essential.
+
+**Important operational note**: The `safebreach_mcp_core.safebreach_base` logger output does NOT appear
+in docker container logs (`docker logs mcp-proxy`). Concurrency limiter logs are only visible in the disk
+log file at `/datadb/logs/sbmcp-proxy.log` via `mgmt_get_log_file`. This is because the systemd service
+redirects stdout to the log file (`>> /datadb/logs/sbmcp-proxy.log`), while docker's log driver only
+captures the container's internal stdout/stderr.
+
+### 8.3 Pressure Test 1 — Data Server (08:42)
+
+| Metric | Value |
+|--------|-------|
+| **Target** | Data server, session `5af78873` |
+| **Peak burst** | ~12 concurrent `get_test_details` calls in 30ms |
+| **Proxy 429s** | 3 (WARNING logs with `lookup=query_string`) |
+| **Agent-visible errors** | 3 (`safebreachData_get_test_details` HTTP 429) |
+| **Post-burst behavior** | Agent settled to 2 concurrent after rejection |
+| **Memory** | 64.5 MiB → 398 MiB (+333.5 MiB from data payloads) |
+
+Agent request timeline:
+```
+08:42:09   ████████████  ~12 concurrent (BURST — 3 agent errors)
+08:42:13   ██            2 sequential (agent respects limit)
+08:42:16   ██            2 sequential
+08:42:21   ██            2 sequential
+           ··· 28s gap — long-running data processing ···
+08:42:49   ██            2 sequential
+08:42:55   ████          2 pairs interleaved
+08:42:59   ████          4 playbook requests
+08:43:08   ████          4 data requests
+```
+
+Total: 42 requests across 3 servers (data 86%, playbook 10%, config 5%).
+
+### 8.4 Pressure Test 2 — Playbook Server (09:13)
+
+| Metric | Value |
+|--------|-------|
+| **Target** | Playbook server, session `37f20b32` |
+| **Peak burst** | ~10+ concurrent requests in 5ms |
+| **Proxy 429s** | 10 (8 at 09:13:30, 2 at 09:13:35) |
+| **Retry behavior** | Agent retried after exactly 5s (honoring Retry-After) but burst again |
+| **Memory** | 398 MiB → 492.4 MiB (70.3% of 700 MiB limit) |
+
+More aggressive than test 1: 10 rejections vs 3. The agent honored the `Retry-After: 5` header
+(5.0s gap between bursts) but fired another burst on retry, exceeding the limit again.
+
+### 8.5 Redundant Layered Rate Limiting — Discovery and Analysis
+
+During staging analysis, we discovered that rate limiting is applied at **two independent layers**
+in the proxy deployment architecture:
+
+```
+Agent → Proxy (port 4150) → MCP Server (port 8002)
+         ↑ limiter #1            ↑ limiter #2
+```
+
+Both layers exist because the proxy and MCP servers independently inherit from `SafeBreachMCPBase`,
+which always wraps the ASGI app with `_create_concurrency_limited_app()`. In a direct deployment
+(client → MCP server), there's correctly one layer. In the proxy deployment, both apply.
+
+**How requests flow through the layers:**
+
+- **Rejected at proxy**: `sem.locked()` → immediate 429, request never forwarded to backend.
+  The proxy middleware logs a WARNING and the agent receives an HTTP 429 error.
+- **Passed proxy, rejected at backend**: Request passes the proxy's TOCTOU pre-check, proxy acquires
+  its semaphore and forwards to the MCP server. The MCP server's own limiter rejects it with 429.
+  The proxy returns this 429 to the agent, but the agent's MCP SDK may handle it differently from
+  a direct proxy rejection.
+
+**Observed in pressure test 1:**
+
+| Layer | 429 count | Evidence |
+|-------|-----------|----------|
+| Proxy middleware | 3 | 3 WARNING logs at 08:42:09.975-09.986 |
+| MCP server backend | 3 | 3 httpx 429 responses from port 8002 |
+| Agent-visible errors | 3 | Only the proxy-level rejections surfaced |
+
+The agent saw exactly 3 errors despite 6 total rejections — the backend rejections were absorbed
+by the proxy/SDK layer and did not surface as tool execution failures.
+
+**Problems with the double layer:**
+
+1. **Orphaned semaphores**: The backend MCP server lazy-creates semaphores from the forwarded URL's
+   session_id. These have no SSE lifecycle (no migration, no disconnect cleanup) and are only cleaned
+   up by the stale cleanup task (every 10 min, max age 1 hour).
+2. **Confusing logs**: 6 server-side events for 3 logical rejections. Log analysis requires
+   understanding which layer produced each entry.
+3. **Wasted work**: Requests that pass the proxy limiter, get forwarded, and are rejected at the
+   backend consume a proxy semaphore slot and an HTTP round-trip for nothing.
+4. **Not defense-in-depth**: A single request cannot be caught by both layers. The proxy either
+   rejects (backend never sees it) or passes (backend may catch it). The layers don't reinforce
+   each other — they independently race to reject.
+
+### 8.6 Sign-Off
+
+- Fix confirmed working on staging with real agent traffic (breach-genie v1.65.0)
+- Concurrency limiter correctly bounds per-session requests to the configured limit
+- Session lifecycle (create → migrate → rate limit → cleanup) fully validated
+- No semaphore leaks observed across multiple test cycles
+- Agent correctly receives 429 with `retry_after: 5` and adapts its concurrency
+
+---
+
+## 9. Future Considerations
 
 1. **MCP Streamable HTTP transport**: FastMCP is migrating from SSE to Streamable HTTP. The session_id
    mechanism may change. Monitor FastMCP releases and update the regex pattern if needed.
@@ -328,9 +454,25 @@ Problem: Semaphore count growing (remaining > 0 after disconnect)
    The second request would block (not get 429) until the first completes. This is acceptable behavior
    -- the semaphore still bounds concurrency correctly; the 429 fast-path is best-effort.
 
+5. **Eliminate redundant backend limiting in proxy deployments**: The double-layer rate limiting
+   discovered during staging validation (Section 8.5) should be resolved. Recommended approach:
+   add a configuration flag `SAFEBREACH_MCP_BEHIND_PROXY=true` (or detect automatically via
+   request origin) to disable `_create_concurrency_limited_app()` on backend MCP servers when
+   they run behind the proxy. The proxy is the correct enforcement point — it owns the client
+   session lifecycle (SSE connect → migrate → disconnect → cleanup) and is the only layer that
+   can properly manage semaphore state. Backend servers behind the proxy should skip the limiter
+   to avoid orphaned semaphores, confusing logs, and wasted forwarding round-trips.
+
+6. **Memory growth under pressure**: Staging tests showed mcp-proxy memory growing from 64.5 MiB
+   to 492.4 MiB (70.3% of 700 MiB limit) across two pressure tests without releasing between them.
+   This is driven by large data payloads (simulation data), not the concurrency limiter itself.
+   The concurrency limiter helps indirectly by capping the number of concurrent heavy requests,
+   but payload-level memory management (streaming responses, bounded response buffers) may be
+   needed if memory pressure becomes a production issue.
+
 ---
 
-## 9. Document Status
+## 10. Document Status
 
 | Field | Value |
 |-------|-------|
