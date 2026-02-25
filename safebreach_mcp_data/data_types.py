@@ -444,34 +444,12 @@ def _build_node_data(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+def _build_response_metadata(api_response: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract common metadata fields from an API response.
+
+    Used by both the normal and empty-data paths in get_full_simulation_logs_mapping()
+    to avoid duplication.
     """
-    Transform SafeBreach API full simulation logs response to MCP tool format.
-
-    Produces a role-based structure with separate 'target' and 'attacker' sections.
-    For host attacks (single-node), 'attacker' is None. For dual-script attacks
-    (exfil, infil, lateral movement), both 'target' and 'attacker' are populated
-    with their respective execution logs and steps.
-
-    Args:
-        api_response: Raw API response from executionsHistoryResults endpoint
-
-    Returns:
-        Transformed dictionary with role-based full simulation logs data
-
-    Raises:
-        ValueError: If expected fields are missing from response
-        IndexError: If dataObj structure is unexpected
-    """
-    # Extract nested details object
-    data_obj = api_response.get('dataObj', {})
-    data_array = data_obj.get('data', [[]])
-
-    if not data_array or not data_array[0]:
-        raise ValueError("Response missing dataObj.data structure")
-
-    entries = data_array[0]
-
     # Helper function to calculate duration
     def calculate_duration(start_time: str, end_time: str) -> float:
         """Calculate duration in seconds between two ISO timestamps."""
@@ -484,6 +462,70 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
             return (end - start).total_seconds()
         except (ValueError, AttributeError):
             return 0.0
+
+    return {
+        "simulation_id": str(api_response.get('id', '')),
+        "test_id": api_response.get('planRunId', ''),
+        "run_id": api_response.get('runId', ''),
+        "execution_times": {
+            "start_time": api_response.get('startTime', ''),
+            "end_time": api_response.get('endTime', ''),
+            "execution_time": api_response.get('executionTime', ''),
+            "duration_seconds": calculate_duration(
+                api_response.get('startTime', ''),
+                api_response.get('endTime', '')
+            ),
+        },
+        "status": {
+            "overall": api_response.get('status', ''),
+            "final_status": api_response.get('finalStatus', ''),
+            "security_action": api_response.get('securityAction', '')
+        },
+        "attack_info": {
+            "move_id": api_response.get('moveId', 0),
+            "move_name": api_response.get('moveName', ''),
+            "move_description": api_response.get('moveDesc', ''),
+            "protocol": api_response.get('protocol', ''),
+            "approach": api_response.get('approach', ''),
+            "opponent": api_response.get('opponent', ''),
+            "noise_level": api_response.get('noiseLevel', ''),
+            "impact": api_response.get('impact', '')
+        },
+    }
+
+
+def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform SafeBreach API full simulation logs response to MCP tool format.
+
+    Produces a role-based structure with separate 'target' and 'attacker' sections.
+    For host attacks (single-node), 'attacker' is None. For dual-script attacks
+    (exfil, infil, lateral movement), both 'target' and 'attacker' are populated
+    with their respective execution logs and steps.
+
+    When dataObj.data is empty (e.g. [[]], [], or missing), returns a valid response
+    with logs_available=False and all available metadata instead of raising an error.
+
+    Args:
+        api_response: Raw API response from executionsHistoryResults endpoint
+
+    Returns:
+        Transformed dictionary with role-based full simulation logs data
+    """
+    # Extract nested details object
+    data_obj = api_response.get('dataObj', {})
+    data_array = data_obj.get('data', [[]])
+
+    if not data_array or not data_array[0]:
+        # Empty execution logs — return graceful response with metadata
+        metadata = _build_response_metadata(api_response)
+        metadata["target"] = None
+        metadata["attacker"] = None
+        metadata["logs_available"] = False
+        metadata["logs_status"] = "No execution logs available for this simulation"
+        return metadata
+
+    entries = data_array[0]
 
     # Role mapping: determine which entry is target and which is attacker
     attacker_node_id = api_response.get('attackerNodeId', '')
@@ -543,43 +585,9 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
                 attacker_data["os_version"] = api_response.get('attackerOSPrettyName', '') or api_response.get('attackerOSVersion', '')
 
     # Build transformed response
-    return {
-        # Core identification
-        "simulation_id": str(api_response.get('id', '')),
-        "test_id": api_response.get('planRunId', ''),
-        "run_id": api_response.get('runId', ''),
-
-        # Execution timing
-        "execution_times": {
-            "start_time": api_response.get('startTime', ''),
-            "end_time": api_response.get('endTime', ''),
-            "execution_time": api_response.get('executionTime', ''),
-            "duration_seconds": calculate_duration(
-                api_response.get('startTime', ''),
-                api_response.get('endTime', '')
-            ),
-        },
-
-        # Execution status
-        "status": {
-            "overall": api_response.get('status', ''),
-            "final_status": api_response.get('finalStatus', ''),
-            "security_action": api_response.get('securityAction', '')
-        },
-
-        # Attack information
-        "attack_info": {
-            "move_id": api_response.get('moveId', 0),
-            "move_name": api_response.get('moveName', ''),
-            "move_description": api_response.get('moveDesc', ''),
-            "protocol": api_response.get('protocol', ''),
-            "approach": api_response.get('approach', ''),
-            "opponent": api_response.get('opponent', ''),
-            "noise_level": api_response.get('noiseLevel', ''),
-            "impact": api_response.get('impact', '')
-        },
-
-        # Per-role execution data
-        "target": target_data,
-        "attacker": attacker_data,
-    }
+    result = _build_response_metadata(api_response)
+    result["target"] = target_data
+    result["attacker"] = attacker_data
+    result["logs_available"] = True
+    result["logs_status"] = None
+    return result

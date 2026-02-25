@@ -2746,7 +2746,7 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
     def test_sb_get_full_simulation_logs_missing_dataobj(self, mock_fetch):
-        """Test handling of response missing dataObj structure."""
+        """Test handling of response missing dataObj structure returns graceful response."""
         # Mock response without dataObj
         mock_response = {
             'id': '1477531',
@@ -2754,12 +2754,15 @@ class TestDataFunctions:
         }
         mock_fetch.return_value = mock_response
 
-        with pytest.raises(ValueError, match="Response missing dataObj.data structure"):
-            sb_get_full_simulation_logs(
-                simulation_id='1477531',
-                test_id='1764165600525.2',
-                console='test-console'
-            )
+        result = sb_get_full_simulation_logs(
+            simulation_id='1477531',
+            test_id='1764165600525.2',
+            console='test-console'
+        )
+        assert result['logs_available'] is False
+        assert isinstance(result['logs_status'], str)
+        assert result['target'] is None
+        assert result['attacker'] is None
 
     @patch('safebreach_mcp_data.data_functions._fetch_full_simulation_logs_from_api')
     def test_sb_get_full_simulation_logs_duration_calculation(self, mock_fetch):
