@@ -507,6 +507,138 @@ class TestFullSimulationLogsDualScript:
         assert node['task_code'] == 0
 
 
+class TestFullSimulationLogsEmptyData:
+    """Test suite for graceful handling of empty dataObj.data in full simulation logs (SAF-28582).
+
+    When the API returns HTTP 200 with empty execution logs (dataObj.data = [[]]),
+    the mapping should return a valid response with logs_available=False instead
+    of raising ValueError.
+    """
+
+    def _make_empty_api_response(self, **overrides):
+        """Helper to build a mock API response with empty dataObj.data."""
+        base = {
+            'id': 3213805,
+            'runId': '1771853252399.2',
+            'planRunId': '1771853252399.2',
+            'status': 'INTERNAL_FAIL',
+            'finalStatus': 'stopped',
+            'startTime': '2026-02-24T12:52:00.000Z',
+            'endTime': '2026-02-24T12:53:06.000Z',
+            'executionTime': '2026-02-24T12:53:06.000Z',
+            'securityAction': '',
+            'moveId': 10042,
+            'moveName': "Email 'Azure token collector' Bash script as a ZIP attachment",
+            'moveDesc': 'Test email-based attack delivery',
+            'protocol': 'SMTP',
+            'approach': 'Social Engineering',
+            'opponent': 'attacker',
+            'noiseLevel': 'low',
+            'impact': 'medium',
+            'attackerNodeId': 'node-atk-1',
+            'targetNodeId': 'node-tgt-1',
+            'dataObj': {'data': [[]]},
+        }
+        base.update(overrides)
+        return base
+
+    def test_empty_data_array_returns_graceful_response(self):
+        """Input: {"dataObj": {"data": [[]]}} -> Returns dict with logs_available=False."""
+        api_response = self._make_empty_api_response()
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert isinstance(result, dict)
+        assert result['logs_available'] is False
+        assert isinstance(result['logs_status'], str)
+        assert len(result['logs_status']) > 0
+
+    def test_missing_data_obj_returns_graceful_response(self):
+        """Input: {} (no dataObj at all) -> Returns dict with logs_available=False."""
+        api_response = {'id': 999, 'planRunId': 'test-1', 'status': 'FAIL'}
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert isinstance(result, dict)
+        assert result['logs_available'] is False
+
+    def test_missing_data_key_returns_graceful_response(self):
+        """Input: {"dataObj": {}} (dataObj present but no data key) -> Returns dict with logs_available=False."""
+        api_response = self._make_empty_api_response()
+        api_response['dataObj'] = {}
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert isinstance(result, dict)
+        assert result['logs_available'] is False
+
+    def test_empty_data_preserves_metadata(self):
+        """Verify simulation_id, test_id, status, attack_info are populated from API fields."""
+        api_response = self._make_empty_api_response()
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert result['simulation_id'] == '3213805'
+        assert result['test_id'] == '1771853252399.2'
+        assert result['status']['overall'] == 'INTERNAL_FAIL'
+        assert result['status']['final_status'] == 'stopped'
+        assert result['attack_info']['move_id'] == 10042
+        assert result['attack_info']['move_name'] == "Email 'Azure token collector' Bash script as a ZIP attachment"
+        assert 'execution_times' in result
+
+    def test_empty_data_sets_target_and_attacker_none(self):
+        """Verify target=None and attacker=None when logs are empty."""
+        api_response = self._make_empty_api_response()
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert result['target'] is None
+        assert result['attacker'] is None
+
+    def test_normal_response_has_logs_available_true(self):
+        """Verify that normal (non-empty) responses include logs_available=True."""
+        node_id = 'node-aaa'
+        entry = {
+            'id': node_id,
+            'nodeNameInMove': 'sim-node',
+            'state': 'finished',
+            'details': {
+                'LOGS': 'detailed logs',
+                'SIMULATION_STEPS': [],
+                'DETAILS': 'summary',
+                'ERROR': '',
+                'OUTPUT': '',
+                'STATUS': 'DONE',
+                'CODE': 0,
+                'SIMULATION_START_TIME': '',
+                'SIMULATION_END_TIME': '',
+                'STARTUP_DURATION': 0.0,
+            }
+        }
+        api_response = {
+            'id': '1477531',
+            'runId': '1764165600525.2',
+            'planRunId': '1764165600525.2',
+            'status': 'SUCCESS',
+            'finalStatus': 'logged',
+            'startTime': '',
+            'endTime': '',
+            'executionTime': '',
+            'securityAction': 'log_only',
+            'moveId': 11318,
+            'moveName': 'Write File',
+            'moveDesc': '',
+            'attackerNodeId': node_id,
+            'targetNodeId': node_id,
+            'dataObj': {'data': [[entry]]},
+        }
+
+        result = get_full_simulation_logs_mapping(api_response)
+
+        assert result['logs_available'] is True
+        assert result['logs_status'] is None
+
+
 class TestTestSummaryMapping:
     """Tests for get_reduced_test_summary_mapping including inline stats and propagate findings."""
 

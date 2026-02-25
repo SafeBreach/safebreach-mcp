@@ -264,12 +264,14 @@ When a simulation status is "stopped" or "no-result", always retrieve these logs
 
 Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation.
 Returns a role-based structure:
-- 'target': Always present. Contains the target node's full execution data (logs, simulation_steps, error, output, os_type, state, etc.).
-- 'attacker': Present for dual-script attacks (exfil, infil, lateral movement). Null for host-only attacks. Contains the attacker node's full execution data.
-- Also includes: simulation_id, test_id, run_id, execution_times, status, attack_info.
+- 'target': Contains the target node's full execution data. Null when logs_available is False.
+- 'attacker': Present for dual-script attacks (exfil, infil, lateral movement). Null for host-only attacks or when logs_available is False.
+- 'logs_available' (bool): True when execution logs are present, False when the API returned empty data (e.g., INTERNAL_FAIL simulations).
+- 'logs_status' (str or null): Null when logs are available. Contains an explanatory message when logs_available is False.
+- Also includes: simulation_id, test_id, run_id, execution_times, status, attack_info (always present regardless of logs_available).
 Each role section contains: node_name, node_id, os_type, os_version, state, logs, simulation_steps, details_summary, error, output, task_status, task_code.
 Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (required).
-Note: Results are cached for 1 hour. Use get_simulation_details with include_basic_attack_logs for summary-level logs only."""
+Note: Results are cached for 5 minutes. Use get_simulation_details with include_basic_attack_logs for summary-level logs only."""
         )
         async def get_full_simulation_logs_tool(
             simulation_id: str,

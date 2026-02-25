@@ -1705,13 +1705,8 @@ def sb_get_full_simulation_logs(
         raise ValueError("test_id parameter is required and cannot be empty")
 
     try:
-        # Get data from cache or API
-        api_response = _get_full_simulation_logs_from_cache_or_api(simulation_id, test_id, console)
-
-        # Transform using data types mapping
-        from .data_types import get_full_simulation_logs_mapping
-        result = get_full_simulation_logs_mapping(api_response)
-
+        # Get already-transformed data from cache or API
+        result = _get_full_simulation_logs_from_cache_or_api(simulation_id, test_id, console)
         return result
 
     except Exception as e:
@@ -1728,7 +1723,11 @@ def _get_full_simulation_logs_from_cache_or_api(
     console: str = "default"
 ) -> Dict[str, Any]:
     """
-    Get full simulation logs from cache or API.
+    Get full simulation logs from cache or API (validate-then-cache pattern).
+
+    Fetches raw data from API, transforms it via get_full_simulation_logs_mapping(),
+    then caches the transformed result. This ensures only validated data is cached,
+    matching the pattern used by all other data server cache functions.
 
     Args:
         simulation_id: Simulation ID
@@ -1736,7 +1735,7 @@ def _get_full_simulation_logs_from_cache_or_api(
         console: SafeBreach console name
 
     Returns:
-        Raw API response dictionary
+        Transformed simulation logs dictionary (already mapped)
     """
     cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}"
 
@@ -1750,14 +1749,18 @@ def _get_full_simulation_logs_from_cache_or_api(
     # Cache miss or expired - fetch from API
     logger.info("Fetching full simulation logs from API for simulation '%s', test '%s' from console '%s'",
                 simulation_id, test_id, console)
-    data = _fetch_full_simulation_logs_from_api(simulation_id, test_id, console)
+    raw_data = _fetch_full_simulation_logs_from_api(simulation_id, test_id, console)
 
-    # Cache the result (only if caching is enabled)
+    # Transform BEFORE caching (validate-then-cache pattern)
+    from .data_types import get_full_simulation_logs_mapping
+    transformed = get_full_simulation_logs_mapping(raw_data)
+
+    # Cache the transformed result (only if caching is enabled)
     if is_caching_enabled("data"):
-        full_simulation_logs_cache.set(cache_key, data)
-        logger.info("Cached full simulation logs: %s", cache_key)
+        full_simulation_logs_cache.set(cache_key, transformed)
+        logger.info("Cached transformed full simulation logs: %s", cache_key)
 
-    return data
+    return transformed
 
 
 def _fetch_full_simulation_logs_from_api(
