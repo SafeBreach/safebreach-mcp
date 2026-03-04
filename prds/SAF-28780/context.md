@@ -1,11 +1,11 @@
 # Context: SAF-28780 - MITRE tactic filter does not support tactic IDs
 
-## Status: Phase 4: Investigation Complete
+## Status: Phase 5: Brainstorming Complete
 
 ## JIRA Ticket Summary
 
 - **ID**: SAF-28780
-- **Title**: [safebreach-mcp] MITRE tactic filter does not support tactic IDs (e.g. TA0006)
+- **Title**: [safebreach-mcp] MITRE tactic filter cannot filter by tactic ID (TA0006) — API lacks tactic IDs
 - **Type**: Bug
 - **Priority**: Medium
 - **Status**: To Do
@@ -20,108 +20,93 @@ The AI agent suggested he do it manually in the UI instead.
 
 ## Investigation Findings
 
-### Root Cause: Asymmetric Data Extraction
+### E2E API Verification (2026-03-04)
 
-In `playbook_types.py`, the `_extract_mitre_data()` function treats tactics differently from techniques:
+Direct API testing against `pentest01` console (9,632 attacks) confirmed:
 
-**Tactics (lines 97-102)** — stores only `{name}`:
-```python
-if tag_name == 'MITRE_Tactic':
-    for val in values:
-        if isinstance(val, dict):
-            name = val.get('displayName') or val.get('value', '')
-            if name:
-                result['mitre_tactics'].append({'name': name})
+**The SafeBreach playbook API does NOT provide tactic IDs in the tag data.**
+
+All 12 unique `MITRE_Tactic` values have identical `value` and `displayName` — both contain only
+the tactic name:
+
+```
+value="Collection"         displayName="Collection"
+value="Command And Control" displayName="Command And Control"
+value="Credential Access"  displayName="Credential Access"
+value="Defense Evasion"    displayName="Defense Evasion"
+value="Discovery"          displayName="Discovery"
+value="Execution"          displayName="Execution"
+value="Exfiltration"       displayName="Exfiltration"
+value="Impact"             displayName="Impact"
+value="Initial Access"     displayName="Initial Access"
+value="Lateral Movement"   displayName="Lateral Movement"
+value="Persistence"        displayName="Persistence"
+value="Privilege Escalation" displayName="Privilege Escalation"
 ```
 
-**Techniques (lines 104-115)** — stores `{id, display_name, url}`:
-```python
-elif tag_name == 'MITRE_Technique':
-    for val in values:
-        if isinstance(val, dict):
-            tech_id = val.get('value', '')
-            display_name = val.get('displayName', '')
-            if tech_id:
-                url = f"https://attack.mitre.org/techniques/{tech_id}/"
-                result['mitre_techniques'].append({
-                    'id': tech_id,
-                    'display_name': display_name,
-                    'url': url
-                })
+Compare with `MITRE_Technique` where `value` = technique ID:
+```json
+{"value": "T1046", "displayName": "(T1046) Network Service Discovery"}
 ```
 
-### Filtering Asymmetry
+### Root Cause: Missing Data at API/Content Level
 
-**`_attack_matches_mitre_tactic()` (lines 371-383)** — only checks `name`:
-```python
-for fv in filter_values:
-    for tactic in tactics:
-        if fv in tactic.get('name', '').lower():
-            return True
-```
+The MCP cannot filter by tactic ID because the upstream SafeBreach playbook API
+(`/api/kb/vLatest/moves?details=true`) does not include tactic IDs in the `MITRE_Tactic` tag data.
+The MCP implementation correctly exposes what the API provides.
 
-**`_attack_matches_mitre_technique()` (lines 352-368)** — checks both `id` and `display_name`:
-```python
-for fv in filter_values:
-    for tech in techniques:
-        if fv in tech.get('id', '').lower() or fv in tech.get('display_name', '').lower():
-            return True
-```
+### Current MCP Behavior (Correct)
 
-### Server Rendering
+- `mitre_tactic_filter="Credential Access"` — **works** (matches tactic name)
+- `mitre_tactic_filter="Discovery"` — **works** (matches tactic name)
+- `mitre_tactic_filter="TA0006"` — **returns zero results** (no tactic ID in data to match)
 
-In `playbook_server.py`, tactic rendering only uses `name`:
-- `get_playbook_attacks` (line ~115-127): `tactic_names = ', '.join(t.get('name', '') for t in mitre_tactics)`
-- `get_playbook_attack_details` (line ~233-236): `f"- {t.get('name', 'Unknown')}"`
+### Code References
 
-Techniques are rendered with IDs and URLs, tactics are not.
-
-### Test Fixture Data Structure
-
-Current test fixtures in `test_playbook_types.py` (lines 540-569):
-```python
-{
-    "id": 10,
-    "name": "MITRE_Tactic",
-    "values": [
-        {"id": 1, "sort": 1, "value": "Discovery", "displayName": "Discovery"}
-    ]
-}
-```
-
-**Note**: The test fixture stores the tactic name in both `value` and `displayName`. The real API
-likely stores the tactic ID (e.g. "TA0007") in `value` and the name in `displayName`. This needs
-E2E verification to confirm the real API structure before fixing.
-
-### Existing Test Coverage (Gaps)
-
-| Test File | Tests Tactic ID? | Tests Tactic Name? |
-|-----------|------------------|--------------------|
-| test_playbook_types.py - TestMitreExtraction | No | Yes |
-| test_playbook_types.py - TestMitreFiltering | No | Yes ("Discovery") |
-| test_playbook_functions.py - TestMitreGetPlaybookAttacks | No | Yes ("Discovery") |
-| test_e2e.py - test_mitre_filtering_real_api | No | Yes ("Discovery") |
-
-### Documentation
-
-Both `playbook_server.py` and `playbook_types.py` docstrings say "tactic names" for the filter
-parameter, not "tactic IDs or names".
-
-### Files to Modify
-
-1. `safebreach_mcp_playbook/playbook_types.py` — extraction + filtering
-2. `safebreach_mcp_playbook/playbook_server.py` — rendering + docstrings
-3. `safebreach_mcp_playbook/tests/test_playbook_types.py` — add tactic ID tests
-4. `safebreach_mcp_playbook/tests/test_playbook_functions.py` — add tactic ID tests
-5. `safebreach_mcp_playbook/tests/test_e2e.py` — add tactic ID E2E test
-6. `CLAUDE.md` — update documentation
-
-### Key Question: Real API Tactic Data Structure
-
-The test fixtures currently have `"value": "Discovery"` for tactics, but for techniques they have
-`"value": "T1046"`. The real API likely has `"value": "TA0006"` for tactics (matching the pattern).
-This needs to be verified via E2E test or API call before we can confidently design the fix.
+- `safebreach_mcp_playbook/playbook_types.py` — `_extract_mitre_data()`: lines ~97-102
+- `safebreach_mcp_playbook/playbook_types.py` — `_attack_matches_mitre_tactic()`: lines ~371-383
+- `safebreach_mcp_playbook/playbook_server.py` — Tactic rendering in markdown
 
 ## Brainstorming Results
 
-(Pending Phase 5)
+### Approaches Considered
+
+**Approach A: Static Mapping Dict** — Add a `MITRE_TACTIC_MAPPING` dict in `playbook_types.py`
+mapping 14 tactic names to their IDs (TA0001-TA0043) and ATT&CK URLs. Enrich tactic extraction
+at transform time.
+- Pros: Simple, fast, no external dependencies, easy to test
+- Cons: Maintenance burden for new tactics, conflates MCP's data access role with enrichment
+
+**Approach B: Dynamic MITRE ATT&CK Fetch** — Fetch tactic mappings from MITRE's STIX data at
+server startup.
+- Pros: Always up to date
+- Cons: Network dependency, ~2MB download, startup latency, failure mode complexity
+
+**Approach C: No MCP Change** — The playbook API should be enriched at the content/source level.
+The MCP correctly exposes what the API provides.
+- Pros: Clean architecture, zero MCP maintenance, fixes the problem at the root
+- Cons: Requires content-manager team involvement, longer timeline
+
+### Chosen Approach: C — No MCP Change (Content-Level Fix)
+
+**Rationale:**
+1. The MCP is a data access/presentation layer, not a data enrichment layer
+2. The tactic-to-ID mapping is content/domain knowledge that belongs in the playbook data source
+3. If the content-manager team adds tactic IDs to the `MITRE_Tactic` tag `value` field (like
+   techniques have), the MCP extraction would automatically pick them up with zero code changes
+4. While the MCP does construct ATT&CK URLs for techniques, that's lightweight enrichment from an
+   already-available ID — adding a full name→ID mapping table is a different level of enrichment
+
+### Recommendation for JIRA Ticket
+
+Re-articulate SAF-28780 to:
+1. Explain that the SafeBreach playbook API lacks tactic IDs in the MITRE_Tactic tag data
+2. Recommend the content-manager team enrich the tags (match the technique pattern)
+3. Note the alternative static mapping approach if API enrichment is out of scope
+
+## References
+
+- Original MITRE implementation: SAF-28305 (PRD at `prds/SAF-28305/prd.md`)
+- Slack thread: #general, 2026-02-23, Jonathan Tillman
+- E2E verification: pentest01 console, 9,632 attacks, 12 unique tactic names — none with IDs
+- MITRE ATT&CK tactic reference: https://attack.mitre.org/tactics/TA0006/
