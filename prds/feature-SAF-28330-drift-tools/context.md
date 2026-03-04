@@ -1,7 +1,7 @@
 # Planning Context: SAF-28330
 
 ## Status
-Phase 3: Create Working Branch and PRD Context
+Phase 4: Investigation Complete
 
 ## JIRA Details
 - **Ticket**: SAF-28330
@@ -57,7 +57,71 @@ Expose the Simulation Status and Result Drift API as two specialized MCP tools (
 3. Ensure consistency with all other tools exposed by the data MCP server
 
 ## Investigation Findings
-(Phase 4)
+
+### Architecture Overview
+The Data Server uses a three-tier pattern: `data_server.py` (MCP tool registration) → `data_functions.py` (business logic & API communication) → `data_types.py` (data transformations). All HTTP API calls and caching flow through the same pathway, ensuring consistency.
+
+### Key Patterns Identified
+
+#### 1. Drift Type Metadata (drifts_metadata.py)
+- 273 drift pattern entries with structured mappings
+- Each drift has: `type_of_drift`, `security_impact` (positive/negative/neutral), `description`, `hint_to_llm`
+- Reference for new tools: use similar metadata structure for classifying drift transitions
+
+#### 2. Reference Implementation: get_test_drifts (Lines 1464-1649, data_functions.py)
+- Validates parameters, retrieves test details, gets simulations via cache-or-API pattern
+- Groups by drift_tracking_code, compares statuses, looks up drift metadata
+- Returns structured result with `total_drifts` and `_metadata` section
+- Pattern to follow: validate → cache check → API call → transform → return with metadata
+
+#### 3. HTTP API Call Pattern (Lines 206-235, data_functions.py)
+```python
+base_url = get_api_base_url(console, 'data')
+account_id = get_api_account_id(console)
+headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+response = requests.post(api_url, headers=headers, json=data, timeout=120)
+```
+Key: Uses requests.post for endpoint calls, 120-second timeout, proper error handling
+
+#### 4. SafeBreachCache Usage (Lines 30-32, data_functions.py)
+- Instantiation: `SafeBreachCache(name="simulations", maxsize=3, ttl=600)`
+- Cache size 3 (stores 3 different caches), TTL 600 seconds
+- Usage: Check cache first, fetch from API on miss, store after transformation
+- Recommended for new tools: `SafeBreachCache(name="simulation_drifts", maxsize=3, ttl=600)`
+
+#### 5. Client-Side Pagination (Lines 596-627, data_functions.py)
+- PAGE_SIZE = 10 (constant at line 35)
+- Calculation: `total_pages = (total_items + PAGE_SIZE - 1) // PAGE_SIZE`
+- Response includes: `page_number`, `total_pages`, `total_simulations`, items array, `applied_filters`, `hint_to_agent`
+- Pattern: API returns unbounded array → paginate locally → include navigation hints for LLM
+
+#### 6. MCP Tool Registration (Lines 46-75, data_server.py)
+- @mcp.tool() decorator with name, description parameters
+- Docstring pattern: What it does → specific outputs → key parameters → cross-references
+- Tools should include "USE THIS WHEN" guidance for LLM tool selection
+
+#### 7. Error Handling Convention (Lines 1802-1830, data_functions.py)
+- HTTP status checks: 404 (not found), 401 (auth failed), raise_for_status()
+- JSON parsing wrapped in try-except
+- Timeout: 120 seconds standard
+
+### Constants & Configuration
+| Item | Location | Value |
+|------|----------|-------|
+| PAGE_SIZE | data_functions.py:35 | 10 |
+| simulations_cache | data_functions.py:31 | maxsize=3, ttl=600s |
+| findings_cache | data_functions.py:1206 | maxsize=3, ttl=600s |
+| full_simulation_logs_cache | data_functions.py:1653 | maxsize=2, ttl=300s |
+
+### Implementation Readiness
+✅ Data server architecture fully understood
+✅ Reference patterns (get_test_drifts) identified
+✅ Cache instantiation pattern confirmed
+✅ HTTP API call pattern documented
+✅ Client-side pagination methodology verified
+✅ MCP tool registration approach clarified
+✅ Error handling conventions established
+✅ Test patterns reviewed
 
 ## Brainstorming Results
 (Phase 5)
