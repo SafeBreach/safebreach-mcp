@@ -280,18 +280,20 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
 11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
 12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
+13. `get_simulation_result_drifts` ✨ **NEW** - Time-window-based **posture-level** drift analysis showing transitions between blocked (FAIL) and not-blocked (SUCCESS) states. Two-phase usage: summary (grouped counts by result transition) then drill-down (paginated records). Groups by FAIL/SUCCESS for coarse posture view. Includes `final_status_breakdown`, `attack_summary`, `look_back_time` (7-day default), and zero-results smart hints.
+14. `get_simulation_status_drifts` ✨ **NEW** - Time-window-based **security-control-level** drift analysis showing transitions between final statuses (prevented, stopped, detected, logged, missed, inconsistent). Two-phase usage: summary then drill-down. Groups by finalStatus for fine-grained control view. Includes `attack_summary`, `look_back_time`, and zero-results smart hints.
 
 **Playbook Server (Port 8003):**
-13. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
+15. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
   (name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics) and pagination.
   Supports `include_mitre_techniques`, `mitre_technique_filter` (comma-separated, OR logic),
   and `mitre_tactic_filter` (comma-separated, OR logic)
-14. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
+16. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
   (fix suggestions, tags, parameters, MITRE ATT&CK data with URLs) for specific attack techniques
 
 **Utilities Server (Port 8002):**
-15. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
-16. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
+17. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
+18. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 
 ## Filtering and Search Capabilities
@@ -348,10 +350,20 @@ All filters work in combination and include pagination support. The response inc
 
 **Drift Definition**: When simulations with identical parameters produce different results between test runs.
 
-**Basic Usage:**
-- `get_test_simulations(..., drifted_only=True)` - Filter drifted simulations
-- `get_simulation_details(..., include_drift_info=True)` - Get drift details
+**Test-Run-Centric Tools:**
+- `get_test_simulations(..., drifted_only=True)` - Filter drifted simulations within a single test
+- `get_simulation_details(..., include_drift_info=True)` - Get drift details for a specific simulation
 - `get_test_drifts(console, test_id)` - Compare with previous test run
+
+**Time-Window-Based Tools (SAF-28330):**
+- `get_simulation_result_drifts(console, window_start, window_end)` - **Posture view**: groups drifts
+  by blocked/not-blocked (FAIL/SUCCESS). Two-phase: summary → drill-down. Drill-down includes
+  `final_status_breakdown` and `attack_summary` for pattern detection.
+- `get_simulation_status_drifts(console, window_start, window_end)` - **Control view**: groups drifts
+  by security control final status (prevented/stopped/detected/logged/missed/inconsistent). Two-phase:
+  summary → drill-down. Drill-down includes `attack_summary`.
+- Both tools support: `look_back_time` (7-day default), `drift_type`, `attack_id`, `attack_type`,
+  status filters, zero-results smart hints, and cached responses (TTL=600s).
 
 ## External Connection Support
 

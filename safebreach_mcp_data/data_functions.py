@@ -20,7 +20,8 @@ from .data_types import (
     get_reduced_simulation_result_entity,
     get_full_simulation_result_entity,
     get_reduced_security_control_events_mapping,
-    get_full_security_control_events_mapping
+    get_full_security_control_events_mapping,
+    group_and_enrich_drift_records,
 )
 from .drifts_metadata import drift_types_mapping
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 tests_cache = SafeBreachCache(name="tests", maxsize=5, ttl=1800)
 simulations_cache = SafeBreachCache(name="simulations", maxsize=3, ttl=600)
 security_control_events_cache = SafeBreachCache(name="security_control_events", maxsize=3, ttl=600)
+simulation_drifts_cache = SafeBreachCache(name="simulation_drifts", maxsize=3, ttl=600)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -1828,3 +1830,445 @@ def _fetch_full_simulation_logs_from_api(
     except Exception as e:
         logger.error("Unexpected error fetching full simulation logs: %s", str(e))
         raise
+
+
+# ---------------------------------------------------------------------------
+# Simulation drift functions (SAF-28330)
+# ---------------------------------------------------------------------------
+
+def _fetch_and_cache_simulation_drifts(
+    console: str,
+    payload: Dict[str, Any],
+    cache_key: str,
+) -> tuple:
+    """Fetch simulation drift records from the API, with optional caching.
+
+    Args:
+        console: SafeBreach console name
+        payload: POST body for the drift API (built by build_drift_api_payload)
+        cache_key: Key for the simulation_drifts_cache
+
+    Returns:
+        Tuple of (records list, elapsed_seconds float)
+
+    Raises:
+        ValueError: On 400 (validation) or 401 (auth) responses
+        requests.exceptions.Timeout: On request timeout
+    """
+    # Check cache first
+    if is_caching_enabled("data"):
+        cached = simulation_drifts_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Retrieved simulation drifts from cache: %s", cache_key)
+            return cached, 0.0
+
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/drift/simulationStatus"
+    headers = {
+        "Content-Type": "application/json",
+        "x-apitoken": apitoken,
+    }
+
+    logger.info("Fetching simulation drifts from API for console '%s'", console)
+    import time as _time
+    t0 = _time.monotonic()
+    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    elapsed = _time.monotonic() - t0
+
+    if response.status_code == 400:
+        raise ValueError(f"400 Bad Request from drift API: {response.text}")
+    if response.status_code == 401:
+        raise ValueError(f"Authentication failed (401) for console '{console}'")
+
+    response.raise_for_status()
+    records = response.json()
+
+    logger.info(
+        "Drift API returned %d records in %.1fs (%.1f MB) for console '%s'",
+        len(records), elapsed, len(response.content) / 1024 / 1024, console,
+    )
+    if elapsed > 30:
+        logger.warning(
+            "Drift API response was slow (%.1fs). Consider narrowing the time window.",
+            elapsed,
+        )
+
+    # Cache the result
+    if is_caching_enabled("data"):
+        simulation_drifts_cache.set(cache_key, records)
+        logger.info("Cached %d simulation drift records: %s", len(records), cache_key)
+
+    return records, elapsed
+
+
+_REMOVABLE_FILTERS = {
+    "from_status", "to_status", "from_final_status", "to_final_status",
+    "drift_type", "attack_id", "attack_type",
+}
+
+
+def _build_zero_results_hint(
+    applied_filters: Dict[str, Any],
+    elapsed_seconds: float,
+) -> str:
+    """Build a smart hint_to_agent when the drift API returns 0 results.
+
+    The hint is context-aware based on which filters are active and how long
+    the API call took (a proxy for dataset size).
+    """
+    parts: list = []
+
+    # 1. Identify removable filters the user applied
+    active = [k for k in applied_filters if k in _REMOVABLE_FILTERS]
+
+    if active:
+        names = ", ".join(active)
+        parts.append(
+            f"No drifts matched the current filters. "
+            f"Try removing {names} to check if any drifts exist in this time window, then narrow down."
+        )
+    elif elapsed_seconds < 30:
+        parts.append(
+            "No drifts found. The API responded quickly, suggesting a small dataset. "
+            "Consider extending look_back_time — attacks that run infrequently (e.g., monthly) "
+            "may have baselines outside the current range. Try doubling it (14 days) or set to 30 days."
+        )
+    else:
+        parts.append(
+            f"No drifts found despite a large dataset (API took {elapsed_seconds:.0f}s). "
+            "Extending the search would be slow. Consider: (a) trying a different or narrower time window, "
+            "(b) filtering by attack_id or attack_type to focus the search."
+        )
+
+    # Always include cross-tool reference
+    parts.append(
+        "Alternatively, use get_test_drifts with a specific test ID "
+        "for a targeted run-to-run comparison."
+    )
+
+    return " ".join(parts)
+
+
+def _group_and_paginate_drifts(
+    records: List[Dict[str, Any]],
+    page_number: int,
+    drift_key: Optional[str],
+    applied_filters: Dict[str, Any],
+    elapsed_seconds: float = 0.0,
+    group_by: str = "final_status",
+) -> Dict[str, Any]:
+    """Group drift records and return summary or paginated drill-down.
+
+    Two modes:
+    - **Summary** (drift_key=None): Returns grouped counts without individual records.
+    - **Drill-down** (drift_key set): Returns paginated records for a specific group.
+
+    Args:
+        records: Raw drift records from the API
+        page_number: 0-based page number (used in drill-down mode)
+        drift_key: If set, drill into this group; if None, return summary
+        applied_filters: Dict of filters that were applied (for response metadata)
+        elapsed_seconds: API call elapsed time in seconds (used for zero-results hints)
+        group_by: Grouping mode — ``"final_status"`` or ``"result_status"``
+
+    Returns:
+        Dict with grouped summary or paginated drill-down data
+
+    Raises:
+        ValueError: On invalid drift_key or out-of-range page_number
+    """
+    groups = group_and_enrich_drift_records(records, group_by=group_by)
+
+    if drift_key is None:
+        # Summary mode: return groups without individual records
+        summary_groups = []
+        for group in groups:
+            summary_groups.append({
+                "drift_key": group["drift_key"],
+                "count": group["count"],
+                "security_impact": group["security_impact"],
+                "description": group["description"],
+                "hint_to_llm": group["hint_to_llm"],
+            })
+
+        if len(records) == 0:
+            hint = _build_zero_results_hint(applied_filters, elapsed_seconds)
+        else:
+            hint = (
+                "To see individual drift records, call this tool again with "
+                "drift_key set to one of the drift_key values above (e.g. drift_key='prevented-logged')."
+            )
+
+        return {
+            "total_drifts": len(records),
+            "total_groups": len(groups),
+            "drift_groups": summary_groups,
+            "applied_filters": applied_filters,
+            "hint_to_agent": hint,
+        }
+
+    # Drill-down mode: find the requested group
+    target_group = None
+    available_keys = []
+    for group in groups:
+        available_keys.append(group["drift_key"])
+        if group["drift_key"] == drift_key:
+            target_group = group
+
+    if target_group is None:
+        raise ValueError(
+            f"Invalid drift_key '{drift_key}'. "
+            f"Available keys: {', '.join(available_keys)}"
+        )
+
+    # Paginate the drifts within the group
+    all_drifts = target_group["drifts"]
+    total_in_group = len(all_drifts)
+    total_pages = (total_in_group + PAGE_SIZE - 1) // PAGE_SIZE if total_in_group > 0 else 1
+
+    if page_number >= total_pages or page_number < 0:
+        raise ValueError(
+            f"Page {page_number} out of range. "
+            f"Available pages: 0 to {total_pages - 1}"
+        )
+
+    start_index = page_number * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    page_drifts = all_drifts[start_index:end_index]
+
+    hint_parts = []
+    if page_number + 1 < total_pages:
+        hint_parts.append(
+            f"Next page: call with drift_key='{drift_key}', page_number={page_number + 1}"
+        )
+    if group_by == "result_status":
+        hint_parts.append(
+            "For finer security-control-level breakdown, use get_simulation_status_drifts."
+        )
+    hint_parts.append(
+        "To investigate a specific drift, call get_simulation_details with the "
+        "simulationId from the 'from' or 'to' object. The response includes the "
+        "planRunId (test ID) for tracing back to get_test_details."
+    )
+
+    result = {
+        "drift_key": drift_key,
+        "security_impact": target_group["security_impact"],
+        "description": target_group["description"],
+        "page_number": page_number,
+        "total_pages": total_pages,
+        "total_drifts_in_group": total_in_group,
+        "drifts_in_page": page_drifts,
+        "applied_filters": applied_filters,
+        "hint_to_agent": " | ".join(hint_parts),
+    }
+
+    # Add final_status_breakdown for result_status grouping (coarse → fine-grained bridge)
+    if group_by == "result_status":
+        breakdown: Dict[str, int] = {}
+        for d in all_drifts:
+            fs_key = (
+                f"{d.get('from', {}).get('finalStatus', 'unknown')}-"
+                f"{d.get('to', {}).get('finalStatus', 'unknown')}"
+            ).lower()
+            breakdown[fs_key] = breakdown.get(fs_key, 0) + 1
+        result["final_status_breakdown"] = breakdown
+
+    # Attack-level sub-grouping (Phase 11) — computed from full group
+    attack_counts: Dict[int, Dict[str, Any]] = {}
+    for d in all_drifts:
+        aid = d.get("attackId")
+        if aid is not None:
+            if aid not in attack_counts:
+                attack_counts[aid] = {
+                    "attack_id": aid,
+                    "attack_types": d.get("attackTypes", []),
+                    "count": 0,
+                }
+            attack_counts[aid]["count"] += 1
+    result["attack_summary"] = sorted(
+        attack_counts.values(), key=lambda x: x["count"], reverse=True
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public entry-point functions (SAF-28330)
+# ---------------------------------------------------------------------------
+
+_VALID_RESULT_STATUSES = {"FAIL", "SUCCESS"}
+_VALID_FINAL_STATUSES = {"prevented", "stopped", "detected", "logged", "missed", "inconsistent"}
+_VALID_DRIFT_TYPES = {"improvement", "regression", "not_applicable"}
+
+
+def _validate_drift_type(drift_type: Optional[str]) -> None:
+    """Validate drift_type parameter if provided."""
+    if drift_type is not None and drift_type.lower() not in _VALID_DRIFT_TYPES:
+        raise ValueError(
+            f"Invalid drift_type '{drift_type}'. "
+            f"Valid values: {', '.join(sorted(_VALID_DRIFT_TYPES))}"
+        )
+
+
+def _build_applied_filters(**kwargs: Any) -> Dict[str, Any]:
+    """Build applied_filters dict from non-None keyword arguments."""
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def sb_get_simulation_result_drifts(
+    console: str,
+    window_start: int,
+    window_end: int,
+    drift_type: Optional[str] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    from_status: Optional[str] = None,
+    to_status: Optional[str] = None,
+    drift_key: Optional[str] = None,
+    page_number: int = 0,
+    look_back_time: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Get simulation result drifts (blocked/not-blocked transitions) over a time window.
+
+    Args:
+        console: SafeBreach console name
+        window_start: Start of time window (epoch milliseconds)
+        window_end: End of time window (epoch milliseconds)
+        drift_type: Filter by drift type (improvement/regression/not_applicable)
+        attack_id: Filter by playbook attack ID
+        attack_type: Filter by attack type
+        from_status: Filter by original result status (FAIL or SUCCESS)
+        to_status: Filter by new result status (FAIL or SUCCESS)
+        drift_key: Drill into a specific group (e.g. "fail-success")
+        page_number: Page number for drill-down mode (0-based)
+        look_back_time: How far back (epoch ms) to search for baseline simulations.
+            Defaults to 7 days before window_start.
+
+    Returns:
+        Summary (no drift_key) or paginated drill-down (with drift_key)
+    """
+    # Validate result-mode specific params
+    if from_status is not None and from_status.upper() not in _VALID_RESULT_STATUSES:
+        raise ValueError(
+            f"Invalid from_status '{from_status}'. Valid values: {', '.join(sorted(_VALID_RESULT_STATUSES))}"
+        )
+    if to_status is not None and to_status.upper() not in _VALID_RESULT_STATUSES:
+        raise ValueError(
+            f"Invalid to_status '{to_status}'. Valid values: {', '.join(sorted(_VALID_RESULT_STATUSES))}"
+        )
+    _validate_drift_type(drift_type)
+
+    from .data_types import build_drift_api_payload
+
+    payload = build_drift_api_payload(
+        window_start=window_start,
+        window_end=window_end,
+        drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        from_status=from_status,
+        to_status=to_status,
+        look_back_time=look_back_time,
+    )
+
+    cache_key = (
+        f"result_drifts_{console}_{window_start}_{window_end}"
+        f"_{drift_type}_{attack_id}_{attack_type}_{from_status}_{to_status}"
+        f"_{look_back_time}"
+    )
+
+    records, elapsed_seconds = _fetch_and_cache_simulation_drifts(console, payload, cache_key)
+
+    applied_filters = _build_applied_filters(
+        drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        from_status=from_status,
+        to_status=to_status,
+    )
+
+    return _group_and_paginate_drifts(
+        records, page_number, drift_key, applied_filters, elapsed_seconds,
+        group_by="result_status",
+    )
+
+
+def sb_get_simulation_status_drifts(
+    console: str,
+    window_start: int,
+    window_end: int,
+    drift_type: Optional[str] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    from_final_status: Optional[str] = None,
+    to_final_status: Optional[str] = None,
+    drift_key: Optional[str] = None,
+    page_number: int = 0,
+    look_back_time: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Get simulation status drifts (security control final status transitions) over a time window.
+
+    Args:
+        console: SafeBreach console name
+        window_start: Start of time window (epoch milliseconds)
+        window_end: End of time window (epoch milliseconds)
+        drift_type: Filter by drift type (improvement/regression/not_applicable)
+        attack_id: Filter by playbook attack ID
+        attack_type: Filter by attack type
+        from_final_status: Filter by original final status
+        to_final_status: Filter by new final status
+        drift_key: Drill into a specific group (e.g. "prevented-logged")
+        page_number: Page number for drill-down mode (0-based)
+        look_back_time: How far back (epoch ms) to search for baseline simulations.
+            Defaults to 7 days before window_start.
+
+    Returns:
+        Summary (no drift_key) or paginated drill-down (with drift_key)
+    """
+    # Validate final-status specific params
+    if from_final_status is not None and from_final_status.lower() not in _VALID_FINAL_STATUSES:
+        raise ValueError(
+            f"Invalid from_final_status '{from_final_status}'. "
+            f"Valid values: {', '.join(sorted(_VALID_FINAL_STATUSES))}"
+        )
+    if to_final_status is not None and to_final_status.lower() not in _VALID_FINAL_STATUSES:
+        raise ValueError(
+            f"Invalid to_final_status '{to_final_status}'. "
+            f"Valid values: {', '.join(sorted(_VALID_FINAL_STATUSES))}"
+        )
+    _validate_drift_type(drift_type)
+
+    from .data_types import build_drift_api_payload
+
+    payload = build_drift_api_payload(
+        window_start=window_start,
+        window_end=window_end,
+        drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        from_final_status=from_final_status,
+        to_final_status=to_final_status,
+        look_back_time=look_back_time,
+    )
+
+    cache_key = (
+        f"status_drifts_{console}_{window_start}_{window_end}"
+        f"_{drift_type}_{attack_id}_{attack_type}_{from_final_status}_{to_final_status}"
+        f"_{look_back_time}"
+    )
+
+    records, elapsed_seconds = _fetch_and_cache_simulation_drifts(console, payload, cache_key)
+
+    applied_filters = _build_applied_filters(
+        drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        from_final_status=from_final_status,
+        to_final_status=to_final_status,
+    )
+
+    return _group_and_paginate_drifts(records, page_number, drift_key, applied_filters, elapsed_seconds)
