@@ -18,10 +18,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-03-04 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-03-06 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | All phases complete (1-12) |
 
 ---
 
@@ -198,20 +198,25 @@ matters (parameter validation, docstrings). Aligns with existing data server pat
 
 ## 7. Definition of Done
 
-- [ ] `get_simulation_result_drifts` tool exposed and functional with all filters
-- [ ] `get_simulation_status_drifts` tool exposed and functional with all filters
-- [ ] Two-phase response: summary mode (grouped counts) and drill-down mode (paginated records, PAGE_SIZE=10)
-- [ ] Epoch-to-ISO-8601 time conversion working correctly
-- [ ] Caching via SafeBreachCache (simulation_drifts, maxsize=3, TTL=600s)
-- [ ] Input validation: reject invalid status values, handle mutual exclusion
-- [ ] `look_back_time` parameter exposed with 7-day default, mapped to `earliestSearchTime` in API payload
-- [ ] Zero-results hint_to_agent with context-aware suggestions (filter relaxation, look_back_time extension, cross-tool)
-- [ ] Error handling: 400 (too many sims), 401 (auth), timeout with clear messages
-- [ ] Docstrings with "USE THIS WHEN" / "DON'T USE FOR" for LLM tool selection
-- [ ] Existing drift tool docstrings updated with cross-references
-- [ ] hint_to_agent in responses guiding to drill-down tools
-- [ ] Unit tests covering: all filter combos, pagination, errors, cache, enrichment
-- [ ] E2E smoke tests for basic API connectivity
+- [x] `get_simulation_result_drifts` tool exposed and functional with all filters
+- [x] `get_simulation_status_drifts` tool exposed and functional with all filters
+- [x] Two-phase response: summary mode (grouped counts) and drill-down mode (paginated records, PAGE_SIZE=10)
+- [x] Epoch-to-ISO-8601 time conversion working correctly
+- [x] Caching via SafeBreachCache (simulation_drifts, maxsize=3, TTL=600s)
+- [x] Input validation: reject invalid status values, handle mutual exclusion
+- [x] `look_back_time` parameter exposed with 7-day default, mapped to `earliestSearchTime` in API payload
+- [x] Zero-results hint_to_agent with context-aware suggestions (filter relaxation, look_back_time extension, cross-tool)
+- [x] Error handling: 400 (too many sims), 401 (auth), timeout with clear messages
+- [x] Docstrings with "USE THIS WHEN" / "DON'T USE FOR" for LLM tool selection
+- [x] Existing drift tool docstrings updated with cross-references
+- [x] hint_to_agent in responses guiding to drill-down tools
+- [x] Unit tests covering: all filter combos, pagination, errors, cache, enrichment
+- [x] E2E smoke tests for basic API connectivity
+- [x] Result drifts group by FAIL/SUCCESS (posture view), distinct from status drifts (Phase 9)
+- [x] `driftType` field stripped from drift records to avoid LLM confusion (Phase 10)
+- [x] `attack_summary` in drill-down responses for automatic pattern detection (Phase 11)
+- [x] Test ID traceability hints in drill-down: simulationId → planRunId guidance (Phase 12)
+- [x] Manual LLM tool selection tests signed off (Phase 7)
 
 ---
 
@@ -250,18 +255,18 @@ Tests are co-located with their implementation, not deferred to a later phase.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Data Types + Tests | ⏳ Pending | - | - | |
-| Phase 2: Core Functions + Tests | ⏳ Pending | - | - | |
-| Phase 3: Public Functions + Tests | ⏳ Pending | - | - | |
-| Phase 4: MCP Tool Registration + Tests | ⏳ Pending | - | - | |
-| Phase 5: E2E Tests | ⏳ Pending | - | - | |
-| Phase 6: Docstring Cross-References | ⏳ Pending | - | - | |
-| Phase 7: Manual LLM Tool Selection Tests | ⏳ Pending | - | - | |
-| Phase 8: Add look_back_time + Zero-Results Hints | ⏳ Pending | - | - | Performance optimization + LLM guidance |
-| Phase 9: Fix Result Drifts Grouping | ⏳ Pending | - | - | Bug: groups by finalStatus instead of status |
-| Phase 10: Drop driftType Field | ⏳ Pending | - | - | UX: remove redundant/confusing field |
-| Phase 11: Attack-Level Sub-Grouping in Drill-Down | ⏳ Pending | - | - | Feature: auto pattern detection |
-| Phase 12: Test ID Traceability in Drift Records | ⏳ Pending | - | - | Feature: trace drifts to test runs |
+| Phase 1: Data Types + Tests | ✅ Done | 2026-03-05 | 5d03400 | |
+| Phase 2: Core Functions + Tests | ✅ Done | 2026-03-05 | 5d03400 | |
+| Phase 3: Public Functions + Tests | ✅ Done | 2026-03-05 | 5d03400 | |
+| Phase 4: MCP Tool Registration + Tests | ✅ Done | 2026-03-05 | 5d03400 | |
+| Phase 5: E2E Tests | ✅ Done | 2026-03-05 | 5d03400 | 4 E2E tests on pentest01 |
+| Phase 6: Docstring Cross-References | ✅ Done | 2026-03-05 | 5d03400 | |
+| Phase 7: Manual LLM Tool Selection Tests | ✅ Done | 2026-03-06 | - | Signed off by product owner |
+| Phase 8: Add look_back_time + Zero-Results Hints | ✅ Done | 2026-03-06 | 5d03400 | |
+| Phase 9: Fix Result Drifts Grouping | ✅ Done | 2026-03-06 | 6986726 | Result drifts group by FAIL/SUCCESS |
+| Phase 10: Drop driftType Field | ✅ Done | 2026-03-06 | 6986726 | Stripped redundant field |
+| Phase 11: Attack-Level Sub-Grouping in Drill-Down | ✅ Done | 2026-03-06 | 6986726 | attack_summary in drill-down |
+| Phase 12: Test ID Traceability in Drift Records | ✅ Done | 2026-03-06 | 6986726 | Option A: improved hints |
 
 ### Phase 1: Data Types + Tests
 
@@ -1098,3 +1103,4 @@ then cross-server regression.
 | 2026-03-06 | Extended Phase 8: zero-results smart hints with duration-based and filter-aware logic |
 | 2026-03-06 | Added Phases 9-12 from Claude Desktop drift tool evaluation (Section 13) |
 | 2026-03-06 | Noted epoch timestamp enhancement for separate JIRA ticket in Future Enhancements |
+| 2026-03-06 | Phases 9-12 implemented, all 12 phases complete. 89 drift tests, 637 cross-server. PRD marked Complete. |
