@@ -1958,6 +1958,7 @@ def _group_and_paginate_drifts(
     drift_key: Optional[str],
     applied_filters: Dict[str, Any],
     elapsed_seconds: float = 0.0,
+    group_by: str = "final_status",
 ) -> Dict[str, Any]:
     """Group drift records and return summary or paginated drill-down.
 
@@ -1971,6 +1972,7 @@ def _group_and_paginate_drifts(
         drift_key: If set, drill into this group; if None, return summary
         applied_filters: Dict of filters that were applied (for response metadata)
         elapsed_seconds: API call elapsed time in seconds (used for zero-results hints)
+        group_by: Grouping mode — ``"final_status"`` or ``"result_status"``
 
     Returns:
         Dict with grouped summary or paginated drill-down data
@@ -1978,7 +1980,7 @@ def _group_and_paginate_drifts(
     Raises:
         ValueError: On invalid drift_key or out-of-range page_number
     """
-    groups = group_and_enrich_drift_records(records)
+    groups = group_and_enrich_drift_records(records, group_by=group_by)
 
     if drift_key is None:
         # Summary mode: return groups without individual records
@@ -2042,12 +2044,17 @@ def _group_and_paginate_drifts(
         hint_parts.append(
             f"Next page: call with drift_key='{drift_key}', page_number={page_number + 1}"
         )
+    if group_by == "result_status":
+        hint_parts.append(
+            "For finer security-control-level breakdown, use get_simulation_status_drifts."
+        )
     hint_parts.append(
-        "Use get_simulation_details or get_test_simulation_details with "
-        "include_drift_info=True to investigate individual simulations."
+        "To investigate a specific drift, call get_simulation_details with the "
+        "simulationId from the 'from' or 'to' object. The response includes the "
+        "planRunId (test ID) for tracing back to get_test_details."
     )
 
-    return {
+    result = {
         "drift_key": drift_key,
         "security_impact": target_group["security_impact"],
         "description": target_group["description"],
@@ -2058,6 +2065,35 @@ def _group_and_paginate_drifts(
         "applied_filters": applied_filters,
         "hint_to_agent": " | ".join(hint_parts),
     }
+
+    # Add final_status_breakdown for result_status grouping (coarse → fine-grained bridge)
+    if group_by == "result_status":
+        breakdown: Dict[str, int] = {}
+        for d in all_drifts:
+            fs_key = (
+                f"{d.get('from', {}).get('finalStatus', 'unknown')}-"
+                f"{d.get('to', {}).get('finalStatus', 'unknown')}"
+            ).lower()
+            breakdown[fs_key] = breakdown.get(fs_key, 0) + 1
+        result["final_status_breakdown"] = breakdown
+
+    # Attack-level sub-grouping (Phase 11) — computed from full group
+    attack_counts: Dict[int, Dict[str, Any]] = {}
+    for d in all_drifts:
+        aid = d.get("attackId")
+        if aid is not None:
+            if aid not in attack_counts:
+                attack_counts[aid] = {
+                    "attack_id": aid,
+                    "attack_types": d.get("attackTypes", []),
+                    "count": 0,
+                }
+            attack_counts[aid]["count"] += 1
+    result["attack_summary"] = sorted(
+        attack_counts.values(), key=lambda x: x["count"], reverse=True
+    )
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2155,7 +2191,10 @@ def sb_get_simulation_result_drifts(
         to_status=to_status,
     )
 
-    return _group_and_paginate_drifts(records, page_number, drift_key, applied_filters, elapsed_seconds)
+    return _group_and_paginate_drifts(
+        records, page_number, drift_key, applied_filters, elapsed_seconds,
+        group_by="result_status",
+    )
 
 
 def sb_get_simulation_status_drifts(

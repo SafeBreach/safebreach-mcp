@@ -8,6 +8,10 @@ Phase 3: public functions (sb_get_simulation_result_drifts, sb_get_simulation_st
 Phase 4: MCP tool registration
 Phase 5: E2E smoke tests
 Phase 8: look_back_time parameter and zero-results smart hints
+Phase 9: result drifts grouping by result_status + final_status_breakdown
+Phase 10: drop driftType field from drift records
+Phase 11: attack_summary in drill-down
+Phase 12: test ID traceability hints in drill-down
 """
 
 import os
@@ -337,7 +341,7 @@ class TestGroupAndEnrichDriftRecords:
         assert drift["trackingId"] == "abc123"
         assert drift["attackId"] == 1263
         assert drift["attackTypes"] == ["Legitimate Channel Exfiltration"]
-        assert drift["driftType"] == "Regression"
+        assert "driftType" not in drift  # Phase 10: stripped from records
 
         # Verify nested from/to fields
         assert drift["from"]["simulationId"] == 3189641
@@ -417,6 +421,115 @@ class TestGroupAndEnrichDriftRecords:
         assert required_keys.issubset(group.keys())
         assert isinstance(group["drifts"], list)
         assert isinstance(group["count"], int)
+
+    # --- Phase 9: group_by="result_status" tests ---
+
+    def test_group_by_result_status_groups_by_from_to_status(self):
+        """group_by='result_status' groups records by from.status-to.status (FAIL/SUCCESS)."""
+        # Two records with different finalStatus but same result status (FAIL→SUCCESS)
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+        ]
+
+        groups = group_and_enrich_drift_records(records, group_by="result_status")
+
+        # Should be one group (fail-success), not two (prevented-logged, stopped-missed)
+        assert len(groups) == 1
+        assert groups[0]["drift_key"] == "fail-success"
+        assert groups[0]["count"] == 2
+
+    def test_group_by_result_status_produces_coarse_groups(self):
+        """group_by='result_status' collapses many finalStatus transitions into few result groups."""
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+            _make_drift_record("missed", "prevented", from_status="SUCCESS", to_status="FAIL", tracking_id="r3"),
+            _make_drift_record("logged", "stopped", from_status="SUCCESS", to_status="FAIL", tracking_id="r4"),
+        ]
+
+        groups = group_and_enrich_drift_records(records, group_by="result_status")
+
+        assert len(groups) == 2
+        keys = {g["drift_key"] for g in groups}
+        assert keys == {"fail-success", "success-fail"}
+        # Each group has 2 records
+        for g in groups:
+            assert g["count"] == 2
+
+    def test_group_by_final_status_default_is_unchanged(self):
+        """Default group_by (or group_by='final_status') preserves current fine-grained behavior."""
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+        ]
+
+        # Default (no group_by)
+        groups_default = group_and_enrich_drift_records(records)
+        # Explicit final_status
+        groups_explicit = group_and_enrich_drift_records(records, group_by="final_status")
+
+        # Both should produce 2 groups (prevented-logged, stopped-missed)
+        assert len(groups_default) == 2
+        assert len(groups_explicit) == 2
+        default_keys = {g["drift_key"] for g in groups_default}
+        explicit_keys = {g["drift_key"] for g in groups_explicit}
+        assert default_keys == {"prevented-logged", "stopped-missed"}
+        assert explicit_keys == {"prevented-logged", "stopped-missed"}
+
+    def test_group_by_result_status_enrichment_uses_result_key(self):
+        """group_by='result_status' uses result-level metadata (fail-success has known metadata)."""
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS"),
+        ]
+
+        groups = group_and_enrich_drift_records(records, group_by="result_status")
+
+        group = groups[0]
+        expected_meta = drift_types_mapping["fail-success"]
+        assert group["security_impact"] == expected_meta["security_impact"]
+        assert group["description"] == expected_meta["description"]
+
+    # --- Phase 10: driftType field stripped ---
+
+    def test_drift_type_field_stripped_from_records(self, sample_drift_record):
+        """driftType field is removed from records in the drifts array."""
+        groups = group_and_enrich_drift_records([sample_drift_record])
+
+        drift = groups[0]["drifts"][0]
+        assert "driftType" not in drift
+
+    def test_other_fields_preserved_when_drift_type_stripped(self, sample_drift_record):
+        """All fields except driftType are preserved after stripping."""
+        groups = group_and_enrich_drift_records([sample_drift_record])
+
+        drift = groups[0]["drifts"][0]
+        assert drift["trackingId"] == "abc123"
+        assert drift["attackId"] == 1263
+        assert drift["from"]["simulationId"] == 3189641
+        assert drift["to"]["simulationId"] == 3286842
+
+    def test_security_impact_present_after_drift_type_stripped(self, sample_drift_record):
+        """security_impact on group remains unchanged after driftType removal."""
+        groups = group_and_enrich_drift_records([sample_drift_record])
+
+        assert groups[0]["security_impact"] == "negative"
+
+    def test_group_by_result_status_same_records_different_grouping(self):
+        """Same records produce different grouping depending on group_by."""
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+            _make_drift_record("missed", "prevented", from_status="SUCCESS", to_status="FAIL", tracking_id="r3"),
+        ]
+
+        groups_fs = group_and_enrich_drift_records(records, group_by="final_status")
+        groups_rs = group_and_enrich_drift_records(records, group_by="result_status")
+
+        # final_status: 3 groups (prevented-logged, stopped-missed, missed-prevented)
+        assert len(groups_fs) == 3
+        # result_status: 2 groups (fail-success, success-fail)
+        assert len(groups_rs) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +867,193 @@ class TestGroupAndPaginateDrifts:
         assert ("get_simulation_details" in hint
                 or "get_test_simulation_details" in hint)
 
+    # --- Phase 9: group_by and final_status_breakdown tests ---
+
+    def test_group_by_result_status_threads_to_enrichment(self):
+        """group_by='result_status' produces coarse groups in summary mode."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key=None, applied_filters={},
+            group_by="result_status",
+        )
+
+        assert result["total_groups"] == 1
+        assert result["drift_groups"][0]["drift_key"] == "fail-success"
+        assert result["drift_groups"][0]["count"] == 2
+
+    def test_drilldown_result_status_has_final_status_breakdown(self):
+        """Drill-down with group_by='result_status' includes final_status_breakdown."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r3"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="fail-success", applied_filters={},
+            group_by="result_status",
+        )
+
+        assert "final_status_breakdown" in result
+        breakdown = result["final_status_breakdown"]
+        assert breakdown["prevented-logged"] == 2
+        assert breakdown["stopped-missed"] == 1
+
+    def test_drilldown_final_status_breakdown_covers_full_group(self):
+        """final_status_breakdown reflects the full group, not just the current page."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        # 15 records: 10 prevented-logged + 5 stopped-missed, all FAIL→SUCCESS
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id=f"pl-{i}")
+            for i in range(10)
+        ] + [
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id=f"sm-{i}")
+            for i in range(5)
+        ]
+        # Page 1 (second page) — but breakdown should cover all 15
+        result = _group_and_paginate_drifts(
+            records, page_number=1, drift_key="fail-success", applied_filters={},
+            group_by="result_status",
+        )
+
+        breakdown = result["final_status_breakdown"]
+        assert breakdown["prevented-logged"] == 10
+        assert breakdown["stopped-missed"] == 5
+
+    def test_drilldown_final_status_not_present_without_group_by_result(self):
+        """Drill-down with default group_by does NOT include final_status_breakdown."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = self._make_records(3)
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        assert "final_status_breakdown" not in result
+
+    def test_drilldown_result_status_hint_mentions_status_drifts(self):
+        """Drill-down with group_by='result_status' hints at get_simulation_status_drifts."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="fail-success", applied_filters={},
+            group_by="result_status",
+        )
+
+        assert "get_simulation_status_drifts" in result["hint_to_agent"]
+
+    # --- Phase 11: attack_summary in drill-down ---
+
+    def test_drilldown_has_attack_summary(self):
+        """Drill-down response contains attack_summary field."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id="r1", attack_id=100),
+            _make_drift_record("prevented", "logged", tracking_id="r2", attack_id=100),
+            _make_drift_record("prevented", "logged", tracking_id="r3", attack_id=200),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        assert "attack_summary" in result
+        summary = result["attack_summary"]
+        assert len(summary) == 2
+        # Sorted by count descending
+        assert summary[0]["attack_id"] == 100
+        assert summary[0]["count"] == 2
+        assert summary[1]["attack_id"] == 200
+        assert summary[1]["count"] == 1
+
+    def test_attack_summary_covers_full_group_not_just_page(self):
+        """attack_summary reflects the full group, not just the current page."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        # 12 records: 10 attack_id=100, 2 attack_id=200 → 2 pages
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id=f"a-{i}", attack_id=100)
+            for i in range(10)
+        ] + [
+            _make_drift_record("prevented", "logged", tracking_id=f"b-{i}", attack_id=200)
+            for i in range(2)
+        ]
+        # Page 1 (second page, only 2 records)
+        result = _group_and_paginate_drifts(
+            records, page_number=1, drift_key="prevented-logged", applied_filters={},
+        )
+
+        summary = result["attack_summary"]
+        assert summary[0]["attack_id"] == 100
+        assert summary[0]["count"] == 10
+        assert summary[1]["attack_id"] == 200
+        assert summary[1]["count"] == 2
+
+    def test_summary_mode_no_attack_summary(self):
+        """Summary mode (no drill-down) does NOT include attack_summary."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = self._make_records(3)
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key=None, applied_filters={},
+        )
+
+        assert "attack_summary" not in result
+
+    def test_attack_summary_includes_attack_types(self):
+        """attack_summary entries include attack_types from the records."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id="r1", attack_id=100),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        assert result["attack_summary"][0]["attack_types"] == ["Test Attack"]
+
+    # --- Phase 12: test ID traceability hints ---
+
+    def test_drilldown_hint_mentions_simulation_id_traceability(self):
+        """Drill-down hint guides agent to trace simulationId → test via get_simulation_details."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id="r1"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        hint = result["hint_to_agent"]
+        assert "get_simulation_details" in hint
+        assert "simulationid" in hint.lower() or "simulation_id" in hint.lower()
+
+    def test_drilldown_hint_mentions_plan_run_id(self):
+        """Drill-down hint mentions planRunId/test ID for traceability."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id="r1"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        hint = result["hint_to_agent"]
+        assert "planrunid" in hint.lower() or "test_id" in hint.lower() or "test id" in hint.lower()
+
 
 # ---------------------------------------------------------------------------
 # Tests: sb_get_simulation_result_drifts  (Phase 3)
@@ -812,10 +1112,10 @@ class TestSbGetSimulationResultDrifts:
             console="demo",
             window_start=1709251200000,
             window_end=1709337600000,
-            drift_key="prevented-logged",
+            drift_key="fail-success",
         )
 
-        assert result["drift_key"] == "prevented-logged"
+        assert result["drift_key"] == "fail-success"
         assert result["total_drifts_in_group"] == 3
         assert len(result["drifts_in_page"]) == 3
 
@@ -985,6 +1285,62 @@ class TestSbGetSimulationResultDrifts:
         # Both calls should have hit the API (different cache keys)
         assert mock_post.call_count == 2
 
+    # --- Phase 9: result drifts groups by result_status ---
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_result_drifts_groups_by_result_status(self, _acct, _url, _sec, mock_post):
+        """Result drifts groups by FAIL/SUCCESS, not finalStatus."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+        ]
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+        )
+
+        assert result["total_groups"] == 1
+        assert result["drift_groups"][0]["drift_key"] == "fail-success"
+        assert result["drift_groups"][0]["count"] == 2
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_result_drifts_drilldown_has_final_status_breakdown(self, _acct, _url, _sec, mock_post):
+        """Result drifts drill-down includes final_status_breakdown."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r3"),
+        ]
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            drift_key="fail-success",
+        )
+
+        assert "final_status_breakdown" in result
+        assert result["final_status_breakdown"]["prevented-logged"] == 2
+        assert result["final_status_breakdown"]["stopped-missed"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Tests: sb_get_simulation_status_drifts  (Phase 3)
@@ -1150,6 +1506,60 @@ class TestSbGetSimulationStatusDrifts:
 
         call_payload = mock_post.call_args[1]["json"]
         assert call_payload["earliestSearchTime"] == "2024-02-20T00:00:00.000Z"
+
+    # --- Phase 9: status drifts uses final_status grouping ---
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_status_drifts_groups_by_final_status(self, _acct, _url, _sec, mock_post):
+        """Status drifts groups by finalStatus (fine-grained), not result status."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            _make_drift_record("prevented", "logged", from_status="FAIL", to_status="SUCCESS", tracking_id="r1"),
+            _make_drift_record("stopped", "missed", from_status="FAIL", to_status="SUCCESS", tracking_id="r2"),
+        ]
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+        )
+
+        # Should produce 2 groups (prevented-logged, stopped-missed), NOT 1 (fail-success)
+        assert result["total_groups"] == 2
+        keys = {g["drift_key"] for g in result["drift_groups"]}
+        assert keys == {"prevented-logged", "stopped-missed"}
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_status_drifts_drilldown_no_final_status_breakdown(self, _acct, _url, _sec, mock_post):
+        """Status drifts drill-down does NOT include final_status_breakdown."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            _make_drift_record("prevented", "logged", tracking_id=f"r-{i}")
+            for i in range(3)
+        ]
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            drift_key="prevented-logged",
+        )
+
+        assert "final_status_breakdown" not in result
 
 
 # ---------------------------------------------------------------------------

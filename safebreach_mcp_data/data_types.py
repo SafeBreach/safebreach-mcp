@@ -665,14 +665,21 @@ def build_drift_api_payload(
 
 def group_and_enrich_drift_records(
     records: List[Dict[str, Any]],
+    group_by: str = "final_status",
 ) -> List[Dict[str, Any]]:
     """Group raw drift records by transition type and enrich with metadata.
 
-    Each record is assigned a *drift_key* derived from
-    ``{from.finalStatus}-{to.finalStatus}`` (lowercased).  Records sharing the
-    same key are collected into a single group whose enrichment fields
-    (security_impact, description, hint_to_llm) come from
-    ``drifts_metadata.drift_types_mapping``.
+    Args:
+        records: Raw drift records from the API.
+        group_by: Grouping mode — ``"final_status"`` (default) groups by
+            ``{from.finalStatus}-{to.finalStatus}`` for fine-grained control view;
+            ``"result_status"`` groups by ``{from.status}-{to.status}``
+            (FAIL/SUCCESS) for coarse posture view.
+
+    Each record is assigned a *drift_key* derived from the chosen grouping
+    fields (lowercased).  Records sharing the same key are collected into a
+    single group whose enrichment fields (security_impact, description,
+    hint_to_llm) come from ``drifts_metadata.drift_types_mapping``.
 
     If the finalStatus-level key is not found in the mapping, a secondary
     lookup using the result-level key ``{from.status}-{to.status}`` is
@@ -684,30 +691,44 @@ def group_and_enrich_drift_records(
     if not records:
         return []
 
+    if group_by == "result_status":
+        from_field, to_field = "status", "status"
+    else:
+        from_field, to_field = "finalStatus", "finalStatus"
+
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for record in records:
+        record.pop("driftType", None)
         from_obj = record.get("from", {})
         to_obj = record.get("to", {})
         drift_key = (
-            f"{from_obj.get('finalStatus', 'unknown')}-"
-            f"{to_obj.get('finalStatus', 'unknown')}"
+            f"{from_obj.get(from_field, 'unknown')}-"
+            f"{to_obj.get(to_field, 'unknown')}"
         ).lower()
         groups.setdefault(drift_key, []).append(record)
 
     result: List[Dict[str, Any]] = []
     for drift_key, drifts in groups.items():
-        # Primary lookup: finalStatus-level key
+        # Primary lookup: drift_key itself (matches the grouping mode)
         meta = drift_types_mapping.get(drift_key)
 
-        # Secondary lookup: result-level key (from.status - to.status)
+        # Secondary lookup: try the alternate key derivation
         if meta is None and drifts:
             from_obj = drifts[0].get("from", {})
             to_obj = drifts[0].get("to", {})
-            result_key = (
-                f"{from_obj.get('status', 'unknown')}-"
-                f"{to_obj.get('status', 'unknown')}"
-            ).lower()
-            meta = drift_types_mapping.get(result_key)
+            if group_by == "result_status":
+                # Grouped by status — try finalStatus key as fallback
+                alt_key = (
+                    f"{from_obj.get('finalStatus', 'unknown')}-"
+                    f"{to_obj.get('finalStatus', 'unknown')}"
+                ).lower()
+            else:
+                # Grouped by finalStatus — try result status key as fallback
+                alt_key = (
+                    f"{from_obj.get('status', 'unknown')}-"
+                    f"{to_obj.get('status', 'unknown')}"
+                ).lower()
+            meta = drift_types_mapping.get(alt_key)
 
         # Fallback
         if meta is None:
