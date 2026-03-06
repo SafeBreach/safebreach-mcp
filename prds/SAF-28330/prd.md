@@ -139,7 +139,7 @@ matters (parameter validation, docstrings). Aligns with existing data server pat
 - **Response Example** (single record from flat array):
 ```json
 {
-  "trackingId": "00bee72fe89f8204ee0bd9a4c028d273",
+  "trackingId": "aabb0011ccdd2233eeff4455aabb6677",
   "attackId": 1263,
   "attackTypes": ["Legitimate Channel Exfiltration"],
   "from": {
