@@ -23,7 +23,9 @@ from .data_functions import (
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
     sb_get_test_drifts,
-    sb_get_full_simulation_logs
+    sb_get_full_simulation_logs,
+    sb_get_simulation_result_drifts,
+    sb_get_simulation_status_drifts
 )
 
 logger = logging.getLogger(__name__)
@@ -94,7 +96,9 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
 Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp in MILLISECONDS), end_time (Unix timestamp in MILLISECONDS),
 playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations).
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format."""
+Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+For broader drift analysis across a time window (not limited to a single test), see \
+get_simulation_result_drifts and get_simulation_status_drifts."""
         )
         async def get_test_simulations_tool(
             test_id: str,
@@ -125,7 +129,8 @@ Note: Use convert_datetime_to_epoch tool to get timestamps in the correct millis
 Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
 Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False), 
 include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
-Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead."""
+Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead.
+For time-window-based drift trends, see get_simulation_result_drifts and get_simulation_status_drifts."""
         )
         async def get_test_simulation_details_tool(
             simulation_id: str,
@@ -240,10 +245,12 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         @self.mcp.tool(
             name="get_test_drifts",
             description="""Analyzes drift between the given test and the most recent previous test with the same name.
-            Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test, 
+            Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test,
             (3) simulations with matching drift_tracking_code but different status values.
             Returns comprehensive drift analysis with security impact classification and detailed metadata for further investigation.
-            Parameters: console (required), test_id (required - the test to analyze for drifts)"""
+            Parameters: console (required), test_id (required - the test to analyze for drifts).
+            Note: For time-window-based drift analysis across all tests (not comparing two specific test runs), \
+use get_simulation_result_drifts or get_simulation_status_drifts instead."""
         )
         async def get_test_drifts_tool(
             test_id: str,
@@ -282,6 +289,134 @@ Note: Results are cached for 5 minutes. Use get_simulation_details with include_
                 simulation_id=simulation_id,
                 test_id=test_id,
                 console=console
+            )
+
+        @self.mcp.tool(
+            name="get_simulation_result_drifts",
+            description="""Returns time-window-based simulation result drift analysis showing transitions between \
+blocked (FAIL) and not-blocked (SUCCESS) states.
+
+TWO-PHASE USAGE:
+  1. Call WITHOUT drift_key to get a grouped summary of all drift types with counts per transition \
+(e.g., fail-success, success-fail). Use this to understand the overall drift landscape.
+  2. Call WITH drift_key='<key>' (e.g., 'fail-success') and page_number to paginate through individual \
+records in that group.
+
+USE THIS WHEN: You need to analyze how simulation RESULTS (blocked vs not-blocked) changed over a time period \
+across all tests. This provides a security POSTURE view — did attacks that were previously blocked become \
+unblocked, or vice versa?
+
+DON'T USE FOR:
+  - Comparing two specific test runs (use get_test_drifts instead).
+  - Filtering drifted simulations within a single test (use get_test_simulations with drifted_only=True).
+  - Getting drift details for a single simulation (use get_test_simulation_details with include_drift_info=True).
+  - Analyzing security control final status transitions like prevented→logged (use get_simulation_status_drifts).
+
+Parameters:
+  console (required): SafeBreach console name.
+  window_start (required): Start of time window in Unix epoch MILLISECONDS.
+  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  from_status: Filter by origin result status. Valid: 'FAIL' (blocked), 'SUCCESS' (not blocked).
+  to_status: Filter by destination result status. Valid: 'FAIL', 'SUCCESS'.
+  drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
+  attack_id: Filter by specific playbook attack ID (integer).
+  drift_key: Drill-down key from summary (e.g., 'fail-success'). Omit for grouped summary.
+  page_number: Page number for drill-down mode (default 0, 10 records per page).
+  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
+Decrease for faster responses on busy consoles.
+Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
+3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
+        )
+        async def get_simulation_result_drifts_tool(
+            console: str,
+            window_start: int,
+            window_end: int,
+            from_status: Optional[str] = None,
+            to_status: Optional[str] = None,
+            drift_type: Optional[str] = None,
+            attack_id: Optional[int] = None,
+            drift_key: Optional[str] = None,
+            page_number: int = 0,
+            look_back_time: Optional[int] = None
+        ) -> dict:
+            return sb_get_simulation_result_drifts(
+                console=console,
+                window_start=window_start,
+                window_end=window_end,
+                from_status=from_status,
+                to_status=to_status,
+                drift_type=drift_type,
+                attack_id=attack_id,
+                drift_key=drift_key,
+                page_number=page_number,
+                look_back_time=look_back_time
+            )
+
+        @self.mcp.tool(
+            name="get_simulation_status_drifts",
+            description="""Returns time-window-based simulation status drift analysis showing transitions between \
+security control final statuses (prevented, stopped, detected, logged, missed, inconsistent).
+
+TWO-PHASE USAGE:
+  1. Call WITHOUT drift_key to get a grouped summary of all drift types with counts per transition \
+(e.g., prevented-logged, detected-missed). Use this to understand the overall drift landscape.
+  2. Call WITH drift_key='<key>' (e.g., 'prevented-logged') and page_number to paginate through individual \
+records in that group.
+
+USE THIS WHEN: You need to analyze how security CONTROLS responded differently over time. This provides a \
+security CONTROL view — did the detection method change? Did prevention degrade to just detection? \
+Did detection degrade to just logging?
+
+DON'T USE FOR:
+  - Comparing two specific test runs (use get_test_drifts instead).
+  - Filtering drifted simulations within a single test (use get_test_simulations with drifted_only=True).
+  - Getting drift details for a single simulation (use get_test_simulation_details with include_drift_info=True).
+  - Analyzing blocked/not-blocked result transitions (use get_simulation_result_drifts).
+
+Parameters:
+  console (required): SafeBreach console name.
+  window_start (required): Start of time window in Unix epoch MILLISECONDS.
+  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  from_final_status: Filter by origin final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
+'missed', 'inconsistent'.
+  to_final_status: Filter by destination final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
+'missed', 'inconsistent'.
+  drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
+  attack_id: Filter by specific playbook attack ID (integer).
+  drift_key: Drill-down key from summary (e.g., 'prevented-logged'). Omit for grouped summary.
+  page_number: Page number for drill-down mode (default 0, 10 records per page).
+  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
+Decrease for faster responses on busy consoles.
+Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
+3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
+        )
+        async def get_simulation_status_drifts_tool(
+            console: str,
+            window_start: int,
+            window_end: int,
+            from_final_status: Optional[str] = None,
+            to_final_status: Optional[str] = None,
+            drift_type: Optional[str] = None,
+            attack_id: Optional[int] = None,
+            drift_key: Optional[str] = None,
+            page_number: int = 0,
+            look_back_time: Optional[int] = None
+        ) -> dict:
+            return sb_get_simulation_status_drifts(
+                console=console,
+                window_start=window_start,
+                window_end=window_end,
+                from_final_status=from_final_status,
+                to_final_status=to_final_status,
+                drift_type=drift_type,
+                attack_id=attack_id,
+                drift_key=drift_key,
+                page_number=page_number,
+                look_back_time=look_back_time
             )
 
 def parse_external_config(server_type: str) -> bool:

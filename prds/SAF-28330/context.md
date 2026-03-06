@@ -1,7 +1,7 @@
 # Planning Context: SAF-28330
 
 ## Status
-Phase 4: Investigation Complete
+Phase 6: PRD Created
 
 ## JIRA Details
 - **Ticket**: SAF-28330
@@ -124,7 +124,33 @@ Key: Uses requests.post for endpoint calls, 120-second timeout, proper error han
 ✅ Test patterns reviewed
 
 ## Brainstorming Results
-(Phase 5)
+
+### Chosen Approach: C — Shared Core with Validation Layer
+
+Clear separation of concerns with explicit validation, fetch, paginate, and enrich layers:
+
+**data_types.py**:
+- `transform_drift_record()` — enriches each record with drifts_metadata lookup (security_impact, description)
+- `build_drift_api_payload()` — constructs API request body from tool parameters
+
+**data_functions.py**:
+- `_fetch_and_cache_simulation_drifts(console, payload)` — handles API call + caching only
+- `_paginate_and_enrich_drifts(records, page_number, applied_filters)` — handles pagination + enrichment
+- `sb_get_simulation_result_drifts()` — validates result-mode params, builds payload, delegates
+- `sb_get_simulation_status_drifts()` — validates status-mode params, builds payload, delegates
+
+**data_server.py**:
+- Two @mcp.tool() registrations with distinct docstrings and "USE THIS WHEN / DON'T USE FOR" guidance
+
+### Design Decisions
+1. **Full detail response** — Keep all API fields including loggedBy/reportedBy/alertedBy/preventedBy arrays
+2. **Enrich all records** — Look up drift metadata from drifts_metadata.py for each record
+3. **Single shared cache** — One SafeBreachCache(name='simulation_drifts', maxsize=3, ttl=600)
+4. **Cache key includes filter mode** — Distinguish result vs status queries in cache key
+
+### Alternatives Rejected
+- **Approach A (Thin Wrappers)**: Too thin — no clear validation layer
+- **Approach B (Fully Separate)**: Code duplication risk, inconsistency over time
 
 ## Implementation Plan
 (Phase 6)

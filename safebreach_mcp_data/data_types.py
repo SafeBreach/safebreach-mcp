@@ -5,7 +5,8 @@ This module provides data type mappings and transformations for SafeBreach data,
 specifically for test and simulation entities.
 """
 
-from typing import Dict, Any, List
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional
 from safebreach_mcp_data.drifts_metadata import drift_types_mapping
 
 # Test summary mapping
@@ -590,4 +591,143 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     result["attacker"] = attacker_data
     result["logs_available"] = True
     result["logs_status"] = None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Drift API helpers (SAF-28330)
+# ---------------------------------------------------------------------------
+
+_DRIFT_TYPE_MAP = {
+    "improvement": "Improvement",
+    "regression": "Regression",
+    "not_applicable": "NotApplicable",
+}
+
+
+_LOOK_BACK_DEFAULT_MS = 7 * 86_400_000  # 7 days in milliseconds
+
+
+def build_drift_api_payload(
+    window_start: int,
+    window_end: int,
+    drift_type: Optional[str] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    from_status: Optional[str] = None,
+    to_status: Optional[str] = None,
+    from_final_status: Optional[str] = None,
+    to_final_status: Optional[str] = None,
+    look_back_time: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the POST body for the simulation drift API.
+
+    Converts epoch-millisecond timestamps to ISO-8601 UTC and maps snake_case
+    parameter names to the camelCase keys expected by the API.  Only non-None
+    optional values are included in the returned dict.
+
+    look_back_time controls how far back the API searches for baseline
+    simulations.  Defaults to window_start - 7 days if not provided.
+    Always included as ``earliestSearchTime`` in the output payload.
+    """
+    def _epoch_ms_to_iso(epoch_ms: int) -> str:
+        return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.000Z"
+        )
+
+    effective_look_back = look_back_time if look_back_time is not None else (window_start - _LOOK_BACK_DEFAULT_MS)
+
+    payload: Dict[str, Any] = {
+        "windowStart": _epoch_ms_to_iso(window_start),
+        "windowEnd": _epoch_ms_to_iso(window_end),
+        "earliestSearchTime": _epoch_ms_to_iso(effective_look_back),
+    }
+
+    if drift_type is not None:
+        payload["driftType"] = _DRIFT_TYPE_MAP.get(
+            drift_type.lower(), drift_type
+        )
+    if attack_id is not None:
+        payload["attackId"] = attack_id
+    if attack_type is not None:
+        payload["attackType"] = attack_type
+    if from_status is not None:
+        payload["fromStatus"] = from_status
+    if to_status is not None:
+        payload["toStatus"] = to_status
+    if from_final_status is not None:
+        payload["fromFinalStatus"] = from_final_status
+    if to_final_status is not None:
+        payload["toFinalStatus"] = to_final_status
+
+    return payload
+
+
+def group_and_enrich_drift_records(
+    records: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Group raw drift records by transition type and enrich with metadata.
+
+    Each record is assigned a *drift_key* derived from
+    ``{from.finalStatus}-{to.finalStatus}`` (lowercased).  Records sharing the
+    same key are collected into a single group whose enrichment fields
+    (security_impact, description, hint_to_llm) come from
+    ``drifts_metadata.drift_types_mapping``.
+
+    If the finalStatus-level key is not found in the mapping, a secondary
+    lookup using the result-level key ``{from.status}-{to.status}`` is
+    attempted.  If that also misses, fallback values with
+    ``security_impact="unknown"`` are generated.
+
+    Returns a list of group dicts sorted by *count* descending.
+    """
+    if not records:
+        return []
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        from_obj = record.get("from", {})
+        to_obj = record.get("to", {})
+        drift_key = (
+            f"{from_obj.get('finalStatus', 'unknown')}-"
+            f"{to_obj.get('finalStatus', 'unknown')}"
+        ).lower()
+        groups.setdefault(drift_key, []).append(record)
+
+    result: List[Dict[str, Any]] = []
+    for drift_key, drifts in groups.items():
+        # Primary lookup: finalStatus-level key
+        meta = drift_types_mapping.get(drift_key)
+
+        # Secondary lookup: result-level key (from.status - to.status)
+        if meta is None and drifts:
+            from_obj = drifts[0].get("from", {})
+            to_obj = drifts[0].get("to", {})
+            result_key = (
+                f"{from_obj.get('status', 'unknown')}-"
+                f"{to_obj.get('status', 'unknown')}"
+            ).lower()
+            meta = drift_types_mapping.get(result_key)
+
+        # Fallback
+        if meta is None:
+            meta = {
+                "security_impact": "unknown",
+                "description": f"No metadata available for drift type '{drift_key}'",
+                "hint_to_llm": (
+                    "Consider using get_simulation_details with include_drift_info=True "
+                    "to investigate individual simulations in this group"
+                ),
+            }
+
+        result.append({
+            "drift_key": drift_key,
+            "security_impact": meta["security_impact"],
+            "description": meta["description"],
+            "hint_to_llm": meta["hint_to_llm"],
+            "count": len(drifts),
+            "drifts": drifts,
+        })
+
+    result.sort(key=lambda g: g["count"], reverse=True)
     return result
