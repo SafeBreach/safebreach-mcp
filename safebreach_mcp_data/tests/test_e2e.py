@@ -525,13 +525,12 @@ class TestDataServerE2E:
     def test_get_full_simulation_logs_e2e(self):
         """Test getting comprehensive simulation execution logs from SafeBreach console.
 
-        This test uses simulation ID 2225626 from the pentest01 console
-        (from BAS Scheduled Scenario test 1771148836322.15, status: prevented).
-        The test first retrieves simulation details to get the test_id, then calls
-        get_full_simulation_logs to retrieve the comprehensive execution logs.
+        This test uses simulation ID 3352477 from the pentest01 console
+        (from Copy of BAS Scheduled Scenario test 1772722800291.5, status: prevented).
+        This simulation has ~21KB of raw LOGS text and 16 structured simulation steps.
         """
         console = "pentest01"
-        simulation_id = "2225626"
+        simulation_id = "3352477"
         
         print(f"\n=== Testing get_full_simulation_logs for simulation {simulation_id} ===")
         
@@ -575,7 +574,7 @@ class TestDataServerE2E:
         for field in target_fields:
             assert field in target, f"Missing target field: {field}"
 
-        # Validate logs field (~40KB of raw, verbose simulator logs)
+        # Validate logs field (~21KB of raw, verbose simulator logs for this simulation)
         logs = target['logs']
         assert isinstance(logs, str), "Logs should be a string"
         assert len(logs) > 1000, f"Logs should be substantial (>1KB), got {len(logs)} characters"
@@ -584,9 +583,9 @@ class TestDataServerE2E:
         # Validate simulation_steps (structured execution steps)
         simulation_steps = target['simulation_steps']
         assert isinstance(simulation_steps, list), "Simulation steps should be a list"
-        if simulation_steps:
-            first_step = simulation_steps[0]
-            assert isinstance(first_step, dict), "Each step should be a dictionary"
+        assert len(simulation_steps) > 0, "Simulation steps should not be empty"
+        first_step = simulation_steps[0]
+        assert isinstance(first_step, dict), "Each step should be a dictionary"
         print(f"  ✅ Target simulation steps: {len(simulation_steps)} structured execution steps")
 
         # Validate details_summary
