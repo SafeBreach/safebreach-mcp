@@ -13,6 +13,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from safebreach_mcp_core import SafeBreachMCPBase
+from safebreach_mcp_core.datetime_utils import normalize_timestamp
 from .data_functions import (
     sb_get_tests_history,
     sb_get_test_details,
@@ -49,21 +50,25 @@ class SafeBreachDataServer(SafeBreachMCPBase):
             name="get_tests_history",
             description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console.
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
-Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), start_date (Unix timestamp in MILLISECONDS), end_date (Unix timestamp in MILLISECONDS),
+Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
+start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
+end_date (epoch ms/seconds or ISO 8601 string),
 status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format."""
+Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
         )
         async def get_tests_history_tool(
             console: str = "default",
             page_number: int = 0,
             test_type: Optional[str] = None,
-            start_date: Optional[int] = None,
-            end_date: Optional[int] = None,
+            start_date: Optional[str | int] = None,
+            end_date: Optional[str | int] = None,
             status_filter: Optional[str] = None,
             name_filter: Optional[str] = None,
             order_by: str = "end_time",
             order_direction: str = "desc"
         ) -> dict:
+            start_date = normalize_timestamp(start_date) if start_date is not None else None
+            end_date = normalize_timestamp(end_date) if end_date is not None else None
             return sb_get_tests_history(
                 console=console,
                 page_number=page_number,
@@ -94,9 +99,11 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
             name="get_test_simulations",
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
-Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp in MILLISECONDS), end_time (Unix timestamp in MILLISECONDS),
+Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), \
+start_time (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
+end_time (epoch ms/seconds or ISO 8601 string),
 playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations).
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for time parameters.
 For broader drift analysis across a time window (not limited to a single test), see \
 get_simulation_result_drifts and get_simulation_status_drifts."""
         )
@@ -105,12 +112,14 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
             console: str = "default",
             page_number: int = 0,
             status_filter: Optional[str] = None,
-            start_time: Optional[int] = None,
-            end_time: Optional[int] = None,
+            start_time: Optional[str | int] = None,
+            end_time: Optional[str | int] = None,
             playbook_attack_id_filter: Optional[str] = None,
             playbook_attack_name_filter: Optional[str] = None,
             drifted_only: bool = False
         ) -> dict:
+            start_time = normalize_timestamp(start_time) if start_time is not None else None
+            end_time = normalize_timestamp(end_time) if end_time is not None else None
             return sb_get_test_simulations(
                 test_id=test_id,
                 console=console,
@@ -314,33 +323,41 @@ DON'T USE FOR:
 
 Parameters:
   console (required): SafeBreach console name.
-  window_start (required): Start of time window in Unix epoch MILLISECONDS.
-  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
+  window_end (required): epoch ms/seconds or ISO 8601 string.
   from_status: Filter by origin result status. Valid: 'FAIL' (blocked), 'SUCCESS' (not blocked).
   to_status: Filter by destination result status. Valid: 'FAIL', 'SUCCESS'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
   drift_key: Drill-down key from summary (e.g., 'fail-success'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
-  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+  look_back_time: How far back to search for baseline (pre-drift) simulations. \
+Accepts epoch ms/seconds or ISO 8601 string. \
 Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
 Decrease for faster responses on busy consoles.
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for all time parameters.
 WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
 3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
         )
         async def get_simulation_result_drifts_tool(
             console: str,
-            window_start: int,
-            window_end: int,
+            window_start: str | int = None,
+            window_end: str | int = None,
             from_status: Optional[str] = None,
             to_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
-            look_back_time: Optional[int] = None
+            look_back_time: Optional[str | int] = None
         ) -> dict:
+            window_start = normalize_timestamp(window_start)
+            if window_start is None:
+                raise ValueError("window_start: invalid or missing timestamp value")
+            window_end = normalize_timestamp(window_end)
+            if window_end is None:
+                raise ValueError("window_end: invalid or missing timestamp value")
+            look_back_time = normalize_timestamp(look_back_time) if look_back_time is not None else None
             return sb_get_simulation_result_drifts(
                 console=console,
                 window_start=window_start,
@@ -377,8 +394,8 @@ DON'T USE FOR:
 
 Parameters:
   console (required): SafeBreach console name.
-  window_start (required): Start of time window in Unix epoch MILLISECONDS.
-  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
+  window_end (required): epoch ms/seconds or ISO 8601 string.
   from_final_status: Filter by origin final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
 'missed', 'inconsistent'.
   to_final_status: Filter by destination final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
@@ -387,25 +404,33 @@ Parameters:
   attack_id: Filter by specific playbook attack ID (integer).
   drift_key: Drill-down key from summary (e.g., 'prevented-logged'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
-  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+  look_back_time: How far back to search for baseline (pre-drift) simulations. \
+Accepts epoch ms/seconds or ISO 8601 string. \
 Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
 Decrease for faster responses on busy consoles.
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for all time parameters.
 WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
 3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
         )
         async def get_simulation_status_drifts_tool(
             console: str,
-            window_start: int,
-            window_end: int,
+            window_start: str | int = None,
+            window_end: str | int = None,
             from_final_status: Optional[str] = None,
             to_final_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
-            look_back_time: Optional[int] = None
+            look_back_time: Optional[str | int] = None
         ) -> dict:
+            window_start = normalize_timestamp(window_start)
+            if window_start is None:
+                raise ValueError("window_start: invalid or missing timestamp value")
+            window_end = normalize_timestamp(window_end)
+            if window_end is None:
+                raise ValueError("window_end: invalid or missing timestamp value")
+            look_back_time = normalize_timestamp(look_back_time) if look_back_time is not None else None
             return sb_get_simulation_status_drifts(
                 console=console,
                 window_start=window_start,
