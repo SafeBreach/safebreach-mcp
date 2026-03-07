@@ -13,6 +13,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from safebreach_mcp_core import SafeBreachMCPBase
+from safebreach_mcp_core.datetime_utils import normalize_timestamp
 from .data_functions import (
     sb_get_tests_history,
     sb_get_test_details,
@@ -57,13 +58,15 @@ Note: Use convert_datetime_to_epoch tool to get timestamps in the correct millis
             console: str = "default",
             page_number: int = 0,
             test_type: Optional[str] = None,
-            start_date: Optional[int] = None,
-            end_date: Optional[int] = None,
+            start_date: Optional[str | int] = None,
+            end_date: Optional[str | int] = None,
             status_filter: Optional[str] = None,
             name_filter: Optional[str] = None,
             order_by: str = "end_time",
             order_direction: str = "desc"
         ) -> dict:
+            start_date = normalize_timestamp(start_date) if start_date is not None else None
+            end_date = normalize_timestamp(end_date) if end_date is not None else None
             return sb_get_tests_history(
                 console=console,
                 page_number=page_number,
@@ -105,12 +108,14 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
             console: str = "default",
             page_number: int = 0,
             status_filter: Optional[str] = None,
-            start_time: Optional[int] = None,
-            end_time: Optional[int] = None,
+            start_time: Optional[str | int] = None,
+            end_time: Optional[str | int] = None,
             playbook_attack_id_filter: Optional[str] = None,
             playbook_attack_name_filter: Optional[str] = None,
             drifted_only: bool = False
         ) -> dict:
+            start_time = normalize_timestamp(start_time) if start_time is not None else None
+            end_time = normalize_timestamp(end_time) if end_time is not None else None
             return sb_get_test_simulations(
                 test_id=test_id,
                 console=console,
@@ -331,16 +336,23 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
         )
         async def get_simulation_result_drifts_tool(
             console: str,
-            window_start: int,
-            window_end: int,
+            window_start: str | int = None,
+            window_end: str | int = None,
             from_status: Optional[str] = None,
             to_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
-            look_back_time: Optional[int] = None
+            look_back_time: Optional[str | int] = None
         ) -> dict:
+            window_start = normalize_timestamp(window_start)
+            if window_start is None:
+                raise ValueError("window_start: invalid or missing timestamp value")
+            window_end = normalize_timestamp(window_end)
+            if window_end is None:
+                raise ValueError("window_end: invalid or missing timestamp value")
+            look_back_time = normalize_timestamp(look_back_time) if look_back_time is not None else None
             return sb_get_simulation_result_drifts(
                 console=console,
                 window_start=window_start,
@@ -396,16 +408,23 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
         )
         async def get_simulation_status_drifts_tool(
             console: str,
-            window_start: int,
-            window_end: int,
+            window_start: str | int = None,
+            window_end: str | int = None,
             from_final_status: Optional[str] = None,
             to_final_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
-            look_back_time: Optional[int] = None
+            look_back_time: Optional[str | int] = None
         ) -> dict:
+            window_start = normalize_timestamp(window_start)
+            if window_start is None:
+                raise ValueError("window_start: invalid or missing timestamp value")
+            window_end = normalize_timestamp(window_end)
+            if window_end is None:
+                raise ValueError("window_end: invalid or missing timestamp value")
+            look_back_time = normalize_timestamp(look_back_time) if look_back_time is not None else None
             return sb_get_simulation_status_drifts(
                 console=console,
                 window_start=window_start,
