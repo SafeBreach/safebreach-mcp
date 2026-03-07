@@ -1,7 +1,7 @@
 # Ticket Context: SAF-28875
 
 ## Status
-Phase 6: Summary Created
+Phase 6: PRD Created
 
 ## Mode
 Improving
@@ -68,6 +68,17 @@ timestamp handling patterns, and confirming the implementation approach is sound
 
 ### 8. Risk Assessment
 **Low risk**: Existing infrastructure covers all cases. Backward compatible. No API changes.
+
+### 9. Regression Risk Analysis
+- **Two epoch scales**: Tests use seconds (1640995200) for tests_history/simulations, milliseconds
+  (1709251200000) for drift tools. Normalizer's `> 10^12` threshold handles both.
+- **97 existing tests** in test_data_functions.py, 89 in test_drift_tools.py, 255 lines in
+  test_utilities_server.py
+- **String-to-int conversion already tested**: `_safe_time_compare()` handles "1640995200" strings
+- **Range validation tested**: start_date > end_date raises ValueError (lines 1222, 1240)
+- **Mock data patterns**: Fixtures use epoch seconds in test/simulation data. Must remain untouched.
+- **Key regression checklist**: epoch int passthrough, string-to-int conversion, missing field handling,
+  range validation, ordering, pagination, drift start_time comparison, None timestamps in findings
 
 ## Brainstorming Results
 - **Helper location**: `safebreach_mcp_core/datetime_utils.py` (shared, reusable)
