@@ -310,7 +310,7 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 
 **Enhanced Test History Filtering (`get_tests_history`):**
 - **Test Type**: Filter by "validate" (BAS tests) or "propagate" (ALM tests)
-- **Time Windows**: Filter by start/end dates (Unix timestamps)
+- **Time Windows**: Filter by start/end dates (epoch timestamps or ISO 8601 strings, e.g., '2026-03-01T00:00:00Z')
 - **Status**: Filter by "completed", "canceled", "failed"
 - **Name Patterns**: Case-insensitive partial matching on test names
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
@@ -321,7 +321,7 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 
 **Enhanced Simulation Filtering (`get_test_simulations`):**
 - **Status**: Filter by simulation status ("missed", "stopped", "prevented", "detected", "logged", "no-result", "inconsistent")
-- **Time Windows**: Filter by start/end times (Unix timestamps) with safe type conversion for end_time field
+- **Time Windows**: Filter by start/end times (epoch timestamps or ISO 8601 strings) with safe type conversion for end_time field
 - **Playbook Attack ID**: Filter by exact playbook attack ID match
 - **Playbook Attack Name**: Case-insensitive partial matching on playbook attack names (e.g., "file", "network", "credential")
 - **Drift Analysis**: Set `drifted_only=True` to filter only simulations that have drifted from previous results with identical parameters

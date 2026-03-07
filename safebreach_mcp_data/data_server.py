@@ -50,9 +50,11 @@ class SafeBreachDataServer(SafeBreachMCPBase):
             name="get_tests_history",
             description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console.
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
-Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), start_date (Unix timestamp in MILLISECONDS), end_date (Unix timestamp in MILLISECONDS),
+Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
+start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
+end_date (epoch ms/seconds or ISO 8601 string),
 status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format."""
+Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
         )
         async def get_tests_history_tool(
             console: str = "default",
@@ -97,9 +99,11 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
             name="get_test_simulations",
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
-Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), start_time (Unix timestamp in MILLISECONDS), end_time (Unix timestamp in MILLISECONDS),
+Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), \
+start_time (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
+end_time (epoch ms/seconds or ISO 8601 string),
 playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations).
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for time parameters.
 For broader drift analysis across a time window (not limited to a single test), see \
 get_simulation_result_drifts and get_simulation_status_drifts."""
         )
@@ -319,18 +323,19 @@ DON'T USE FOR:
 
 Parameters:
   console (required): SafeBreach console name.
-  window_start (required): Start of time window in Unix epoch MILLISECONDS.
-  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
+  window_end (required): epoch ms/seconds or ISO 8601 string.
   from_status: Filter by origin result status. Valid: 'FAIL' (blocked), 'SUCCESS' (not blocked).
   to_status: Filter by destination result status. Valid: 'FAIL', 'SUCCESS'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
   drift_key: Drill-down key from summary (e.g., 'fail-success'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
-  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+  look_back_time: How far back to search for baseline (pre-drift) simulations. \
+Accepts epoch ms/seconds or ISO 8601 string. \
 Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
 Decrease for faster responses on busy consoles.
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for all time parameters.
 WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
 3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
         )
@@ -389,8 +394,8 @@ DON'T USE FOR:
 
 Parameters:
   console (required): SafeBreach console name.
-  window_start (required): Start of time window in Unix epoch MILLISECONDS.
-  window_end (required): End of time window in Unix epoch MILLISECONDS.
+  window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
+  window_end (required): epoch ms/seconds or ISO 8601 string.
   from_final_status: Filter by origin final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
 'missed', 'inconsistent'.
   to_final_status: Filter by destination final status. Valid: 'prevented', 'stopped', 'detected', 'logged', \
@@ -399,10 +404,11 @@ Parameters:
   attack_id: Filter by specific playbook attack ID (integer).
   drift_key: Drill-down key from summary (e.g., 'prevented-logged'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
-  look_back_time: How far back (epoch ms) to search for baseline (pre-drift) simulations. \
+  look_back_time: How far back to search for baseline (pre-drift) simulations. \
+Accepts epoch ms/seconds or ISO 8601 string. \
 Defaults to 7 days before window_start. Increase for attacks that run infrequently (e.g., monthly). \
 Decrease for faster responses on busy consoles.
-Note: Use convert_datetime_to_epoch tool to get timestamps in the correct milliseconds format.
+Accepts both epoch timestamps and ISO 8601 strings for all time parameters.
 WARNING: This endpoint has no server-side pagination. Large time windows (7+ days) on busy consoles can take \
 3+ minutes. Start with a narrow window (1-2 days) and widen only if needed."""
         )
