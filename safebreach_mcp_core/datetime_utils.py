@@ -5,8 +5,60 @@ Provides datetime conversion utilities shared across all MCP servers.
 """
 
 from datetime import datetime, timezone as dt_timezone
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 import zoneinfo
+
+def normalize_timestamp(value: Any) -> Optional[int]:
+    """
+    Normalize a timestamp value to epoch milliseconds.
+
+    Accepts ISO 8601 strings, epoch integers (seconds or milliseconds),
+    string-numeric values, floats, or None. Returns epoch milliseconds
+    or None if the input cannot be parsed.
+
+    Auto-detection: integer/float values > 10^12 are treated as milliseconds;
+    values <= 10^12 are treated as seconds and multiplied by 1000.
+
+    Args:
+        value: Timestamp in any supported format, or None.
+
+    Returns:
+        Epoch milliseconds as int, or None if input is invalid/None.
+    """
+    if value is None:
+        return None
+
+    # Handle numeric types directly
+    if isinstance(value, (int, float)):
+        int_val = int(value)
+        if int_val > 10**12:
+            return int_val
+        return int_val * 1000
+
+    # Handle string inputs
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+
+        # Try numeric parse first (string-numeric like "1640995200")
+        try:
+            num_val = int(float(value))
+            if num_val > 10**12:
+                return num_val
+            return num_val * 1000
+        except (ValueError, OverflowError):
+            pass
+
+        # Try ISO 8601 parse
+        result = convert_datetime_to_epoch(value)
+        if "error" not in result:
+            return result["epoch_timestamp"]
+
+        return None
+
+    # Unsupported type
+    return None
+
 
 def convert_datetime_to_epoch(datetime_str: str) -> Dict[str, Any]:
     """

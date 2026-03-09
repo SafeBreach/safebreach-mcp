@@ -6,7 +6,93 @@ This module tests the utilities server and datetime conversion functions.
 
 import pytest
 from datetime import datetime
-from safebreach_mcp_core.datetime_utils import convert_datetime_to_epoch, convert_epoch_to_datetime
+from safebreach_mcp_core.datetime_utils import convert_datetime_to_epoch, convert_epoch_to_datetime, normalize_timestamp
+
+class TestNormalizeTimestamp:
+    """Test suite for normalize_timestamp() helper function."""
+
+    def test_iso_8601_z_suffix(self):
+        """ISO 8601 string with Z suffix returns epoch milliseconds."""
+        result = normalize_timestamp("2024-01-15T10:30:00Z")
+        assert result is not None
+        assert isinstance(result, int)
+        expected = convert_datetime_to_epoch("2024-01-15T10:30:00Z")["epoch_timestamp"]
+        assert result == expected
+
+    def test_iso_8601_positive_offset(self):
+        """ISO 8601 string with positive timezone offset returns UTC epoch ms."""
+        result = normalize_timestamp("2024-01-15T10:30:00+02:00")
+        assert result is not None
+        expected = convert_datetime_to_epoch("2024-01-15T10:30:00+02:00")["epoch_timestamp"]
+        assert result == expected
+
+    def test_iso_8601_negative_offset(self):
+        """ISO 8601 string with negative timezone offset returns UTC epoch ms."""
+        result = normalize_timestamp("2024-01-15T10:30:00-05:00")
+        assert result is not None
+        expected = convert_datetime_to_epoch("2024-01-15T10:30:00-05:00")["epoch_timestamp"]
+        assert result == expected
+
+    def test_epoch_milliseconds_passthrough(self):
+        """Epoch integer > 10^12 treated as milliseconds, returned unchanged."""
+        result = normalize_timestamp(1709251200000)
+        assert result == 1709251200000
+
+    def test_epoch_seconds_converted_to_ms(self):
+        """Epoch integer <= 10^12 treated as seconds, converted to milliseconds."""
+        result = normalize_timestamp(1640995200)
+        assert result == 1640995200000
+
+    def test_string_numeric_seconds(self):
+        """String-numeric value in seconds range is parsed and converted to ms."""
+        result = normalize_timestamp("1640995200")
+        assert result == 1640995200000
+
+    def test_string_numeric_milliseconds(self):
+        """String-numeric value in milliseconds range is parsed and returned as-is."""
+        result = normalize_timestamp("1709251200000")
+        assert result == 1709251200000
+
+    def test_float_input(self):
+        """Float input is converted using seconds/ms auto-detection."""
+        result = normalize_timestamp(1640995200.5)
+        assert result is not None
+        assert isinstance(result, int)
+
+    def test_none_returns_none(self):
+        """None input returns None."""
+        assert normalize_timestamp(None) is None
+
+    def test_invalid_string_returns_none(self):
+        """Invalid string returns None (no exception)."""
+        assert normalize_timestamp("not-a-date") is None
+
+    def test_empty_string_returns_none(self):
+        """Empty string returns None."""
+        assert normalize_timestamp("") is None
+
+    def test_boundary_below_threshold(self):
+        """Value just below 10^12 threshold treated as seconds."""
+        result = normalize_timestamp(999999999999)
+        assert result == 999999999999000
+
+    def test_boundary_at_threshold(self):
+        """Value at exactly 10^12 treated as seconds (consistent with convert_epoch_to_datetime)."""
+        result = normalize_timestamp(1000000000000)
+        assert result == 1000000000000000  # 10^12 is NOT > 10^12, so treated as seconds
+
+    def test_boundary_above_threshold(self):
+        """Value above 10^12 treated as milliseconds (unchanged)."""
+        result = normalize_timestamp(1000000000001)
+        assert result == 1000000000001
+
+    def test_round_trip_consistency(self):
+        """normalize_timestamp output matches convert_datetime_to_epoch for same ISO input."""
+        iso_str = "2026-03-01T00:00:00Z"
+        normalized = normalize_timestamp(iso_str)
+        direct = convert_datetime_to_epoch(iso_str)["epoch_timestamp"]
+        assert normalized == direct
+
 
 class TestDateTimeUtils:
     """Test suite for datetime utility functions."""
