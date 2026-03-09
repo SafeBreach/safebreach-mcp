@@ -13,7 +13,8 @@ from safebreach_mcp_playbook.playbook_types import (
     filter_attacks_by_criteria,
     paginate_attacks,
     _transform_tags,
-    _extract_mitre_data
+    _extract_mitre_data,
+    _resolve_tactic_filter_value
 )
 
 
@@ -836,3 +837,73 @@ class TestMitreFiltering:
         # Attack 3141 has no MITRE data - a broad tactic filter should not include it
         result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="Discovery")
         assert all(a['id'] != 3141 for a in result)
+
+    def test_filter_by_tactic_id(self, sample_attacks_with_mitre_list):
+        """Test filtering by tactic ID (e.g. TA0007) matches Discovery attack."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="TA0007")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_by_tactic_id_short_form(self, sample_attacks_with_mitre_list):
+        """Test short form tactic ID (TA7) normalizes to TA0007 and matches Discovery."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="TA7")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_by_tactic_id_mixed_case(self, sample_attacks_with_mitre_list):
+        """Test tactic ID filtering is case-insensitive (ta0007)."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="ta0007")
+        assert len(result) == 1
+        assert result[0]['id'] == 1027
+
+    def test_filter_by_tactic_id_unknown(self, sample_attacks_with_mitre_list):
+        """Test unknown tactic ID (TA9999) returns no matches gracefully."""
+        result = filter_attacks_by_criteria(sample_attacks_with_mitre_list, mitre_tactic_filter="TA9999")
+        assert len(result) == 0
+
+    def test_filter_multi_tactic_ids(self, sample_attacks_with_mitre_list):
+        """Test comma-separated tactic IDs match multiple attacks."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_mitre_list, mitre_tactic_filter="TA0007,TA0008"
+        )
+        assert len(result) == 2
+        ids = {a['id'] for a in result}
+        assert ids == {1027, 2048}
+
+    def test_filter_mixed_id_and_name(self, sample_attacks_with_mitre_list):
+        """Test mixing tactic ID and tactic name in comma-separated filter."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_mitre_list, mitre_tactic_filter="TA0007,Lateral Movement"
+        )
+        assert len(result) == 2
+        ids = {a['id'] for a in result}
+        assert ids == {1027, 2048}
+
+
+class TestResolveTacticFilterValue:
+    """Test _resolve_tactic_filter_value helper function."""
+
+    def test_known_id_returns_lowercase_name(self):
+        """Test known tactic ID resolves to lowercase tactic name."""
+        assert _resolve_tactic_filter_value("ta0006") == "credential access"
+
+    def test_short_form_normalizes_and_resolves(self):
+        """Test short form 'ta6' normalizes to TA0006 and resolves."""
+        assert _resolve_tactic_filter_value("ta6") == "credential access"
+
+    def test_unknown_id_returns_original(self):
+        """Test unknown tactic ID returns original value unchanged."""
+        assert _resolve_tactic_filter_value("ta9999") == "ta9999"
+
+    def test_non_id_input_returns_unchanged(self):
+        """Test non-ID input (tactic name) is returned unchanged."""
+        assert _resolve_tactic_filter_value("discovery") == "discovery"
+
+    def test_full_canonical_form(self):
+        """Test full canonical form TA0007 resolves correctly."""
+        assert _resolve_tactic_filter_value("ta0007") == "discovery"
+
+    def test_impact_high_id(self):
+        """Test higher tactic ID TA0040 (Impact) resolves correctly."""
+        assert _resolve_tactic_filter_value("ta0040") == "impact"
+        assert _resolve_tactic_filter_value("ta40") == "impact"

@@ -1,6 +1,6 @@
 # Context: SAF-28780 - MITRE tactic filter does not support tactic IDs
 
-## Status: Phase 5: Brainstorming Complete
+## Status: Implementation Complete (Approach A — Static Mapping)
 
 ## JIRA Ticket Summary
 
@@ -87,22 +87,31 @@ The MCP correctly exposes what the API provides.
 - Pros: Clean architecture, zero MCP maintenance, fixes the problem at the root
 - Cons: Requires content-manager team involvement, longer timeline
 
-### Chosen Approach: C — No MCP Change (Content-Level Fix)
+### Previously Chosen: Approach C — No MCP Change (Content-Level Fix)
+
+Initially recommended, but reconsidered since the content-manager team fix has a longer timeline
+and the customer needs a solution now.
+
+### Final Decision: Approach A — Static Mapping Dict
 
 **Rationale:**
-1. The MCP is a data access/presentation layer, not a data enrichment layer
-2. The tactic-to-ID mapping is content/domain knowledge that belongs in the playbook data source
-3. If the content-manager team adds tactic IDs to the `MITRE_Tactic` tag `value` field (like
-   techniques have), the MCP extraction would automatically pick them up with zero code changes
-4. While the MCP does construct ATT&CK URLs for techniques, that's lightweight enrichment from an
-   already-available ID — adding a full name→ID mapping table is a different level of enrichment
+1. Customer-facing issue needs a timely resolution
+2. MITRE ATT&CK Enterprise tactics are extremely stable (14 tactics, last addition was 2020)
+3. Minimal code change — only a translation layer before existing filter logic
+4. Zero impact on existing name-based filtering behavior
+5. Graceful fallback for unknown tactic IDs (passed through unchanged)
 
-### Recommendation for JIRA Ticket
+### Implementation Summary (2026-03-09)
 
-Re-articulate SAF-28780 to:
-1. Explain that the SafeBreach playbook API lacks tactic IDs in the MITRE_Tactic tag data
-2. Recommend the content-manager team enrich the tags (match the technique pattern)
-3. Note the alternative static mapping approach if API enrichment is out of scope
+**Files modified:**
+- `safebreach_mcp_playbook/playbook_types.py` — Added `MITRE_TACTIC_ID_TO_NAME` mapping (14 tactics),
+  `_resolve_tactic_filter_value()` helper with ID normalization (e.g. "TA6" → "TA0006" → "credential access"),
+  and updated `filter_attacks_by_criteria()` to translate tactic IDs before filtering
+- `safebreach_mcp_playbook/playbook_server.py` — Updated tool docstring to mention tactic ID support
+- `safebreach_mcp_playbook/tests/test_playbook_types.py` — Added 13 new tests (7 filtering + 6 resolver unit tests)
+- `safebreach_mcp_playbook/tests/test_playbook_functions.py` — Added 1 end-to-end test through `sb_get_playbook_attacks()`
+
+**Test results:** 561 tests passing across all servers (111 playbook tests)
 
 ## References
 
