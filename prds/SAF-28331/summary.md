@@ -54,7 +54,7 @@ different data model: boolean status flags per capability instead of a single `f
 ```json
 [
   {
-    "trackingId": "6215d320a114f7588d3841752fee73ca",
+    "trackingId": "abc123def456...",
     "from": {
       "simulationId": 820344,
       "executionTime": "2025-10-12T11:01:14.931Z",
@@ -285,7 +285,7 @@ async def get_security_control_drifts(
   "description": "Gained prevention capability while maintaining reporting and alerting",
   "records": [
     {
-      "trackingId": "6215d320a114f7588d3841752fee73ca",
+      "trackingId": "abc123def456...",
       "from": {
         "simulationId": 820344,
         "executionTime": "2025-10-12T11:01:14.931Z",
