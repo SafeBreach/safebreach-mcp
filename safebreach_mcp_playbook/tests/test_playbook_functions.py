@@ -611,6 +611,16 @@ class TestMitreGetPlaybookAttacks:
         assert result['applied_filters']['mitre_technique_filter'] == 'T1046'
         assert result['applied_filters']['mitre_tactic_filter'] == 'Discovery'
 
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_mitre_tactic_filter_by_id(self, mock_get_all, sample_attack_data_with_mitre):
+        """Test mitre_tactic_filter with tactic ID (TA0007) resolves to Discovery."""
+        mock_get_all.return_value = sample_attack_data_with_mitre
+
+        result = sb_get_playbook_attacks('test-console', mitre_tactic_filter="TA0007")
+
+        assert result['total_attacks'] == 1
+        assert result['attacks_in_page'][0]['id'] == 1027
+
 
 class TestMitreGetPlaybookAttackDetails:
     """Test MITRE functionality in sb_get_playbook_attack_details."""

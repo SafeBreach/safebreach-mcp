@@ -45,7 +45,7 @@ id_min (minimum ID), id_max (maximum ID), modified_date_start (ISO date), modifi
 published_date_start (ISO date), published_date_end (ISO date),
 include_mitre_techniques (default False - include MITRE ATT&CK tactics/techniques/sub-techniques),
 mitre_technique_filter (comma-separated technique IDs or names, OR logic, case-insensitive partial match),
-mitre_tactic_filter (comma-separated tactic names, OR logic, case-insensitive partial match)"""
+mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, case-insensitive partial match)"""
         )
         def get_playbook_attacks(
             console: str = "default",
