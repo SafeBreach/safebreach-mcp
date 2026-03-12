@@ -2551,3 +2551,160 @@ class TestDriftToolsE2E:
         assert "drift_groups" in result
         assert isinstance(result["total_drifts"], int)
         assert result["total_drifts"] >= 0
+
+
+class TestSecurityControlDriftsE2E:
+    """End-to-end tests for security control drift tool against pentest01."""
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_summary(self, e2e_console):
+        """Summary query for a known security control returns valid structure."""
+        from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        controls = get_suggestions_for_collection(e2e_console, "security_product")
+        assert len(controls) > 0, "No security controls found on console"
+        control = controls[0]
+
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+        )
+
+        assert "total_drifts" in result
+        assert "security_control" in result
+        assert result["security_control"] == control
+        assert isinstance(result["total_drifts"], int)
+        assert result["total_drifts"] >= 0
+        if result["total_drifts"] > 0:
+            assert "drift_groups" in result
+            assert isinstance(result["drift_groups"], list)
+            assert len(result["drift_groups"]) > 0
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_drill_down(self, e2e_console):
+        """Drill into first group from summary, verify paginated response."""
+        from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        controls = get_suggestions_for_collection(e2e_console, "security_product")
+        control = controls[0]
+
+        summary = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+        )
+
+        if summary["total_drifts"] == 0:
+            pytest.skip("No drifts found for drill-down test")
+
+        first_key = summary["drift_groups"][0]["drift_key"]
+        drilldown = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+            drift_key=first_key,
+            page_number=0,
+        )
+
+        assert drilldown["drift_key"] == first_key
+        assert drilldown["total_drifts_in_group"] >= 1
+        assert drilldown["page_number"] == 0
+        assert drilldown["total_pages"] >= 1
+        assert len(drilldown["drifts_in_page"]) >= 1
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_contains_mode(self, e2e_console):
+        """transition_matching_mode='contains' returns valid results."""
+        from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        controls = get_suggestions_for_collection(e2e_console, "security_product")
+        control = controls[0]
+
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+        )
+
+        assert "applied_filters" in result
+        assert result["applied_filters"]["transition_matching_mode"] == "contains"
+        assert isinstance(result["total_drifts"], int)
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_starts_and_ends_mode(self, e2e_console):
+        """transition_matching_mode='starts_and_ends' returns valid results."""
+        from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        controls = get_suggestions_for_collection(e2e_console, "security_product")
+        control = controls[0]
+
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="starts_and_ends",
+        )
+
+        assert "applied_filters" in result
+        assert result["applied_filters"]["transition_matching_mode"] == "starts_and_ends"
+        assert isinstance(result["total_drifts"], int)
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_invalid_control(self, e2e_console):
+        """Garbage security control name returns ValueError with valid names."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_security_control_drifts(
+                console=e2e_console,
+                security_control="NonExistentSecurityProduct12345",
+                window_start=_E2E_WINDOW_START,
+                window_end=_E2E_WINDOW_END,
+                transition_matching_mode="contains",
+            )
+
+        error_msg = str(exc_info.value)
+        assert "not found" in error_msg.lower() or "valid" in error_msg.lower()
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_with_drift_type_filter(self, e2e_console):
+        """drift_type='regression' narrows results."""
+        from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        controls = get_suggestions_for_collection(e2e_console, "security_product")
+        control = controls[0]
+
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control=control,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+            drift_type="regression",
+        )
+
+        assert "applied_filters" in result
+        assert result["applied_filters"].get("drift_type") == "regression"
+        assert isinstance(result["total_drifts"], int)
+        assert result["total_drifts"] >= 0
