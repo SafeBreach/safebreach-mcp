@@ -466,8 +466,10 @@ DON'T USE FOR:
 
 Parameters:
   console (required): SafeBreach console name.
-  security_control (required): Security control name (e.g., 'Microsoft Defender for Endpoint'). \
-Must match a known security product. If invalid, the error will list valid values.
+  security_control (required): Security control name (e.g., 'Microsoft Defender for Endpoint'), \
+or '__list__' to enumerate available security control names on the console. \
+When '__list__' is passed, all other parameters are ignored and the response contains \
+a list of known security product names filtered to those with significant simulation data.
   window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
   window_end (required): epoch ms/seconds or ISO 8601 string.
   transition_matching_mode (required): How to match transitions. \
@@ -509,6 +511,16 @@ Start with a narrow window (1-2 days) and widen only if needed."""
             drift_key: str | None = None,
             page_number: int = 0,
         ) -> dict:
+            # Discovery mode: list available security controls
+            if security_control == "__list__":
+                return sb_get_security_control_drifts(
+                    console=console,
+                    security_control="__list__",
+                    window_start=0,
+                    window_end=0,
+                    transition_matching_mode="contains",
+                )
+
             window_start = normalize_timestamp(window_start)
             if window_start is None:
                 raise ValueError("window_start: invalid or missing timestamp value")

@@ -8,7 +8,7 @@ valid values for data-plane collections (e.g., security_product names).
 
 import logging
 import requests
-from typing import List
+from typing import List, Dict, Any
 
 from .safebreach_cache import SafeBreachCache
 from .cache_config import is_caching_enabled
@@ -20,26 +20,15 @@ logger = logging.getLogger(__name__)
 suggestions_cache = SafeBreachCache(name="suggestions", maxsize=10, ttl=1800)
 
 
-def get_suggestions_for_collection(
+def _fetch_suggestions_entries(
     console: str,
     collection_name: str,
-) -> List[str]:
-    """Fetch valid values for a specific data-plane collection.
+) -> List[Dict[str, Any]]:
+    """Fetch raw suggestion entries (key + doc_count) for a collection.
 
-    Returns a list of string keys from the executionsHistorySuggestions API
-    for the requested collection. Results are cached with TTL.
-
-    Args:
-        console: SafeBreach console name
-        collection_name: Name of the collection (e.g., "security_product")
-
-    Returns:
-        List of valid string values for the collection
-
-    Raises:
-        ValueError: If collection_name not found in API response
+    Returns cached entries if available.  Each entry is
+    ``{"key": "...", "doc_count": N}``.
     """
-    # Check cache first
     cache_key = f"{console}_{collection_name}"
     if is_caching_enabled("data"):
         cached = suggestions_cache.get(cache_key)
@@ -47,7 +36,6 @@ def get_suggestions_for_collection(
             logger.info("Suggestions cache hit: %s", cache_key)
             return cached
 
-    # Fetch from API
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
@@ -69,7 +57,6 @@ def get_suggestions_for_collection(
 
     response.raise_for_status()
 
-    # Parse response and validate collection
     data = response.json()
     completion = data.get("completion", {})
 
@@ -80,13 +67,50 @@ def get_suggestions_for_collection(
             f"Available collections: {available}"
         )
 
-    # Extract keys only
-    entries = completion[collection_name]
-    result = [item["key"] for item in entries if isinstance(item.get("key"), str)]
+    entries = [
+        item for item in completion[collection_name]
+        if isinstance(item.get("key"), str)
+    ]
 
-    # Cache result
     if is_caching_enabled("data"):
-        suggestions_cache.set(cache_key, result)
-        logger.info("Cached suggestions for %s: %d values", cache_key, len(result))
+        suggestions_cache.set(cache_key, entries)
+        logger.info("Cached suggestions for %s: %d entries", cache_key, len(entries))
 
-    return result
+    return entries
+
+
+def get_suggestions_for_collection(
+    console: str,
+    collection_name: str,
+    min_doc_count: int = 0,
+) -> List[str]:
+    """Fetch valid values for a specific data-plane collection.
+
+    Returns a list of string keys from the executionsHistorySuggestions API
+    for the requested collection. Results are cached with TTL.
+
+    Args:
+        console: SafeBreach console name
+        collection_name: Name of the collection (e.g., "security_product")
+        min_doc_count: Minimum doc_count to include (default 0 = all entries).
+            Use a threshold (e.g., 50) to filter out noisy/low-frequency values.
+
+    Returns:
+        List of valid string values for the collection, sorted by doc_count
+        descending when min_doc_count > 0.
+
+    Raises:
+        ValueError: If collection_name not found in API response
+    """
+    entries = _fetch_suggestions_entries(console, collection_name)
+
+    if min_doc_count > 0:
+        filtered = [
+            e for e in entries
+            if e.get("doc_count", 0) >= min_doc_count
+        ]
+        # Sort by doc_count descending for better UX
+        filtered.sort(key=lambda e: e.get("doc_count", 0), reverse=True)
+        return [e["key"] for e in filtered]
+
+    return [e["key"] for e in entries]

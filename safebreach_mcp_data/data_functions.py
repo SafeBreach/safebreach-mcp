@@ -2294,6 +2294,8 @@ _SC_REMOVABLE_FILTERS = {
 def _build_sc_zero_results_hint(
     applied_filters: Dict[str, Any],
     elapsed_seconds: float,
+    console: str = "",
+    security_control: str = "",
 ) -> str:
     """Build a smart hint_to_agent when the v2 drift API returns 0 results."""
     parts: list = []
@@ -2317,6 +2319,19 @@ def _build_sc_zero_results_hint(
             "Consider narrowing the time window."
         )
 
+    # Fetch known security product names to help the agent pick a valid one.
+    # The suggestions API may include noisy entries (usernames, instance types),
+    # but the agent can identify real products from the list.
+    if console:
+        try:
+            suggestions = get_suggestions_for_collection(console, "security_product")
+            if suggestions:
+                parts.append(
+                    f"Known security products on this console: {suggestions}."
+                )
+        except Exception:
+            pass  # Don't let hint building fail the request
+
     parts.append(
         "Alternatively, use get_test_drifts with a specific test ID "
         "for a targeted run-to-run comparison."
@@ -2333,6 +2348,7 @@ def _group_and_paginate_sc_drifts(
     applied_filters: Dict[str, Any],
     elapsed_seconds: float = 0.0,
     group_by: str = "transition",
+    console: str = "",
 ) -> Dict[str, Any]:
     """Group v2 security control drift records and return summary or drill-down.
 
@@ -2355,7 +2371,10 @@ def _group_and_paginate_sc_drifts(
             })
 
         if len(records) == 0:
-            hint = _build_sc_zero_results_hint(applied_filters, elapsed_seconds)
+            hint = _build_sc_zero_results_hint(
+                applied_filters, elapsed_seconds,
+                console=console, security_control=security_control,
+            )
         else:
             hint = (
                 "To see individual drift records, call this tool again with "
@@ -2449,9 +2468,12 @@ def sb_get_security_control_drifts(
     Calls the v2 drift/securityControl API and groups results by boolean
     capability transitions (prevented/reported/logged/alerted).
 
+    Pass ``security_control="__list__"`` to enumerate available security
+    control names on the console instead of querying drifts.
+
     Args:
         console: SafeBreach console name
-        security_control: Security control name (must match suggestions API)
+        security_control: Security control name, or "__list__" to enumerate
         window_start: Start of time window (epoch milliseconds)
         window_end: End of time window (epoch milliseconds)
         transition_matching_mode: "contains" or "starts_and_ends"
@@ -2464,8 +2486,24 @@ def sb_get_security_control_drifts(
         page_number: Page number for drill-down (0-based)
 
     Returns:
-        Summary (no drift_key) or paginated drill-down (with drift_key)
+        Summary (no drift_key), paginated drill-down (with drift_key),
+        or security control list (security_control="__list__")
     """
+    # 0. Discovery mode: list available security controls
+    if security_control == "__list__":
+        controls = get_suggestions_for_collection(
+            console, "security_product", min_doc_count=50,
+        )
+        return {
+            "security_controls": controls,
+            "total": len(controls),
+            "hint_to_agent": (
+                "These are security product names from execution history "
+                "(filtered to products with 50+ simulation events). "
+                "Pass one of these as security_control to query drifts."
+            ),
+        }
+
     # 1. Validate transition_matching_mode
     if transition_matching_mode not in _VALID_TRANSITION_MODES:
         raise ValueError(
@@ -2476,15 +2514,7 @@ def sb_get_security_control_drifts(
     # 2. Validate drift_type
     _validate_drift_type(drift_type)
 
-    # 3. Validate security_control via suggestions helper
-    valid_controls = get_suggestions_for_collection(console, "security_product")
-    if security_control not in valid_controls:
-        raise ValueError(
-            f"Unknown security control '{security_control}'. "
-            f"Valid values: {valid_controls}"
-        )
-
-    # 4. Map transition mode to API booleans
+    # 3. Map transition mode to API booleans
     contains_transition = transition_matching_mode == "contains"
     starts_and_ends_with_transition = transition_matching_mode == "starts_and_ends"
 
@@ -2541,4 +2571,5 @@ def sb_get_security_control_drifts(
     return _group_and_paginate_sc_drifts(
         records, security_control, page_number, drift_key,
         applied_filters, elapsed_seconds, group_by=group_by,
+        console=console,
     )

@@ -2021,19 +2021,47 @@ class TestSbGetSecurityControlDrifts:
 
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    def test_list_mode(self, mock_suggestions):
+        """security_control='__list__' returns available controls without querying drifts."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        result = sb_get_security_control_drifts(
+            console="demo",
+            security_control="__list__",
+            window_start=0,
+            window_end=0,
+            transition_matching_mode="contains",
+        )
+
+        assert "security_controls" in result
+        assert result["total"] == 2
+        assert "Microsoft Defender for Endpoint" in result["security_controls"]
+        mock_suggestions.assert_called_once_with("demo", "security_product", min_doc_count=50)
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
     @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
-    def test_invalid_security_control(self, _acct, _url, _sec, mock_post, mock_suggestions):
-        """Security control not in suggestions -> ValueError with valid names."""
+    def test_unknown_control_returns_zero_results(
+        self, _acct, _url, _sec, mock_post, mock_suggestions
+    ):
+        """Unknown security control -> 0 results with hint listing valid names."""
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
 
-        with pytest.raises(ValueError, match="Microsoft Defender for Endpoint"):
-            sb_get_security_control_drifts(
-                **{**self.COMMON_KWARGS, "security_control": "NonExistent Control"},
-            )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        result = sb_get_security_control_drifts(
+            **{**self.COMMON_KWARGS, "security_control": "NonExistent Control"},
+        )
+
+        assert result["total_drifts"] == 0
+        assert "Known security products" in result["hint_to_agent"]
 
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
@@ -2682,20 +2710,40 @@ class TestSecurityControlDriftsE2E:
     @skip_e2e
     @pytest.mark.e2e
     def test_e2e_sc_drifts_invalid_control(self, e2e_console):
-        """Garbage security control name returns ValueError with valid names."""
+        """Garbage security control name returns 0 results with hint."""
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
 
-        with pytest.raises(ValueError) as exc_info:
-            sb_get_security_control_drifts(
-                console=e2e_console,
-                security_control="NonExistentSecurityProduct12345",
-                window_start=_E2E_WINDOW_START,
-                window_end=_E2E_WINDOW_END,
-                transition_matching_mode="contains",
-            )
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control="NonExistentSecurityProduct12345",
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+        )
 
-        error_msg = str(exc_info.value)
-        assert "not found" in error_msg.lower() or "valid" in error_msg.lower()
+        assert result["total_drifts"] == 0
+        assert "hint_to_agent" in result
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_list_mode(self, e2e_console):
+        """security_control='__list__' returns available control names."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control="__list__",
+            window_start=0,
+            window_end=0,
+            transition_matching_mode="contains",
+        )
+
+        assert "security_controls" in result
+        assert result["total"] > 0
+        assert isinstance(result["security_controls"], list)
+        # Should contain well-known products, not noise like usernames
+        names = result["security_controls"]
+        assert any("Defender" in n or "CrowdStrike" in n or "SentinelOne" in n for n in names)
 
     @skip_e2e
     @pytest.mark.e2e
