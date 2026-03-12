@@ -15,6 +15,7 @@ from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+from safebreach_mcp_core.suggestions import get_suggestions_for_collection
 from .data_types import (
     get_reduced_test_summary_mapping,
     get_reduced_simulation_result_entity,
@@ -1840,6 +1841,7 @@ def _fetch_and_cache_simulation_drifts(
     console: str,
     payload: Dict[str, Any],
     cache_key: str,
+    api_path: Optional[str] = None,
 ) -> tuple:
     """Fetch simulation drift records from the API, with optional caching.
 
@@ -1847,6 +1849,7 @@ def _fetch_and_cache_simulation_drifts(
         console: SafeBreach console name
         payload: POST body for the drift API (built by build_drift_api_payload)
         cache_key: Key for the simulation_drifts_cache
+        api_path: Custom API path (default: v1 simulationStatus endpoint)
 
     Returns:
         Tuple of (records list, elapsed_seconds float)
@@ -1866,7 +1869,9 @@ def _fetch_and_cache_simulation_drifts(
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
 
-    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/drift/simulationStatus"
+    if api_path is None:
+        api_path = f"/api/data/v1/accounts/{account_id}/drift/simulationStatus"
+    api_url = f"{base_url}{api_path}"
     headers = {
         "Content-Type": "application/json",
         "x-apitoken": apitoken,
@@ -2272,3 +2277,268 @@ def sb_get_simulation_status_drifts(
     )
 
     return _group_and_paginate_drifts(records, page_number, drift_key, applied_filters, elapsed_seconds)
+
+
+# ---------------------------------------------------------------------------
+# Security control drift functions (SAF-28331)
+# ---------------------------------------------------------------------------
+
+_VALID_TRANSITION_MODES = {"contains", "starts_and_ends"}
+
+_SC_REMOVABLE_FILTERS = {
+    "drift_type", "from_prevented", "from_reported", "from_logged", "from_alerted",
+    "to_prevented", "to_reported", "to_logged", "to_alerted",
+}
+
+
+def _build_sc_zero_results_hint(
+    applied_filters: Dict[str, Any],
+    elapsed_seconds: float,
+) -> str:
+    """Build a smart hint_to_agent when the v2 drift API returns 0 results."""
+    parts: list = []
+
+    active = [k for k in applied_filters if k in _SC_REMOVABLE_FILTERS]
+
+    if active:
+        names = ", ".join(active)
+        parts.append(
+            f"No drifts matched the current filters. "
+            f"Try removing {names} to check if any drifts exist in this time window."
+        )
+    elif elapsed_seconds < 30:
+        parts.append(
+            "No drifts found. Consider extending the time window or "
+            "checking that the security control name is correct."
+        )
+    else:
+        parts.append(
+            f"No drifts found despite a large dataset (API took {elapsed_seconds:.0f}s). "
+            "Consider narrowing the time window."
+        )
+
+    parts.append(
+        "Alternatively, use get_test_drifts with a specific test ID "
+        "for a targeted run-to-run comparison."
+    )
+
+    return " ".join(parts)
+
+
+def _group_and_paginate_sc_drifts(
+    records: List[Dict[str, Any]],
+    security_control: str,
+    page_number: int,
+    drift_key: Optional[str],
+    applied_filters: Dict[str, Any],
+    elapsed_seconds: float = 0.0,
+    group_by: str = "transition",
+) -> Dict[str, Any]:
+    """Group v2 security control drift records and return summary or drill-down.
+
+    Two modes:
+    - **Summary** (drift_key=None): grouped counts.
+    - **Drill-down** (drift_key set): paginated records for a specific group.
+    """
+    from .data_types import group_sc_drift_records
+
+    groups = group_sc_drift_records(records, group_by=group_by)
+
+    if drift_key is None:
+        # Summary mode
+        summary_groups = []
+        for group in groups:
+            summary_groups.append({
+                "drift_key": group["drift_key"],
+                "count": group["count"],
+                "description": group["description"],
+            })
+
+        if len(records) == 0:
+            hint = _build_sc_zero_results_hint(applied_filters, elapsed_seconds)
+        else:
+            hint = (
+                "To see individual drift records, call this tool again with "
+                "drift_key set to one of the drift_key values above."
+            )
+
+        return {
+            "security_control": security_control,
+            "grouped_by": group_by,
+            "total_drifts": len(records),
+            "total_groups": len(groups),
+            "drift_groups": summary_groups,
+            "applied_filters": applied_filters,
+            "hint_to_agent": hint,
+        }
+
+    # Drill-down mode
+    target_group = None
+    available_keys = []
+    for group in groups:
+        available_keys.append(group["drift_key"])
+        if group["drift_key"] == drift_key:
+            target_group = group
+
+    if target_group is None:
+        raise ValueError(
+            f"Invalid drift_key '{drift_key}'. "
+            f"Available keys: {', '.join(available_keys)}"
+        )
+
+    all_drifts = target_group["drifts"]
+    total_in_group = len(all_drifts)
+    total_pages = (total_in_group + PAGE_SIZE - 1) // PAGE_SIZE if total_in_group > 0 else 1
+
+    if page_number >= total_pages or page_number < 0:
+        raise ValueError(
+            f"Page {page_number} out of range. "
+            f"Available pages: 0 to {total_pages - 1}"
+        )
+
+    start_index = page_number * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    page_drifts = all_drifts[start_index:end_index]
+
+    hint_parts = []
+    if page_number + 1 < total_pages:
+        hint_parts.append(
+            f"Next page: call with drift_key='{drift_key}', page_number={page_number + 1}"
+        )
+    hint_parts.append(
+        "To investigate a specific drift, call get_simulation_details with the "
+        "simulationId from the 'from' or 'to' object."
+    )
+
+    return {
+        "security_control": security_control,
+        "drift_key": drift_key,
+        "description": target_group["description"],
+        "page_number": page_number,
+        "total_pages": total_pages,
+        "total_drifts_in_group": total_in_group,
+        "drifts_in_page": page_drifts,
+        "applied_filters": applied_filters,
+        "hint_to_agent": " | ".join(hint_parts),
+    }
+
+
+def sb_get_security_control_drifts(
+    console: str,
+    security_control: str,
+    window_start: int,
+    window_end: int,
+    transition_matching_mode: str,
+    from_prevented: Optional[bool] = None,
+    from_reported: Optional[bool] = None,
+    from_logged: Optional[bool] = None,
+    from_alerted: Optional[bool] = None,
+    to_prevented: Optional[bool] = None,
+    to_reported: Optional[bool] = None,
+    to_logged: Optional[bool] = None,
+    to_alerted: Optional[bool] = None,
+    drift_type: Optional[str] = None,
+    earliest_search_time: Optional[int] = None,
+    max_outside_window_executions: Optional[int] = None,
+    group_by: str = "transition",
+    drift_key: Optional[str] = None,
+    page_number: int = 0,
+) -> Dict[str, Any]:
+    """Get security control capability drifts over a time window.
+
+    Calls the v2 drift/securityControl API and groups results by boolean
+    capability transitions (prevented/reported/logged/alerted).
+
+    Args:
+        console: SafeBreach console name
+        security_control: Security control name (must match suggestions API)
+        window_start: Start of time window (epoch milliseconds)
+        window_end: End of time window (epoch milliseconds)
+        transition_matching_mode: "contains" or "starts_and_ends"
+        from_prevented..to_alerted: Boolean capability filters
+        drift_type: Filter by drift type (improvement/regression/not_applicable)
+        earliest_search_time: Baseline lookback (epoch ms, default 7d before window_start)
+        max_outside_window_executions: Max executions outside window
+        group_by: "transition" (default) or "drift_type"
+        drift_key: Drill into a specific group
+        page_number: Page number for drill-down (0-based)
+
+    Returns:
+        Summary (no drift_key) or paginated drill-down (with drift_key)
+    """
+    # 1. Validate transition_matching_mode
+    if transition_matching_mode not in _VALID_TRANSITION_MODES:
+        raise ValueError(
+            f"Invalid transition_matching_mode '{transition_matching_mode}'. "
+            f"Valid values: {', '.join(sorted(_VALID_TRANSITION_MODES))}"
+        )
+
+    # 2. Validate drift_type
+    _validate_drift_type(drift_type)
+
+    # 3. Validate security_control via suggestions helper
+    valid_controls = get_suggestions_for_collection(console, "security_product")
+    if security_control not in valid_controls:
+        raise ValueError(
+            f"Unknown security control '{security_control}'. "
+            f"Valid values: {valid_controls}"
+        )
+
+    # 4. Map transition mode to API booleans
+    contains_transition = transition_matching_mode == "contains"
+    starts_and_ends_with_transition = transition_matching_mode == "starts_and_ends"
+
+    # 5. Build payload
+    from .data_types import build_security_control_drift_payload
+    payload = build_security_control_drift_payload(
+        security_control=security_control,
+        window_start=window_start,
+        window_end=window_end,
+        contains_transition=contains_transition,
+        starts_and_ends_with_transition=starts_and_ends_with_transition,
+        from_prevented=from_prevented,
+        from_reported=from_reported,
+        from_logged=from_logged,
+        from_alerted=from_alerted,
+        to_prevented=to_prevented,
+        to_reported=to_reported,
+        to_logged=to_logged,
+        to_alerted=to_alerted,
+        drift_type=drift_type,
+        earliest_search_time=earliest_search_time,
+        max_outside_window_executions=max_outside_window_executions,
+    )
+
+    # 6. Build cache key
+    cache_key = (
+        f"sc_drifts_{console}_{security_control}_{window_start}_{window_end}"
+        f"_{transition_matching_mode}_{from_prevented}_{from_reported}"
+        f"_{from_logged}_{from_alerted}_{to_prevented}_{to_reported}"
+        f"_{to_logged}_{to_alerted}_{drift_type}_{earliest_search_time}"
+        f"_{max_outside_window_executions}"
+    )
+
+    # 7. Fetch via shared helper with v2 api_path
+    account_id = get_api_account_id(console)
+    api_path = f"/api/data/v2/accounts/{account_id}/drift/securityControl"
+    records, elapsed_seconds = _fetch_and_cache_simulation_drifts(
+        console, payload, cache_key, api_path=api_path,
+    )
+
+    # 8. Build applied filters and group/paginate
+    applied_filters = _build_applied_filters(
+        drift_type=drift_type,
+        from_prevented=from_prevented,
+        from_reported=from_reported,
+        from_logged=from_logged,
+        from_alerted=from_alerted,
+        to_prevented=to_prevented,
+        to_reported=to_reported,
+        to_logged=to_logged,
+        to_alerted=to_alerted,
+    )
+
+    return _group_and_paginate_sc_drifts(
+        records, security_control, page_number, drift_key,
+        applied_filters, elapsed_seconds, group_by=group_by,
+    )

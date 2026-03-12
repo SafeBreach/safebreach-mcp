@@ -14,7 +14,7 @@
 |-------|------|--------|-----------|--------|-------|
 | 1 | Shared Suggestions Helper | ✅ Complete | 2026-03-12 | — | `safebreach_mcp_core/suggestions.py` |
 | 2 | Payload Builder & Grouping | ✅ Complete | 2026-03-12 | — | `data_types.py` |
-| 3 | Business Logic | ⏳ Pending | — | — | `data_functions.py` |
+| 3 | Business Logic | ✅ Complete | 2026-03-12 | — | `data_functions.py` |
 | 4 | MCP Tool Registration | ⏳ Pending | — | — | `data_server.py` |
 | 5 | E2E Tests | ⏳ Pending | — | — | Automated against `pentest01` |
 
@@ -698,15 +698,15 @@ E2E framework (`.vscode/run_e2e_with_env.py`, `E2E_CONSOLE=pentest01`). Sources
 - [x] Payload builder handles all v2 params correctly
 - [x] Transition key generation produces compact, readable keys
 - [x] Grouping works for both transition and drift_type modes
-- [ ] Orchestrator validates all inputs with helpful errors
-- [ ] Security control validated against suggestions API
-- [ ] `_fetch_and_cache_simulation_drifts` refactored without breaking v1 callers
+- [x] Orchestrator validates all inputs with helpful errors
+- [x] Security control validated against suggestions API
+- [x] `_fetch_and_cache_simulation_drifts` refactored without breaking v1 callers
 - [ ] MCP tool registered with comprehensive docstring
 - [ ] All timestamp params accept ISO-8601 and epoch formats
-- [ ] Two-phase (summary/drill-down) pattern works correctly
-- [ ] Pagination with proper hints
-- [ ] Caching works with v2-specific cache keys
-- [ ] Zero-results smart hints adapted for v2 context
+- [x] Two-phase (summary/drill-down) pattern works correctly
+- [x] Pagination with proper hints
+- [x] Caching works with v2-specific cache keys
+- [x] Zero-results smart hints adapted for v2 context
 - [ ] All unit tests passing
 - [ ] E2E tests passing
 - [ ] No breaking changes to existing drift tools
