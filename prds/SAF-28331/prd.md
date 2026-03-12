@@ -4,6 +4,19 @@
 **Branch**: `SAF-28331-drift-by-security-control`
 **Author**: Yossi Attas
 **Status**: Ready for Implementation
+**Last Updated**: 2026-03-12
+
+---
+
+## Phase Status Tracking
+
+| Phase | Name | Status | Completed | Commit | Notes |
+|-------|------|--------|-----------|--------|-------|
+| 1 | Shared Suggestions Helper | ✅ Complete | 2026-03-12 | — | `safebreach_mcp_core/suggestions.py` |
+| 2 | Payload Builder & Grouping | ⏳ Pending | — | — | `data_types.py` |
+| 3 | Business Logic | ⏳ Pending | — | — | `data_functions.py` |
+| 4 | MCP Tool Registration | ⏳ Pending | — | — | `data_server.py` |
+| 5 | E2E Tests | ⏳ Pending | — | — | Automated against `pentest01` |
 
 ---
 
@@ -681,7 +694,7 @@ E2E framework (`.vscode/run_e2e_with_env.py`, `E2E_CONSOLE=pentest01`). Sources
 
 ## Definition of Done
 
-- [ ] Suggestions helper created and tested
+- [x] Suggestions helper created and tested
 - [ ] Payload builder handles all v2 params correctly
 - [ ] Transition key generation produces compact, readable keys
 - [ ] Grouping works for both transition and drift_type modes

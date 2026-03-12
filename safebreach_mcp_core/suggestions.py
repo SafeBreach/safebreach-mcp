@@ -39,4 +39,54 @@ def get_suggestions_for_collection(
     Raises:
         ValueError: If collection_name not found in API response
     """
-    raise NotImplementedError("TDD stub — implement after tests are written")
+    # Check cache first
+    cache_key = f"{console}_{collection_name}"
+    if is_caching_enabled("data"):
+        cached = suggestions_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Suggestions cache hit: %s", cache_key)
+            return cached
+
+    # Fetch from API
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistorySuggestions"
+    headers = {
+        "Content-Type": "application/json",
+        "x-apitoken": apitoken,
+    }
+
+    logger.info("Fetching suggestions from API for console '%s'", console)
+    response = requests.get(api_url, headers=headers, timeout=120)
+
+    if response.status_code == 401:
+        raise ValueError(
+            f"Authentication failed (401) for console '{console}'. "
+            "Check API token configuration."
+        )
+
+    response.raise_for_status()
+
+    # Parse response and validate collection
+    data = response.json()
+    completion = data.get("completion", {})
+
+    if collection_name not in completion:
+        available = sorted(completion.keys())
+        raise ValueError(
+            f"Collection '{collection_name}' not found in suggestions response. "
+            f"Available collections: {available}"
+        )
+
+    # Extract keys only
+    entries = completion[collection_name]
+    result = [item["key"] for item in entries if isinstance(item.get("key"), str)]
+
+    # Cache result
+    if is_caching_enabled("data"):
+        suggestions_cache.set(cache_key, result)
+        logger.info("Cached suggestions for %s: %d values", cache_key, len(result))
+
+    return result
