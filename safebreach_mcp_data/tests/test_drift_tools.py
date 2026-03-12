@@ -2593,25 +2593,37 @@ class TestSecurityControlDriftsE2E:
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
 
         controls = get_suggestions_for_collection(e2e_console, "security_product")
-        control = controls[0]
+        # Try a 7-day window across multiple controls to find drifts.
+        # Some controls may have too many simulations (400 error) — skip those.
+        wide_start = _E2E_WINDOW_START - 3 * 24 * 3600 * 1000
+        wide_end = _E2E_WINDOW_END + 4 * 24 * 3600 * 1000
 
-        summary = sb_get_security_control_drifts(
-            console=e2e_console,
-            security_control=control,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
-            transition_matching_mode="contains",
-        )
+        summary = None
+        control = None
+        for candidate in controls[:10]:
+            try:
+                summary = sb_get_security_control_drifts(
+                    console=e2e_console,
+                    security_control=candidate,
+                    window_start=wide_start,
+                    window_end=wide_end,
+                    transition_matching_mode="contains",
+                )
+            except ValueError:
+                continue  # 400 = too many simulations, try next
+            if summary["total_drifts"] > 0:
+                control = candidate
+                break
 
-        if summary["total_drifts"] == 0:
-            pytest.skip("No drifts found for drill-down test")
+        if control is None:
+            pytest.skip("No drifts found across controls in 7-day window")
 
         first_key = summary["drift_groups"][0]["drift_key"]
         drilldown = sb_get_security_control_drifts(
             console=e2e_console,
             security_control=control,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            window_start=wide_start,
+            window_end=wide_end,
             transition_matching_mode="contains",
             drift_key=first_key,
             page_number=0,
