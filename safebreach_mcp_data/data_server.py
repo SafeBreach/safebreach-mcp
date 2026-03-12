@@ -26,7 +26,8 @@ from .data_functions import (
     sb_get_test_drifts,
     sb_get_full_simulation_logs,
     sb_get_simulation_result_drifts,
-    sb_get_simulation_status_drifts
+    sb_get_simulation_status_drifts,
+    sb_get_security_control_drifts,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,108 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
                 drift_key=drift_key,
                 page_number=page_number,
                 look_back_time=look_back_time
+            )
+
+        @self.mcp.tool(
+            name="get_security_control_drifts",
+            description="""Analyze capability transitions for a specific security control over time. \
+Shows how a control's prevented/reported/logged/alerted capabilities changed within a time window.
+
+TWO-PHASE USAGE:
+  1. Call WITHOUT drift_key to get a grouped summary of all capability transitions with counts. \
+Use this to understand the overall drift landscape for a security control.
+  2. Call WITH drift_key='<key>' (e.g., 'P:F,R:T,L:F,A:T->P:T,R:T,L:F,A:T') and page_number \
+to paginate through individual records in that group.
+
+USE THIS WHEN: You need to understand how a specific security control's capabilities changed over \
+time — e.g., did it gain/lose prevention? Did it start/stop alerting? Did detection degrade?
+
+DON'T USE FOR:
+  - Overall blocked/not-blocked posture view (use get_simulation_result_drifts).
+  - Security control final status transitions like prevented->logged (use get_simulation_status_drifts).
+  - Comparing two specific test runs (use get_test_drifts).
+
+Parameters:
+  console (required): SafeBreach console name.
+  security_control (required): Security control name (e.g., 'Microsoft Defender for Endpoint'). \
+Must match a known security product. If invalid, the error will list valid values.
+  window_start (required): epoch ms/seconds or ISO 8601 string (e.g., '2026-03-01T00:00:00Z').
+  window_end (required): epoch ms/seconds or ISO 8601 string.
+  transition_matching_mode (required): How to match transitions. \
+'contains' = sequence includes from->to at least once. \
+'starts_and_ends' = first AND last statuses must equal from/to.
+  from_prevented, from_reported, from_logged, from_alerted: \
+Boolean filters for origin capability state. Omit to match any.
+  to_prevented, to_reported, to_logged, to_alerted: \
+Boolean filters for destination capability state. Omit to match any.
+  drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
+  earliest_search_time: How far back to search for baseline simulations. \
+Epoch ms/seconds or ISO 8601 string. Defaults to 7 days before window_start.
+  max_outside_window_executions: Max executions outside window to consider (integer).
+  group_by: How to group results. 'transition' (default) groups by boolean capability changes. \
+'drift_type' groups by Improvement/Regression.
+  drift_key: Drill-down key from summary. Omit for grouped summary.
+  page_number: Page number for drill-down mode (default 0, 10 records per page).
+WARNING: This endpoint has no server-side pagination. Large time windows on busy consoles can be slow. \
+Start with a narrow window (1-2 days) and widen only if needed."""
+        )
+        async def get_security_control_drifts_tool(
+            console: str,
+            security_control: str,
+            window_start: str | int = None,
+            window_end: str | int = None,
+            transition_matching_mode: str = None,
+            from_prevented: bool | None = None,
+            from_reported: bool | None = None,
+            from_logged: bool | None = None,
+            from_alerted: bool | None = None,
+            to_prevented: bool | None = None,
+            to_reported: bool | None = None,
+            to_logged: bool | None = None,
+            to_alerted: bool | None = None,
+            drift_type: str | None = None,
+            earliest_search_time: str | int | None = None,
+            max_outside_window_executions: int | None = None,
+            group_by: str = "transition",
+            drift_key: str | None = None,
+            page_number: int = 0,
+        ) -> dict:
+            window_start = normalize_timestamp(window_start)
+            if window_start is None:
+                raise ValueError("window_start: invalid or missing timestamp value")
+            window_end = normalize_timestamp(window_end)
+            if window_end is None:
+                raise ValueError("window_end: invalid or missing timestamp value")
+            if transition_matching_mode is None:
+                raise ValueError(
+                    "transition_matching_mode is required. "
+                    "Valid values: 'contains', 'starts_and_ends'"
+                )
+            earliest_search_time = (
+                normalize_timestamp(earliest_search_time)
+                if earliest_search_time is not None else None
+            )
+
+            return sb_get_security_control_drifts(
+                console=console,
+                security_control=security_control,
+                window_start=window_start,
+                window_end=window_end,
+                transition_matching_mode=transition_matching_mode,
+                from_prevented=from_prevented,
+                from_reported=from_reported,
+                from_logged=from_logged,
+                from_alerted=from_alerted,
+                to_prevented=to_prevented,
+                to_reported=to_reported,
+                to_logged=to_logged,
+                to_alerted=to_alerted,
+                drift_type=drift_type,
+                earliest_search_time=earliest_search_time,
+                max_outside_window_executions=max_outside_window_executions,
+                group_by=group_by,
+                drift_key=drift_key,
+                page_number=page_number,
             )
 
 def parse_external_config(server_type: str) -> bool:
