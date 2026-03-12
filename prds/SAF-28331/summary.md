@@ -132,6 +132,7 @@ Status transitions are defined as objects with four boolean capability flags:
 
 ---
 
+<<<<<<< HEAD
 ## Unblocking: Execution History Suggestions Helper
 
 The ticket was blocked because the LLM agent had no way to discover valid `securityControl` values.
@@ -157,6 +158,8 @@ The ticket was blocked because the LLM agent had no way to discover valid `secur
 
 ---
 
+=======
+>>>>>>> origin/main
 ## Implementation Plan
 
 ### 1. Data Types Layer (`data_types.py`)
@@ -415,7 +418,10 @@ Response: Paginated list of tracking IDs with full details
 ## Definition of Done
 
 **Implementation**
+<<<<<<< HEAD
 - [ ] `safebreach_mcp_core/suggestions.py`: Generic shared helper for fetching execution history suggestions
+=======
+>>>>>>> origin/main
 - [ ] `data_types.py`: Payload builder for v2 security control drift API with boolean status objects
 - [ ] `data_types.py`: Response transformation for boolean status records
 - [ ] `data_functions.py`: Entry point function with summary/drill-down phases

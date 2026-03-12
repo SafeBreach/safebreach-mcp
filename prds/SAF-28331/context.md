@@ -234,6 +234,7 @@ async def get_security_control_drifts(
 
 ---
 
+<<<<<<< HEAD
 ## Planning Brainstorming Results (Phase 5)
 
 **Status**: Complete — Approach A selected
@@ -288,6 +289,8 @@ Extend existing drift infrastructure where possible, add v2-specific code only w
 
 ---
 
+=======
+>>>>>>> origin/main
 ## Notes
 
 - You're currently on branch `SAF-28331-drift-by-security-control`
