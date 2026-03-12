@@ -752,3 +752,38 @@ def group_and_enrich_drift_records(
 
     result.sort(key=lambda g: g["count"], reverse=True)
     return result
+
+
+def build_security_control_drift_payload(
+    security_control: str,
+    window_start: int,
+    window_end: int,
+    contains_transition: bool,
+    starts_and_ends_with_transition: bool,
+    from_prevented: Optional[bool] = None,
+    from_reported: Optional[bool] = None,
+    from_logged: Optional[bool] = None,
+    from_alerted: Optional[bool] = None,
+    to_prevented: Optional[bool] = None,
+    to_reported: Optional[bool] = None,
+    to_logged: Optional[bool] = None,
+    to_alerted: Optional[bool] = None,
+    drift_type: Optional[str] = None,
+    earliest_search_time: Optional[int] = None,
+    max_outside_window_executions: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the POST body for the v2 security control drift API."""
+    raise NotImplementedError("Phase 2 stub")
+
+
+def build_sc_drift_transition_key(record: Dict[str, Any]) -> str:
+    """Build transition key from v2 boolean status flags."""
+    raise NotImplementedError("Phase 2 stub")
+
+
+def group_sc_drift_records(
+    records: List[Dict[str, Any]],
+    group_by: str = "transition",
+) -> List[Dict[str, Any]]:
+    """Group v2 security control drift records."""
+    raise NotImplementedError("Phase 2 stub")

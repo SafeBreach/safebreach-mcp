@@ -21,6 +21,9 @@ import pytest
 from safebreach_mcp_data.data_types import (
     build_drift_api_payload,
     group_and_enrich_drift_records,
+    build_security_control_drift_payload,
+    build_sc_drift_transition_key,
+    group_sc_drift_records,
 )
 from safebreach_mcp_data.drifts_metadata import drift_types_mapping
 
@@ -94,6 +97,43 @@ def _make_drift_record(
             "preventedBy": [],
         },
         "driftType": "Regression",
+    }
+
+
+def _make_sc_drift_record(
+    from_prevented: bool = False,
+    from_reported: bool = False,
+    from_logged: bool = False,
+    from_alerted: bool = False,
+    to_prevented: bool = False,
+    to_reported: bool = False,
+    to_logged: bool = False,
+    to_alerted: bool = False,
+    tracking_id: str = "sc-track-001",
+    drift_type: str = "Improvement",
+    from_simulation_id: int = 820344,
+    to_simulation_id: int = 838191,
+) -> dict:
+    """Helper factory for v2 security control drift records with boolean flags."""
+    return {
+        "trackingId": tracking_id,
+        "from": {
+            "simulationId": from_simulation_id,
+            "executionTime": "2025-10-12T11:01:14.931Z",
+            "prevented": from_prevented,
+            "reported": from_reported,
+            "logged": from_logged,
+            "alerted": from_alerted,
+        },
+        "to": {
+            "simulationId": to_simulation_id,
+            "executionTime": "2025-10-13T13:20:50.099Z",
+            "prevented": to_prevented,
+            "reported": to_reported,
+            "logged": to_logged,
+            "alerted": to_alerted,
+        },
+        "driftType": drift_type,
     }
 
 
@@ -530,6 +570,328 @@ class TestGroupAndEnrichDriftRecords:
         assert len(groups_fs) == 3
         # result_status: 2 groups (fail-success, success-fail)
         assert len(groups_rs) == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_security_control_drift_payload  (SAF-28331 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestBuildSecurityControlDriftPayload:
+    """Tests for building the v2 security control drift POST payload."""
+
+    # Standard test timestamps
+    WINDOW_START = 1709251200000   # 2024-03-01T00:00:00.000Z
+    WINDOW_END = 1709337600000     # 2024-03-02T00:00:00.000Z
+    SEVEN_DAYS_MS = 7 * 86_400_000
+    DEFAULT_EARLIEST = WINDOW_START - SEVEN_DAYS_MS  # 2024-02-23T00:00:00.000Z
+
+    def _build_minimal(self, **overrides):
+        """Build payload with minimal required params, merging overrides."""
+        defaults = dict(
+            security_control="Microsoft Defender for Endpoint",
+            window_start=self.WINDOW_START,
+            window_end=self.WINDOW_END,
+            contains_transition=True,
+            starts_and_ends_with_transition=False,
+        )
+        defaults.update(overrides)
+        return build_security_control_drift_payload(**defaults)
+
+    def test_build_sc_payload_required_fields(self):
+        """Output has securityControl, windowStart, windowEnd, earliestSearchTime, both transition booleans."""
+        payload = self._build_minimal()
+
+        assert "securityControl" in payload
+        assert "windowStart" in payload
+        assert "windowEnd" in payload
+        assert "earliestSearchTime" in payload
+        assert "containsTransition" in payload
+        assert "startsAndEndsWithTransition" in payload
+        assert payload["securityControl"] == "Microsoft Defender for Endpoint"
+        assert payload["containsTransition"] is True
+        assert payload["startsAndEndsWithTransition"] is False
+
+    def test_build_sc_payload_timestamps_converted(self):
+        """Epoch ms -> ISO-8601 UTC strings."""
+        payload = self._build_minimal()
+
+        assert payload["windowStart"] == "2024-03-01T00:00:00.000Z"
+        assert payload["windowEnd"] == "2024-03-02T00:00:00.000Z"
+
+    def test_build_sc_payload_all_from_booleans(self):
+        """fromStatus: {prevented: T, reported: F, logged: T, alerted: F}."""
+        payload = self._build_minimal(
+            from_prevented=True, from_reported=False,
+            from_logged=True, from_alerted=False,
+        )
+
+        assert payload["fromStatus"] == {
+            "prevented": True, "reported": False,
+            "logged": True, "alerted": False,
+        }
+
+    def test_build_sc_payload_all_to_booleans(self):
+        """toStatus: {prevented: T, reported: T, logged: F, alerted: T}."""
+        payload = self._build_minimal(
+            to_prevented=True, to_reported=True,
+            to_logged=False, to_alerted=True,
+        )
+
+        assert payload["toStatus"] == {
+            "prevented": True, "reported": True,
+            "logged": False, "alerted": True,
+        }
+
+    def test_build_sc_payload_partial_from_booleans(self):
+        """Only 2 of 4 from booleans -> fromStatus has only those 2 keys."""
+        payload = self._build_minimal(
+            from_prevented=True, from_alerted=False,
+        )
+
+        assert "fromStatus" in payload
+        assert payload["fromStatus"] == {"prevented": True, "alerted": False}
+        assert "reported" not in payload["fromStatus"]
+        assert "logged" not in payload["fromStatus"]
+
+    def test_build_sc_payload_no_from_booleans(self):
+        """All from booleans None -> no fromStatus key in payload."""
+        payload = self._build_minimal()
+
+        assert "fromStatus" not in payload
+
+    def test_build_sc_payload_no_to_booleans(self):
+        """All to booleans None -> no toStatus key in payload."""
+        payload = self._build_minimal()
+
+        assert "toStatus" not in payload
+
+    @pytest.mark.parametrize("input_val,expected", [
+        ("regression", "Regression"),
+        ("IMPROVEMENT", "Improvement"),
+        ("not_applicable", "NotApplicable"),
+        ("Regression", "Regression"),
+        ("improvement", "Improvement"),
+    ])
+    def test_build_sc_payload_drift_type_mapping(self, input_val, expected):
+        """Drift type string maps to PascalCase API value."""
+        payload = self._build_minimal(drift_type=input_val)
+
+        assert payload["driftType"] == expected
+
+    def test_build_sc_payload_default_earliest_search_time(self):
+        """None -> 7 days before window_start."""
+        payload = self._build_minimal()
+
+        assert payload["earliestSearchTime"] == "2024-02-23T00:00:00.000Z"
+
+    def test_build_sc_payload_explicit_earliest_search_time(self):
+        """Explicit value overrides default."""
+        payload = self._build_minimal(earliest_search_time=1708387200000)
+
+        assert payload["earliestSearchTime"] == "2024-02-20T00:00:00.000Z"
+
+    def test_build_sc_payload_max_outside_window(self):
+        """Integer included as maxOutsideWindowExecutions."""
+        payload = self._build_minimal(max_outside_window_executions=0)
+
+        assert payload["maxOutsideWindowExecutions"] == 0
+
+    def test_build_sc_payload_max_outside_window_omitted(self):
+        """None -> key absent from payload."""
+        payload = self._build_minimal()
+
+        assert "maxOutsideWindowExecutions" not in payload
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_sc_drift_transition_key  (SAF-28331 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestBuildScDriftTransitionKey:
+    """Tests for v2 transition key generation from boolean status flags."""
+
+    def test_transition_key_all_true(self):
+        """All booleans True on both sides."""
+        record = _make_sc_drift_record(
+            from_prevented=True, from_reported=True, from_logged=True, from_alerted=True,
+            to_prevented=True, to_reported=True, to_logged=True, to_alerted=True,
+        )
+        key = build_sc_drift_transition_key(record)
+        assert key == "P:T,R:T,L:T,A:T->P:T,R:T,L:T,A:T"
+
+    def test_transition_key_all_false(self):
+        """All booleans False on both sides."""
+        record = _make_sc_drift_record()  # defaults are all False
+        key = build_sc_drift_transition_key(record)
+        assert key == "P:F,R:F,L:F,A:F->P:F,R:F,L:F,A:F"
+
+    def test_transition_key_mixed(self):
+        """Specific mixed combo produces correct compact key."""
+        record = _make_sc_drift_record(
+            from_prevented=False, from_reported=True, from_logged=False, from_alerted=True,
+            to_prevented=True, to_reported=True, to_logged=False, to_alerted=True,
+        )
+        key = build_sc_drift_transition_key(record)
+        assert key == "P:F,R:T,L:F,A:T->P:T,R:T,L:F,A:T"
+
+    def test_transition_key_single_change(self):
+        """Only prevented flips from F to T."""
+        record = _make_sc_drift_record(to_prevented=True)
+        key = build_sc_drift_transition_key(record)
+        assert key == "P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"
+
+    def test_transition_key_missing_field_defaults(self):
+        """Missing 'prevented' in 'from' defaults to False."""
+        record = {
+            "trackingId": "missing-field",
+            "from": {
+                "simulationId": 1000,
+                "executionTime": "2025-10-12T11:01:14.931Z",
+                "reported": True,
+                "logged": False,
+                "alerted": False,
+            },
+            "to": {
+                "simulationId": 2000,
+                "executionTime": "2025-10-13T13:20:50.099Z",
+                "prevented": True,
+                "reported": True,
+                "logged": False,
+                "alerted": False,
+            },
+            "driftType": "Improvement",
+        }
+        key = build_sc_drift_transition_key(record)
+        assert key == "P:F,R:T,L:F,A:F->P:T,R:T,L:F,A:F"
+
+
+# ---------------------------------------------------------------------------
+# Tests: group_sc_drift_records  (SAF-28331 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestGroupScDriftRecords:
+    """Tests for grouping v2 security control drift records."""
+
+    def test_group_by_transition_same_combo(self):
+        """3 identical boolean combos -> 1 group, count=3."""
+        records = [
+            _make_sc_drift_record(to_prevented=True, tracking_id=f"t-{i}")
+            for i in range(3)
+        ]
+        groups = group_sc_drift_records(records, group_by="transition")
+
+        assert len(groups) == 1
+        assert groups[0]["count"] == 3
+
+    def test_group_by_transition_different_combos(self):
+        """Different boolean combos -> separate groups."""
+        rec_a = _make_sc_drift_record(to_prevented=True, tracking_id="a")
+        rec_b = _make_sc_drift_record(to_reported=True, tracking_id="b")
+        groups = group_sc_drift_records([rec_a, rec_b], group_by="transition")
+
+        assert len(groups) == 2
+
+    def test_group_by_transition_sorted_by_count(self):
+        """Groups sorted descending by count."""
+        recs_a = [
+            _make_sc_drift_record(to_prevented=True, tracking_id=f"a-{i}")
+            for i in range(5)
+        ]
+        recs_b = [
+            _make_sc_drift_record(to_reported=True, tracking_id=f"b-{i}")
+            for i in range(2)
+        ]
+        groups = group_sc_drift_records(recs_a + recs_b, group_by="transition")
+
+        assert groups[0]["count"] == 5
+        assert groups[1]["count"] == 2
+
+    def test_group_by_drift_type(self):
+        """Groups by driftType (Improvement, Regression)."""
+        recs = [
+            _make_sc_drift_record(drift_type="Improvement", tracking_id="imp-1"),
+            _make_sc_drift_record(drift_type="Improvement", tracking_id="imp-2"),
+            _make_sc_drift_record(drift_type="Regression", tracking_id="reg-1"),
+        ]
+        groups = group_sc_drift_records(recs, group_by="drift_type")
+
+        assert len(groups) == 2
+        keys = {g["drift_key"] for g in groups}
+        assert "Improvement" in keys
+        assert "Regression" in keys
+
+    def test_group_by_drift_type_mixed(self):
+        """3 Improvement + 2 Regression -> 2 groups sorted by count."""
+        recs = [
+            _make_sc_drift_record(drift_type="Improvement", tracking_id=f"i-{i}")
+            for i in range(3)
+        ] + [
+            _make_sc_drift_record(drift_type="Regression", tracking_id=f"r-{i}")
+            for i in range(2)
+        ]
+        groups = group_sc_drift_records(recs, group_by="drift_type")
+
+        assert len(groups) == 2
+        assert groups[0]["drift_key"] == "Improvement"
+        assert groups[0]["count"] == 3
+        assert groups[1]["drift_key"] == "Regression"
+        assert groups[1]["count"] == 2
+
+    def test_group_empty_records(self):
+        """Empty list -> empty list."""
+        groups = group_sc_drift_records([], group_by="transition")
+        assert groups == []
+
+    def test_group_description_gained_prevention(self):
+        """from.prevented=false, to.prevented=true -> description mentions prevention gain."""
+        record = _make_sc_drift_record(from_prevented=False, to_prevented=True)
+        groups = group_sc_drift_records([record], group_by="transition")
+
+        assert len(groups) == 1
+        desc = groups[0]["description"].lower()
+        assert "prevent" in desc
+
+    def test_group_description_lost_alerting(self):
+        """from.alerted=true, to.alerted=false -> description mentions alerting loss."""
+        record = _make_sc_drift_record(from_alerted=True, to_alerted=False)
+        groups = group_sc_drift_records([record], group_by="transition")
+
+        assert len(groups) == 1
+        desc = groups[0]["description"].lower()
+        assert "alert" in desc
+
+    def test_group_description_multi_change(self):
+        """Multiple flags changed -> description covers all changes."""
+        record = _make_sc_drift_record(
+            from_prevented=True, to_prevented=False,
+            from_logged=False, to_logged=True,
+        )
+        groups = group_sc_drift_records([record], group_by="transition")
+
+        assert len(groups) == 1
+        desc = groups[0]["description"].lower()
+        assert "prevent" in desc
+        assert "log" in desc
+
+    def test_group_preserves_original_records(self):
+        """All original API fields intact in drifts list."""
+        record = _make_sc_drift_record(
+            from_prevented=True, to_prevented=False,
+            tracking_id="preserve-me",
+            from_simulation_id=111,
+            to_simulation_id=222,
+        )
+        groups = group_sc_drift_records([record], group_by="transition")
+
+        assert len(groups) == 1
+        drift = groups[0]["drifts"][0]
+        assert drift["trackingId"] == "preserve-me"
+        assert drift["from"]["simulationId"] == 111
+        assert drift["to"]["simulationId"] == 222
+        assert drift["from"]["executionTime"] == "2025-10-12T11:01:14.931Z"
+        assert drift["to"]["executionTime"] == "2025-10-13T13:20:50.099Z"
+        assert "prevented" in drift["from"]
+        assert "prevented" in drift["to"]
 
 
 # ---------------------------------------------------------------------------
