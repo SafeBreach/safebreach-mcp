@@ -13,7 +13,7 @@
 | Phase | Name | Status | Completed | Commit | Notes |
 |-------|------|--------|-----------|--------|-------|
 | 1 | Shared Suggestions Helper | ✅ Complete | 2026-03-12 | — | `safebreach_mcp_core/suggestions.py` |
-| 2 | Payload Builder & Grouping | ⏳ Pending | — | — | `data_types.py` |
+| 2 | Payload Builder & Grouping | ✅ Complete | 2026-03-12 | — | `data_types.py` |
 | 3 | Business Logic | ⏳ Pending | — | — | `data_functions.py` |
 | 4 | MCP Tool Registration | ⏳ Pending | — | — | `data_server.py` |
 | 5 | E2E Tests | ⏳ Pending | — | — | Automated against `pentest01` |
@@ -695,9 +695,9 @@ E2E framework (`.vscode/run_e2e_with_env.py`, `E2E_CONSOLE=pentest01`). Sources
 ## Definition of Done
 
 - [x] Suggestions helper created and tested
-- [ ] Payload builder handles all v2 params correctly
-- [ ] Transition key generation produces compact, readable keys
-- [ ] Grouping works for both transition and drift_type modes
+- [x] Payload builder handles all v2 params correctly
+- [x] Transition key generation produces compact, readable keys
+- [x] Grouping works for both transition and drift_type modes
 - [ ] Orchestrator validates all inputs with helpful errors
 - [ ] Security control validated against suggestions API
 - [ ] `_fetch_and_cache_simulation_drifts` refactored without breaking v1 callers
