@@ -2491,15 +2491,13 @@ def sb_get_security_control_drifts(
     """
     # 0. Discovery mode: list available security controls
     if security_control == "__list__":
-        controls = get_suggestions_for_collection(
-            console, "security_product", min_doc_count=50,
-        )
+        controls = get_suggestions_for_collection(console, "security_product")
         return {
             "security_controls": controls,
             "total": len(controls),
             "hint_to_agent": (
-                "These are security product names from execution history "
-                "(filtered to products with 50+ simulation events). "
+                "These are security product names from execution history. "
+                "Some entries may be noisy (usernames, instance types). "
                 "Pass one of these as security_control to query drifts."
             ),
         }

@@ -206,29 +206,3 @@ class TestGetSuggestionsForCollection:
         assert result == ["Alpha", "Beta", "Gamma"]
         assert all(isinstance(item, str) for item in result)
 
-    # --- min_doc_count filtering ---
-
-    @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
-    @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
-    @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_min_doc_count_filters_low_entries(self, _acct, _url, _sec, mock_get):
-        """min_doc_count filters out entries below threshold, sorted by doc_count desc."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "completion": {
-                "security_product": [
-                    {"key": "CrowdStrike Falcon", "doc_count": 6000},
-                    {"key": "administrator", "doc_count": 21},
-                    {"key": "Microsoft Defender", "doc_count": 38000},
-                    {"key": "test", "doc_count": 2},
-                ]
-            }
-        }
-        mock_get.return_value = mock_response
-
-        result = get_suggestions_for_collection("demo", "security_product", min_doc_count=50)
-
-        # Only high doc_count entries, sorted desc
-        assert result == ["Microsoft Defender", "CrowdStrike Falcon"]

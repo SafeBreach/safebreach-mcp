@@ -82,7 +82,6 @@ def _fetch_suggestions_entries(
 def get_suggestions_for_collection(
     console: str,
     collection_name: str,
-    min_doc_count: int = 0,
 ) -> List[str]:
     """Fetch valid values for a specific data-plane collection.
 
@@ -92,25 +91,12 @@ def get_suggestions_for_collection(
     Args:
         console: SafeBreach console name
         collection_name: Name of the collection (e.g., "security_product")
-        min_doc_count: Minimum doc_count to include (default 0 = all entries).
-            Use a threshold (e.g., 50) to filter out noisy/low-frequency values.
 
     Returns:
-        List of valid string values for the collection, sorted by doc_count
-        descending when min_doc_count > 0.
+        List of valid string values for the collection
 
     Raises:
         ValueError: If collection_name not found in API response
     """
     entries = _fetch_suggestions_entries(console, collection_name)
-
-    if min_doc_count > 0:
-        filtered = [
-            e for e in entries
-            if e.get("doc_count", 0) >= min_doc_count
-        ]
-        # Sort by doc_count descending for better UX
-        filtered.sort(key=lambda e: e.get("doc_count", 0), reverse=True)
-        return [e["key"] for e in filtered]
-
     return [e["key"] for e in entries]

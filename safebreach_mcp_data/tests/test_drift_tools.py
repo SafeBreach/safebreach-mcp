@@ -2036,7 +2036,7 @@ class TestSbGetSecurityControlDrifts:
         assert "security_controls" in result
         assert result["total"] == 2
         assert "Microsoft Defender for Endpoint" in result["security_controls"]
-        mock_suggestions.assert_called_once_with("demo", "security_product", min_doc_count=50)
+        mock_suggestions.assert_called_once_with("demo", "security_product")
 
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
