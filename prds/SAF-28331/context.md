@@ -2,7 +2,7 @@
 
 **Ticket ID**: SAF-28331
 **Title**: Add Security Control Drift API to MCP
-**Status**: Phase 3: Context Created
+**Status**: Phase 5: Brainstorm Complete
 **Mode**: Improve Existing Ticket
 **Repo**: /Users/yossiattas/Public/safebreach-mcp
 
@@ -234,6 +234,63 @@ async def get_security_control_drifts(
 
 ---
 
+<<<<<<< HEAD
+## Planning Brainstorming Results (Phase 5)
+
+**Status**: Complete — Approach A selected
+
+### Suggestions Helper Design
+
+**Decision**: Per-collection on-demand caching in `safebreach_mcp_core/suggestions.py`
+- Generic helper usable across all MCP servers
+- `GET /api/data/v1/accounts/{accountId}/executionsHistorySuggestions` returns 60+ collections
+- `security_product` collection maps to v2 drift API's `securityControl` parameter
+- Cached per-collection with TTL to avoid repeated API calls
+
+### Validation Strategy
+
+**Decision**: Validate `security_control` before API call
+- If the value is not in the `security_product` suggestions list, return the list of valid options to the caller
+- Fail-fast with helpful guidance instead of sending invalid requests to the API
+
+### Implementation Approach (Chosen: Approach A — Maximize Reuse)
+
+Extend existing drift infrastructure where possible, add v2-specific code only where needed:
+
+1. **`safebreach_mcp_core/suggestions.py`** (NEW): Shared helper for `executionsHistorySuggestions` API
+   - Generic per-collection fetcher with caching
+   - Used by Data Server for security control validation, available to all servers
+
+2. **`data_types.py`** — New functions:
+   - `build_security_control_drift_payload()`: Builds POST body for v2 endpoint with boolean status objects
+   - `group_and_enrich_sc_drift_records()`: Groups records by boolean flag combinations (not string finalStatus)
+
+3. **`data_functions.py`** — Refactor + new:
+   - Refactor `_fetch_and_cache_simulation_drifts()` to accept endpoint URL as parameter (reuse for v2)
+   - New `sb_get_security_control_drifts()` orchestrator following existing pattern
+   - Reuse `_group_and_paginate_drifts()` by adding group_by mode for boolean flag combos
+   - Reuse `_build_zero_results_hint()` and `_build_applied_filters()`
+
+4. **`data_server.py`** — New MCP tool:
+   - `get_security_control_drifts` tool with timestamp normalization, validation, delegation
+
+5. **`tests/test_drift_tools.py`** — New test class:
+   - Unit tests following existing drift test patterns
+   - Mock v2 API responses with boolean status model
+   - E2E tests with `@skip_e2e` and `@pytest.mark.e2e` decorators
+
+### Key v2 API Differences (from v1)
+
+- **Endpoint**: `POST /api/data/v2/accounts/{accountId}/drift/securityControl`
+- **Status model**: Boolean flags (`prevented`, `reported`, `logged`, `alerted`) instead of string `finalStatus`
+- **Transition matching**: `containsTransition` / `startsAndEndsWithTransition` boolean params (mutually exclusive)
+- **`securityControl`**: Direct API parameter (validated via suggestions helper)
+- **No `attackId`/`attackTypes`** in response (unlike v1)
+
+---
+
+=======
+>>>>>>> origin/main
 ## Notes
 
 - You're currently on branch `SAF-28331-drift-by-security-control`

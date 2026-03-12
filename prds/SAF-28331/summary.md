@@ -1,6 +1,6 @@
 # SAF-28331 Summary: Add Security Control Drift API to MCP
 
-**Status**: Phase 6 - Ready for Approval (Revised with correct API details)
+**Status**: Unblocked - Ready for Implementation
 
 ---
 
@@ -132,6 +132,34 @@ Status transitions are defined as objects with four boolean capability flags:
 
 ---
 
+<<<<<<< HEAD
+## Unblocking: Execution History Suggestions Helper
+
+The ticket was blocked because the LLM agent had no way to discover valid `securityControl` values.
+
+**Solution**: A shared helper in `safebreach_mcp_core/` that fetches from the
+`GET /api/data/v1/accounts/{accountId}/executionsHistorySuggestions` endpoint.
+
+**Endpoint details**:
+- Returns `{ "completion": { ... 60+ collections ... } }`
+- Each collection is an array of `{"key": "name", "doc_count": N}`
+- The `security_product` collection provides valid security control names
+  (e.g., "Microsoft Defender for Endpoint", "CrowdStrike Falcon")
+
+**Design**:
+- Location: `safebreach_mcp_core/suggestions.py` (shared across all servers)
+- Generic interface: accepts console name + collection name, returns list of values
+- Cacheable (suggestions change infrequently)
+- Any MCP server can import and use it for input validation or discovery
+
+**Usage in SAF-28331**:
+- Before calling the v2 drift API, validate `security_control` against known values
+- Or provide hints in error messages when an invalid control name is supplied
+
+---
+
+=======
+>>>>>>> origin/main
 ## Implementation Plan
 
 ### 1. Data Types Layer (`data_types.py`)
@@ -390,6 +418,10 @@ Response: Paginated list of tracking IDs with full details
 ## Definition of Done
 
 **Implementation**
+<<<<<<< HEAD
+- [ ] `safebreach_mcp_core/suggestions.py`: Generic shared helper for fetching execution history suggestions
+=======
+>>>>>>> origin/main
 - [ ] `data_types.py`: Payload builder for v2 security control drift API with boolean status objects
 - [ ] `data_types.py`: Response transformation for boolean status records
 - [ ] `data_functions.py`: Entry point function with summary/drill-down phases
