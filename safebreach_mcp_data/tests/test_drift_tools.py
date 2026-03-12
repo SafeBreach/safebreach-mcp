@@ -1017,6 +1017,50 @@ class TestFetchAndCacheSimulationDrifts:
         with pytest.raises(req.exceptions.Timeout):
             _fetch_and_cache_simulation_drifts("demo", {}, "key")
 
+    # --- Backward compatibility: api_path parameter (SAF-28331 Phase 3) ---
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_fetch_v1_default_unchanged(self, mock_account, mock_url, mock_secret, mock_post):
+        """No api_path → URL contains /v1/.../drift/simulationStatus."""
+        from safebreach_mcp_data.data_functions import _fetch_and_cache_simulation_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"trackingId": "t1"}]
+        mock_resp.content = b"[]"
+        mock_post.return_value = mock_resp
+
+        _fetch_and_cache_simulation_drifts("demo", {"windowStart": "x"}, "key_v1")
+
+        call_url = mock_post.call_args[0][0]
+        assert "/api/data/v1/accounts/12345/drift/simulationStatus" in call_url
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_fetch_v2_custom_api_path(self, mock_account, mock_url, mock_secret, mock_post):
+        """Custom api_path → URL uses that path instead of v1 default."""
+        from safebreach_mcp_data.data_functions import _fetch_and_cache_simulation_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"trackingId": "sc1"}]
+        mock_resp.content = b"[]"
+        mock_post.return_value = mock_resp
+
+        _fetch_and_cache_simulation_drifts(
+            "demo", {"securityControl": "x"}, "key_v2",
+            api_path="/api/data/v2/accounts/12345/drift/securityControl",
+        )
+
+        call_url = mock_post.call_args[0][0]
+        assert call_url == "https://demo.safebreach.com/api/data/v2/accounts/12345/drift/securityControl"
+        assert "/v1/" not in call_url
+
 
 # ---------------------------------------------------------------------------
 # Tests: _group_and_paginate_drifts  (Phase 2)
@@ -1922,6 +1966,345 @@ class TestSbGetSimulationStatusDrifts:
         )
 
         assert "final_status_breakdown" not in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: sb_get_security_control_drifts  (SAF-28331 Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestSbGetSecurityControlDrifts:
+    """Tests for the v2 security control drift orchestrator function."""
+
+    COMMON_KWARGS = dict(
+        console="demo",
+        security_control="Microsoft Defender for Endpoint",
+        window_start=1709251200000,
+        window_end=1709337600000,
+        transition_matching_mode="contains",
+    )
+
+    def setup_method(self):
+        """Clear the simulation_drifts_cache before each test."""
+        from safebreach_mcp_data.data_functions import simulation_drifts_cache
+        simulation_drifts_cache.clear()
+
+    def _mock_response(self, records):
+        """Create a mock response with given v2 records."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = records
+        mock_resp.content = b"[]"
+        return mock_resp
+
+    # --- Validation tests (no mocks needed) ---
+
+    def test_invalid_transition_mode(self):
+        """Invalid transition_matching_mode raises ValueError listing valid modes."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        with pytest.raises(ValueError, match="contains"):
+            sb_get_security_control_drifts(
+                **{**self.COMMON_KWARGS, "transition_matching_mode": "invalid"},
+            )
+
+    def test_invalid_drift_type(self):
+        """Invalid drift_type raises ValueError."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        with pytest.raises(ValueError, match="drift_type"):
+            sb_get_security_control_drifts(
+                **self.COMMON_KWARGS,
+                drift_type="unknown",
+            )
+
+    # --- Tests requiring mock stack ---
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_invalid_security_control(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Security control not in suggestions -> ValueError with valid names."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        with pytest.raises(ValueError, match="Microsoft Defender for Endpoint"):
+            sb_get_security_control_drifts(
+                **{**self.COMMON_KWARGS, "security_control": "NonExistent Control"},
+            )
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_contains_mode_maps_correctly(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """'contains' -> containsTransition=True in payload."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        sb_get_security_control_drifts(**self.COMMON_KWARGS)
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["containsTransition"] is True
+        assert payload["startsAndEndsWithTransition"] is False
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_starts_and_ends_mode_maps_correctly(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """'starts_and_ends' -> startsAndEndsWithTransition=True in payload."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        sb_get_security_control_drifts(
+            **{**self.COMMON_KWARGS, "transition_matching_mode": "starts_and_ends"},
+        )
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["containsTransition"] is False
+        assert payload["startsAndEndsWithTransition"] is True
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_summary_mode(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """No drift_key -> summary with grouped_by, total_drifts, drift_groups."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
+            _make_sc_drift_record(to_prevented=True, tracking_id="t2"),
+            _make_sc_drift_record(to_reported=True, tracking_id="t3"),
+        ])
+
+        result = sb_get_security_control_drifts(**self.COMMON_KWARGS)
+
+        assert result["security_control"] == "Microsoft Defender for Endpoint"
+        assert result["grouped_by"] == "transition"
+        assert result["total_drifts"] == 3
+        assert len(result["drift_groups"]) == 2
+        assert "hint_to_agent" in result
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_drill_down_mode(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """drift_key set -> paginated drill-down with drifts_in_page."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id=f"t{i}")
+            for i in range(3)
+        ])
+
+        result = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+        )
+
+        assert result["security_control"] == "Microsoft Defender for Endpoint"
+        assert result["drift_key"] == "P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"
+        assert result["total_drifts_in_group"] == 3
+        assert len(result["drifts_in_page"]) == 3
+        assert result["page_number"] == 0
+        assert "total_pages" in result
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_drill_down_pagination(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """25 records -> total_pages=3, page 0 has 10 records."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id=f"t-{i}")
+            for i in range(25)
+        ])
+
+        result = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            page_number=0,
+        )
+
+        assert result["total_pages"] == 3
+        assert result["total_drifts_in_group"] == 25
+        assert len(result["drifts_in_page"]) == 10
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_invalid_drift_key(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Unknown drift_key -> ValueError listing available keys."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
+        ])
+
+        with pytest.raises(ValueError, match="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"):
+            sb_get_security_control_drifts(
+                **self.COMMON_KWARGS,
+                drift_key="nonexistent-key",
+            )
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_out_of_range_page(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """page_number=99 on small dataset -> ValueError."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
+        ])
+
+        with pytest.raises(ValueError, match="[Pp]age"):
+            sb_get_security_control_drifts(
+                **self.COMMON_KWARGS,
+                drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+                page_number=99,
+            )
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_zero_results_hint(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """0 records -> contextual hint_to_agent."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        result = sb_get_security_control_drifts(**self.COMMON_KWARGS)
+
+        assert result["total_drifts"] == 0
+        assert "hint_to_agent" in result
+        assert len(result["hint_to_agent"]) > 0
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_applied_filters(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Non-None filters appear in applied_filters dict."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        result = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            drift_type="regression",
+            from_prevented=True,
+            to_reported=False,
+        )
+
+        filters = result["applied_filters"]
+        assert filters["drift_type"] == "regression"
+        assert filters["from_prevented"] is True
+        assert filters["to_reported"] is False
+        assert "from_reported" not in filters
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_cache_key_includes_all_params(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Different params -> different cache keys -> separate API calls."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        sb_get_security_control_drifts(**self.COMMON_KWARGS)
+        sb_get_security_control_drifts(**self.COMMON_KWARGS, from_prevented=True)
+
+        assert mock_post.call_count == 2
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_security_control_in_response(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Both summary and drill-down include security_control field."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
+        ])
+
+        summary = sb_get_security_control_drifts(**self.COMMON_KWARGS)
+        assert summary["security_control"] == "Microsoft Defender for Endpoint"
+
+        drilldown = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+        )
+        assert drilldown["security_control"] == "Microsoft Defender for Endpoint"
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_no_attack_summary_in_drilldown(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Unlike v1, v2 drill-down has no attack_summary (no attackId in records)."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([
+            _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
+        ])
+
+        result = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+        )
+
+        assert "attack_summary" not in result
 
 
 # ---------------------------------------------------------------------------
