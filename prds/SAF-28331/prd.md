@@ -692,6 +692,54 @@ E2E framework (`.vscode/run_e2e_with_env.py`, `E2E_CONSOLE=pentest01`). Sources
 
 ---
 
+## Post-Implementation Refinements
+
+### Refinement 1: `__list__` Discovery Mode
+
+Added `security_control="__list__"` to enumerate available security controls with simulation counts.
+Removed strict client-side validation (noisy `security_product` suggestions data includes usernames,
+instance types). The v2 API returns `[]` for unknown controls, so soft guidance via zero-results hints
+is preferred over hard validation errors.
+
+**Response format**:
+```python
+{
+    "security_controls": [
+        {"name": "Microsoft Defender for Endpoint", "simulations": 500},
+        {"name": "CrowdStrike Falcon", "simulations": 300},
+    ],
+    "total": 2,
+    "hint_to_agent": "These are security product names from execution history..."
+}
+```
+
+### Refinement 2: Drift Key Notation — Capability-List Format
+
+**Problem**: The original `P:T,R:F,L:F,A:F->P:T,R:T,L:F,A:F` notation is cryptic and inconsistent
+with the existing drift tools which use human-readable keys like `prevented-logged` and `fail-success`.
+
+**Options analyzed**:
+1. **Capability-list keys** — List active capabilities per side: `prevented->prevented,reported`
+2. **Map to finalStatus names** — Reuse `prevented-logged` format. Loses boolean granularity.
+3. **Group by drift_type only** — Use `regression`/`improvement`. Too coarse, loses transition detail.
+
+**Selected: Option 1 (Capability-list keys)**. Preserves full boolean granularity (the unique value
+of this tool) while being self-describing. The `->` arrow clearly separates from/to states.
+
+**Format rules**:
+- Each side lists comma-separated active (true) capability names: `prevented`, `reported`, `logged`, `alerted`
+- `none` when all capabilities are false
+- Arrow `->` separates from-state and to-state
+- Examples:
+  - `prevented->prevented,reported` — gained reporting
+  - `prevented,reported,logged,alerted->none` — lost all capabilities
+  - `none->prevented` — gained prevention from scratch
+  - `prevented,reported->prevented,reported` — no change
+
+**Files changed**: `data_types.py` (builder), `data_server.py` (docstring), `test_drift_tools.py` (assertions)
+
+---
+
 ## Definition of Done
 
 - [x] Suggestions helper created and tested
@@ -711,3 +759,5 @@ E2E framework (`.vscode/run_e2e_with_env.py`, `E2E_CONSOLE=pentest01`). Sources
 - [x] E2E tests passing
 - [x] No breaking changes to existing drift tools
 - [x] All cross-server tests passing (`716` tests)
+- [x] `__list__` discovery mode with simulation counts
+- [x] Capability-list drift key notation (replaces P:T/F notation)

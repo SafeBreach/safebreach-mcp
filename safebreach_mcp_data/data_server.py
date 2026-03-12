@@ -453,7 +453,7 @@ Shows how a control's prevented/reported/logged/alerted capabilities changed wit
 TWO-PHASE USAGE:
   1. Call WITHOUT drift_key to get a grouped summary of all capability transitions with counts. \
 Use this to understand the overall drift landscape for a security control.
-  2. Call WITH drift_key='<key>' (e.g., 'P:F,R:T,L:F,A:T->P:T,R:T,L:F,A:T') and page_number \
+  2. Call WITH drift_key='<key>' (e.g., 'none->prevented' or 'reported,alerted->prevented,reported,alerted') and page_number \
 to paginate through individual records in that group.
 
 USE THIS WHEN: You need to understand how a specific security control's capabilities changed over \

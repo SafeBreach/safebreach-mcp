@@ -717,13 +717,13 @@ class TestBuildScDriftTransitionKey:
             to_prevented=True, to_reported=True, to_logged=True, to_alerted=True,
         )
         key = build_sc_drift_transition_key(record)
-        assert key == "P:T,R:T,L:T,A:T->P:T,R:T,L:T,A:T"
+        assert key == "prevented,reported,logged,alerted->prevented,reported,logged,alerted"
 
     def test_transition_key_all_false(self):
         """All booleans False on both sides."""
         record = _make_sc_drift_record()  # defaults are all False
         key = build_sc_drift_transition_key(record)
-        assert key == "P:F,R:F,L:F,A:F->P:F,R:F,L:F,A:F"
+        assert key == "none->none"
 
     def test_transition_key_mixed(self):
         """Specific mixed combo produces correct compact key."""
@@ -732,13 +732,13 @@ class TestBuildScDriftTransitionKey:
             to_prevented=True, to_reported=True, to_logged=False, to_alerted=True,
         )
         key = build_sc_drift_transition_key(record)
-        assert key == "P:F,R:T,L:F,A:T->P:T,R:T,L:F,A:T"
+        assert key == "reported,alerted->prevented,reported,alerted"
 
     def test_transition_key_single_change(self):
         """Only prevented flips from F to T."""
         record = _make_sc_drift_record(to_prevented=True)
         key = build_sc_drift_transition_key(record)
-        assert key == "P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"
+        assert key == "none->prevented"
 
     def test_transition_key_missing_field_defaults(self):
         """Missing 'prevented' in 'from' defaults to False."""
@@ -762,7 +762,7 @@ class TestBuildScDriftTransitionKey:
             "driftType": "Improvement",
         }
         key = build_sc_drift_transition_key(record)
-        assert key == "P:F,R:T,L:F,A:F->P:T,R:T,L:F,A:F"
+        assert key == "reported->prevented,reported"
 
 
 # ---------------------------------------------------------------------------
@@ -2019,10 +2019,13 @@ class TestSbGetSecurityControlDrifts:
 
     # --- Tests requiring mock stack ---
 
-    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
-           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
-    def test_list_mode(self, mock_suggestions):
-        """security_control='__list__' returns available controls without querying drifts."""
+    @patch("safebreach_mcp_core.suggestions._fetch_suggestions_entries",
+           return_value=[
+               {"key": "Microsoft Defender for Endpoint", "doc_count": 500},
+               {"key": "CrowdStrike Falcon", "doc_count": 300},
+           ])
+    def test_list_mode(self, mock_entries):
+        """security_control='__list__' returns controls with simulation counts."""
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
 
         result = sb_get_security_control_drifts(
@@ -2035,8 +2038,12 @@ class TestSbGetSecurityControlDrifts:
 
         assert "security_controls" in result
         assert result["total"] == 2
-        assert "Microsoft Defender for Endpoint" in result["security_controls"]
-        mock_suggestions.assert_called_once_with("demo", "security_product")
+        # Sorted by simulations descending
+        assert result["security_controls"] == [
+            {"name": "Microsoft Defender for Endpoint", "simulations": 500},
+            {"name": "CrowdStrike Falcon", "simulations": 300},
+        ]
+        mock_entries.assert_called_once_with("demo", "security_product")
 
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
@@ -2146,11 +2153,11 @@ class TestSbGetSecurityControlDrifts:
 
         result = sb_get_security_control_drifts(
             **self.COMMON_KWARGS,
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
         )
 
         assert result["security_control"] == "Microsoft Defender for Endpoint"
-        assert result["drift_key"] == "P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"
+        assert result["drift_key"] == "none->prevented"
         assert result["total_drifts_in_group"] == 3
         assert len(result["drifts_in_page"]) == 3
         assert result["page_number"] == 0
@@ -2174,7 +2181,7 @@ class TestSbGetSecurityControlDrifts:
 
         result = sb_get_security_control_drifts(
             **self.COMMON_KWARGS,
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
             page_number=0,
         )
 
@@ -2197,7 +2204,7 @@ class TestSbGetSecurityControlDrifts:
             _make_sc_drift_record(to_prevented=True, tracking_id="t1"),
         ])
 
-        with pytest.raises(ValueError, match="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F"):
+        with pytest.raises(ValueError, match="none->prevented"):
             sb_get_security_control_drifts(
                 **self.COMMON_KWARGS,
                 drift_key="nonexistent-key",
@@ -2221,7 +2228,7 @@ class TestSbGetSecurityControlDrifts:
         with pytest.raises(ValueError, match="[Pp]age"):
             sb_get_security_control_drifts(
                 **self.COMMON_KWARGS,
-                drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+                drift_key="none->prevented",
                 page_number=99,
             )
 
@@ -2308,7 +2315,7 @@ class TestSbGetSecurityControlDrifts:
 
         drilldown = sb_get_security_control_drifts(
             **self.COMMON_KWARGS,
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
         )
         assert drilldown["security_control"] == "Microsoft Defender for Endpoint"
 
@@ -2329,7 +2336,7 @@ class TestSbGetSecurityControlDrifts:
 
         result = sb_get_security_control_drifts(
             **self.COMMON_KWARGS,
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
         )
 
         assert "attack_summary" not in result
@@ -2442,7 +2449,7 @@ class TestMcpToolRegistration:
             to_reported=False,
             drift_type="regression",
             group_by="transition",
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
             page_number=1,
         )
 
@@ -2456,7 +2463,7 @@ class TestMcpToolRegistration:
             to_reported=False,
             drift_type="regression",
             group_by="transition",
-            drift_key="P:F,R:F,L:F,A:F->P:T,R:F,L:F,A:F",
+            drift_key="none->prevented",
             page_number=1,
         )
 
@@ -2741,8 +2748,14 @@ class TestSecurityControlDriftsE2E:
         assert "security_controls" in result
         assert result["total"] > 0
         assert isinstance(result["security_controls"], list)
-        # Should contain well-known products, not noise like usernames
-        names = result["security_controls"]
+        # Each entry should have name and simulations
+        first = result["security_controls"][0]
+        assert "name" in first
+        assert "simulations" in first
+        assert isinstance(first["name"], str)
+        assert isinstance(first["simulations"], int)
+        # Should contain well-known products
+        names = [c["name"] for c in result["security_controls"]]
         assert any("Defender" in n or "CrowdStrike" in n or "SentinelOne" in n for n in names)
 
     @skip_e2e

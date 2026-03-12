@@ -833,25 +833,22 @@ def build_security_control_drift_payload(
 
 
 _SC_FLAG_NAMES = ("prevented", "reported", "logged", "alerted")
-_SC_FLAG_LABELS = ("P", "R", "L", "A")
 
 
 def build_sc_drift_transition_key(record: Dict[str, Any]) -> str:
     """Build transition key from v2 boolean status flags.
 
-    Format: ``P:T,R:F,L:F,A:T->P:T,R:T,L:F,A:T``
-    Where P=prevented, R=reported, L=logged, A=alerted, T=true, F=false.
+    Format: ``prevented,reported->prevented,reported,logged``
+    Lists active (true) capabilities per side, separated by ``->``.
+    Uses ``none`` when all capabilities are false.
     Missing fields default to False.
     """
     from_obj = record.get("from", {})
     to_obj = record.get("to", {})
 
     def _side_key(obj: Dict[str, Any]) -> str:
-        parts = []
-        for name, label in zip(_SC_FLAG_NAMES, _SC_FLAG_LABELS):
-            val = "T" if obj.get(name, False) else "F"
-            parts.append(f"{label}:{val}")
-        return ",".join(parts)
+        active = [name for name in _SC_FLAG_NAMES if obj.get(name, False)]
+        return ",".join(active) if active else "none"
 
     return f"{_side_key(from_obj)}->{_side_key(to_obj)}"
 
@@ -894,7 +891,8 @@ def group_sc_drift_records(
 
     Args:
         records: Raw v2 drift records from the API.
-        group_by: ``"transition"`` groups by boolean flag combos,
+        group_by: ``"transition"`` groups by capability-list keys
+            (e.g. ``prevented->prevented,reported``),
             ``"drift_type"`` groups by Improvement/Regression/NotApplicable.
 
     Returns:

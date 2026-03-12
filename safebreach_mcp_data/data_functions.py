@@ -2491,14 +2491,21 @@ def sb_get_security_control_drifts(
     """
     # 0. Discovery mode: list available security controls
     if security_control == "__list__":
-        controls = get_suggestions_for_collection(console, "security_product")
+        from safebreach_mcp_core.suggestions import _fetch_suggestions_entries
+        entries = _fetch_suggestions_entries(console, "security_product")
+        controls = [
+            {"name": e["key"], "simulations": e.get("doc_count", 0)}
+            for e in entries
+        ]
+        controls.sort(key=lambda c: c["simulations"], reverse=True)
         return {
             "security_controls": controls,
             "total": len(controls),
             "hint_to_agent": (
-                "These are security product names from execution history. "
-                "Some entries may be noisy (usernames, instance types). "
-                "Pass one of these as security_control to query drifts."
+                "These are security product names from execution history, "
+                "sorted by simulation count. Some entries may be noisy "
+                "(usernames, instance types). "
+                "Pass one of these names as security_control to query drifts."
             ),
         }
 
