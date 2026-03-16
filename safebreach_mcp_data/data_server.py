@@ -28,6 +28,7 @@ from .data_functions import (
     sb_get_simulation_result_drifts,
     sb_get_simulation_status_drifts,
     sb_get_security_control_drifts,
+    sb_get_simulation_lineage,
 )
 
 logger = logging.getLogger(__name__)
@@ -556,6 +557,46 @@ Start with a narrow window (1-2 days) and widen only if needed."""
                 max_outside_window_executions=max_outside_window_executions,
                 group_by=group_by,
                 drift_key=drift_key,
+                page_number=page_number,
+            )
+
+        @self.mcp.tool(
+            name="get_simulation_lineage",
+            description="""Returns the full chronological execution history (lineage) of a simulation across all \
+test runs, identified by its drift_tracking_code.
+
+The drift_tracking_code is a lineage identifier that groups all executions of the same attack \
+configuration across test runs. Every simulation record returned by get_test_simulations, \
+get_test_simulation_details (with include_drift_info=True), get_simulation_result_drifts, \
+get_simulation_status_drifts, and get_security_control_drifts includes a drift_tracking_code field.
+
+USE THIS WHEN: After discovering a drift or investigating a simulation, you want to see how its \
+results changed over time across multiple test runs. Pass the drift_tracking_code from any \
+simulation record to get the complete timeline.
+
+RETURNS: Chronological list of all simulations sharing the tracking code, each with an is_drifted \
+flag indicating whether its status differs from its predecessor. Also includes a status_summary \
+(count per status), test_runs_spanned, first_seen, and last_seen timestamps.
+
+CROSS-REFERENCES:
+  - For individual simulation details, use get_test_simulation_details.
+  - For time-window drift analysis, see get_simulation_result_drifts and get_simulation_status_drifts.
+  - For security control capability transitions, see get_security_control_drifts.
+  - For comparing two specific test runs, use get_test_drifts.
+
+Parameters:
+  console (required): SafeBreach console name.
+  tracking_code (required): The drift_tracking_code value from any simulation or drift record.
+  page_number (default 0): Page number for pagination (10 simulations per page)."""
+        )
+        async def get_simulation_lineage_tool(
+            console: str,
+            tracking_code: str,
+            page_number: int = 0,
+        ) -> dict:
+            return sb_get_simulation_lineage(
+                console=console,
+                tracking_code=tracking_code,
                 page_number=page_number,
             )
 

@@ -2792,6 +2792,42 @@ class TestMcpToolRegistration:
             page_number=1,
         )
 
+    # --- Simulation lineage tool (SAF-29072 Phase 3) ---
+
+    def test_lineage_tool_registered(self):
+        """get_simulation_lineage tool is registered on the data server."""
+        assert "get_simulation_lineage" in self._get_tool_names()
+
+    def test_lineage_tool_docstring_mentions_tracking_code(self):
+        """get_simulation_lineage docstring explains drift_tracking_code."""
+        import asyncio
+        from safebreach_mcp_data.data_server import data_server
+
+        tools = asyncio.run(data_server.mcp.list_tools())
+        lineage_tool = next(t for t in tools if t.name == "get_simulation_lineage")
+        desc = lineage_tool.description.lower()
+        assert "drift_tracking_code" in desc
+        assert "lineage" in desc
+        assert "chronological" in desc
+
+    @patch("safebreach_mcp_data.data_functions.sb_get_simulation_lineage")
+    def test_lineage_tool_passes_params(self, mock_fn):
+        """sb_get_simulation_lineage receives all params from MCP wrapper."""
+        mock_fn.return_value = {"total_simulations": 0}
+
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+        sb_get_simulation_lineage(
+            console="demo",
+            tracking_code="abc-123",
+            page_number=2,
+        )
+
+        mock_fn.assert_called_once_with(
+            console="demo",
+            tracking_code="abc-123",
+            page_number=2,
+        )
+
 
 # ---------------------------------------------------------------------------
 # E2E Tests: Simulation Drift Tools  (Phase 5)
