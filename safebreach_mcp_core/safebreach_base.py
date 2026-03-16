@@ -125,37 +125,56 @@ class SafeBreachMCPBase:
     async def run_server(self, port: int = 8000, host: str = "127.0.0.1", allow_external: bool = False) -> None:
         """
         Run the MCP server.
-        
+
         Args:
             port: Port number to run the server on
             host: Host to bind to (default: 127.0.0.1)
             allow_external: Whether to allow external connections (default: False)
+
+        Transport is selected via the SAFEBREACH_MCP_TRANSPORT environment variable:
+            "sse" (default) — SSE transport, endpoints /sse and /messages/
+            "streamable-http"  — Streamable HTTP transport, single /mcp endpoint
         """
         import uvicorn
         apply_patch()  # Apply MCP initialization patch
-        
+
+        # Resolve transport from env var
+        transport = os.environ.get('SAFEBREACH_MCP_TRANSPORT', 'sse').strip().lower()
+        if transport not in ('sse', 'streamable-http'):
+            logger.warning(f"Unknown SAFEBREACH_MCP_TRANSPORT value '{transport}', falling back to 'sse'")
+            transport = 'sse'
+
         # Determine bind address based on configuration
         bind_host = self._determine_bind_host(host, allow_external)
-        
-        # Get the Starlette app from FastMCP
-        mcp_app = self.mcp.sse_app()
-        
-        # Create the main app and mount the MCP app at the base URL
-        if self.base_url != '/':
-            from starlette.applications import Starlette
-            from starlette.responses import JSONResponse
-            from starlette.routing import Mount
-            
-            app = Starlette()
-            app.mount(self.base_url, mcp_app)
-            
-            logger.info(f"🔗 MCP server mounted at base URL: {self.base_url}")
-            logger.info(f"📡 SSE endpoint will be available at: {self.base_url}/sse")
-        else:
+
+        if transport == 'streamable-http':
+            # For streamable-http, set the endpoint path to base_url (or /mcp when root)
+            # so the single /mcp endpoint respects SAFEBREACH_MCP_BASE_URL cleanly.
+            endpoint_path = self.base_url if self.base_url != '/' else '/mcp'
+            self.mcp.settings.streamable_http_path = endpoint_path
+            mcp_app = self.mcp.streamable_http_app()
             app = mcp_app
-            logger.info("🔗 MCP server running at root URL: /")
-            logger.info("📡 SSE endpoint available at: /sse")
-        
+            logger.info("🔗 MCP server running with streamable-http transport")
+            logger.info(f"📡 Streamable HTTP endpoint available at: {endpoint_path}")
+        else:
+            # SSE transport — existing logic unchanged
+            mcp_app = self.mcp.sse_app()
+            if self.base_url != '/':
+                from starlette.applications import Starlette
+                from starlette.responses import JSONResponse
+                from starlette.routing import Mount
+
+                app = Starlette()
+                app.mount(self.base_url, mcp_app)
+
+                logger.info(f"🔗 MCP server mounted at base URL: {self.base_url}")
+                logger.info(f"📡 SSE endpoint will be available at: {self.base_url}/sse")
+            else:
+                app = mcp_app
+                logger.info("🔗 MCP server running at root URL: /")
+                logger.info("📡 SSE endpoint available at: /sse")
+            endpoint_path = '/sse'
+
         # Wrap with authentication for external connections
         if allow_external:
             logger.info("Adding ASGI authentication wrapper for external connections")
@@ -165,7 +184,7 @@ class SafeBreachMCPBase:
             logger.info("🏠 Local-only server - no authentication wrapper applied")
 
         # Wrap with concurrency limiter (applies to all servers)
-        app = self._create_concurrency_limited_app(app)
+        app = self._create_concurrency_limited_app(app, transport=transport, endpoint_path=endpoint_path)
         logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
 
         # Start background tasks
@@ -482,8 +501,8 @@ class SafeBreachMCPBase:
         logger.warning("🔒 HTTP Authorization required for external connections")
         logger.warning("🔑 Set SAFEBREACH_MCP_AUTH_TOKEN environment variable for authentication")
 
-    def _create_concurrency_limited_app(self, original_app):
-        """Create an ASGI wrapper that limits concurrent requests per SSE session."""
+    def _create_concurrency_limited_app(self, original_app, transport: str = "sse", endpoint_path: str = "/sse"):
+        """Create an ASGI wrapper that limits concurrent requests per MCP session."""
 
         async def concurrency_limited_app(scope, receive, send):
             if scope["type"] != "http":
@@ -603,6 +622,48 @@ class SafeBreachMCPBase:
                 # No session tracking — pass through
                 logger.debug(f"⏩ No session_id found — pass through (path={path})")
                 return await original_app(scope, receive, send)
+
+            # Streamable HTTP — single endpoint, session identified by Mcp-Session-Id header
+            if transport == 'streamable-http' and path == endpoint_path:
+                headers_dict = dict(scope.get("headers", []))
+                session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
+
+                if not session_id:
+                    # Initialize request — no session yet, pass through
+                    return await original_app(scope, receive, send)
+
+                # Lazy semaphore creation per session
+                if session_id not in _session_semaphores:
+                    _session_semaphores[session_id] = (asyncio.Semaphore(_concurrency_limit), time.time())
+                    logger.info(
+                        f"🆔 New streamable-http session: {session_id[:8]}... "
+                        f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
+                    )
+
+                sem, _ = _session_semaphores[session_id]
+                if sem.locked():
+                    logger.warning(
+                        f"⚠️ Rate limited session {session_id[:8]}... (limit={_concurrency_limit})"
+                    )
+                    response_body = json.dumps({
+                        "error": "Too Many Requests",
+                        "message": f"Concurrency limit of {_concurrency_limit} exceeded. Please retry.",
+                        "retry_after": 5
+                    }).encode()
+                    await send({
+                        "type": "http.response.start",
+                        "status": 429,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                            [b"content-length", str(len(response_body)).encode()],
+                            [b"retry-after", b"5"],
+                        ],
+                    })
+                    await send({"type": "http.response.body", "body": response_body})
+                    return
+
+                async with sem:
+                    return await original_app(scope, receive, send)
 
             # All other paths — pass through without limiting
             return await original_app(scope, receive, send)
