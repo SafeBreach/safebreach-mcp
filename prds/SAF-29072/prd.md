@@ -15,7 +15,7 @@
 | 1 | Normalize Tracking Code in Drill-Down Records | ✅ Complete | 2026-03-16 | - | `data_types.py` + tests |
 | 2 | Lineage Query Function | ✅ Complete | 2026-03-16 | - | `data_functions.py` + 10 tests |
 | 3 | MCP Tool Registration | ✅ Complete | 2026-03-16 | - | `data_server.py` + 3 tests |
-| 4 | Docstring Terminology Update | ⏳ Pending | - | - | All 6 drift tools + 2 simulation tools |
+| 4 | Docstring Terminology Update | ✅ Complete | 2026-03-16 | - | 7 tools updated |
 | 5 | E2E Tests | ⏳ Pending | - | - | Against live console, zero mocks |
 
 ---
@@ -136,7 +136,7 @@ first-class concept and create cross-tool workflow hints.
 - [x] `trackingId` normalized to `drift_tracking_code` in all drill-down records (Phase 1)
 - [x] `get_simulation_lineage` function implemented in `data_functions.py`
 - [x] MCP tool registered in `data_server.py` with comprehensive docstring
-- [ ] `drift_tracking_code` formalized across all 8 tool docstrings
+- [x] `drift_tracking_code` formalized across all 7 relevant tool docstrings
 - [x] Unit tests cover: happy path, pagination, empty results, API errors, caching
 - [ ] E2E tests verify lineage tracing against live console (zero mocks)
 - [x] All existing cross-server tests still pass
@@ -515,3 +515,4 @@ without manual correlation.
 | 2026-03-15 14:00 | Added Phase 1: normalize trackingId → drift_tracking_code in drill-down records. Renumbered all phases (now 1-5). Removed "Tracking code in drill-down" from Future Enhancements. Updated docstring phase to reference direct drift_tracking_code in drill-down records. |
 | 2026-03-16 | Phase 2 complete: `sb_get_simulation_lineage()` function + 10 unit tests. 740 cross-server tests passing. |
 | 2026-03-16 | Phase 3 complete: `get_simulation_lineage` MCP tool registered with agent-friendly docstring + 3 tests. 743 tests passing. |
+| 2026-03-16 | Phase 4 complete: drift_tracking_code terminology added to 7 tool docstrings (get_test_simulations, get_test_simulation_details, get_test_drifts, get_simulation_result_drifts, get_simulation_status_drifts, get_security_control_drifts, get_full_simulation_logs). |
