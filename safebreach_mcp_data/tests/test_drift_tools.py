@@ -378,7 +378,8 @@ class TestGroupAndEnrichDriftRecords:
         drift = groups[0]["drifts"][0]
 
         # Verify the full structure of the original record is intact
-        assert drift["trackingId"] == "abc123"
+        assert drift["drift_tracking_code"] == "abc123"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["attackId"] == 1263
         assert drift["attackTypes"] == ["Legitimate Channel Exfiltration"]
         assert "driftType" not in drift  # Phase 10: stripped from records
@@ -544,7 +545,8 @@ class TestGroupAndEnrichDriftRecords:
         groups = group_and_enrich_drift_records([sample_drift_record])
 
         drift = groups[0]["drifts"][0]
-        assert drift["trackingId"] == "abc123"
+        assert drift["drift_tracking_code"] == "abc123"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["attackId"] == 1263
         assert drift["from"]["simulationId"] == 3189641
         assert drift["to"]["simulationId"] == 3286842
@@ -885,7 +887,8 @@ class TestGroupScDriftRecords:
 
         assert len(groups) == 1
         drift = groups[0]["drifts"][0]
-        assert drift["trackingId"] == "preserve-me"
+        assert drift["drift_tracking_code"] == "preserve-me"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["from"]["simulationId"] == 111
         assert drift["to"]["simulationId"] == 222
         assert drift["from"]["executionTime"] == "2025-10-12T11:01:14.931Z"
