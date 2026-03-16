@@ -5,7 +5,8 @@ This module provides data type mappings and transformations for SafeBreach data,
 specifically for test and simulation entities.
 """
 
-from typing import Dict, Any, List
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional
 from safebreach_mcp_data.drifts_metadata import drift_types_mapping
 
 # Test summary mapping
@@ -590,4 +591,339 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     result["attacker"] = attacker_data
     result["logs_available"] = True
     result["logs_status"] = None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Drift API helpers (SAF-28330)
+# ---------------------------------------------------------------------------
+
+_DRIFT_TYPE_MAP = {
+    "improvement": "Improvement",
+    "regression": "Regression",
+    "not_applicable": "NotApplicable",
+}
+
+
+_LOOK_BACK_DEFAULT_MS = 7 * 86_400_000  # 7 days in milliseconds
+
+
+def _epoch_ms_to_iso(epoch_ms: int) -> str:
+    """Convert epoch milliseconds to ISO-8601 UTC string."""
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.000Z"
+    )
+
+
+def build_drift_api_payload(
+    window_start: int,
+    window_end: int,
+    drift_type: Optional[str] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    from_status: Optional[str] = None,
+    to_status: Optional[str] = None,
+    from_final_status: Optional[str] = None,
+    to_final_status: Optional[str] = None,
+    look_back_time: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the POST body for the simulation drift API.
+
+    Converts epoch-millisecond timestamps to ISO-8601 UTC and maps snake_case
+    parameter names to the camelCase keys expected by the API.  Only non-None
+    optional values are included in the returned dict.
+
+    look_back_time controls how far back the API searches for baseline
+    simulations.  Defaults to window_start - 7 days if not provided.
+    Always included as ``earliestSearchTime`` in the output payload.
+    """
+    effective_look_back = look_back_time if look_back_time is not None else (window_start - _LOOK_BACK_DEFAULT_MS)
+
+    payload: Dict[str, Any] = {
+        "windowStart": _epoch_ms_to_iso(window_start),
+        "windowEnd": _epoch_ms_to_iso(window_end),
+        "earliestSearchTime": _epoch_ms_to_iso(effective_look_back),
+    }
+
+    if drift_type is not None:
+        payload["driftType"] = _DRIFT_TYPE_MAP.get(
+            drift_type.lower(), drift_type
+        )
+    if attack_id is not None:
+        payload["attackId"] = attack_id
+    if attack_type is not None:
+        payload["attackType"] = attack_type
+    if from_status is not None:
+        payload["fromStatus"] = from_status
+    if to_status is not None:
+        payload["toStatus"] = to_status
+    if from_final_status is not None:
+        payload["fromFinalStatus"] = from_final_status
+    if to_final_status is not None:
+        payload["toFinalStatus"] = to_final_status
+
+    return payload
+
+
+def group_and_enrich_drift_records(
+    records: List[Dict[str, Any]],
+    group_by: str = "final_status",
+) -> List[Dict[str, Any]]:
+    """Group raw drift records by transition type and enrich with metadata.
+
+    Args:
+        records: Raw drift records from the API.
+        group_by: Grouping mode — ``"final_status"`` (default) groups by
+            ``{from.finalStatus}-{to.finalStatus}`` for fine-grained control view;
+            ``"result_status"`` groups by ``{from.status}-{to.status}``
+            (FAIL/SUCCESS) for coarse posture view.
+
+    Each record is assigned a *drift_key* derived from the chosen grouping
+    fields (lowercased).  Records sharing the same key are collected into a
+    single group whose enrichment fields (security_impact, description,
+    hint_to_llm) come from ``drifts_metadata.drift_types_mapping``.
+
+    If the finalStatus-level key is not found in the mapping, a secondary
+    lookup using the result-level key ``{from.status}-{to.status}`` is
+    attempted.  If that also misses, fallback values with
+    ``security_impact="unknown"`` are generated.
+
+    Returns a list of group dicts sorted by *count* descending.
+    """
+    if not records:
+        return []
+
+    if group_by == "result_status":
+        from_field, to_field = "status", "status"
+    else:
+        from_field, to_field = "finalStatus", "finalStatus"
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        record.pop("driftType", None)
+        from_obj = record.get("from", {})
+        to_obj = record.get("to", {})
+        drift_key = (
+            f"{from_obj.get(from_field, 'unknown')}-"
+            f"{to_obj.get(to_field, 'unknown')}"
+        ).lower()
+        groups.setdefault(drift_key, []).append(record)
+
+    result: List[Dict[str, Any]] = []
+    for drift_key, drifts in groups.items():
+        # Primary lookup: drift_key itself (matches the grouping mode)
+        meta = drift_types_mapping.get(drift_key)
+
+        # Secondary lookup: try the alternate key derivation
+        if meta is None and drifts:
+            from_obj = drifts[0].get("from", {})
+            to_obj = drifts[0].get("to", {})
+            if group_by == "result_status":
+                # Grouped by status — try finalStatus key as fallback
+                alt_key = (
+                    f"{from_obj.get('finalStatus', 'unknown')}-"
+                    f"{to_obj.get('finalStatus', 'unknown')}"
+                ).lower()
+            else:
+                # Grouped by finalStatus — try result status key as fallback
+                alt_key = (
+                    f"{from_obj.get('status', 'unknown')}-"
+                    f"{to_obj.get('status', 'unknown')}"
+                ).lower()
+            meta = drift_types_mapping.get(alt_key)
+
+        # Fallback
+        if meta is None:
+            meta = {
+                "security_impact": "unknown",
+                "description": f"No metadata available for drift type '{drift_key}'",
+                "hint_to_llm": (
+                    "Consider using get_simulation_details with include_drift_info=True "
+                    "to investigate individual simulations in this group"
+                ),
+            }
+
+        result.append({
+            "drift_key": drift_key,
+            "security_impact": meta["security_impact"],
+            "description": meta["description"],
+            "hint_to_llm": meta["hint_to_llm"],
+            "count": len(drifts),
+            "drifts": drifts,
+        })
+
+    result.sort(key=lambda g: g["count"], reverse=True)
+    return result
+
+
+def build_security_control_drift_payload(
+    security_control: str,
+    window_start: int,
+    window_end: int,
+    contains_transition: bool,
+    starts_and_ends_with_transition: bool,
+    from_prevented: Optional[bool] = None,
+    from_reported: Optional[bool] = None,
+    from_logged: Optional[bool] = None,
+    from_alerted: Optional[bool] = None,
+    to_prevented: Optional[bool] = None,
+    to_reported: Optional[bool] = None,
+    to_logged: Optional[bool] = None,
+    to_alerted: Optional[bool] = None,
+    drift_type: Optional[str] = None,
+    earliest_search_time: Optional[int] = None,
+    max_outside_window_executions: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build the POST body for the v2 security control drift API.
+
+    Similar to ``build_drift_api_payload`` but uses boolean status objects
+    (prevented/reported/logged/alerted) instead of string fromStatus/toStatus.
+    Only non-None boolean fields are included in the status objects.
+    """
+    effective_look_back = (
+        earliest_search_time
+        if earliest_search_time is not None
+        else (window_start - _LOOK_BACK_DEFAULT_MS)
+    )
+
+    payload: Dict[str, Any] = {
+        "securityControl": security_control,
+        "windowStart": _epoch_ms_to_iso(window_start),
+        "windowEnd": _epoch_ms_to_iso(window_end),
+        "earliestSearchTime": _epoch_ms_to_iso(effective_look_back),
+        "containsTransition": contains_transition,
+        "startsAndEndsWithTransition": starts_and_ends_with_transition,
+    }
+
+    # Build fromStatus object (only non-None booleans)
+    from_status: Dict[str, bool] = {}
+    if from_prevented is not None:
+        from_status["prevented"] = from_prevented
+    if from_reported is not None:
+        from_status["reported"] = from_reported
+    if from_logged is not None:
+        from_status["logged"] = from_logged
+    if from_alerted is not None:
+        from_status["alerted"] = from_alerted
+    if from_status:
+        payload["fromStatus"] = from_status
+
+    # Build toStatus object (only non-None booleans)
+    to_status: Dict[str, bool] = {}
+    if to_prevented is not None:
+        to_status["prevented"] = to_prevented
+    if to_reported is not None:
+        to_status["reported"] = to_reported
+    if to_logged is not None:
+        to_status["logged"] = to_logged
+    if to_alerted is not None:
+        to_status["alerted"] = to_alerted
+    if to_status:
+        payload["toStatus"] = to_status
+
+    if drift_type is not None:
+        payload["driftType"] = _DRIFT_TYPE_MAP.get(
+            drift_type.lower(), drift_type
+        )
+
+    if max_outside_window_executions is not None:
+        payload["maxOutsideWindowExecutions"] = max_outside_window_executions
+
+    return payload
+
+
+_SC_FLAG_NAMES = ("prevented", "reported", "logged", "alerted")
+
+
+def build_sc_drift_transition_key(record: Dict[str, Any]) -> str:
+    """Build transition key from v2 boolean status flags.
+
+    Format: ``prevented,reported->prevented,reported,logged``
+    Lists active (true) capabilities per side, separated by ``->``.
+    Uses ``none`` when all capabilities are false.
+    Missing fields default to False.
+    """
+    from_obj = record.get("from", {})
+    to_obj = record.get("to", {})
+
+    def _side_key(obj: Dict[str, Any]) -> str:
+        active = [name for name in _SC_FLAG_NAMES if obj.get(name, False)]
+        return ",".join(active) if active else "none"
+
+    return f"{_side_key(from_obj)}->{_side_key(to_obj)}"
+
+
+def _build_sc_drift_description(from_obj: Dict[str, Any], to_obj: Dict[str, Any]) -> str:
+    """Generate a human-readable description of boolean flag changes."""
+    capability_names = {
+        "prevented": "prevention",
+        "reported": "reporting",
+        "logged": "logging",
+        "alerted": "alerting",
+    }
+
+    gained = []
+    lost = []
+    for flag, name in capability_names.items():
+        from_val = from_obj.get(flag, False)
+        to_val = to_obj.get(flag, False)
+        if not from_val and to_val:
+            gained.append(name)
+        elif from_val and not to_val:
+            lost.append(name)
+
+    parts = []
+    if gained:
+        parts.append(f"Gained {', '.join(gained)}")
+    if lost:
+        parts.append(f"Lost {', '.join(lost)}")
+
+    if not parts:
+        return "No capability changes detected"
+    return "; ".join(parts)
+
+
+def group_sc_drift_records(
+    records: List[Dict[str, Any]],
+    group_by: str = "transition",
+) -> List[Dict[str, Any]]:
+    """Group v2 security control drift records.
+
+    Args:
+        records: Raw v2 drift records from the API.
+        group_by: ``"transition"`` groups by capability-list keys
+            (e.g. ``prevented->prevented,reported``),
+            ``"drift_type"`` groups by Improvement/Regression/NotApplicable.
+
+    Returns:
+        List of group dicts sorted by count descending.
+    """
+    if not records:
+        return []
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        if group_by == "drift_type":
+            key = record.get("driftType", "Unknown")
+        else:
+            key = build_sc_drift_transition_key(record)
+        groups.setdefault(key, []).append(record)
+
+    result: List[Dict[str, Any]] = []
+    for drift_key, drifts in groups.items():
+        if group_by == "drift_type":
+            description = f"Drift type: {drift_key}"
+        else:
+            from_obj = drifts[0].get("from", {})
+            to_obj = drifts[0].get("to", {})
+            description = _build_sc_drift_description(from_obj, to_obj)
+
+        result.append({
+            "drift_key": drift_key,
+            "count": len(drifts),
+            "description": description,
+            "drifts": drifts,
+        })
+
+    result.sort(key=lambda g: g["count"], reverse=True)
     return result

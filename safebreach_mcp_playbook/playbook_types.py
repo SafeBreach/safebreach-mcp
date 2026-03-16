@@ -5,7 +5,62 @@ This module provides data transformation functions for SafeBreach playbook opera
 It handles mapping between SafeBreach API response format and MCP tool response format.
 """
 
+import re
 from typing import Dict, Any, List, Optional
+
+# MITRE ATT&CK Enterprise tactic ID → name mapping
+# Source: https://attack.mitre.org/tactics/enterprise/
+# Last updated: 2026-03-09 (14 tactics, rarely changes — last addition was 2020)
+MITRE_TACTIC_ID_TO_NAME = {
+    "TA0001": "Initial Access",
+    "TA0002": "Execution",
+    "TA0003": "Persistence",
+    "TA0004": "Privilege Escalation",
+    "TA0005": "Defense Evasion",
+    "TA0006": "Credential Access",
+    "TA0007": "Discovery",
+    "TA0008": "Lateral Movement",
+    "TA0009": "Collection",
+    "TA0010": "Exfiltration",
+    "TA0011": "Command and Control",
+    "TA0040": "Impact",
+    "TA0042": "Resource Development",
+    "TA0043": "Reconnaissance",
+}
+
+
+def _resolve_tactic_filter_value(value: str) -> str:
+    """
+    Resolve a tactic filter value, translating tactic IDs (e.g. "TA0006") to names.
+
+    If the value starts with "TA" (case-insensitive), it is treated as a tactic ID:
+    - The numeric part is extracted and zero-padded to 4 digits (e.g. "ta6" → "TA0006")
+    - The canonical ID is looked up in MITRE_TACTIC_ID_TO_NAME
+    - If found, the tactic name is returned (lowercased for matching)
+    - If not found, the original value is returned unchanged (graceful fallback)
+
+    If the value doesn't start with "TA", it is returned unchanged (name-based filtering).
+
+    Args:
+        value: A lowercased, stripped filter value (e.g. "ta0006", "discovery")
+
+    Returns:
+        Resolved filter value (lowercased tactic name or original value)
+    """
+    if not re.match(r'^ta\d', value, re.IGNORECASE):
+        return value
+
+    # Extract numeric part and zero-pad to 4 digits
+    numeric_part = re.sub(r'^ta', '', value, flags=re.IGNORECASE)
+    try:
+        canonical_id = f"TA{int(numeric_part):04d}"
+    except ValueError:
+        return value
+
+    name = MITRE_TACTIC_ID_TO_NAME.get(canonical_id)
+    if name:
+        return name.lower()
+    return value
 
 
 def _transform_tags(tags_data: Any) -> List[str]:
@@ -268,7 +323,7 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
         published_date_start: Start date for published date range (ISO format)
         published_date_end: End date for published date range (ISO format)
         mitre_technique_filter: Comma-separated technique IDs or names (OR logic, case-insensitive partial match)
-        mitre_tactic_filter: Comma-separated tactic names (OR logic, case-insensitive partial match)
+        mitre_tactic_filter: Comma-separated tactic names or IDs like TA0006 (OR logic, case-insensitive partial match)
 
     Returns:
         Filtered list of attacks
@@ -338,9 +393,12 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             if _attack_matches_mitre_technique(attack, filter_values)
         ]
 
-    # Filter by MITRE tactic name (comma-separated OR logic, case-insensitive partial match)
+    # Filter by MITRE tactic name or ID (comma-separated OR logic, case-insensitive partial match)
     if mitre_tactic_filter:
-        filter_values = [v.strip().lower() for v in mitre_tactic_filter.split(',') if v.strip()]
+        filter_values = [
+            _resolve_tactic_filter_value(v.strip().lower())
+            for v in mitre_tactic_filter.split(',') if v.strip()
+        ]
         filtered_attacks = [
             attack for attack in filtered_attacks
             if _attack_matches_mitre_tactic(attack, filter_values)
