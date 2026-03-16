@@ -28,6 +28,7 @@ from .data_functions import (
     sb_get_simulation_result_drifts,
     sb_get_simulation_status_drifts,
     sb_get_security_control_drifts,
+    sb_get_simulation_lineage,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
             name="get_test_simulations",
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
+Each simulation includes a drift_tracking_code — a lineage identifier grouping all executions of the same \
+attack configuration across test runs. Pass it to get_simulation_lineage to trace how results changed over time.
 Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), \
 start_time (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
 end_time (epoch ms/seconds or ISO 8601 string),
@@ -137,7 +140,9 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
             name="get_test_simulation_details",
             description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
 Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
-Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False), 
+When include_drift_info=True, returns drift_tracking_code for drifted simulations. Pass this code to \
+get_simulation_lineage to see the full execution timeline across all test runs.
+Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False),
 include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
 Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead.
 For time-window-based drift trends, see get_simulation_result_drifts and get_simulation_status_drifts."""
@@ -258,6 +263,7 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test,
             (3) simulations with matching drift_tracking_code but different status values.
             Returns comprehensive drift analysis with security impact classification and detailed metadata for further investigation.
+            Each drifted simulation includes a drift_tracking_code — use get_simulation_lineage to trace its full history across all test runs.
             Parameters: console (required), test_id (required - the test to analyze for drifts).
             Note: For time-window-based drift analysis across all tests (not comparing two specific test runs), \
 use get_simulation_result_drifts or get_simulation_status_drifts instead."""
@@ -279,7 +285,8 @@ IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, retur
 The logs contain granular execution traces NOT available in get_simulation_details or get_studio_attack_latest_result.
 When a simulation status is "stopped" or "no-result", always retrieve these logs before concluding root cause.
 
-Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation.
+Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation. \
+Use drift_tracking_code from the parent simulation to correlate logs across test runs via get_simulation_lineage.
 Returns a role-based structure:
 - 'target': Contains the target node's full execution data. Null when logs_available is False.
 - 'attacker': Present for dual-script attacks (exfil, infil, lateral movement). Null for host-only attacks or when logs_available is False.
@@ -314,7 +321,8 @@ records in that group.
 
 USE THIS WHEN: You need to analyze how simulation RESULTS (blocked vs not-blocked) changed over a time period \
 across all tests. This provides a security POSTURE view — did attacks that were previously blocked become \
-unblocked, or vice versa?
+unblocked, or vice versa? Each drill-down record includes drift_tracking_code — pass it to \
+get_simulation_lineage for the full execution history of that simulation lineage.
 
 DON'T USE FOR:
   - Comparing two specific test runs (use get_test_drifts instead).
@@ -385,7 +393,8 @@ records in that group.
 
 USE THIS WHEN: You need to analyze how security CONTROLS responded differently over time. This provides a \
 security CONTROL view — did the detection method change? Did prevention degrade to just detection? \
-Did detection degrade to just logging?
+Did detection degrade to just logging? Each drill-down record includes drift_tracking_code — pass it to \
+get_simulation_lineage for the full execution history of that simulation lineage.
 
 DON'T USE FOR:
   - Comparing two specific test runs (use get_test_drifts instead).
@@ -457,7 +466,9 @@ Use this to understand the overall drift landscape for a security control.
 to paginate through individual records in that group.
 
 USE THIS WHEN: You need to understand how a specific security control's capabilities changed over \
-time — e.g., did it gain/lose prevention? Did it start/stop alerting? Did detection degrade?
+time — e.g., did it gain/lose prevention? Did it start/stop alerting? Did detection degrade? \
+Each drill-down record includes drift_tracking_code — pass it to get_simulation_lineage for the full \
+execution history of that simulation lineage.
 
 DON'T USE FOR:
   - Overall blocked/not-blocked posture view (use get_simulation_result_drifts).
@@ -556,6 +567,46 @@ Start with a narrow window (1-2 days) and widen only if needed."""
                 max_outside_window_executions=max_outside_window_executions,
                 group_by=group_by,
                 drift_key=drift_key,
+                page_number=page_number,
+            )
+
+        @self.mcp.tool(
+            name="get_simulation_lineage",
+            description="""Returns the full chronological execution history (lineage) of a simulation across all \
+test runs, identified by its drift_tracking_code.
+
+The drift_tracking_code is a lineage identifier that groups all executions of the same attack \
+configuration across test runs. Every simulation record returned by get_test_simulations, \
+get_test_simulation_details (with include_drift_info=True), get_simulation_result_drifts, \
+get_simulation_status_drifts, and get_security_control_drifts includes a drift_tracking_code field.
+
+USE THIS WHEN: After discovering a drift or investigating a simulation, you want to see how its \
+results changed over time across multiple test runs. Pass the drift_tracking_code from any \
+simulation record to get the complete timeline.
+
+RETURNS: Chronological list of all simulations sharing the tracking code, each with an is_drifted \
+flag indicating whether its status differs from its predecessor. Also includes a status_summary \
+(count per status), test_runs_spanned, first_seen, and last_seen timestamps.
+
+CROSS-REFERENCES:
+  - For individual simulation details, use get_test_simulation_details.
+  - For time-window drift analysis, see get_simulation_result_drifts and get_simulation_status_drifts.
+  - For security control capability transitions, see get_security_control_drifts.
+  - For comparing two specific test runs, use get_test_drifts.
+
+Parameters:
+  console (required): SafeBreach console name.
+  tracking_code (required): The drift_tracking_code value from any simulation or drift record.
+  page_number (default 0): Page number for pagination (10 simulations per page)."""
+        )
+        async def get_simulation_lineage_tool(
+            console: str,
+            tracking_code: str,
+            page_number: int = 0,
+        ) -> dict:
+            return sb_get_simulation_lineage(
+                console=console,
+                tracking_code=tracking_code,
                 page_number=page_number,
             )
 

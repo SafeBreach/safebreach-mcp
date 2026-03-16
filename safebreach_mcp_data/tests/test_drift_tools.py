@@ -378,7 +378,8 @@ class TestGroupAndEnrichDriftRecords:
         drift = groups[0]["drifts"][0]
 
         # Verify the full structure of the original record is intact
-        assert drift["trackingId"] == "abc123"
+        assert drift["drift_tracking_code"] == "abc123"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["attackId"] == 1263
         assert drift["attackTypes"] == ["Legitimate Channel Exfiltration"]
         assert "driftType" not in drift  # Phase 10: stripped from records
@@ -544,7 +545,8 @@ class TestGroupAndEnrichDriftRecords:
         groups = group_and_enrich_drift_records([sample_drift_record])
 
         drift = groups[0]["drifts"][0]
-        assert drift["trackingId"] == "abc123"
+        assert drift["drift_tracking_code"] == "abc123"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["attackId"] == 1263
         assert drift["from"]["simulationId"] == 3189641
         assert drift["to"]["simulationId"] == 3286842
@@ -885,7 +887,8 @@ class TestGroupScDriftRecords:
 
         assert len(groups) == 1
         drift = groups[0]["drifts"][0]
-        assert drift["trackingId"] == "preserve-me"
+        assert drift["drift_tracking_code"] == "preserve-me"
+        assert "trackingId" not in drift  # Renamed to drift_tracking_code
         assert drift["from"]["simulationId"] == 111
         assert drift["to"]["simulationId"] == 222
         assert drift["from"]["executionTime"] == "2025-10-12T11:01:14.931Z"
@@ -2343,6 +2346,328 @@ class TestSbGetSecurityControlDrifts:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Simulation Lineage  (SAF-29072 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_raw_simulation_for_lineage(
+    sim_id=1000,
+    plan_run_id="test-run-1",
+    plan_name="Weekly Test",
+    final_status="prevented",
+    execution_time="2026-03-01T10:00:00.000Z",
+    move_id=100,
+    move_name="File Operation",
+    original_execution_id="track-abc-123",
+    drift_type=None,
+    attacker_start_time=1709286000,
+):
+    """Factory for raw API simulation records matching executionsHistoryResults shape."""
+    record = {
+        "id": sim_id,
+        "planRunId": plan_run_id,
+        "planName": plan_name,
+        "finalStatus": final_status,
+        "executionTime": execution_time,
+        "moveId": move_id,
+        "moveName": move_name,
+        "originalExecutionId": original_execution_id,
+        "attackerSimulatorStartTime": attacker_start_time,
+    }
+    if drift_type is not None:
+        record["driftType"] = drift_type
+    return record
+
+
+class TestSbGetSimulationLineage:
+    """Tests for sb_get_simulation_lineage (SAF-29072 Phase 2)."""
+
+    def setup_method(self):
+        from safebreach_mcp_data.data_functions import simulations_cache
+        simulations_cache.clear()
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_happy_path(self, mock_account, mock_url, mock_secret, mock_post):
+        """Returns chronological list of simulations for a valid tracking code."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [
+            _make_raw_simulation_for_lineage(
+                sim_id=1001, plan_run_id="run-a", plan_name="Test A",
+                final_status="prevented", execution_time="2026-01-10T10:00:00.000Z",
+            ),
+            _make_raw_simulation_for_lineage(
+                sim_id=1002, plan_run_id="run-b", plan_name="Test B",
+                final_status="prevented", execution_time="2026-02-10T10:00:00.000Z",
+            ),
+            _make_raw_simulation_for_lineage(
+                sim_id=1003, plan_run_id="run-c", plan_name="Test C",
+                final_status="missed", execution_time="2026-03-10T10:00:00.000Z",
+            ),
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 3}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        assert result["tracking_code"] == "track-abc-123"
+        assert result["total_simulations"] == 3
+        assert len(result["simulations"]) == 3
+        assert result["test_runs_spanned"] == 3
+        assert result["page_number"] == 0
+        assert result["total_pages"] == 1
+        assert "hint_to_agent" in result
+        assert result["first_seen"] is not None
+        assert result["last_seen"] is not None
+
+        # Verify each simulation has expected keys
+        for sim in result["simulations"]:
+            assert "simulation_id" in sim
+            assert "test_id" in sim
+            assert "status" in sim
+            assert "drift_tracking_code" in sim
+            assert "is_drifted" in sim
+
+        # Verify API was called with correct params
+        mock_post.assert_called()
+        call_kwargs = mock_post.call_args
+        payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs[0][1]
+        assert payload["runId"] == "*"
+        assert "track-abc-123" in payload["query"]
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_pagination(self, mock_account, mock_url, mock_secret, mock_post):
+        """Page 0 returns first 10, page 1 returns remaining."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [
+            _make_raw_simulation_for_lineage(
+                sim_id=2000 + i, plan_run_id=f"run-{i}",
+                final_status="prevented",
+                execution_time=f"2026-01-{10 + i:02d}T10:00:00.000Z",
+            )
+            for i in range(15)
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 15}
+        mock_post.return_value = mock_response
+
+        page0 = sb_get_simulation_lineage("demo", "track-abc-123", page_number=0)
+        assert len(page0["simulations"]) == 10
+        assert page0["total_simulations"] == 15
+        assert page0["total_pages"] == 2
+        assert page0["page_number"] == 0
+
+        page1 = sb_get_simulation_lineage("demo", "track-abc-123", page_number=1)
+        assert len(page1["simulations"]) == 5
+        assert page1["page_number"] == 1
+        assert page1["total_simulations"] == 15
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_empty_results(self, mock_account, mock_url, mock_secret, mock_post):
+        """Unknown tracking code returns empty with helpful hint."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": [], "totalSimulations": 0}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "nonexistent-code")
+
+        assert result["total_simulations"] == 0
+        assert result["simulations"] == []
+        assert result["status_summary"] == {}
+        assert result["test_runs_spanned"] == 0
+        assert "hint_to_agent" in result
+        assert len(result["hint_to_agent"]) > 0
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_single_result(self, mock_account, mock_url, mock_secret, mock_post):
+        """One simulation returns a single-item list."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [_make_raw_simulation_for_lineage(
+            sim_id=3001, final_status="detected",
+            execution_time="2026-02-15T10:00:00.000Z",
+        )]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 1}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        assert result["total_simulations"] == 1
+        assert len(result["simulations"]) == 1
+        assert result["total_pages"] == 1
+        assert result["first_seen"] == result["last_seen"]
+        assert result["test_runs_spanned"] == 1
+        assert result["simulations"][0]["is_drifted"] is False
+        assert result["status_summary"] == {"detected": 1}
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_api_error(self, mock_account, mock_url, mock_secret, mock_post):
+        """API failure raises an error."""
+        import requests as req
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = req.exceptions.HTTPError("500 Server Error")
+        mock_post.return_value = mock_response
+
+        with pytest.raises(Exception):
+            sb_get_simulation_lineage("demo", "track-abc-123")
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_api_401(self, mock_account, mock_url, mock_secret, mock_post):
+        """Auth failure (401) raises ValueError mentioning authentication."""
+        import requests as req
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status.side_effect = req.exceptions.HTTPError("401 Unauthorized")
+        mock_post.return_value = mock_response
+
+        with pytest.raises(ValueError, match="[Aa]uthenticat"):
+            sb_get_simulation_lineage("demo", "track-abc-123")
+
+    @patch("safebreach_mcp_data.data_functions.is_caching_enabled", return_value=True)
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_cache_hit(self, mock_account, mock_url, mock_secret, mock_post, mock_cache):
+        """Second call returns cached data without API call."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [_make_raw_simulation_for_lineage(sim_id=4001)]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 1}
+        mock_post.return_value = mock_response
+
+        result1 = sb_get_simulation_lineage("demo", "track-abc-123")
+        result2 = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        assert result1["total_simulations"] == result2["total_simulations"]
+        assert mock_post.call_count == 1  # API called only once
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_includes_status_summary(self, mock_account, mock_url, mock_secret, mock_post):
+        """Response includes status distribution across the lineage."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [
+            _make_raw_simulation_for_lineage(sim_id=5001, final_status="prevented",
+                                             execution_time="2026-01-01T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=5002, final_status="prevented",
+                                             execution_time="2026-01-02T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=5003, final_status="missed",
+                                             execution_time="2026-01-03T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=5004, final_status="detected",
+                                             execution_time="2026-01-04T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=5005, final_status="prevented",
+                                             execution_time="2026-01-05T10:00:00.000Z"),
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 5}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        assert result["status_summary"]["prevented"] == 3
+        assert result["status_summary"]["missed"] == 1
+        assert result["status_summary"]["detected"] == 1
+        assert sum(result["status_summary"].values()) == 5
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_includes_is_drifted(self, mock_account, mock_url, mock_secret, mock_post):
+        """Each record has is_drifted computed by comparing to previous."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [
+            _make_raw_simulation_for_lineage(sim_id=6001, final_status="prevented",
+                                             execution_time="2026-01-01T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=6002, final_status="prevented",
+                                             execution_time="2026-01-02T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=6003, final_status="missed",
+                                             execution_time="2026-01-03T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=6004, final_status="missed",
+                                             execution_time="2026-01-04T10:00:00.000Z"),
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 4}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        sims = result["simulations"]
+        assert sims[0]["is_drifted"] is False   # first is never drifted
+        assert sims[1]["is_drifted"] is False   # same status as previous
+        assert sims[2]["is_drifted"] is True    # status changed: prevented → missed
+        assert sims[3]["is_drifted"] is False   # same status as previous
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_lineage_chronological_order(self, mock_account, mock_url, mock_secret, mock_post):
+        """Results sorted oldest-first by execution time."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        raw_sims = [
+            _make_raw_simulation_for_lineage(sim_id=7001, execution_time="2026-01-15T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=7002, execution_time="2026-02-15T10:00:00.000Z"),
+            _make_raw_simulation_for_lineage(sim_id=7003, execution_time="2026-03-15T10:00:00.000Z"),
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"simulations": raw_sims, "totalSimulations": 3}
+        mock_post.return_value = mock_response
+
+        result = sb_get_simulation_lineage("demo", "track-abc-123")
+
+        sims = result["simulations"]
+        assert sims[0]["end_time"] == "2026-01-15T10:00:00.000Z"
+        assert sims[1]["end_time"] == "2026-02-15T10:00:00.000Z"
+        assert sims[2]["end_time"] == "2026-03-15T10:00:00.000Z"
+        assert result["first_seen"] == sims[0]["end_time"]
+        assert result["last_seen"] == sims[-1]["end_time"]
+
+
+# ---------------------------------------------------------------------------
 # Tests: MCP Tool Registration  (Phase 4)
 # ---------------------------------------------------------------------------
 
@@ -2465,6 +2790,42 @@ class TestMcpToolRegistration:
             group_by="transition",
             drift_key="none->prevented",
             page_number=1,
+        )
+
+    # --- Simulation lineage tool (SAF-29072 Phase 3) ---
+
+    def test_lineage_tool_registered(self):
+        """get_simulation_lineage tool is registered on the data server."""
+        assert "get_simulation_lineage" in self._get_tool_names()
+
+    def test_lineage_tool_docstring_mentions_tracking_code(self):
+        """get_simulation_lineage docstring explains drift_tracking_code."""
+        import asyncio
+        from safebreach_mcp_data.data_server import data_server
+
+        tools = asyncio.run(data_server.mcp.list_tools())
+        lineage_tool = next(t for t in tools if t.name == "get_simulation_lineage")
+        desc = lineage_tool.description.lower()
+        assert "drift_tracking_code" in desc
+        assert "lineage" in desc
+        assert "chronological" in desc
+
+    @patch("safebreach_mcp_data.data_functions.sb_get_simulation_lineage")
+    def test_lineage_tool_passes_params(self, mock_fn):
+        """sb_get_simulation_lineage receives all params from MCP wrapper."""
+        mock_fn.return_value = {"total_simulations": 0}
+
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+        sb_get_simulation_lineage(
+            console="demo",
+            tracking_code="abc-123",
+            page_number=2,
+        )
+
+        mock_fn.assert_called_once_with(
+            console="demo",
+            tracking_code="abc-123",
+            page_number=2,
         )
 
 
@@ -2781,3 +3142,108 @@ class TestSecurityControlDriftsE2E:
         assert result["applied_filters"].get("drift_type") == "regression"
         assert isinstance(result["total_drifts"], int)
         assert result["total_drifts"] >= 0
+
+
+@pytest.fixture(scope="class")
+def drifted_tracking_code(e2e_console):
+    """Get a drift_tracking_code from a known drifted simulation on the live console."""
+    from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+    # Use known Window 1 to get a drifted sim with tracking code
+    result = sb_get_simulation_status_drifts(
+        console=e2e_console,
+        window_start=_E2E_WINDOW_START,
+        window_end=_E2E_WINDOW_END,
+    )
+
+    if result["total_drifts"] == 0:
+        pytest.skip("No drifts found in known window — cannot extract tracking code")
+
+    # Drill into the first group to get a record with drift_tracking_code
+    first_key = result["drift_groups"][0]["drift_key"]
+    drilldown = sb_get_simulation_status_drifts(
+        console=e2e_console,
+        window_start=_E2E_WINDOW_START,
+        window_end=_E2E_WINDOW_END,
+        drift_key=first_key,
+        page_number=0,
+    )
+
+    records = drilldown.get("drifts_in_page", [])
+    for record in records:
+        code = record.get("drift_tracking_code")
+        if code:
+            return code
+
+    pytest.skip("No drift_tracking_code found in drill-down records")
+
+
+class TestSimulationLineageE2E:
+    """End-to-end tests for simulation lineage tracing against a live console."""
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_from_drifted_simulation(self, e2e_console, drifted_tracking_code):
+        """Lineage from a real drifted tracking code returns valid structure."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, drifted_tracking_code)
+
+        assert result["tracking_code"] == drifted_tracking_code
+        assert result["total_simulations"] >= 1
+        assert isinstance(result["simulations"], list)
+        assert len(result["simulations"]) >= 1
+
+        # Verify each simulation has required fields
+        for sim in result["simulations"]:
+            assert "simulation_id" in sim
+            assert "test_id" in sim
+            assert "status" in sim
+            assert "drift_tracking_code" in sim
+            assert "is_drifted" in sim
+
+        # Verify status_summary is a dict with string keys and int values
+        summary = result["status_summary"]
+        assert isinstance(summary, dict)
+        for k, v in summary.items():
+            assert isinstance(k, str)
+            assert isinstance(v, int)
+
+        # Verify chronological order (end_time non-decreasing)
+        sims = result["simulations"]
+        for i in range(1, len(sims)):
+            assert sims[i]["end_time"] >= sims[i - 1]["end_time"], (
+                f"Simulations not in chronological order at index {i}"
+            )
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_returns_multiple_test_runs(self, e2e_console, drifted_tracking_code):
+        """Lineage crosses test run boundaries — spans multiple test runs."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, drifted_tracking_code)
+
+        assert result["test_runs_spanned"] >= 2, (
+            "Expected lineage to span at least 2 test runs for a drifted simulation"
+        )
+
+        # Verify distinct test_ids match test_runs_spanned
+        all_sims = result["simulations"]
+        # If paginated, only check the current page
+        distinct_test_ids = {s["test_id"] for s in all_sims}
+        assert len(distinct_test_ids) >= 1
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_unknown_code(self, e2e_console):
+        """Unknown tracking code returns empty results with hint."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, "nonexistent-tracking-code-12345")
+
+        assert result["total_simulations"] == 0
+        assert result["simulations"] == []
+        assert "hint_to_agent" in result
+        assert isinstance(result["hint_to_agent"], str)
+        assert len(result["hint_to_agent"]) > 0

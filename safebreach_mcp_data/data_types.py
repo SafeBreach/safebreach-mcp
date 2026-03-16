@@ -701,6 +701,8 @@ def group_and_enrich_drift_records(
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for record in records:
         record.pop("driftType", None)
+        if "trackingId" in record:
+            record["drift_tracking_code"] = record.pop("trackingId")
         from_obj = record.get("from", {})
         to_obj = record.get("to", {})
         drift_key = (
@@ -903,6 +905,8 @@ def group_sc_drift_records(
 
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for record in records:
+        if "trackingId" in record:
+            record["drift_tracking_code"] = record.pop("trackingId")
         if group_by == "drift_type":
             key = record.get("driftType", "Unknown")
         else:
