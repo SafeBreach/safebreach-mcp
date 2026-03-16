@@ -2578,3 +2578,128 @@ def sb_get_security_control_drifts(
         applied_filters, elapsed_seconds, group_by=group_by,
         console=console,
     )
+
+
+def sb_get_simulation_lineage(
+    console: str,
+    tracking_code: str,
+    page_number: int = 0,
+) -> Dict[str, Any]:
+    """Return all simulations sharing a drift tracking code across test runs.
+
+    Queries the SafeBreach API with ``runId: "*"`` to search across every test
+    run, transforms results via :func:`get_reduced_simulation_result_entity`,
+    computes per-simulation ``is_drifted`` by comparing to the chronological
+    predecessor, and returns a paginated response ordered oldest-first.
+    """
+    if not tracking_code or not tracking_code.strip():
+        raise ValueError("tracking_code must be a non-empty string")
+
+    cache_key = f"lineage_{console}_{tracking_code}"
+    all_simulations = None
+
+    # Check cache
+    if is_caching_enabled("data"):
+        cached = simulations_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Lineage cache hit for tracking_code '%s'", tracking_code)
+            all_simulations = cached
+
+    # Fetch from API if not cached
+    if all_simulations is None:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, "data")
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+        all_raw: List[Dict[str, Any]] = []
+        page = 1
+        page_size = 100
+
+        while True:
+            data = {
+                "runId": "*",
+                "query": f'originalExecutionId:("{tracking_code}")',
+                "page": page,
+                "pageSize": page_size,
+                "orderBy": "asc",
+                "sortBy": "executionTime",
+            }
+
+            response = requests.post(api_url, headers=headers, json=data, timeout=120)
+
+            if response.status_code == 401:
+                raise ValueError(
+                    f"Authentication failed (401) for console '{console}'. "
+                    "Check that the API token is valid."
+                )
+            response.raise_for_status()
+
+            response_data = response.json()
+            page_sims = response_data.get("simulations", [])
+            if not page_sims:
+                break
+
+            all_raw.extend(page_sims)
+            if len(page_sims) < page_size:
+                break
+            page += 1
+
+        # Transform via existing mapper
+        all_simulations = [
+            get_reduced_simulation_result_entity(s) for s in all_raw
+        ]
+
+        # Compute is_drifted by comparing to chronological predecessor
+        for i, sim in enumerate(all_simulations):
+            if i == 0:
+                sim["is_drifted"] = False
+            else:
+                sim["is_drifted"] = sim["status"] != all_simulations[i - 1]["status"]
+
+        # Cache the transformed list
+        if is_caching_enabled("data"):
+            simulations_cache.set(cache_key, all_simulations)
+
+    # Metadata
+    total_simulations = len(all_simulations)
+    status_summary: Dict[str, int] = {}
+    for sim in all_simulations:
+        s = sim.get("status", "unknown")
+        status_summary[s] = status_summary.get(s, 0) + 1
+
+    test_runs_spanned = len({s["test_id"] for s in all_simulations}) if all_simulations else 0
+    first_seen = all_simulations[0]["end_time"] if all_simulations else None
+    last_seen = all_simulations[-1]["end_time"] if all_simulations else None
+
+    # MCP pagination
+    total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE if total_simulations > 0 else 0
+    start_idx = page_number * PAGE_SIZE
+    page_sims = all_simulations[start_idx : start_idx + PAGE_SIZE]
+
+    # Hint
+    if total_simulations == 0:
+        hint = (
+            "No simulations found for this tracking code. "
+            "The tracking code may be invalid or the simulations may have aged out."
+        )
+    else:
+        hint = (
+            f"Showing page {page_number} of {total_pages}. "
+            "Use get_simulation_details for full details on any simulation."
+        )
+
+    return {
+        "tracking_code": tracking_code,
+        "total_simulations": total_simulations,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "status_summary": status_summary,
+        "test_runs_spanned": test_runs_spanned,
+        "page_number": page_number,
+        "total_pages": total_pages,
+        "simulations": page_sims,
+        "hint_to_agent": hint,
+    }
