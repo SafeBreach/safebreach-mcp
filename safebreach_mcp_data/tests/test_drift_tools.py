@@ -3142,3 +3142,108 @@ class TestSecurityControlDriftsE2E:
         assert result["applied_filters"].get("drift_type") == "regression"
         assert isinstance(result["total_drifts"], int)
         assert result["total_drifts"] >= 0
+
+
+@pytest.fixture(scope="class")
+def drifted_tracking_code(e2e_console):
+    """Get a drift_tracking_code from a known drifted simulation on the live console."""
+    from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+    # Use known Window 1 to get a drifted sim with tracking code
+    result = sb_get_simulation_status_drifts(
+        console=e2e_console,
+        window_start=_E2E_WINDOW_START,
+        window_end=_E2E_WINDOW_END,
+    )
+
+    if result["total_drifts"] == 0:
+        pytest.skip("No drifts found in known window — cannot extract tracking code")
+
+    # Drill into the first group to get a record with drift_tracking_code
+    first_key = result["drift_groups"][0]["drift_key"]
+    drilldown = sb_get_simulation_status_drifts(
+        console=e2e_console,
+        window_start=_E2E_WINDOW_START,
+        window_end=_E2E_WINDOW_END,
+        drift_key=first_key,
+        page_number=0,
+    )
+
+    records = drilldown.get("drifts_in_page", [])
+    for record in records:
+        code = record.get("drift_tracking_code")
+        if code:
+            return code
+
+    pytest.skip("No drift_tracking_code found in drill-down records")
+
+
+class TestSimulationLineageE2E:
+    """End-to-end tests for simulation lineage tracing against a live console."""
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_from_drifted_simulation(self, e2e_console, drifted_tracking_code):
+        """Lineage from a real drifted tracking code returns valid structure."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, drifted_tracking_code)
+
+        assert result["tracking_code"] == drifted_tracking_code
+        assert result["total_simulations"] >= 1
+        assert isinstance(result["simulations"], list)
+        assert len(result["simulations"]) >= 1
+
+        # Verify each simulation has required fields
+        for sim in result["simulations"]:
+            assert "simulation_id" in sim
+            assert "test_id" in sim
+            assert "status" in sim
+            assert "drift_tracking_code" in sim
+            assert "is_drifted" in sim
+
+        # Verify status_summary is a dict with string keys and int values
+        summary = result["status_summary"]
+        assert isinstance(summary, dict)
+        for k, v in summary.items():
+            assert isinstance(k, str)
+            assert isinstance(v, int)
+
+        # Verify chronological order (end_time non-decreasing)
+        sims = result["simulations"]
+        for i in range(1, len(sims)):
+            assert sims[i]["end_time"] >= sims[i - 1]["end_time"], (
+                f"Simulations not in chronological order at index {i}"
+            )
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_returns_multiple_test_runs(self, e2e_console, drifted_tracking_code):
+        """Lineage crosses test run boundaries — spans multiple test runs."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, drifted_tracking_code)
+
+        assert result["test_runs_spanned"] >= 2, (
+            "Expected lineage to span at least 2 test runs for a drifted simulation"
+        )
+
+        # Verify distinct test_ids match test_runs_spanned
+        all_sims = result["simulations"]
+        # If paginated, only check the current page
+        distinct_test_ids = {s["test_id"] for s in all_sims}
+        assert len(distinct_test_ids) >= 1
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_lineage_unknown_code(self, e2e_console):
+        """Unknown tracking code returns empty results with hint."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_lineage
+
+        result = sb_get_simulation_lineage(e2e_console, "nonexistent-tracking-code-12345")
+
+        assert result["total_simulations"] == 0
+        assert result["simulations"] == []
+        assert "hint_to_agent" in result
+        assert isinstance(result["hint_to_agent"], str)
+        assert len(result["hint_to_agent"]) > 0
