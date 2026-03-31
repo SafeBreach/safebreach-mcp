@@ -187,6 +187,67 @@ def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
     return result
 
 
+def _extract_platform_data(content_data: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """
+    Extract attacker and target platform from attack node structure.
+
+    Traverses content.nodes to find OS constraints, mapping nodes to roles
+    via isSource (attacker) and isDestination (target) flags.
+
+    For single-node attacks where neither isSource nor isDestination is set,
+    the node's OS is assigned to target_platform (host attacks are target-centric).
+
+    Args:
+        content_data: The 'content' dict from raw attack data
+
+    Returns:
+        Dict with 'attacker_platform' and 'target_platform' (each str or None)
+    """
+    result: Dict[str, Optional[str]] = {
+        'attacker_platform': None,
+        'target_platform': None
+    }
+
+    if not content_data or not isinstance(content_data, dict):
+        return result
+
+    nodes = content_data.get('nodes')
+    if not nodes or not isinstance(nodes, dict):
+        return result
+
+    has_role_flags = False
+
+    for node_data in nodes.values():
+        if not isinstance(node_data, dict):
+            continue
+
+        is_source = node_data.get('isSource', False)
+        is_destination = node_data.get('isDestination', False)
+        constraints = node_data.get('constraints', {})
+        os_value = constraints.get('os') if isinstance(constraints, dict) else None
+
+        if is_source:
+            has_role_flags = True
+            if os_value:
+                result['attacker_platform'] = os_value
+        if is_destination:
+            has_role_flags = True
+            if os_value:
+                result['target_platform'] = os_value
+
+    # Single-node fallback: if no isSource/isDestination flags found,
+    # assign the single node's OS to target_platform
+    if not has_role_flags and len(nodes) == 1:
+        single_node = next(iter(nodes.values()))
+        if isinstance(single_node, dict):
+            constraints = single_node.get('constraints', {})
+            os_value = constraints.get('os') if isinstance(constraints, dict) else None
+            if os_value:
+                result['target_platform'] = os_value
+
+    return result
+
+
 def get_reduced_playbook_attack_mapping() -> Dict[str, str]:
     """
     Get mapping for reduced playbook attack objects.
@@ -249,6 +310,10 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
             result[output_key] = value
         else:
             result[output_key] = attack_data.get(source_key)
+
+    # Always extract platform data (lightweight — two optional strings)
+    platform_data = _extract_platform_data(attack_data.get('content', {}))
+    result.update(platform_data)
 
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))

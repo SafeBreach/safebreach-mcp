@@ -250,9 +250,10 @@ class TestTransformationFunctions:
         result = transform_reduced_playbook_attack(sample_attack_raw)
         
         # Verify all required fields are present
-        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate']
+        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
+                          'attacker_platform', 'target_platform']
         assert set(result.keys()) == set(expected_fields)
-        
+
         # Verify field values
         assert result['id'] == 1027
         assert result['name'] == "DNS queries of malicious URLs"
@@ -271,7 +272,8 @@ class TestTransformationFunctions:
         result = transform_reduced_playbook_attack(incomplete_data)
         
         # Should still have all expected keys, with None for missing values
-        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate']
+        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
+                          'attacker_platform', 'target_platform']
         assert set(result.keys()) == set(expected_fields)
         assert result['id'] == 123
         assert result['name'] == "Test Attack"
@@ -284,7 +286,8 @@ class TestTransformationFunctions:
         result = transform_full_playbook_attack(sample_attack_raw)
         
         # Should include all reduced fields plus all optional fields (default behavior)
-        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate', 
+        expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
+                          'attacker_platform', 'target_platform',
                           'fix_suggestions', 'tags', 'params']
         assert set(result.keys()) == set(expected_fields)
         
