@@ -373,7 +373,9 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                published_date_start: Optional[str] = None,
                                published_date_end: Optional[str] = None,
                                mitre_technique_filter: Optional[str] = None,
-                               mitre_tactic_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                               mitre_tactic_filter: Optional[str] = None,
+                               attacker_platform_filter: Optional[str] = None,
+                               target_platform_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
 
@@ -389,6 +391,10 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
         published_date_end: End date for published date range (ISO format)
         mitre_technique_filter: Comma-separated technique IDs or names (OR logic, case-insensitive partial match)
         mitre_tactic_filter: Comma-separated tactic names or IDs like TA0006 (OR logic, case-insensitive partial match)
+        attacker_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
+            Attacks with None attacker_platform pass through (are included).
+        target_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
+            Attacks with None target_platform pass through (are included).
 
     Returns:
         Filtered list of attacks
@@ -469,6 +475,22 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             if _attack_matches_mitre_tactic(attack, filter_values)
         ]
 
+    # Filter by attacker platform (comma-separated OR, case-insensitive partial match, None passes through)
+    if attacker_platform_filter:
+        filter_values = [v.strip().lower() for v in attacker_platform_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_platform(attack.get('attacker_platform'), filter_values)
+        ]
+
+    # Filter by target platform (comma-separated OR, case-insensitive partial match, None passes through)
+    if target_platform_filter:
+        filter_values = [v.strip().lower() for v in target_platform_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_platform(attack.get('target_platform'), filter_values)
+        ]
+
     return filtered_attacks
 
 
@@ -506,7 +528,32 @@ def _attack_matches_mitre_tactic(attack: Dict[str, Any], filter_values: List[str
     return False
 
 
-def paginate_attacks(attacks: List[Dict[str, Any]], 
+def _attack_matches_platform(platform_value: Optional[str], filter_values: List[str]) -> bool:
+    """
+    Check if a platform value matches any of the filter values.
+
+    None platform values always pass through (return True) — attacks without
+    OS data are included in results when platform filters are active.
+
+    Args:
+        platform_value: The attack's platform value (e.g., 'WINDOWS') or None
+        filter_values: List of lowercased filter values to match against
+
+    Returns:
+        True if platform is None (pass-through) or matches any filter value
+    """
+    if platform_value is None:
+        return True
+
+    platform_lower = platform_value.lower()
+    for fv in filter_values:
+        if fv in platform_lower:
+            return True
+
+    return False
+
+
+def paginate_attacks(attacks: List[Dict[str, Any]],
                      page_number: int = 0, 
                      page_size: int = 10) -> Dict[str, Any]:
     """
