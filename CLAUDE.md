@@ -361,7 +361,7 @@ All filters work in combination and include pagination support. The response inc
   Supports comma-separated multi-value with OR logic (e.g., "LINUX,WINDOWS").
   Case-insensitive partial match (e.g., "win" matches "WINDOWS").
 - **Target Platform**: Filter by target OS via `target_platform_filter`. Same syntax as attacker filter.
-- **Valid Platform Values**: AWS, AZURE, GCP, LINUX, MAC, WEBAPPLICATION, WINDOWS
+- **Valid Platform Values**: AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
 - **Always-On Fields**: `attacker_platform` and `target_platform` are always present in results (None when unavailable).
 - **None Pass-Through**: Attacks without platform data are **included** when platform filters are active.
   This avoids hiding attacks that lack OS constraints (~67.7% of attacks).

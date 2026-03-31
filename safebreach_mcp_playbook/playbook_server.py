@@ -50,7 +50,7 @@ attacker_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - O
   Attacks without platform data are INCLUDED in results when this filter is active),
 target_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
   Attacks without platform data are INCLUDED in results when this filter is active).
-Valid platform values: AWS, AZURE, GCP, LINUX, MAC, WEBAPPLICATION, WINDOWS"""
+Valid platform values: AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS"""
         )
         def get_playbook_attacks(
             console: str = "default",

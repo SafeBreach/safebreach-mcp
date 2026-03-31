@@ -418,7 +418,7 @@ class TestPlaybookE2E:
             pytest.fail(f"E2E test failed: {str(e)}")
 
 
-VALID_OS_VALUES = {'AWS', 'AZURE', 'GCP', 'LINUX', 'MAC', 'WEBAPPLICATION', 'WINDOWS'}
+VALID_OS_VALUES = {'AWS', 'AZURE', 'DOCKER', 'GCP', 'LINUX', 'MAC', 'MAILBOX', 'WEBAPPLICATION', 'WINDOWS'}
 
 
 @skip_e2e
