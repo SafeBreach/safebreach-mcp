@@ -14,6 +14,8 @@ from safebreach_mcp_playbook.playbook_types import (
     paginate_attacks,
     _transform_tags,
     _extract_mitre_data,
+    _extract_platform_data,
+    _attack_matches_platform,
     _resolve_tactic_filter_value
 )
 
@@ -910,3 +912,332 @@ class TestResolveTacticFilterValue:
         """Test higher tactic ID TA0040 (Impact) resolves correctly."""
         assert _resolve_tactic_filter_value("ta0040") == "impact"
         assert _resolve_tactic_filter_value("ta40") == "impact"
+
+
+# ============================================================================
+# Platform Extraction and Filtering Tests
+# ============================================================================
+
+class TestExtractPlatformData:
+    """Test _extract_platform_data() function."""
+
+    def test_gold_node_single_host_attack(self):
+        """Gold node: target_platform = OS, attacker_platform = None."""
+        content = {
+            "nodes": {
+                "gold": {
+                    "isSource": False,
+                    "isDestination": False,
+                    "constraints": {"os": "WINDOWS", "framework": "3.146.0"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] == "WINDOWS"
+
+    def test_green_red_network_attack(self):
+        """Green/red nodes: map via isSource/isDestination."""
+        content = {
+            "nodes": {
+                "green": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {"os": "LINUX"}
+                },
+                "red": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {"os": "WINDOWS"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] == "LINUX"
+        assert result['target_platform'] == "WINDOWS"
+
+    def test_green_red_reversed_roles(self):
+        """Green as destination, red as source."""
+        content = {
+            "nodes": {
+                "green": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {"os": "AZURE"}
+                },
+                "red": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {"os": "LINUX"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] == "LINUX"
+        assert result['target_platform'] == "AZURE"
+
+    def test_explicit_attacker_target_nodes(self):
+        """Explicit attacker/target node names with isSource/isDestination."""
+        content = {
+            "nodes": {
+                "attacker": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {"os": "LINUX"}
+                },
+                "target": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {"os": "WINDOWS"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] == "LINUX"
+        assert result['target_platform'] == "WINDOWS"
+
+    def test_target_only_pattern(self):
+        """Single target node: target_platform = OS, attacker = None."""
+        content = {
+            "nodes": {
+                "target": {
+                    "isSource": False,
+                    "isDestination": False,
+                    "constraints": {"os": "MAC"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] == "MAC"
+
+    def test_local_only_pattern(self):
+        """Single local node: target_platform = OS, attacker = None."""
+        content = {
+            "nodes": {
+                "local": {
+                    "isSource": False,
+                    "isDestination": False,
+                    "constraints": {"os": "LINUX"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] == "LINUX"
+
+    def test_missing_content(self):
+        """Empty or None content returns None/None."""
+        assert _extract_platform_data({}) == {'attacker_platform': None, 'target_platform': None}
+        assert _extract_platform_data(None) == {'attacker_platform': None, 'target_platform': None}
+
+    def test_missing_nodes(self):
+        """Content without nodes returns None/None."""
+        result = _extract_platform_data({"params": []})
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] is None
+
+    def test_missing_constraints_os(self):
+        """Node without constraints.os returns None for that role."""
+        content = {
+            "nodes": {
+                "gold": {
+                    "isSource": False,
+                    "isDestination": False,
+                    "constraints": {"framework": "3.146.0"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] is None
+
+    def test_case_variant_node_names(self):
+        """Capital case Green/Red should work the same as lowercase."""
+        content = {
+            "nodes": {
+                "Green": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {"os": "WEBAPPLICATION"}
+                },
+                "Red": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {"os": "LINUX"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] == "WEBAPPLICATION"
+        assert result['target_platform'] == "LINUX"
+
+    def test_green_red_no_os(self):
+        """Green/red nodes without OS constraints."""
+        content = {
+            "nodes": {
+                "green": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {}
+                },
+                "red": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] is None
+        assert result['target_platform'] is None
+
+    def test_cloud_platform_values(self):
+        """Test cloud platform values like AWS, AZURE, GCP."""
+        content = {
+            "nodes": {
+                "green": {
+                    "isSource": False,
+                    "isDestination": True,
+                    "constraints": {"os": "AWS"}
+                },
+                "red": {
+                    "isSource": True,
+                    "isDestination": False,
+                    "constraints": {"os": "GCP"}
+                }
+            }
+        }
+        result = _extract_platform_data(content)
+        assert result['attacker_platform'] == "GCP"
+        assert result['target_platform'] == "AWS"
+
+
+class TestAttackMatchesPlatform:
+    """Test _attack_matches_platform() helper function."""
+
+    def test_none_platform_passes_through(self):
+        """None platform always returns True (pass-through)."""
+        assert _attack_matches_platform(None, ["windows"]) is True
+        assert _attack_matches_platform(None, ["linux", "mac"]) is True
+
+    def test_exact_match_case_insensitive(self):
+        """Case-insensitive exact match."""
+        assert _attack_matches_platform("WINDOWS", ["windows"]) is True
+        assert _attack_matches_platform("windows", ["WINDOWS".lower()]) is True
+
+    def test_partial_match(self):
+        """Partial string match."""
+        assert _attack_matches_platform("WINDOWS", ["win"]) is True
+        assert _attack_matches_platform("WEBAPPLICATION", ["web"]) is True
+
+    def test_no_match(self):
+        """No match returns False."""
+        assert _attack_matches_platform("WINDOWS", ["linux"]) is False
+        assert _attack_matches_platform("LINUX", ["mac"]) is False
+
+    def test_multiple_filter_values_or_logic(self):
+        """Multiple filter values use OR logic."""
+        assert _attack_matches_platform("WINDOWS", ["linux", "windows"]) is True
+        assert _attack_matches_platform("MAC", ["linux", "mac"]) is True
+        assert _attack_matches_platform("AWS", ["linux", "mac"]) is False
+
+    def test_empty_filter_values(self):
+        """Empty filter values list returns False for non-None platform."""
+        assert _attack_matches_platform("WINDOWS", []) is False
+
+
+class TestPlatformFiltering:
+    """Test platform filtering in filter_attacks_by_criteria()."""
+
+    @pytest.fixture
+    def sample_attacks_with_platform(self):
+        """Mixed attacks with various platform configurations."""
+        return [
+            {"id": 1, "name": "Attack A", "attacker_platform": None, "target_platform": "WINDOWS"},
+            {"id": 2, "name": "Attack B", "attacker_platform": "LINUX", "target_platform": "WINDOWS"},
+            {"id": 3, "name": "Attack C", "attacker_platform": None, "target_platform": "LINUX"},
+            {"id": 4, "name": "Attack D", "attacker_platform": None, "target_platform": None},
+            {"id": 5, "name": "Attack E", "attacker_platform": "LINUX", "target_platform": "MAC"},
+        ]
+
+    def test_target_platform_filter_single(self, sample_attacks_with_platform):
+        """Filter by single target platform value."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform, target_platform_filter="WINDOWS"
+        )
+        ids = [a['id'] for a in result]
+        # Attacks 1,2 match WINDOWS; attack 4 has None (pass-through)
+        assert 1 in ids
+        assert 2 in ids
+        assert 4 in ids
+        # Attack 3 has LINUX target, attack 5 has MAC target
+        assert 3 not in ids
+        assert 5 not in ids
+
+    def test_attacker_platform_filter_single(self, sample_attacks_with_platform):
+        """Filter by single attacker platform value."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform, attacker_platform_filter="LINUX"
+        )
+        ids = [a['id'] for a in result]
+        # Attacks 2,5 have LINUX attacker; attacks 1,3,4 have None (pass-through)
+        assert set(ids) == {1, 2, 3, 4, 5}
+
+    def test_target_platform_filter_comma_separated(self, sample_attacks_with_platform):
+        """Filter by comma-separated target platforms (OR logic)."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform, target_platform_filter="WINDOWS,MAC"
+        )
+        ids = [a['id'] for a in result]
+        # 1,2 = WINDOWS, 5 = MAC, 4 = None (pass-through)
+        assert 1 in ids
+        assert 2 in ids
+        assert 5 in ids
+        assert 4 in ids
+        # 3 = LINUX (no match)
+        assert 3 not in ids
+
+    def test_target_platform_filter_partial_match(self, sample_attacks_with_platform):
+        """Partial match on platform value."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform, target_platform_filter="win"
+        )
+        ids = [a['id'] for a in result]
+        assert 1 in ids  # WINDOWS matches "win"
+        assert 2 in ids  # WINDOWS matches "win"
+        assert 4 in ids  # None pass-through
+
+    def test_none_pass_through(self, sample_attacks_with_platform):
+        """Attacks with None platform are included when filter active."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform, target_platform_filter="NONEXISTENT"
+        )
+        ids = [a['id'] for a in result]
+        # Only attack 4 has None target_platform (pass-through)
+        assert ids == [4]
+
+    def test_combined_platform_and_name_filter(self, sample_attacks_with_platform):
+        """Platform filter combined with name filter."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform,
+            name_filter="Attack B",
+            target_platform_filter="WINDOWS"
+        )
+        ids = [a['id'] for a in result]
+        assert ids == [2]
+
+    def test_both_platform_filters(self, sample_attacks_with_platform):
+        """Both attacker and target platform filters applied."""
+        result = filter_attacks_by_criteria(
+            sample_attacks_with_platform,
+            attacker_platform_filter="LINUX",
+            target_platform_filter="WINDOWS"
+        )
+        ids = [a['id'] for a in result]
+        # Attack 2: attacker=LINUX (match), target=WINDOWS (match)
+        # Attack 1: attacker=None (pass), target=WINDOWS (match)
+        # Attack 4: attacker=None (pass), target=None (pass)
+        assert 2 in ids
+        assert 1 in ids
+        assert 4 in ids
