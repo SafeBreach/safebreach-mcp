@@ -47,10 +47,12 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics/technique
 mitre_technique_filter (comma-separated technique IDs or names, OR logic, case-insensitive partial match),
 mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, case-insensitive partial match),
 attacker_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
-  Attacks without platform data are INCLUDED in results when this filter is active),
+  Strict: only attacks matching the specified platform(s) are returned.
+  Add ANY to also include platform-agnostic attacks, e.g. WINDOWS,ANY),
 target_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
-  Attacks without platform data are INCLUDED in results when this filter is active).
-Valid platform values: AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS"""
+  Strict: only attacks matching the specified platform(s) are returned.
+  Add ANY to also include platform-agnostic attacks, e.g. WINDOWS,ANY).
+Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS"""
         )
         def get_playbook_attacks(
             console: str = "default",

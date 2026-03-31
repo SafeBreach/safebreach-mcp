@@ -194,8 +194,13 @@ def _extract_platform_data(content_data: Dict[str, Any]) -> Dict[str, Optional[s
     Traverses content.nodes to find OS constraints, mapping nodes to roles
     via isSource (attacker) and isDestination (target) flags.
 
+    Platform values:
+    - Specific OS string (e.g., "WINDOWS", "LINUX") when constraints.os is set
+    - "ANY" when a node exists but has no OS constraint (runs on any platform)
+    - None only when there are no nodes at all (no platform data available)
+
     For single-node attacks where neither isSource nor isDestination is set,
-    the node's OS is assigned to target_platform (host attacks are target-centric).
+    the node's platform is assigned to target_platform (host attacks are target-centric).
 
     Args:
         content_data: The 'content' dict from raw attack data
@@ -225,25 +230,23 @@ def _extract_platform_data(content_data: Dict[str, Any]) -> Dict[str, Optional[s
         is_destination = node_data.get('isDestination', False)
         constraints = node_data.get('constraints', {})
         os_value = constraints.get('os') if isinstance(constraints, dict) else None
+        platform = os_value if os_value else "ANY"
 
         if is_source:
             has_role_flags = True
-            if os_value:
-                result['attacker_platform'] = os_value
+            result['attacker_platform'] = platform
         if is_destination:
             has_role_flags = True
-            if os_value:
-                result['target_platform'] = os_value
+            result['target_platform'] = platform
 
     # Single-node fallback: if no isSource/isDestination flags found,
-    # assign the single node's OS to target_platform
+    # assign the single node's platform to target_platform
     if not has_role_flags and len(nodes) == 1:
         single_node = next(iter(nodes.values()))
         if isinstance(single_node, dict):
             constraints = single_node.get('constraints', {})
             os_value = constraints.get('os') if isinstance(constraints, dict) else None
-            if os_value:
-                result['target_platform'] = os_value
+            result['target_platform'] = os_value if os_value else "ANY"
 
     return result
 
@@ -532,18 +535,20 @@ def _attack_matches_platform(platform_value: Optional[str], filter_values: List[
     """
     Check if a platform value matches any of the filter values.
 
-    None platform values always pass through (return True) — attacks without
-    OS data are included in results when platform filters are active.
+    Strict matching: only returns True when the platform value matches a filter.
+    None platform values (no nodes at all) do NOT match any filter.
+    "ANY" platform values only match if "any" is in the filter values
+    (e.g., target_platform_filter="WINDOWS,ANY").
 
     Args:
-        platform_value: The attack's platform value (e.g., 'WINDOWS') or None
+        platform_value: The attack's platform value (e.g., 'WINDOWS', 'ANY') or None
         filter_values: List of lowercased filter values to match against
 
     Returns:
-        True if platform is None (pass-through) or matches any filter value
+        True if platform matches any filter value, False otherwise
     """
     if platform_value is None:
-        return True
+        return False
 
     platform_lower = platform_value.lower()
     for fv in filter_values:

@@ -361,13 +361,16 @@ All filters work in combination and include pagination support. The response inc
   Supports comma-separated multi-value with OR logic (e.g., "LINUX,WINDOWS").
   Case-insensitive partial match (e.g., "win" matches "WINDOWS").
 - **Target Platform**: Filter by target OS via `target_platform_filter`. Same syntax as attacker filter.
-- **Valid Platform Values**: AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
-- **Always-On Fields**: `attacker_platform` and `target_platform` are always present in results (None when unavailable).
-- **None Pass-Through**: Attacks without platform data are **included** when platform filters are active.
-  This avoids hiding attacks that lack OS constraints (~67.7% of attacks).
+- **Valid Platform Values**: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
+- **Always-On Fields**: `attacker_platform` and `target_platform` are always present in results.
+  Values are a specific OS (e.g., "WINDOWS"), "ANY" (runs on any platform), or None (no node data).
+- **Strict Filtering**: By default, platform filters only return attacks that explicitly match the
+  specified platform. "ANY" and None platform attacks are excluded.
+- **Including ANY**: Add `ANY` to the filter to also include platform-agnostic attacks
+  (e.g., `target_platform_filter="WINDOWS,ANY"` returns WINDOWS + any-platform attacks).
 - **Platform Source**: Extracted from `content.nodes.{node}.constraints.os` with role mapping via
   `isSource` (attacker) and `isDestination` (target) flags.
-- **Coverage**: ~32.3% of playbook attacks have OS constraints (93.8% of host attacks, 3.7% of network attacks).
+- **Coverage**: ~32.3% of playbook attacks have specific OS constraints; the remainder are "ANY".
 
 ## Drift Analysis
 

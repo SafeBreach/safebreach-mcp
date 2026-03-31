@@ -474,12 +474,11 @@ class TestPlatformIntegration:
         result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS")
 
         ids = [a['id'] for a in result['attacks_in_page']]
-        # 1027: target=WINDOWS (gold), 2048: target=WINDOWS (red),
-        # 3141: target=None (pass-through)
+        # 1027: target=WINDOWS (gold), 2048: target=WINDOWS (red)
         assert 1027 in ids
         assert 2048 in ids
-        assert 3141 in ids
-        # 4096: target=MAC (no match)
+        # 3141: target=ANY (excluded — strict), 4096: target=MAC (no match)
+        assert 3141 not in ids
         assert 4096 not in ids
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
@@ -509,7 +508,7 @@ class TestPlatformIntegration:
         assert attacks[2048]['target_platform'] == 'WINDOWS'
 
         assert attacks[3141]['attacker_platform'] is None
-        assert attacks[3141]['target_platform'] is None
+        assert attacks[3141]['target_platform'] == 'ANY'
 
         assert attacks[4096]['target_platform'] == 'MAC'
         assert attacks[4096]['attacker_platform'] is None

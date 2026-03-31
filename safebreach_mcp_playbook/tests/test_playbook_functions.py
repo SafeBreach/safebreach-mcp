@@ -753,7 +753,7 @@ class TestPlatformGetPlaybookAttacks:
         result = sb_get_playbook_attacks('test-console')
         attacks = {a['id']: a for a in result['attacks_in_page']}
 
-        # Attack 1001: gold node (host) — target=WINDOWS, attacker=None
+        # Attack 1001: gold node (host) — target=WINDOWS, attacker=None (no nodes for attacker)
         assert attacks[1001]['target_platform'] == 'WINDOWS'
         assert attacks[1001]['attacker_platform'] is None
 
@@ -761,31 +761,41 @@ class TestPlatformGetPlaybookAttacks:
         assert attacks[1002]['attacker_platform'] == 'LINUX'
         assert attacks[1002]['target_platform'] == 'WINDOWS'
 
-        # Attack 1003: gold node no OS — both None
+        # Attack 1003: gold node no OS — target=ANY, attacker=None
         assert attacks[1003]['attacker_platform'] is None
-        assert attacks[1003]['target_platform'] is None
+        assert attacks[1003]['target_platform'] == 'ANY'
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
-    def test_target_platform_filter(self, mock_get_all, sample_attack_data_with_platform):
-        """Filter by target platform."""
+    def test_target_platform_filter_strict(self, mock_get_all, sample_attack_data_with_platform):
+        """Strict filter: only WINDOWS matches, ANY excluded."""
         mock_get_all.return_value = sample_attack_data_with_platform
 
         result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS")
 
         ids = [a['id'] for a in result['attacks_in_page']]
-        # 1001: target=WINDOWS (match), 1002: target=WINDOWS (match), 1003: target=None (pass-through)
+        # 1001: target=WINDOWS (match), 1002: target=WINDOWS (match), 1003: target=ANY (excluded)
+        assert set(ids) == {1001, 1002}
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_target_platform_filter_with_any(self, mock_get_all, sample_attack_data_with_platform):
+        """Filter WINDOWS,ANY includes WINDOWS + ANY platform attacks."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS,ANY")
+
+        ids = [a['id'] for a in result['attacks_in_page']]
         assert set(ids) == {1001, 1002, 1003}
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
-    def test_attacker_platform_filter(self, mock_get_all, sample_attack_data_with_platform):
-        """Filter by attacker platform."""
+    def test_attacker_platform_filter_strict(self, mock_get_all, sample_attack_data_with_platform):
+        """Strict filter on attacker: only LINUX matches."""
         mock_get_all.return_value = sample_attack_data_with_platform
 
         result = sb_get_playbook_attacks('test-console', attacker_platform_filter="LINUX")
 
         ids = [a['id'] for a in result['attacks_in_page']]
-        # All pass: 1001 attacker=None (pass), 1002 attacker=LINUX (match), 1003 attacker=None (pass)
-        assert set(ids) == {1001, 1002, 1003}
+        # Only 1002 has attacker=LINUX; 1001,1003 have attacker=None (excluded)
+        assert set(ids) == {1002}
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
     def test_platform_filter_combined_with_name(self, mock_get_all, sample_attack_data_with_platform):
@@ -814,12 +824,10 @@ class TestPlatformGetPlaybookAttacks:
         assert result['applied_filters']['target_platform_filter'] == 'WINDOWS'
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
-    def test_platform_filter_none_pass_through(self, mock_get_all, sample_attack_data_with_platform):
-        """Attacks without OS data included when filter active."""
+    def test_platform_filter_nonexistent_returns_empty(self, mock_get_all, sample_attack_data_with_platform):
+        """Nonexistent platform returns no results (strict)."""
         mock_get_all.return_value = sample_attack_data_with_platform
 
         result = sb_get_playbook_attacks('test-console', target_platform_filter="NONEXISTENT")
 
-        ids = [a['id'] for a in result['attacks_in_page']]
-        # Only attack 1003 has None target_platform (pass-through)
-        assert ids == [1003]
+        assert result['total_attacks'] == 0
