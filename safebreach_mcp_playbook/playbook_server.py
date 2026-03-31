@@ -38,14 +38,19 @@ class SafeBreachPlaybookServer(SafeBreachMCPBase):
         @self.mcp.tool(
             name="get_playbook_attacks",
             description="""Returns a filtered and paginated list of SafeBreach playbook attacks.
-Supports filtering by name, description, ID range, date ranges, and MITRE ATT&CK techniques/tactics.
-Results are paginated with 10 items per page.
+Supports filtering by name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics, and platform.
+Results are paginated with 10 items per page. Each attack includes attacker_platform and target_platform fields.
 Parameters: console (required), page_number (default 0), name_filter (partial match), description_filter (partial match),
 id_min (minimum ID), id_max (maximum ID), modified_date_start (ISO date), modified_date_end (ISO date),
 published_date_start (ISO date), published_date_end (ISO date),
 include_mitre_techniques (default False - include MITRE ATT&CK tactics/techniques/sub-techniques),
 mitre_technique_filter (comma-separated technique IDs or names, OR logic, case-insensitive partial match),
-mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, case-insensitive partial match)"""
+mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, case-insensitive partial match),
+attacker_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
+  Attacks without platform data are INCLUDED in results when this filter is active),
+target_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
+  Attacks without platform data are INCLUDED in results when this filter is active).
+Valid platform values: AWS, AZURE, GCP, LINUX, MAC, WEBAPPLICATION, WINDOWS"""
         )
         def get_playbook_attacks(
             console: str = "default",
@@ -60,7 +65,9 @@ mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, 
             published_date_end: Optional[str] = None,
             include_mitre_techniques: bool = False,
             mitre_technique_filter: Optional[str] = None,
-            mitre_tactic_filter: Optional[str] = None
+            mitre_tactic_filter: Optional[str] = None,
+            attacker_platform_filter: Optional[str] = None,
+            target_platform_filter: Optional[str] = None
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -77,7 +84,9 @@ mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, 
                     published_date_end=published_date_end,
                     include_mitre_techniques=include_mitre_techniques,
                     mitre_technique_filter=mitre_technique_filter,
-                    mitre_tactic_filter=mitre_tactic_filter
+                    mitre_tactic_filter=mitre_tactic_filter,
+                    attacker_platform_filter=attacker_platform_filter,
+                    target_platform_filter=target_platform_filter
                 )
                 
                 if 'error' in result:
@@ -125,6 +134,14 @@ mitre_tactic_filter (comma-separated tactic names or IDs like TA0006, OR logic, 
                     if mitre_sub_techniques:
                         sub_names = ', '.join(t.get('display_name', t.get('id', '')) for t in mitre_sub_techniques)
                         response_parts.append(f"**MITRE Sub-Techniques:** {sub_names}")
+
+                    # Render platform data
+                    attacker_platform = attack.get('attacker_platform')
+                    target_platform = attack.get('target_platform')
+                    if attacker_platform:
+                        response_parts.append(f"**Attacker Platform:** {attacker_platform}")
+                    if target_platform:
+                        response_parts.append(f"**Target Platform:** {target_platform}")
 
                     response_parts.append("")
                 
