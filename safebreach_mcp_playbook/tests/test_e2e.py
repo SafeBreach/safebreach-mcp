@@ -416,3 +416,258 @@ class TestPlaybookE2E:
 
         except Exception as e:
             pytest.fail(f"E2E test failed: {str(e)}")
+
+
+VALID_OS_VALUES = {'AWS', 'AZURE', 'GCP', 'LINUX', 'MAC', 'WEBAPPLICATION', 'WINDOWS'}
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestPlatformE2E:
+    """End-to-end tests for platform filtering — zero mocks."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def test_platform_fields_real_api(self):
+        """Verify platform fields exist on every attack from real API."""
+        result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
+        assert result['total_attacks'] > 0
+
+        for attack in result['attacks_in_page']:
+            assert 'attacker_platform' in attack
+            assert 'target_platform' in attack
+            # Values are either None or a valid OS string
+            for field in ['attacker_platform', 'target_platform']:
+                val = attack[field]
+                assert val is None or val in VALID_OS_VALUES, \
+                    f"Attack {attack['id']} has unexpected {field}={val}"
+
+        print(f"✅ Platform fields verified for {len(result['attacks_in_page'])} attacks")
+
+    def test_target_platform_filter_windows(self):
+        """Filter by target_platform=WINDOWS returns matching attacks."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+        assert result['total_attacks'] > 0
+        assert result['applied_filters']['target_platform_filter'] == 'WINDOWS'
+
+        for attack in result['attacks_in_page']:
+            tp = attack.get('target_platform')
+            # Either matches WINDOWS or is None (pass-through)
+            assert tp is None or 'WINDOWS' in tp, \
+                f"Attack {attack['id']} has target_platform={tp}, expected WINDOWS or None"
+
+        print(f"✅ WINDOWS target filter: {result['total_attacks']} attacks")
+
+    def test_attacker_platform_filter_linux(self):
+        """Filter by attacker_platform=LINUX returns matching attacks."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, attacker_platform_filter="LINUX"
+        )
+        assert result['total_attacks'] > 0
+
+        for attack in result['attacks_in_page']:
+            ap = attack.get('attacker_platform')
+            assert ap is None or 'LINUX' in ap, \
+                f"Attack {attack['id']} has attacker_platform={ap}, expected LINUX or None"
+
+        print(f"✅ LINUX attacker filter: {result['total_attacks']} attacks")
+
+    def test_target_platform_filter_linux(self):
+        """Filter by target_platform=LINUX returns matching attacks."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="LINUX"
+        )
+        assert result['total_attacks'] > 0
+
+        for attack in result['attacks_in_page']:
+            tp = attack.get('target_platform')
+            assert tp is None or 'LINUX' in tp
+
+        print(f"✅ LINUX target filter: {result['total_attacks']} attacks")
+
+    def test_platform_filter_multi_value(self):
+        """Multi-value OR filter: WINDOWS,LINUX."""
+        combined = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS,LINUX"
+        )
+        assert combined['total_attacks'] > 0
+
+        for attack in combined['attacks_in_page']:
+            tp = attack.get('target_platform')
+            assert tp is None or 'WINDOWS' in tp or 'LINUX' in tp
+
+        # Combined should be >= individual filters
+        win_only = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+        linux_only = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="LINUX"
+        )
+        assert combined['total_attacks'] >= max(win_only['total_attacks'], linux_only['total_attacks'])
+
+        print(f"✅ Multi-value filter: {combined['total_attacks']} attacks")
+
+    def test_platform_filter_partial_match(self):
+        """Partial match: 'win' should match WINDOWS."""
+        partial = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="win"
+        )
+        full = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+        assert partial['total_attacks'] == full['total_attacks']
+
+        for attack in partial['attacks_in_page']:
+            tp = attack.get('target_platform')
+            assert tp is None or 'win' in tp.lower()
+
+        print(f"✅ Partial match: {partial['total_attacks']} attacks")
+
+    def test_platform_filter_case_insensitive(self):
+        """Case insensitivity: 'windows' == 'WINDOWS'."""
+        lower = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="windows"
+        )
+        upper = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+        assert lower['total_attacks'] == upper['total_attacks']
+
+        print(f"✅ Case insensitive: both return {lower['total_attacks']} attacks")
+
+    def test_platform_filter_none_pass_through(self):
+        """None platform attacks are included when filter is active."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+
+        # Scan pages to find at least one attack with None target_platform
+        found_none = False
+        for page in range(min(5, result['total_pages'])):
+            page_result = sb_get_playbook_attacks(
+                console=E2E_CONSOLE, target_platform_filter="WINDOWS", page_number=page
+            )
+            for attack in page_result['attacks_in_page']:
+                if attack.get('target_platform') is None:
+                    found_none = True
+                    break
+            if found_none:
+                break
+
+        assert found_none, "Expected at least one attack with None target_platform in filtered results"
+        print(f"✅ None pass-through verified")
+
+    def test_platform_plus_name_filter(self):
+        """Combined platform + name filter."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE,
+            target_platform_filter="WINDOWS",
+            name_filter="registry"
+        )
+
+        for attack in result['attacks_in_page']:
+            assert 'registry' in attack['name'].lower()
+            tp = attack.get('target_platform')
+            assert tp is None or 'WINDOWS' in tp
+
+        # Combined should be <= individual filters
+        win_only = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+        name_only = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, name_filter="registry"
+        )
+        assert result['total_attacks'] <= win_only['total_attacks']
+        assert result['total_attacks'] <= name_only['total_attacks']
+
+        print(f"✅ Platform + name: {result['total_attacks']} attacks")
+
+    def test_platform_plus_mitre_filter(self):
+        """Combined platform + MITRE tactic filter."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE,
+            target_platform_filter="WINDOWS",
+            mitre_tactic_filter="Discovery"
+        )
+
+        for attack in result['attacks_in_page']:
+            tp = attack.get('target_platform')
+            assert tp is None or 'WINDOWS' in tp
+            tactic_names = [t['name'].lower() for t in attack.get('mitre_tactics', [])]
+            assert any('discovery' in name for name in tactic_names), \
+                f"Attack {attack['id']} missing Discovery tactic"
+
+        print(f"✅ Platform + MITRE: {result['total_attacks']} attacks")
+
+    def test_platform_filter_metadata(self):
+        """Applied filters metadata contains both platform filters."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE,
+            attacker_platform_filter="LINUX",
+            target_platform_filter="WINDOWS"
+        )
+
+        assert result['applied_filters']['attacker_platform_filter'] == 'LINUX'
+        assert result['applied_filters']['target_platform_filter'] == 'WINDOWS'
+
+        print(f"✅ Filter metadata verified")
+
+    def test_platform_filter_nonexistent(self):
+        """Nonexistent platform returns only None pass-through attacks."""
+        result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="NONEXISTENT_OS"
+        )
+
+        # Should have results (None pass-through)
+        assert result['total_attacks'] > 0
+
+        # No attack should have a non-None target_platform
+        for attack in result['attacks_in_page']:
+            assert attack.get('target_platform') is None, \
+                f"Attack {attack['id']} has target_platform={attack.get('target_platform')}"
+
+        print(f"✅ Nonexistent filter: {result['total_attacks']} pass-through attacks")
+
+    def test_platform_filter_pagination(self):
+        """Pagination works correctly with platform filter."""
+        page0 = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS", page_number=0
+        )
+
+        if page0['total_pages'] > 1:
+            page1 = sb_get_playbook_attacks(
+                console=E2E_CONSOLE, target_platform_filter="WINDOWS", page_number=1
+            )
+
+            page0_ids = {a['id'] for a in page0['attacks_in_page']}
+            page1_ids = {a['id'] for a in page1['attacks_in_page']}
+            assert page0_ids.isdisjoint(page1_ids), "Pages have overlapping attacks"
+            assert page0['total_attacks'] == page1['total_attacks']
+
+            print(f"✅ Pagination: {page0['total_pages']} pages, disjoint verified")
+        else:
+            print(f"ℹ️ Only one page with WINDOWS filter")
+
+    def test_platform_in_attack_details(self):
+        """Get details for a WINDOWS attack from filtered list."""
+        attacks_result = sb_get_playbook_attacks(
+            console=E2E_CONSOLE, target_platform_filter="WINDOWS"
+        )
+
+        # Find first attack with actual WINDOWS platform (not None)
+        target_id = None
+        for attack in attacks_result['attacks_in_page']:
+            if attack.get('target_platform') == 'WINDOWS':
+                target_id = attack['id']
+                break
+
+        if target_id:
+            details = sb_get_playbook_attack_details(target_id, console=E2E_CONSOLE)
+            assert details['id'] == target_id
+            assert details['name'] is not None
+            print(f"✅ Attack details verified for {target_id}")
+        else:
+            print(f"ℹ️ No WINDOWS attacks found in first page")
