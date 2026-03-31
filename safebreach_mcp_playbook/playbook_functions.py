@@ -107,7 +107,9 @@ def sb_get_playbook_attacks(
     published_date_end: Optional[str] = None,
     include_mitre_techniques: bool = False,
     mitre_technique_filter: Optional[str] = None,
-    mitre_tactic_filter: Optional[str] = None
+    mitre_tactic_filter: Optional[str] = None,
+    attacker_platform_filter: Optional[str] = None,
+    target_platform_filter: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated playbook attacks.
@@ -126,6 +128,8 @@ def sb_get_playbook_attacks(
         include_mitre_techniques: Whether to include MITRE ATT&CK data
         mitre_technique_filter: Comma-separated technique IDs/names (OR, case-insensitive partial)
         mitre_tactic_filter: Comma-separated tactic names (OR, case-insensitive partial)
+        attacker_platform_filter: Comma-separated platform values (OR, case-insensitive partial). None passes through.
+        target_platform_filter: Comma-separated platform values (OR, case-insensitive partial). None passes through.
 
     Returns:
         Dict containing paginated attacks and metadata
@@ -173,7 +177,9 @@ def sb_get_playbook_attacks(
             published_date_start=published_date_start,
             published_date_end=published_date_end,
             mitre_technique_filter=mitre_technique_filter,
-            mitre_tactic_filter=mitre_tactic_filter
+            mitre_tactic_filter=mitre_tactic_filter,
+            attacker_platform_filter=attacker_platform_filter,
+            target_platform_filter=target_platform_filter
         )
 
         # Paginate results
@@ -201,6 +207,10 @@ def sb_get_playbook_attacks(
             applied_filters['mitre_technique_filter'] = mitre_technique_filter
         if mitre_tactic_filter:
             applied_filters['mitre_tactic_filter'] = mitre_tactic_filter
+        if attacker_platform_filter:
+            applied_filters['attacker_platform_filter'] = attacker_platform_filter
+        if target_platform_filter:
+            applied_filters['target_platform_filter'] = target_platform_filter
 
         paginated_result['applied_filters'] = applied_filters
 

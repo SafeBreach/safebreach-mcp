@@ -187,6 +187,70 @@ def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
     return result
 
 
+def _extract_platform_data(content_data: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """
+    Extract attacker and target platform from attack node structure.
+
+    Traverses content.nodes to find OS constraints, mapping nodes to roles
+    via isSource (attacker) and isDestination (target) flags.
+
+    Platform values:
+    - Specific OS string (e.g., "WINDOWS", "LINUX") when constraints.os is set
+    - "ANY" when a node exists but has no OS constraint (runs on any platform)
+    - None only when there are no nodes at all (no platform data available)
+
+    For single-node attacks where neither isSource nor isDestination is set,
+    the node's platform is assigned to target_platform (host attacks are target-centric).
+
+    Args:
+        content_data: The 'content' dict from raw attack data
+
+    Returns:
+        Dict with 'attacker_platform' and 'target_platform' (each str or None)
+    """
+    result: Dict[str, Optional[str]] = {
+        'attacker_platform': None,
+        'target_platform': None
+    }
+
+    if not content_data or not isinstance(content_data, dict):
+        return result
+
+    nodes = content_data.get('nodes')
+    if not nodes or not isinstance(nodes, dict):
+        return result
+
+    has_role_flags = False
+
+    for node_data in nodes.values():
+        if not isinstance(node_data, dict):
+            continue
+
+        is_source = node_data.get('isSource', False)
+        is_destination = node_data.get('isDestination', False)
+        constraints = node_data.get('constraints', {})
+        os_value = constraints.get('os') if isinstance(constraints, dict) else None
+        platform = os_value if os_value else "ANY"
+
+        if is_source:
+            has_role_flags = True
+            result['attacker_platform'] = platform
+        if is_destination:
+            has_role_flags = True
+            result['target_platform'] = platform
+
+    # Single-node fallback: if no isSource/isDestination flags found,
+    # assign the single node's platform to target_platform
+    if not has_role_flags and len(nodes) == 1:
+        single_node = next(iter(nodes.values()))
+        if isinstance(single_node, dict):
+            constraints = single_node.get('constraints', {})
+            os_value = constraints.get('os') if isinstance(constraints, dict) else None
+            result['target_platform'] = os_value if os_value else "ANY"
+
+    return result
+
+
 def get_reduced_playbook_attack_mapping() -> Dict[str, str]:
     """
     Get mapping for reduced playbook attack objects.
@@ -250,6 +314,10 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
         else:
             result[output_key] = attack_data.get(source_key)
 
+    # Always extract platform data (lightweight — two optional strings)
+    platform_data = _extract_platform_data(attack_data.get('content', {}))
+    result.update(platform_data)
+
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))
         result.update(mitre_data)
@@ -308,7 +376,9 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                published_date_start: Optional[str] = None,
                                published_date_end: Optional[str] = None,
                                mitre_technique_filter: Optional[str] = None,
-                               mitre_tactic_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                               mitre_tactic_filter: Optional[str] = None,
+                               attacker_platform_filter: Optional[str] = None,
+                               target_platform_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
 
@@ -324,6 +394,10 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
         published_date_end: End date for published date range (ISO format)
         mitre_technique_filter: Comma-separated technique IDs or names (OR logic, case-insensitive partial match)
         mitre_tactic_filter: Comma-separated tactic names or IDs like TA0006 (OR logic, case-insensitive partial match)
+        attacker_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
+            Attacks with None attacker_platform pass through (are included).
+        target_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
+            Attacks with None target_platform pass through (are included).
 
     Returns:
         Filtered list of attacks
@@ -404,6 +478,22 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             if _attack_matches_mitre_tactic(attack, filter_values)
         ]
 
+    # Filter by attacker platform (comma-separated OR, case-insensitive partial match, None passes through)
+    if attacker_platform_filter:
+        filter_values = [v.strip().lower() for v in attacker_platform_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_platform(attack.get('attacker_platform'), filter_values)
+        ]
+
+    # Filter by target platform (comma-separated OR, case-insensitive partial match, None passes through)
+    if target_platform_filter:
+        filter_values = [v.strip().lower() for v in target_platform_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_platform(attack.get('target_platform'), filter_values)
+        ]
+
     return filtered_attacks
 
 
@@ -441,7 +531,34 @@ def _attack_matches_mitre_tactic(attack: Dict[str, Any], filter_values: List[str
     return False
 
 
-def paginate_attacks(attacks: List[Dict[str, Any]], 
+def _attack_matches_platform(platform_value: Optional[str], filter_values: List[str]) -> bool:
+    """
+    Check if a platform value matches any of the filter values.
+
+    Strict matching: only returns True when the platform value matches a filter.
+    None platform values (no nodes at all) do NOT match any filter.
+    "ANY" platform values only match if "any" is in the filter values
+    (e.g., target_platform_filter="WINDOWS,ANY").
+
+    Args:
+        platform_value: The attack's platform value (e.g., 'WINDOWS', 'ANY') or None
+        filter_values: List of lowercased filter values to match against
+
+    Returns:
+        True if platform matches any filter value, False otherwise
+    """
+    if platform_value is None:
+        return False
+
+    platform_lower = platform_value.lower()
+    for fv in filter_values:
+        if fv in platform_lower:
+            return True
+
+    return False
+
+
+def paginate_attacks(attacks: List[Dict[str, Any]],
                      page_number: int = 0, 
                      page_size: int = 10) -> Dict[str, Any]:
     """

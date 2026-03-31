@@ -291,9 +291,13 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 
 **Playbook Server (Port 8003):**
 15. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
-  (name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics) and pagination.
+  (name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics, attacker/target platform) and pagination.
   Supports `include_mitre_techniques`, `mitre_technique_filter` (comma-separated, OR logic),
-  and `mitre_tactic_filter` (comma-separated, OR logic)
+  `mitre_tactic_filter` (comma-separated, OR logic),
+  `attacker_platform_filter` (comma-separated, OR logic, case-insensitive partial match),
+  and `target_platform_filter` (comma-separated, OR logic, case-insensitive partial match).
+  Each attack always includes `attacker_platform` and `target_platform` fields.
+  Attacks without platform data are included when platform filters are active (None pass-through)
 16. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
   (fix suggestions, tags, parameters, MITRE ATT&CK data with URLs) for specific attack techniques
 
@@ -351,6 +355,22 @@ All filters work in combination and include pagination support. The response inc
   techniques, and sub-techniques with ATT&CK URLs in responses.
   Auto-enabled when MITRE filters are active.
 - **Coverage**: ~42.6% of playbook attacks have MITRE technique/tactic mappings.
+
+**Platform Filtering (`get_playbook_attacks`):**
+- **Attacker Platform**: Filter by attacker OS via `attacker_platform_filter` (e.g., "LINUX" or "WINDOWS").
+  Supports comma-separated multi-value with OR logic (e.g., "LINUX,WINDOWS").
+  Case-insensitive partial match (e.g., "win" matches "WINDOWS").
+- **Target Platform**: Filter by target OS via `target_platform_filter`. Same syntax as attacker filter.
+- **Valid Platform Values**: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
+- **Always-On Fields**: `attacker_platform` and `target_platform` are always present in results.
+  Values are a specific OS (e.g., "WINDOWS"), "ANY" (runs on any platform), or None (no node data).
+- **Strict Filtering**: By default, platform filters only return attacks that explicitly match the
+  specified platform. "ANY" and None platform attacks are excluded.
+- **Including ANY**: Add `ANY` to the filter to also include platform-agnostic attacks
+  (e.g., `target_platform_filter="WINDOWS,ANY"` returns WINDOWS + any-platform attacks).
+- **Platform Source**: Extracted from `content.nodes.{node}.constraints.os` with role mapping via
+  `isSource` (attacker) and `isDestination` (target) flags.
+- **Coverage**: ~32.3% of playbook attacks have specific OS constraints; the remainder are "ANY".
 
 ## Drift Analysis
 

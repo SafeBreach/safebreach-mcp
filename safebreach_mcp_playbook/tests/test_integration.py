@@ -56,7 +56,14 @@ def comprehensive_attack_dataset():
                         "description": "The malicious URL to query",
                         "values": [{"id": 1, "value": "www.malicious-domain.com", "displayValue": "www.malicious-domain.com"}]
                     }
-                ]
+                ],
+                "nodes": {
+                    "gold": {
+                        "isSource": False,
+                        "isDestination": False,
+                        "constraints": {"os": "WINDOWS", "framework": "3.100.0"}
+                    }
+                }
             }
         },
         {
@@ -84,7 +91,19 @@ def comprehensive_attack_dataset():
                         "description": "Size of the file to transfer",
                         "values": [{"id": 1, "value": "10", "displayValue": "10 MB"}]
                     }
-                ]
+                ],
+                "nodes": {
+                    "green": {
+                        "isSource": True,
+                        "isDestination": False,
+                        "constraints": {"os": "LINUX"}
+                    },
+                    "red": {
+                        "isSource": False,
+                        "isDestination": True,
+                        "constraints": {"os": "WINDOWS"}
+                    }
+                }
             }
         },
         {
@@ -110,7 +129,14 @@ def comprehensive_attack_dataset():
                             {"id": 2, "value": "root", "displayValue": "root"}
                         ]
                     }
-                ]
+                ],
+                "nodes": {
+                    "gold": {
+                        "isSource": False,
+                        "isDestination": False,
+                        "constraints": {"framework": "3.100.0"}
+                    }
+                }
             }
         },
         {
@@ -129,7 +155,14 @@ def comprehensive_attack_dataset():
             },
             "tags": ["windows", "registry", "persistence"],
             "content": {
-                "params": []
+                "params": [],
+                "nodes": {
+                    "gold": {
+                        "isSource": False,
+                        "isDestination": False,
+                        "constraints": {"os": "MAC", "framework": "3.120.0"}
+                    }
+                }
             }
         }
     ]
@@ -422,3 +455,60 @@ class TestPlaybookIntegration:
         
         # Verify both consoles were called separately
         assert mock_get_all_attacks.call_count == 2
+
+
+class TestPlatformIntegration:
+    """Integration tests for platform filtering across the full pipeline."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_filtering_integration(self, mock_get_all, comprehensive_attack_dataset):
+        """Filter by target platform across mixed dataset."""
+        mock_get_all.return_value = comprehensive_attack_dataset
+
+        result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS")
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        # 1027: target=WINDOWS (gold), 2048: target=WINDOWS (red)
+        assert 1027 in ids
+        assert 2048 in ids
+        # 3141: target=ANY (excluded — strict), 4096: target=MAC (no match)
+        assert 3141 not in ids
+        assert 4096 not in ids
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_combined_filtering(self, mock_get_all, comprehensive_attack_dataset):
+        """Platform + name filter combined."""
+        mock_get_all.return_value = comprehensive_attack_dataset
+
+        result = sb_get_playbook_attacks(
+            'test-console', target_platform_filter="WINDOWS", name_filter="DNS"
+        )
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        assert ids == [1027]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_fields_in_results(self, mock_get_all, comprehensive_attack_dataset):
+        """Verify platform fields present and correct in all results."""
+        mock_get_all.return_value = comprehensive_attack_dataset
+
+        result = sb_get_playbook_attacks('test-console')
+        attacks = {a['id']: a for a in result['attacks_in_page']}
+
+        assert attacks[1027]['target_platform'] == 'WINDOWS'
+        assert attacks[1027]['attacker_platform'] is None
+
+        assert attacks[2048]['attacker_platform'] == 'LINUX'
+        assert attacks[2048]['target_platform'] == 'WINDOWS'
+
+        assert attacks[3141]['attacker_platform'] is None
+        assert attacks[3141]['target_platform'] == 'ANY'
+
+        assert attacks[4096]['target_platform'] == 'MAC'
+        assert attacks[4096]['attacker_platform'] is None

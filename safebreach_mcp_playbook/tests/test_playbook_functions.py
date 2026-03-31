@@ -652,3 +652,182 @@ class TestMitreGetPlaybookAttackDetails:
 
         assert 'mitre_tactics' not in result
         assert 'mitre_techniques' not in result
+
+
+# Platform-specific fixtures and tests
+
+@pytest.fixture
+def sample_attack_data_with_platform():
+    """Sample attack data with platform info in content.nodes structure."""
+    return [
+        {
+            "id": 1001,
+            "name": "Windows registry manipulation",
+            "description": "Modify Windows registry for persistence.",
+            "modifiedDate": "2024-05-20T16:45:12.000Z",
+            "publishedDate": "2021-07-15T11:30:00.000Z",
+            "metadata": {"fix_suggestions": []},
+            "tags": [],
+            "content": {
+                "params": [],
+                "nodes": {
+                    "gold": {
+                        "isSource": False,
+                        "isDestination": False,
+                        "constraints": {"os": "WINDOWS", "framework": "3.100.0"}
+                    }
+                }
+            }
+        },
+        {
+            "id": 1002,
+            "name": "HTTP file transfer exfiltration",
+            "description": "Transfer file over HTTP from Linux attacker.",
+            "modifiedDate": "2024-01-15T10:30:00.000Z",
+            "publishedDate": "2020-03-10T12:00:00.000Z",
+            "metadata": {"fix_suggestions": []},
+            "tags": [],
+            "content": {
+                "params": [],
+                "nodes": {
+                    "green": {
+                        "isSource": True,
+                        "isDestination": False,
+                        "constraints": {"os": "LINUX"}
+                    },
+                    "red": {
+                        "isSource": False,
+                        "isDestination": True,
+                        "constraints": {"os": "WINDOWS"}
+                    }
+                }
+            }
+        },
+        {
+            "id": 1003,
+            "name": "ARP scanning of local subnet",
+            "description": "Discover hosts on network via ARP.",
+            "modifiedDate": "2024-10-07T07:28:05.000Z",
+            "publishedDate": "2019-05-29T15:18:44.000Z",
+            "metadata": {"fix_suggestions": []},
+            "tags": [],
+            "content": {
+                "params": [],
+                "nodes": {
+                    "gold": {
+                        "isSource": False,
+                        "isDestination": False,
+                        "constraints": {"framework": "3.146.0"}
+                    }
+                }
+            }
+        }
+    ]
+
+
+class TestPlatformGetPlaybookAttacks:
+    """Test platform functionality in sb_get_playbook_attacks."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_fields_always_present(self, mock_get_all, sample_attack_data_with_platform):
+        """Platform fields should always be present in response."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console')
+
+        for attack in result['attacks_in_page']:
+            assert 'attacker_platform' in attack
+            assert 'target_platform' in attack
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_extraction_values(self, mock_get_all, sample_attack_data_with_platform):
+        """Platform values extracted correctly from node data."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console')
+        attacks = {a['id']: a for a in result['attacks_in_page']}
+
+        # Attack 1001: gold node (host) — target=WINDOWS, attacker=None (no nodes for attacker)
+        assert attacks[1001]['target_platform'] == 'WINDOWS'
+        assert attacks[1001]['attacker_platform'] is None
+
+        # Attack 1002: green/red — attacker=LINUX, target=WINDOWS
+        assert attacks[1002]['attacker_platform'] == 'LINUX'
+        assert attacks[1002]['target_platform'] == 'WINDOWS'
+
+        # Attack 1003: gold node no OS — target=ANY, attacker=None
+        assert attacks[1003]['attacker_platform'] is None
+        assert attacks[1003]['target_platform'] == 'ANY'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_target_platform_filter_strict(self, mock_get_all, sample_attack_data_with_platform):
+        """Strict filter: only WINDOWS matches, ANY excluded."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS")
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        # 1001: target=WINDOWS (match), 1002: target=WINDOWS (match), 1003: target=ANY (excluded)
+        assert set(ids) == {1001, 1002}
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_target_platform_filter_with_any(self, mock_get_all, sample_attack_data_with_platform):
+        """Filter WINDOWS,ANY includes WINDOWS + ANY platform attacks."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console', target_platform_filter="WINDOWS,ANY")
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        assert set(ids) == {1001, 1002, 1003}
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_attacker_platform_filter_strict(self, mock_get_all, sample_attack_data_with_platform):
+        """Strict filter on attacker: only LINUX matches."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console', attacker_platform_filter="LINUX")
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        # Only 1002 has attacker=LINUX; 1001,1003 have attacker=None (excluded)
+        assert set(ids) == {1002}
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_filter_combined_with_name(self, mock_get_all, sample_attack_data_with_platform):
+        """Platform + name filter combination."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks(
+            'test-console', target_platform_filter="WINDOWS", name_filter="registry"
+        )
+
+        ids = [a['id'] for a in result['attacks_in_page']]
+        assert ids == [1001]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_filter_applied_filters_metadata(self, mock_get_all, sample_attack_data_with_platform):
+        """Platform filters appear in applied_filters metadata."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks(
+            'test-console',
+            attacker_platform_filter="LINUX",
+            target_platform_filter="WINDOWS"
+        )
+
+        assert result['applied_filters']['attacker_platform_filter'] == 'LINUX'
+        assert result['applied_filters']['target_platform_filter'] == 'WINDOWS'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_platform_filter_nonexistent_returns_empty(self, mock_get_all, sample_attack_data_with_platform):
+        """Nonexistent platform returns no results (strict)."""
+        mock_get_all.return_value = sample_attack_data_with_platform
+
+        result = sb_get_playbook_attacks('test-console', target_platform_filter="NONEXISTENT")
+
+        assert result['total_attacks'] == 0
