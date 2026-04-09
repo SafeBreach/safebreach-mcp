@@ -3325,6 +3325,37 @@ class TestDriftToolsE2E:
         )
         assert empty["total_drifts"] == 0
 
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_attack_summary_contains_attack_name_in_drilldown(self, e2e_console):
+        """Drill-down attack_summary includes attack_name from real API data."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        # Get summary to find a valid drift_key
+        summary = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+        )
+        assert summary["total_drifts"] > 0, "Need drifts for drill-down"
+        drift_key = summary["drift_groups"][0]["drift_key"]
+
+        # Drill down to get attack_summary
+        drilldown = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            drift_key=drift_key,
+        )
+        attack_summary = drilldown.get("attack_summary", [])
+        assert len(attack_summary) > 0, "Drill-down must have attack_summary"
+
+        # Every entry must have attack_name
+        for entry in attack_summary:
+            assert "attack_name" in entry, f"attack_name missing from entry: {entry}"
+            assert entry["attack_name"] is not None, f"attack_name is None for attack_id={entry['attack_id']}"
+            assert isinstance(entry["attack_name"], str)
+
 
 class TestSecurityControlDriftsE2E:
     """End-to-end tests for security control drift tool against pentest01."""
