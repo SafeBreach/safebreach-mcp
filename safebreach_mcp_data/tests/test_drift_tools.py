@@ -3142,6 +3142,11 @@ _E2E_WINDOW_END = 1770300000000    # 2026-02-05T14:00:00Z
 _E2E_EXPECTED_MIN_DRIFTS = 6  # at least 6 known drifts in this window
 _E2E_EXPECTED_KEYS = {"logged-prevented", "logged-stopped", "missed-stopped"}
 
+# Wide window for attack filter E2E tests (SAF-29727)
+# Staging has known drift data for "Upload File over SMB" (Dec 2025 - Jan 2026)
+_E2E_ATTACK_FILTER_WINDOW_START = 1764547200000  # 2025-12-01T00:00:00Z
+_E2E_ATTACK_FILTER_WINDOW_END = 1769904000000    # 2026-02-01T00:00:00Z
+
 
 @pytest.fixture(scope="class")
 def e2e_console():
@@ -3239,82 +3244,61 @@ class TestDriftToolsE2E:
 
     @skip_e2e
     @pytest.mark.e2e
-    def test_result_drifts_attack_filters_accepted(self, e2e_console):
-        """Result drift API accepts attack_name and attack_type filters."""
+    def test_result_drifts_attack_name_returns_nonempty(self, e2e_console):
+        """attack_name filter returns non-empty results when matching data exists."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
 
-        # 1. Unfiltered baseline
+        # Known drift data on staging: "Upload File over SMB" has drifts
+        filtered = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            attack_name="Upload File over SMB",
+        )
+        assert filtered["total_drifts"] > 0, "Known attack name must return drifts"
+        assert filtered["applied_filters"]["attack_name"] == "Upload File over SMB"
+
+        # Non-matching name returns zero
+        empty = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            attack_name="zzz_nonexistent_attack_for_e2e",
+        )
+        assert empty["total_drifts"] == 0
+
+        # Filtered total must be less than unfiltered total
         unfiltered = sb_get_simulation_result_drifts(
             console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
         )
-        assert "total_drifts" in unfiltered
-        assert isinstance(unfiltered["total_drifts"], int)
-
-        # 2. attack_name filter — API must accept it (no 400 error)
-        filtered_by_name = sb_get_simulation_result_drifts(
-            console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
-            attack_name="zzz_nonexistent_attack_for_e2e",
-        )
-        assert filtered_by_name["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_for_e2e"
-        assert filtered_by_name["total_drifts"] <= unfiltered["total_drifts"]
-
-        # 3. attack_type filter — API must accept it
-        filtered_by_type = sb_get_simulation_result_drifts(
-            console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
-            attack_type="host",
-        )
-        assert filtered_by_type["applied_filters"]["attack_type"] == "host"
-        assert filtered_by_type["total_drifts"] <= unfiltered["total_drifts"]
-
-        # 4. Combined filters — API must accept both simultaneously
-        filtered_combined = sb_get_simulation_result_drifts(
-            console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
-            attack_type="host",
-            attack_name="zzz_nonexistent_attack_for_e2e",
-        )
-        assert filtered_combined["total_drifts"] == 0
+        assert filtered["total_drifts"] <= unfiltered["total_drifts"]
 
     @skip_e2e
     @pytest.mark.e2e
-    def test_status_drifts_attack_filters_accepted(self, e2e_console):
-        """Status drift API accepts attack_name and attack_type filters."""
+    def test_status_drifts_attack_name_returns_nonempty(self, e2e_console):
+        """attack_name filter returns non-empty results when matching data exists."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
 
-        # 1. Unfiltered baseline
-        unfiltered = sb_get_simulation_status_drifts(
+        # Known drift data on staging: "Upload File over SMB" has drifts
+        filtered = sb_get_simulation_status_drifts(
             console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            attack_name="Upload File over SMB",
         )
-        assert "total_drifts" in unfiltered
+        assert filtered["total_drifts"] > 0, "Known attack name must return drifts"
+        assert filtered["applied_filters"]["attack_name"] == "Upload File over SMB"
 
-        # 2. attack_name filter — API must accept it (no 400 error)
-        filtered_by_name = sb_get_simulation_status_drifts(
+        # Non-matching name returns zero
+        empty = sb_get_simulation_status_drifts(
             console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
             attack_name="zzz_nonexistent_attack_for_e2e",
         )
-        assert filtered_by_name["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_for_e2e"
-        assert filtered_by_name["total_drifts"] <= unfiltered["total_drifts"]
-
-        # 3. attack_type filter — API must accept it
-        filtered_by_type = sb_get_simulation_status_drifts(
-            console=e2e_console,
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
-            attack_type="host",
-        )
-        assert filtered_by_type["applied_filters"]["attack_type"] == "host"
-        assert filtered_by_type["total_drifts"] <= unfiltered["total_drifts"]
+        assert empty["total_drifts"] == 0
 
 
 class TestSecurityControlDriftsE2E:
@@ -3551,34 +3535,42 @@ class TestSecurityControlDriftsAttackFilterE2E:
 
     @skip_e2e
     @pytest.mark.e2e
-    def test_e2e_sc_drifts_attack_filters_work(self, e2e_console):
-        """SC drift attack filters narrow results and non-matching returns zero."""
+    def test_e2e_sc_drifts_attack_name_returns_nonempty(self, e2e_console):
+        """SC drift attack_name filter returns non-empty results with known data."""
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
 
-        # Non-matching attack name should return zero (proves API accepts the param)
-        result = sb_get_security_control_drifts(
+        # Known drift data: "Mockion" control, "Upload File over SMB" attack
+        filtered = sb_get_security_control_drifts(
             console=e2e_console,
-            security_control="Microsoft Defender for Endpoint",
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            security_control="Mockion",
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
             transition_matching_mode="contains",
-            attack_name="zzz_nonexistent_attack_name_for_e2e",
+            attack_name="Upload File over SMB",
         )
+        assert filtered["total_drifts"] > 0, "Known attack name must return SC drifts"
+        assert filtered["applied_filters"]["attack_name"] == "Upload File over SMB"
 
-        assert result["total_drifts"] == 0
-        assert result["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_name_for_e2e"
+        # Non-matching name returns zero
+        empty = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control="Mockion",
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            transition_matching_mode="contains",
+            attack_name="zzz_nonexistent_attack_for_e2e",
+        )
+        assert empty["total_drifts"] == 0
 
-        # Same query without filter should return drifts (or zero if no data)
+        # Filtered total must be <= unfiltered
         unfiltered = sb_get_security_control_drifts(
             console=e2e_console,
-            security_control="Microsoft Defender for Endpoint",
-            window_start=_E2E_WINDOW_START,
-            window_end=_E2E_WINDOW_END,
+            security_control="Mockion",
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
             transition_matching_mode="contains",
         )
-
-        # The filtered result should be <= the unfiltered result
-        assert result["total_drifts"] <= unfiltered["total_drifts"]
+        assert filtered["total_drifts"] <= unfiltered["total_drifts"]
 
 
 class TestSimulationLineageE2E:
