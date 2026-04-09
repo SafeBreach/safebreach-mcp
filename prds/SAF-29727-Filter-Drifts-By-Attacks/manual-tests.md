@@ -1,86 +1,95 @@
 # Manual Test Cases — SAF-29727
 
-Minimal set for product sign-off. Run against an environment where backend PR #2799 is deployed
-(e.g., staging.sbops.com, account 3477291461).
+Minimal set for product sign-off. Send each prompt from a Claude Desktop window connected to the
+SafeBreach MCP data server running against an environment where backend PR #2799 is deployed
+(e.g., staging.sbops.com).
 
 ## Prerequisites
 
-- MCP data server running (`uv run -m safebreach_mcp_data.data_server`)
-- Environment with drift data and backend PR #2799 deployed
+- MCP data server running and connected to Claude Desktop
+- Target console has drift data and backend PR #2799 deployed
 
 ---
 
-## 1. Result drifts — attack_name filter narrows results
+## Test 1: attack_name filter narrows result drifts
 
-**Steps:**
-1. Call `get_simulation_result_drifts` without any attack filter (wide window)
-2. Note `total_drifts` count
-3. Call again with `attack_name="Upload File over SMB"`
-4. Call again with `attack_name="zzz_nonexistent"`
+**Prompt:**
+> On staging, show me simulation result drifts for the last 60 days.
+> Then show me only drifts for the attack named "Upload File over SMB".
+> Then show me drifts for a nonexistent attack called "zzz_no_such_attack".
 
-**Expected:**
-- Step 3 returns `total_drifts > 0` and `< step 2 count`
-- Step 4 returns `total_drifts == 0`
-- Both filtered calls show `attack_name` in `applied_filters`
-
----
-
-## 2. Status drifts — attack_type filter narrows results
-
-**Steps:**
-1. Call `get_simulation_status_drifts` without attack filters
-2. Call again with `attack_type="Suspicious File Creation"`
-
-**Expected:**
-- Filtered result has `total_drifts <= unfiltered total_drifts`
-- `applied_filters` contains `attack_type`
+**Pass criteria:**
+- First query returns drifts (total > 0)
+- Second query returns fewer drifts than the first, but still > 0
+- Third query returns zero drifts
+- Agent used `attack_name` parameter in the tool calls
 
 ---
 
-## 3. Security control drifts — all three attack filters work
+## Test 2: attack_type filter narrows status drifts
 
-**Steps:**
-1. Call `get_security_control_drifts` with `security_control="Mockion"`,
-   `transition_matching_mode="contains"`, no attack filters
-2. Call again adding `attack_name="Upload File over SMB"`
-3. Call again adding `attack_id=240`
-4. Call again with `attack_name="zzz_nonexistent"`
+**Prompt:**
+> On staging, show me simulation status drifts for the last 60 days,
+> filtered to attack type "Suspicious File Creation".
+> Compare the count to the unfiltered total.
 
-**Expected:**
-- Steps 2-3 return `total_drifts > 0` (subset of step 1)
-- Step 4 returns `total_drifts == 0`
-- `applied_filters` reflects the params passed
+**Pass criteria:**
+- Agent calls `get_simulation_status_drifts` with `attack_type` parameter
+- Filtered count is <= unfiltered count
+- Response mentions the filter was applied
 
 ---
 
-## 4. Drill-down attack_summary includes attack_name
+## Test 3: Security control drifts with attack filters
 
-**Steps:**
-1. Call any drift tool in drill-down mode (`drift_key` set to a valid group key)
-2. Inspect `attack_summary` in the response
+**Prompt:**
+> On staging, show me security control drifts for "Mockion" in the last 60 days
+> using contains transition mode.
+> Then filter to only drifts for attack "Upload File over SMB".
+> Then try filtering for attack ID 240.
 
-**Expected:**
-- Each entry in `attack_summary` has `attack_id`, `attack_name`, `attack_types`, `count`
-- `attack_name` is a non-null string (e.g., "Upload File over SMB")
-
----
-
-## 5. No filters = unchanged behavior
-
-**Steps:**
-1. Call each of the 3 drift tools without any attack filter params
-
-**Expected:**
-- Response structure identical to pre-change behavior
-- No errors, no missing fields
+**Pass criteria:**
+- Unfiltered query returns drifts
+- attack_name filtered query returns a non-empty subset
+- attack_id filtered query returns a non-empty subset
+- Agent used `attack_name` and `attack_id` parameters in the respective calls
 
 ---
 
-## 6. Natural language query via MCP agent
+## Test 4: Drill-down shows attack_name in attack_summary
 
-**Steps:**
-1. Ask an MCP-connected agent: "Show me drifts for attack Upload File over SMB last 30 days"
+**Prompt:**
+> On staging, get simulation result drifts for the last 60 days,
+> then drill down into the first drift group.
+> What attack names appear in the attack summary?
 
-**Expected:**
-- Agent uses `attack_name` filter in the drift tool call
-- Returns meaningful filtered drift results
+**Pass criteria:**
+- Agent drills down using a `drift_key` from the summary
+- Response includes `attack_summary` with `attack_name` field populated
+- Agent reports human-readable attack names (e.g., "Upload File over SMB")
+
+---
+
+## Test 5: No filters = unchanged behavior
+
+**Prompt:**
+> On staging, show me simulation result drifts, simulation status drifts,
+> and security control drifts for "Mockion" — all for the last 60 days, no attack filters.
+
+**Pass criteria:**
+- All three tools return valid responses with no errors
+- Response structure is correct (drift_groups, total_drifts, etc.)
+
+---
+
+## Test 6: Natural language end-to-end
+
+**Prompt:**
+> Show me all the drifts related to the "Upload File over SMB" attack
+> against the Mockion security control on staging in the last 60 days.
+> Which ones are regressions?
+
+**Pass criteria:**
+- Agent autonomously selects the right drift tool and applies attack_name filter
+- Returns meaningful results identifying regressions by name
+- Demonstrates the user story: "query drift data without additional processing"
