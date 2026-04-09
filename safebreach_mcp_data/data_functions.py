@@ -2465,6 +2465,9 @@ def sb_get_security_control_drifts(
     drift_type: Optional[str] = None,
     earliest_search_time: Optional[int] = None,
     max_outside_window_executions: Optional[int] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     group_by: str = "transition",
     drift_key: Optional[str] = None,
     page_number: int = 0,
@@ -2487,6 +2490,9 @@ def sb_get_security_control_drifts(
         drift_type: Filter by drift type (improvement/regression/not_applicable)
         earliest_search_time: Baseline lookback (epoch ms, default 7d before window_start)
         max_outside_window_executions: Max executions outside window
+        attack_id: Filter by playbook attack ID
+        attack_type: Filter by attack type
+        attack_name: Filter by attack name
         group_by: "transition" (default) or "drift_type"
         drift_key: Drill into a specific group
         page_number: Page number for drill-down (0-based)
@@ -2548,6 +2554,9 @@ def sb_get_security_control_drifts(
         drift_type=drift_type,
         earliest_search_time=earliest_search_time,
         max_outside_window_executions=max_outside_window_executions,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        attack_name=attack_name,
     )
 
     # 6. Build cache key
@@ -2556,7 +2565,7 @@ def sb_get_security_control_drifts(
         f"_{transition_matching_mode}_{from_prevented}_{from_reported}"
         f"_{from_logged}_{from_alerted}_{to_prevented}_{to_reported}"
         f"_{to_logged}_{to_alerted}_{drift_type}_{earliest_search_time}"
-        f"_{max_outside_window_executions}"
+        f"_{max_outside_window_executions}_{attack_id}_{attack_type}_{attack_name}"
     )
 
     # 7. Fetch via shared helper with v2 api_path
@@ -2569,6 +2578,9 @@ def sb_get_security_control_drifts(
     # 8. Build applied filters and group/paginate
     applied_filters = _build_applied_filters(
         drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        attack_name=attack_name,
         from_prevented=from_prevented,
         from_reported=from_reported,
         from_logged=from_logged,

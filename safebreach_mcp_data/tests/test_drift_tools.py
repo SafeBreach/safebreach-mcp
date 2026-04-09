@@ -722,6 +722,28 @@ class TestBuildSecurityControlDriftPayload:
 
         assert "maxOutsideWindowExecutions" not in payload
 
+    def test_build_sc_payload_attack_id_filter(self):
+        """attack_id is included as attackId."""
+        payload = self._build_minimal(attack_id=123)
+        assert payload["attackId"] == 123
+
+    def test_build_sc_payload_attack_type_filter(self):
+        """attack_type is included as attackType."""
+        payload = self._build_minimal(attack_type="exfil")
+        assert payload["attackType"] == "exfil"
+
+    def test_build_sc_payload_attack_name_filter(self):
+        """attack_name is included as attackName."""
+        payload = self._build_minimal(attack_name="Malware Drop")
+        assert payload["attackName"] == "Malware Drop"
+
+    def test_build_sc_payload_attack_params_none_excluded(self):
+        """None attack params are not in the payload."""
+        payload = self._build_minimal()
+        assert "attackId" not in payload
+        assert "attackType" not in payload
+        assert "attackName" not in payload
+
 
 # ---------------------------------------------------------------------------
 # Tests: build_sc_drift_transition_key  (SAF-28331 Phase 2)
@@ -2445,6 +2467,56 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_applied_filters_includes_attack_params(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """attack_id, attack_type, attack_name appear in applied_filters when provided."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        result = sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            attack_id=42,
+            attack_type="host",
+            attack_name="Malware Drop",
+        )
+
+        filters = result["applied_filters"]
+        assert filters["attack_id"] == 42
+        assert filters["attack_type"] == "host"
+        assert filters["attack_name"] == "Malware Drop"
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_attack_params_in_api_payload(self, _acct, _url, _sec, mock_post, mock_suggestions):
+        """Attack params are passed in the API request payload."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        mock_post.return_value = self._mock_response([])
+
+        sb_get_security_control_drifts(
+            **self.COMMON_KWARGS,
+            attack_id=42,
+            attack_type="host",
+            attack_name="Credential Theft",
+        )
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["attackId"] == 42
+        assert payload["attackType"] == "host"
+        assert payload["attackName"] == "Credential Theft"
+
+    @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
+           return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_cache_key_includes_all_params(self, _acct, _url, _sec, mock_post, mock_suggestions):
         """Different params -> different cache keys -> separate API calls."""
         from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
@@ -2923,6 +2995,28 @@ class TestMcpToolRegistration:
 
         call_kwargs = mock_fn.call_args[1]
         assert call_kwargs["attack_type"] == "exfil"
+        assert call_kwargs["attack_name"] == "Test Attack"
+
+    @patch("safebreach_mcp_data.data_functions.sb_get_security_control_drifts")
+    def test_sc_drifts_passes_attack_params(self, mock_fn):
+        """attack_id, attack_type, attack_name are forwarded to SC drifts function."""
+        mock_fn.return_value = {"total_drifts": 0}
+
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+        sb_get_security_control_drifts(
+            console="demo",
+            security_control="Test Control",
+            window_start=100,
+            window_end=200,
+            transition_matching_mode="contains",
+            attack_id=42,
+            attack_type="host",
+            attack_name="Test Attack",
+        )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["attack_id"] == 42
+        assert call_kwargs["attack_type"] == "host"
         assert call_kwargs["attack_name"] == "Test Attack"
 
     # --- Security control drifts tool (SAF-28331 Phase 4) ---
@@ -3423,6 +3517,30 @@ def drifted_tracking_code(e2e_console):
             return code
 
     pytest.skip("No drift_tracking_code found in drill-down records")
+
+
+class TestSecurityControlDriftsAttackFilterE2E:
+    """E2E tests for SC drift attack filtering (SAF-29727)."""
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_e2e_sc_drifts_attack_name_filter(self, e2e_console):
+        """attack_name filter is accepted by the SC drift API."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        # Use a known control name — any valid name works; the API accepts it
+        # even if no drifts exist for that combination
+        result = sb_get_security_control_drifts(
+            console=e2e_console,
+            security_control="Microsoft Defender for Endpoint",
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            transition_matching_mode="contains",
+            attack_name="zzz_nonexistent_attack_name_for_e2e",
+        )
+
+        assert result["total_drifts"] == 0
+        assert result["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_name_for_e2e"
 
 
 class TestSimulationLineageE2E:
