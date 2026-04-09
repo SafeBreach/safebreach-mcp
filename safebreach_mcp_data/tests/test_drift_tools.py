@@ -233,6 +233,24 @@ class TestBuildDriftApiPayload:
         assert result["attackId"] == 1263
         assert result["attackType"] == "host"
 
+    def test_build_payload_attack_name_filter(self):
+        """attack_name is included with camelCase key attackName."""
+        result = build_drift_api_payload(
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Malware Drop",
+        )
+        assert result["attackName"] == "Malware Drop"
+
+    def test_build_payload_attack_name_none_excluded(self):
+        """attack_name=None means attackName is not in the payload."""
+        result = build_drift_api_payload(
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name=None,
+        )
+        assert "attackName" not in result
+
     def test_build_payload_all_params(self):
         """All parameters supplied at once produce a complete payload."""
         result = build_drift_api_payload(
@@ -1597,6 +1615,101 @@ class TestSbGetSimulationResultDrifts:
     @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_applied_filters_includes_attack_name(self, _acct, _url, _sec, mock_post):
+        """attack_name appears in applied_filters when provided."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Test Attack",
+        )
+
+        assert result["applied_filters"]["attack_name"] == "Test Attack"
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_applied_filters_includes_attack_type(self, _acct, _url, _sec, mock_post):
+        """attack_type appears in applied_filters when provided."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_type="host",
+        )
+
+        assert result["applied_filters"]["attack_type"] == "host"
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_attack_name_in_api_payload(self, _acct, _url, _sec, mock_post):
+        """attack_name is passed as attackName in the API request payload."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Credential Theft",
+        )
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["attackName"] == "Credential Theft"
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_cache_key_differentiates_on_attack_name(self, _acct, _url, _sec, mock_post):
+        """Different attack_name values produce different cache keys (no cache hit)."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Attack A",
+        )
+        sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Attack B",
+        )
+
+        assert mock_post.call_count == 2
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_from_status_to_status_in_payload(self, _acct, _url, _sec, mock_post):
         """from_status/to_status are passed in the API payload, not fromFinalStatus/toFinalStatus."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
@@ -2709,6 +2822,24 @@ class TestMcpToolRegistration:
             page_number=1,
         )
 
+    @patch("safebreach_mcp_data.data_functions.sb_get_simulation_result_drifts")
+    def test_result_drifts_passes_attack_type_and_attack_name(self, mock_fn):
+        """attack_type and attack_name are forwarded to the result drifts function."""
+        mock_fn.return_value = {"total_drifts": 0}
+
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+        sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=100,
+            window_end=200,
+            attack_type="exfil",
+            attack_name="Test Attack",
+        )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["attack_type"] == "exfil"
+        assert call_kwargs["attack_name"] == "Test Attack"
+
     @patch("safebreach_mcp_data.data_functions.sb_get_simulation_status_drifts")
     def test_status_drifts_passes_params(self, mock_fn):
         """sb_get_simulation_status_drifts receives all params correctly."""
@@ -2947,6 +3078,43 @@ class TestDriftToolsE2E:
         assert "drift_groups" in result
         assert isinstance(result["total_drifts"], int)
         assert result["total_drifts"] >= 0
+
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_result_drifts_attack_name_filter(self, e2e_console):
+        """attack_name filter is accepted by the API and returns valid structure."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        # Use a non-matching name to verify the filter is passed without error
+        result = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            attack_name="zzz_nonexistent_attack_name_for_e2e",
+        )
+
+        # Filter should be accepted (no API error) and return zero drifts
+        assert result["total_drifts"] == 0
+        assert result["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_name_for_e2e"
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_result_drifts_attack_type_filter(self, e2e_console):
+        """attack_type filter is accepted by the API and returns valid structure."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        # Use attack_type filter — should return subset or empty without error
+        result = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            attack_type="host",
+        )
+
+        assert "total_drifts" in result
+        assert isinstance(result["total_drifts"], int)
+        assert result["applied_filters"]["attack_type"] == "host"
 
 
 class TestSecurityControlDriftsE2E:

@@ -15,10 +15,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-04-09 10:45 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-04-09 11:30 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Phase 1 of 5 |
 
 ## 2. Solution Description
 
@@ -127,7 +127,7 @@ focused on its API contract. The duplication is 3 optional params with trivial m
 
 ## 7. Definition of Done
 
-- [ ] `get_simulation_result_drifts` accepts and passes `attack_type` and `attack_name` to the API
+- [x] `get_simulation_result_drifts` accepts and passes `attack_type` and `attack_name` to the API
 - [ ] `get_simulation_status_drifts` accepts and passes `attack_type` and `attack_name` to the API
 - [ ] `get_security_control_drifts` accepts and passes `attack_id`, `attack_type`, `attack_name` to the API
 - [ ] `attack_summary` includes `attack_name` field in drill-down responses
@@ -179,7 +179,7 @@ filtering on the affected tool.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Result drifts — full attack filtering (attack_id + attack_type + attack_name) | ⏳ Pending | - | - | |
+| Phase 1: Result drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 tests, 162 pass |
 | Phase 2: Status drifts — full attack filtering (attack_id + attack_type + attack_name) | ⏳ Pending | - | - | |
 | Phase 3: SC drifts — full attack filtering (attack_id + attack_type + attack_name) | ⏳ Pending | - | - | |
 | Phase 4: Response enrichment — attack_name in attack_summary | ⏳ Pending | - | - | |
@@ -426,3 +426,4 @@ parameters for all three drift tools.
 | Date | Change Description |
 |------|-------------------|
 | 2026-04-09 10:45 | PRD created — initial draft |
+| 2026-04-09 11:30 | Phase 1 complete — result drifts attack filtering (7 tests, 162 pass) |

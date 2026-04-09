@@ -621,6 +621,7 @@ def build_drift_api_payload(
     drift_type: Optional[str] = None,
     attack_id: Optional[int] = None,
     attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     from_status: Optional[str] = None,
     to_status: Optional[str] = None,
     from_final_status: Optional[str] = None,
@@ -653,6 +654,8 @@ def build_drift_api_payload(
         payload["attackId"] = attack_id
     if attack_type is not None:
         payload["attackType"] = attack_type
+    if attack_name is not None:
+        payload["attackName"] = attack_name
     if from_status is not None:
         payload["fromStatus"] = from_status
     if to_status is not None:
