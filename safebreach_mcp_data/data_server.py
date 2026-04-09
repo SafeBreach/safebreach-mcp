@@ -338,6 +338,8 @@ Parameters:
   to_status: Filter by destination result status. Valid: 'FAIL', 'SUCCESS'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type (e.g., 'host', 'Suspicious File Creation').
+  attack_name: Filter by attack name using phrase match (e.g., 'Upload File over SMB').
   drift_key: Drill-down key from summary (e.g., 'fail-success'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
   look_back_time: How far back to search for baseline (pre-drift) simulations. \
@@ -416,6 +418,8 @@ Parameters:
 'missed', 'inconsistent'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type (e.g., 'host', 'Suspicious File Creation').
+  attack_name: Filter by attack name using phrase match (e.g., 'Upload File over SMB').
   drift_key: Drill-down key from summary (e.g., 'prevented-logged'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
   look_back_time: How far back to search for baseline (pre-drift) simulations. \
@@ -502,6 +506,9 @@ Boolean filters for destination capability state. Omit to match any.
   earliest_search_time: How far back to search for baseline simulations. \
 Epoch ms/seconds or ISO 8601 string. Defaults to 7 days before window_start.
   max_outside_window_executions: Max executions outside window to consider (integer).
+  attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type (e.g., 'Suspicious File Creation').
+  attack_name: Filter by attack name using phrase match (e.g., 'Upload File over SMB').
   group_by: How to group results. 'transition' (default) groups by boolean capability changes. \
 'drift_type' groups by Improvement/Regression.
   drift_key: Drill-down key from summary. Omit for grouped summary.

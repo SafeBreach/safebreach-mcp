@@ -15,10 +15,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
+| **PRD Status** | Complete |
 | **Last Updated** | 2026-04-09 11:30 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 4 of 5 |
+| **Current Phase** | Complete |
 
 ## 2. Solution Description
 
@@ -135,7 +135,7 @@ focused on its API contract. The duplication is 3 optional params with trivial m
 - [x] Cache keys include new attack filter params for correct invalidation
 - [x] Unit tests cover all new params at payload builder, function, and MCP tool layers
 - [x] All existing tests continue to pass
-- [ ] Tool descriptions updated to document new attack filter parameters
+- [x] Tool descriptions updated to document new attack filter parameters
 - [ ] Product reviewed — user can query "drifts for CrowdStrike against attack X last 7 days"
 
 ## 8. Testing Strategy
@@ -183,7 +183,7 @@ filtering on the affected tool.
 | Phase 2: Status drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 3 unit + 1 E2E |
 | Phase 3: SC drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 unit + 1 E2E |
 | Phase 4: Response enrichment — attack_name in attack_summary | ✅ Complete | 2026-04-09 | - | 1 unit, verified on staging |
-| Phase 5: Documentation update | ⏳ Pending | - | - | |
+| Phase 5: Documentation update | ✅ Complete | 2026-04-09 | - | CLAUDE.md + tool descriptions |
 
 ---
 

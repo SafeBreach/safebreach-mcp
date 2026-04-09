@@ -286,8 +286,8 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 10. `get_test_findings_details` - Detailed findings with comprehensive filtering
 11. `get_test_drifts` ✨ **NEW** - Advanced drift analysis between test runs with comprehensive drift type classification and security impact assessment
 12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
-13. `get_simulation_result_drifts` ✨ **NEW** - Time-window-based **posture-level** drift analysis showing transitions between blocked (FAIL) and not-blocked (SUCCESS) states. Two-phase usage: summary (grouped counts by result transition) then drill-down (paginated records). Groups by FAIL/SUCCESS for coarse posture view. Includes `final_status_breakdown`, `attack_summary`, `look_back_time` (7-day default), and zero-results smart hints.
-14. `get_simulation_status_drifts` ✨ **NEW** - Time-window-based **security-control-level** drift analysis showing transitions between final statuses (prevented, stopped, detected, logged, missed, inconsistent). Two-phase usage: summary then drill-down. Groups by finalStatus for fine-grained control view. Includes `attack_summary`, `look_back_time`, and zero-results smart hints.
+13. `get_simulation_result_drifts` ✨ **NEW** - Time-window-based **posture-level** drift analysis showing transitions between blocked (FAIL) and not-blocked (SUCCESS) states. Two-phase usage: summary (grouped counts by result transition) then drill-down (paginated records). Groups by FAIL/SUCCESS for coarse posture view. Includes `final_status_breakdown`, `attack_summary` (with `attack_name`), `look_back_time` (7-day default), and zero-results smart hints. Supports `attack_id`, `attack_type`, and `attack_name` filters.
+14. `get_simulation_status_drifts` ✨ **NEW** - Time-window-based **security-control-level** drift analysis showing transitions between final statuses (prevented, stopped, detected, logged, missed, inconsistent). Two-phase usage: summary then drill-down. Groups by finalStatus for fine-grained control view. Includes `attack_summary` (with `attack_name`), `look_back_time`, and zero-results smart hints. Supports `attack_id`, `attack_type`, and `attack_name` filters.
 
 **Playbook Server (Port 8003):**
 15. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
@@ -389,7 +389,8 @@ All filters work in combination and include pagination support. The response inc
   by security control final status (prevented/stopped/detected/logged/missed/inconsistent). Two-phase:
   summary → drill-down. Drill-down includes `attack_summary`.
 - Both tools support: `look_back_time` (7-day default), `drift_type`, `attack_id`, `attack_type`,
-  status filters, zero-results smart hints, and cached responses (TTL=600s).
+  `attack_name`, status filters, zero-results smart hints, and cached responses (TTL=600s).
+- `get_security_control_drifts` also supports `attack_id`, `attack_type`, `attack_name` filters.
 
 ## External Connection Support
 
