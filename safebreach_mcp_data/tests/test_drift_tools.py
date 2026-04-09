@@ -1982,6 +1982,51 @@ class TestSbGetSimulationStatusDrifts:
     @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_applied_filters_includes_attack_name(self, _acct, _url, _sec, mock_post):
+        """attack_name appears in applied_filters when provided."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Test Attack",
+        )
+
+        assert result["applied_filters"]["attack_name"] == "Test Attack"
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_attack_name_in_api_payload(self, _acct, _url, _sec, mock_post):
+        """attack_name is passed as attackName in the API request payload."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_name="Credential Theft",
+        )
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["attackName"] == "Credential Theft"
+
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_drilldown_mode_valid_call(self, _acct, _url, _sec, mock_post):
         """Valid drill-down with drift_key returns paginated records."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
@@ -2862,6 +2907,24 @@ class TestMcpToolRegistration:
             to_final_status="logged",
         )
 
+    @patch("safebreach_mcp_data.data_functions.sb_get_simulation_status_drifts")
+    def test_status_drifts_passes_attack_type_and_attack_name(self, mock_fn):
+        """attack_type and attack_name are forwarded to the status drifts function."""
+        mock_fn.return_value = {"total_drifts": 0}
+
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+        sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=100,
+            window_end=200,
+            attack_type="exfil",
+            attack_name="Test Attack",
+        )
+
+        call_kwargs = mock_fn.call_args[1]
+        assert call_kwargs["attack_type"] == "exfil"
+        assert call_kwargs["attack_name"] == "Test Attack"
+
     # --- Security control drifts tool (SAF-28331 Phase 4) ---
 
     def test_sc_drifts_tool_registered(self):
@@ -3115,6 +3178,22 @@ class TestDriftToolsE2E:
         assert "total_drifts" in result
         assert isinstance(result["total_drifts"], int)
         assert result["applied_filters"]["attack_type"] == "host"
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_status_drifts_attack_name_filter(self, e2e_console):
+        """attack_name filter is accepted by the status drifts API."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        result = sb_get_simulation_status_drifts(
+            console=e2e_console,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            attack_name="zzz_nonexistent_attack_name_for_e2e",
+        )
+
+        assert result["total_drifts"] == 0
+        assert result["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_name_for_e2e"
 
 
 class TestSecurityControlDriftsE2E:

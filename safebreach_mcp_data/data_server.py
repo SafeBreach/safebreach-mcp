@@ -434,6 +434,8 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
             to_final_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
+            attack_type: Optional[str] = None,
+            attack_name: Optional[str] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
             look_back_time: Optional[str | int] = None
@@ -453,6 +455,8 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
                 to_final_status=to_final_status,
                 drift_type=drift_type,
                 attack_id=attack_id,
+                attack_type=attack_type,
+                attack_name=attack_name,
                 drift_key=drift_key,
                 page_number=page_number,
                 look_back_time=look_back_time

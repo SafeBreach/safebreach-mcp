@@ -2212,6 +2212,7 @@ def sb_get_simulation_status_drifts(
     drift_type: Optional[str] = None,
     attack_id: Optional[int] = None,
     attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     from_final_status: Optional[str] = None,
     to_final_status: Optional[str] = None,
     drift_key: Optional[str] = None,
@@ -2258,6 +2259,7 @@ def sb_get_simulation_status_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_final_status=from_final_status,
         to_final_status=to_final_status,
         look_back_time=look_back_time,
@@ -2265,7 +2267,7 @@ def sb_get_simulation_status_drifts(
 
     cache_key = (
         f"status_drifts_{console}_{window_start}_{window_end}"
-        f"_{drift_type}_{attack_id}_{attack_type}_{from_final_status}_{to_final_status}"
+        f"_{drift_type}_{attack_id}_{attack_type}_{attack_name}_{from_final_status}_{to_final_status}"
         f"_{look_back_time}"
     )
 
@@ -2275,6 +2277,7 @@ def sb_get_simulation_status_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_final_status=from_final_status,
         to_final_status=to_final_status,
     )

@@ -128,7 +128,7 @@ focused on its API contract. The duplication is 3 optional params with trivial m
 ## 7. Definition of Done
 
 - [x] `get_simulation_result_drifts` accepts and passes `attack_type` and `attack_name` to the API
-- [ ] `get_simulation_status_drifts` accepts and passes `attack_type` and `attack_name` to the API
+- [x] `get_simulation_status_drifts` accepts and passes `attack_type` and `attack_name` to the API
 - [ ] `get_security_control_drifts` accepts and passes `attack_id`, `attack_type`, `attack_name` to the API
 - [ ] `attack_summary` includes `attack_name` field in drill-down responses
 - [ ] All new params are optional — behavior unchanged when no filters used
@@ -180,7 +180,7 @@ filtering on the affected tool.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase 1: Result drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 tests, 162 pass |
-| Phase 2: Status drifts — full attack filtering (attack_id + attack_type + attack_name) | ⏳ Pending | - | - | |
+| Phase 2: Status drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 3 unit + 1 E2E |
 | Phase 3: SC drifts — full attack filtering (attack_id + attack_type + attack_name) | ⏳ Pending | - | - | |
 | Phase 4: Response enrichment — attack_name in attack_summary | ⏳ Pending | - | - | |
 | Phase 5: Documentation update | ⏳ Pending | - | - | |
