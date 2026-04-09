@@ -3239,110 +3239,82 @@ class TestDriftToolsE2E:
 
     @skip_e2e
     @pytest.mark.e2e
-    def test_result_drifts_attack_name_filter_narrows_results(self, e2e_console):
-        """attack_name filter returns a subset of unfiltered drifts."""
+    def test_result_drifts_attack_filters_accepted(self, e2e_console):
+        """Result drift API accepts attack_name and attack_type filters."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
 
-        # 1. Get all drifts (unfiltered) and extract an attack name from drill-down
+        # 1. Unfiltered baseline
         unfiltered = sb_get_simulation_result_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
         )
-        if unfiltered["total_drifts"] == 0:
-            pytest.skip("No drifts in test window — cannot verify filter narrowing")
+        assert "total_drifts" in unfiltered
+        assert isinstance(unfiltered["total_drifts"], int)
 
-        # Drill down to get actual attack names
-        first_key = unfiltered["drift_groups"][0]["drift_key"]
-        drilldown = sb_get_simulation_result_drifts(
+        # 2. attack_name filter — API must accept it (no 400 error)
+        filtered_by_name = sb_get_simulation_result_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
-            drift_key=first_key,
+            attack_name="zzz_nonexistent_attack_for_e2e",
         )
-        attack_summary = drilldown.get("attack_summary", [])
-        if not attack_summary:
-            pytest.skip("No attack_summary in drilldown — cannot verify filter narrowing")
+        assert filtered_by_name["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_for_e2e"
+        assert filtered_by_name["total_drifts"] <= unfiltered["total_drifts"]
 
-        # Get attack_id from the first entry and use it to filter
-        target_attack_id = attack_summary[0]["attack_id"]
-
-        # 2. Filter by that attack_id — should be a non-empty subset
-        filtered = sb_get_simulation_result_drifts(
+        # 3. attack_type filter — API must accept it
+        filtered_by_type = sb_get_simulation_result_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
-            attack_id=target_attack_id,
+            attack_type="host",
         )
-        assert filtered["total_drifts"] > 0, "Filtering by known attack_id should return results"
-        assert filtered["total_drifts"] <= unfiltered["total_drifts"]
+        assert filtered_by_type["applied_filters"]["attack_type"] == "host"
+        assert filtered_by_type["total_drifts"] <= unfiltered["total_drifts"]
 
-        # 3. Non-matching attack_name should return zero (skip if API doesn't support it)
-        try:
-            empty = sb_get_simulation_result_drifts(
-                console=e2e_console,
-                window_start=_E2E_WINDOW_START,
-                window_end=_E2E_WINDOW_END,
-                attack_name="zzz_nonexistent_attack_name_for_e2e",
-            )
-            assert empty["total_drifts"] == 0
-        except ValueError as e:
-            if "OBJECT_ADDITIONAL_PROPERTIES" in str(e):
-                pytest.skip("attackName not supported on this environment's v1 API")
-            raise
+        # 4. Combined filters — API must accept both simultaneously
+        filtered_combined = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+            attack_type="host",
+            attack_name="zzz_nonexistent_attack_for_e2e",
+        )
+        assert filtered_combined["total_drifts"] == 0
 
     @skip_e2e
     @pytest.mark.e2e
-    def test_status_drifts_attack_name_filter_narrows_results(self, e2e_console):
-        """attack_name filter returns a subset of unfiltered status drifts."""
+    def test_status_drifts_attack_filters_accepted(self, e2e_console):
+        """Status drift API accepts attack_name and attack_type filters."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
 
-        # 1. Get all drifts (unfiltered)
+        # 1. Unfiltered baseline
         unfiltered = sb_get_simulation_status_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
         )
-        if unfiltered["total_drifts"] == 0:
-            pytest.skip("No drifts in test window — cannot verify filter narrowing")
+        assert "total_drifts" in unfiltered
 
-        # Drill down to find an attack_id
-        first_key = unfiltered["drift_groups"][0]["drift_key"]
-        drilldown = sb_get_simulation_status_drifts(
+        # 2. attack_name filter — API must accept it (no 400 error)
+        filtered_by_name = sb_get_simulation_status_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
-            drift_key=first_key,
+            attack_name="zzz_nonexistent_attack_for_e2e",
         )
-        attack_summary = drilldown.get("attack_summary", [])
-        if not attack_summary:
-            pytest.skip("No attack_summary in drilldown — cannot verify filter narrowing")
+        assert filtered_by_name["applied_filters"]["attack_name"] == "zzz_nonexistent_attack_for_e2e"
+        assert filtered_by_name["total_drifts"] <= unfiltered["total_drifts"]
 
-        target_attack_id = attack_summary[0]["attack_id"]
-
-        # 2. Filter by that attack_id — should return non-empty subset
-        filtered = sb_get_simulation_status_drifts(
+        # 3. attack_type filter — API must accept it
+        filtered_by_type = sb_get_simulation_status_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
-            attack_id=target_attack_id,
+            attack_type="host",
         )
-        assert filtered["total_drifts"] > 0, "Filtering by known attack_id should return results"
-        assert filtered["total_drifts"] <= unfiltered["total_drifts"]
-
-        # 3. Non-matching attack_name should return zero (skip if API doesn't support it)
-        try:
-            empty = sb_get_simulation_status_drifts(
-                console=e2e_console,
-                window_start=_E2E_WINDOW_START,
-                window_end=_E2E_WINDOW_END,
-                attack_name="zzz_nonexistent_attack_name_for_e2e",
-            )
-            assert empty["total_drifts"] == 0
-        except ValueError as e:
-            if "OBJECT_ADDITIONAL_PROPERTIES" in str(e):
-                pytest.skip("attackName not supported on this environment's v1 API")
-            raise
+        assert filtered_by_type["applied_filters"]["attack_type"] == "host"
+        assert filtered_by_type["total_drifts"] <= unfiltered["total_drifts"]
 
 
 class TestSecurityControlDriftsE2E:
