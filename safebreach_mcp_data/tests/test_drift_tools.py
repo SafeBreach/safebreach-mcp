@@ -70,11 +70,13 @@ def _make_drift_record(
     to_status: str = "SUCCESS",
     tracking_id: str = "track-001",
     attack_id: int = 100,
+    attack_name: str = "Test Attack Name",
 ):
     """Helper factory to create drift records with specified statuses."""
     return {
         "trackingId": tracking_id,
         "attackId": attack_id,
+        "attackName": attack_name,
         "attackTypes": ["Test Attack"],
         "from": {
             "simulationId": 1000,
@@ -1471,6 +1473,29 @@ class TestGroupAndPaginateDrifts:
         )
 
         assert result["attack_summary"][0]["attack_types"] == ["Test Attack"]
+
+    def test_attack_summary_includes_attack_name(self):
+        """attack_summary entries include attack_name from the records."""
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+
+        records = [
+            _make_drift_record("prevented", "logged", tracking_id="r1",
+                               attack_id=100, attack_name="Upload File over SMB"),
+            _make_drift_record("prevented", "logged", tracking_id="r2",
+                               attack_id=100, attack_name="Upload File over SMB"),
+            _make_drift_record("prevented", "logged", tracking_id="r3",
+                               attack_id=200, attack_name="Credential Theft via CMD"),
+        ]
+        result = _group_and_paginate_drifts(
+            records, page_number=0, drift_key="prevented-logged", applied_filters={},
+        )
+
+        summary = result["attack_summary"]
+        # Sorted by count desc: attack 100 (2 records) first, then 200 (1 record)
+        assert summary[0]["attack_name"] == "Upload File over SMB"
+        assert summary[0]["count"] == 2
+        assert summary[1]["attack_name"] == "Credential Theft via CMD"
+        assert summary[1]["count"] == 1
 
     # --- Phase 12: test ID traceability hints ---
 

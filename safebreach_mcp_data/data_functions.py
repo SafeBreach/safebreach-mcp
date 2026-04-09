@@ -2090,6 +2090,7 @@ def _group_and_paginate_drifts(
             if aid not in attack_counts:
                 attack_counts[aid] = {
                     "attack_id": aid,
+                    "attack_name": d.get("attackName"),
                     "attack_types": d.get("attackTypes", []),
                     "count": 0,
                 }

@@ -18,7 +18,7 @@
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-04-09 11:30 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 1 of 5 |
+| **Current Phase** | Phase 4 of 5 |
 
 ## 2. Solution Description
 
@@ -130,11 +130,11 @@ focused on its API contract. The duplication is 3 optional params with trivial m
 - [x] `get_simulation_result_drifts` accepts and passes `attack_type` and `attack_name` to the API
 - [x] `get_simulation_status_drifts` accepts and passes `attack_type` and `attack_name` to the API
 - [x] `get_security_control_drifts` accepts and passes `attack_id`, `attack_type`, `attack_name` to the API
-- [ ] `attack_summary` includes `attack_name` field in drill-down responses
-- [ ] All new params are optional — behavior unchanged when no filters used
-- [ ] Cache keys include new attack filter params for correct invalidation
-- [ ] Unit tests cover all new params at payload builder, function, and MCP tool layers
-- [ ] All existing tests continue to pass
+- [x] `attack_summary` includes `attack_name` field in drill-down responses
+- [x] All new params are optional — behavior unchanged when no filters used
+- [x] Cache keys include new attack filter params for correct invalidation
+- [x] Unit tests cover all new params at payload builder, function, and MCP tool layers
+- [x] All existing tests continue to pass
 - [ ] Tool descriptions updated to document new attack filter parameters
 - [ ] Product reviewed — user can query "drifts for CrowdStrike against attack X last 7 days"
 
@@ -182,7 +182,7 @@ filtering on the affected tool.
 | Phase 1: Result drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 tests, 162 pass |
 | Phase 2: Status drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 3 unit + 1 E2E |
 | Phase 3: SC drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 unit + 1 E2E |
-| Phase 4: Response enrichment — attack_name in attack_summary | ⏳ Pending | - | - | |
+| Phase 4: Response enrichment — attack_name in attack_summary | ✅ Complete | 2026-04-09 | - | 1 unit, verified on staging |
 | Phase 5: Documentation update | ⏳ Pending | - | - | |
 
 ---
@@ -426,4 +426,7 @@ parameters for all three drift tools.
 | Date | Change Description |
 |------|-------------------|
 | 2026-04-09 10:45 | PRD created — initial draft |
-| 2026-04-09 11:30 | Phase 1 complete — result drifts attack filtering (7 tests, 162 pass) |
+| 2026-04-09 11:30 | Phase 1 complete — result drifts attack filtering (7 unit + 1 E2E) |
+| 2026-04-09 11:45 | Phase 2 complete — status drifts attack filtering (3 unit + 1 E2E) |
+| 2026-04-09 12:00 | Phase 3 complete — SC drifts attack filtering (7 unit + 1 E2E) |
+| 2026-04-09 12:30 | E2E tests upgraded to verify non-empty filtered results on staging |
