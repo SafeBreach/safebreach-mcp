@@ -1909,6 +1909,26 @@ def _fetch_and_cache_simulation_drifts(
     return records, elapsed
 
 
+def _list_attack_types(console: str) -> Dict[str, Any]:
+    """Return available attack_type values for a console via suggestions API."""
+    from safebreach_mcp_core.suggestions import _fetch_suggestions_entries
+    entries = _fetch_suggestions_entries(console, "attack_type")
+    attack_types = [
+        {"name": e["key"], "occurrences": e.get("doc_count", 0)}
+        for e in entries
+    ]
+    attack_types.sort(key=lambda a: a["occurrences"], reverse=True)
+    return {
+        "attack_types": attack_types,
+        "total": len(attack_types),
+        "hint_to_agent": (
+            "Valid attack_type values for this console (case-sensitive exact match). "
+            "Pass one of these as attack_type to filter drifts. "
+            "Note: attack_name is case-insensitive, but attack_type is NOT."
+        ),
+    }
+
+
 _REMOVABLE_FILTERS = {
     "from_status", "to_status", "from_final_status", "to_final_status",
     "drift_type", "attack_id", "attack_type",
@@ -2156,8 +2176,12 @@ def sb_get_simulation_result_drifts(
             Defaults to 7 days before window_start.
 
     Returns:
-        Summary (no drift_key) or paginated drill-down (with drift_key)
+        Summary (no drift_key), paginated drill-down (with drift_key),
+        or attack type list (attack_type="__list__")
     """
+    if attack_type == "__list__":
+        return _list_attack_types(console)
+
     # Validate result-mode specific params
     if from_status is not None and from_status.upper() not in _VALID_RESULT_STATUSES:
         raise ValueError(
@@ -2237,8 +2261,12 @@ def sb_get_simulation_status_drifts(
             Defaults to 7 days before window_start.
 
     Returns:
-        Summary (no drift_key) or paginated drill-down (with drift_key)
+        Summary (no drift_key), paginated drill-down (with drift_key),
+        or attack type list (attack_type="__list__")
     """
+    if attack_type == "__list__":
+        return _list_attack_types(console)
+
     # Validate final-status specific params
     if from_final_status is not None and from_final_status.lower() not in _VALID_FINAL_STATUSES:
         raise ValueError(
@@ -2521,6 +2549,10 @@ def sb_get_security_control_drifts(
                 "Pass one of these names as security_control to query drifts."
             ),
         }
+
+    # 0b. Discovery mode: list available attack types
+    if attack_type == "__list__":
+        return _list_attack_types(console)
 
     # 1. Validate transition_matching_mode
     if transition_matching_mode not in _VALID_TRANSITION_MODES:

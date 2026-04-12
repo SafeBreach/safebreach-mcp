@@ -1621,6 +1621,29 @@ class TestSbGetSimulationResultDrifts:
         assert result["total_drifts_in_group"] == 3
         assert len(result["drifts_in_page"]) == 3
 
+    @patch("safebreach_mcp_core.suggestions._fetch_suggestions_entries",
+           return_value=[
+               {"key": "Suspicious File Creation", "doc_count": 203},
+               {"key": "Hidden Malware Transfer", "doc_count": 791057},
+           ])
+    def test_result_drifts_attack_type_list_mode(self, mock_suggestions):
+        """attack_type='__list__' returns valid attack types from suggestions API."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=0,
+            window_end=0,
+            attack_type="__list__",
+        )
+
+        assert "attack_types" in result
+        assert result["total"] == 2
+        assert result["attack_types"][0]["name"] == "Hidden Malware Transfer"
+        assert result["attack_types"][0]["occurrences"] == 791057
+        assert "case-sensitive" in result["hint_to_agent"].lower()
+        mock_suggestions.assert_called_once_with("demo", "attack_type")
+
     def test_invalid_from_status_raises(self):
         """Invalid from_status raises ValueError."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
@@ -1975,6 +1998,24 @@ class TestSbGetSimulationStatusDrifts:
         assert result["total_drifts"] == 1
         assert "drift_groups" in result
 
+    @patch("safebreach_mcp_core.suggestions._fetch_suggestions_entries",
+           return_value=[{"key": "host", "doc_count": 1000}])
+    def test_status_drifts_attack_type_list_mode(self, mock_suggestions):
+        """attack_type='__list__' returns valid attack types from suggestions API."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        result = sb_get_simulation_status_drifts(
+            console="demo",
+            window_start=0,
+            window_end=0,
+            attack_type="__list__",
+        )
+
+        assert "attack_types" in result
+        assert result["total"] == 1
+        assert result["attack_types"][0]["name"] == "host"
+        mock_suggestions.assert_called_once_with("demo", "attack_type")
+
     def test_invalid_from_final_status_raises(self):
         """Invalid from_final_status raises ValueError."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
@@ -2231,6 +2272,21 @@ class TestSbGetSecurityControlDrifts:
         mock_resp.json.return_value = records
         mock_resp.content = b"[]"
         return mock_resp
+
+    @patch("safebreach_mcp_core.suggestions._fetch_suggestions_entries",
+           return_value=[{"key": "Remote Control", "doc_count": 500}])
+    def test_sc_drifts_attack_type_list_mode(self, mock_suggestions):
+        """attack_type='__list__' returns valid attack types from suggestions API."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        result = sb_get_security_control_drifts(
+            **{**self.COMMON_KWARGS, "attack_type": "__list__"},
+        )
+
+        assert "attack_types" in result
+        assert result["total"] == 1
+        assert result["attack_types"][0]["name"] == "Remote Control"
+        mock_suggestions.assert_called_once_with("demo", "attack_type")
 
     # --- Validation tests (no mocks needed) ---
 
@@ -3327,6 +3383,28 @@ class TestDriftToolsE2E:
             window_end=_E2E_ATTACK_FILTER_WINDOW_END,
         )
         assert filtered["total_drifts"] <= unfiltered["total_drifts"]
+
+    @skip_e2e
+    @pytest.mark.e2e
+    def test_attack_type_list_mode_returns_values_that_work(self, e2e_console):
+        """__list__ returns valid attack types, and using one returns non-empty drifts."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        listing = sb_get_simulation_result_drifts(
+            console=e2e_console, window_start=0, window_end=0, attack_type="__list__",
+        )
+        assert listing["total"] > 0, "Should have at least one attack type"
+        assert "case-sensitive" in listing["hint_to_agent"].lower()
+
+        # Use the most common type to filter — should return non-empty
+        top_type = listing["attack_types"][0]["name"]
+        filtered = sb_get_simulation_result_drifts(
+            console=e2e_console,
+            window_start=_E2E_ATTACK_FILTER_WINDOW_START,
+            window_end=_E2E_ATTACK_FILTER_WINDOW_END,
+            attack_type=top_type,
+        )
+        assert filtered["total_drifts"] > 0, f"Filtering by '{top_type}' should return drifts"
 
     @skip_e2e
     @pytest.mark.e2e

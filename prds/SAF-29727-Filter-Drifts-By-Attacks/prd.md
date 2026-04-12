@@ -184,6 +184,7 @@ filtering on the affected tool.
 | Phase 3: SC drifts — full attack filtering (attack_id + attack_type + attack_name) | ✅ Complete | 2026-04-09 | - | 7 unit + 1 E2E |
 | Phase 4: Response enrichment — attack_name in attack_summary | ✅ Complete | 2026-04-09 | - | 1 unit, verified on staging |
 | Phase 5: Documentation update | ✅ Complete | 2026-04-09 | - | CLAUDE.md + tool descriptions |
+| Phase 6: attack_type discovery mode + zero-results hints | ✅ Complete | 2026-04-12 | - | 3 unit + 1 E2E |
 
 ---
 
@@ -389,6 +390,62 @@ parameters for all three drift tools.
 
 **Git Commit**: `docs: document attack filter params for drift tools (SAF-29727)`
 
+---
+
+### Phase 6: attack_type discovery mode + zero-results hints
+
+**E2E Deliverable**: All 3 drift tools support `attack_type="__list__"` to discover valid
+attack type values. When an `attack_type` filter returns zero results, the response hint
+includes the list of valid attack types on that console.
+
+**Problem**: `attack_type` is a case-sensitive exact match filter. "Suspicious File Creation"
+returns drifts; "suspicious file creation" returns 0 with no error. The silent zero-result
+is indistinguishable from "no drifts exist." The suggestions API at
+`/executionsHistorySuggestions` provides the `attack_type` collection with 30 valid values
+(verified on staging).
+
+**Vertical slice** — all layers:
+
+**TDD Steps**:
+
+1. **RED — Unit tests**:
+   - `test_result_drifts_attack_type_list_mode` — mock suggestions API, call with
+     `attack_type="__list__"`, assert response contains `attack_types` list with `name`
+     and `occurrences` fields, plus `hint_to_agent`
+   - Same for status drifts and SC drifts
+   - `test_zero_results_hint_includes_attack_types` — when `attack_type` filter produces
+     zero results, assert the hint mentions valid attack types
+
+2. **GREEN — Implementation**:
+   - In `sb_get_simulation_result_drifts()`: add early return for `attack_type == "__list__"`
+     using `_fetch_suggestions_entries(console, "attack_type")`. Return sorted list with
+     `name`, `occurrences`, `total`, and `hint_to_agent` noting case-sensitive exact match.
+   - Same in `sb_get_simulation_status_drifts()` and `sb_get_security_control_drifts()`
+   - In `data_server.py`: add early return in all 3 tool functions before timestamp validation
+   - In `_build_zero_results_hint()`: when `attack_type` is in applied_filters, fetch and
+     include valid types in the hint
+   - Update tool descriptions to document `__list__` mode and case sensitivity
+
+3. **E2E test** against staging:
+   - Call `attack_type="__list__"` on staging, assert non-empty list returned
+   - Verify a returned value works as a filter (non-empty results)
+
+**Existing infrastructure to reuse**:
+- `safebreach_mcp_core/suggestions.py` — `_fetch_suggestions_entries(console, "attack_type")`
+  already works, cached with 30-min TTL
+- `__list__` pattern from `sb_get_security_control_drifts()` (line 2506) — copy structure
+
+**Changes**:
+
+| File | Change |
+|------|--------|
+| `safebreach_mcp_data/data_functions.py` | Add `__list__` mode to all 3 drift functions + enhance zero-results hints |
+| `safebreach_mcp_data/data_server.py` | Add early return for `__list__` in all 3 tools + update descriptions |
+| `safebreach_mcp_data/tests/test_drift_tools.py` | Unit + E2E tests for discovery mode and hints |
+| `CLAUDE.md` | Document `__list__` mode and case-sensitivity |
+
+**Git Commit**: `feat(data): add attack_type discovery mode to drift tools (SAF-29727)`
+
 ## 10. Risks and Assumptions
 
 ### Assumptions
@@ -430,3 +487,4 @@ parameters for all three drift tools.
 | 2026-04-09 11:45 | Phase 2 complete — status drifts attack filtering (3 unit + 1 E2E) |
 | 2026-04-09 12:00 | Phase 3 complete — SC drifts attack filtering (7 unit + 1 E2E) |
 | 2026-04-09 12:30 | E2E tests upgraded to verify non-empty filtered results on staging |
+| 2026-04-12 | Added Phase 6: attack_type discovery mode — addresses case-sensitive exact match usability issue |

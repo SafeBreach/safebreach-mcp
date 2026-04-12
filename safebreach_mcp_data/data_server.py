@@ -364,6 +364,9 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
             page_number: int = 0,
             look_back_time: Optional[str | int] = None
         ) -> dict:
+            if attack_type == "__list__":
+                return sb_get_simulation_result_drifts(
+                    console=console, window_start=0, window_end=0, attack_type="__list__")
             window_start = normalize_timestamp(window_start)
             if window_start is None:
                 raise ValueError("window_start: invalid or missing timestamp value")
@@ -444,6 +447,9 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
             page_number: int = 0,
             look_back_time: Optional[str | int] = None
         ) -> dict:
+            if attack_type == "__list__":
+                return sb_get_simulation_status_drifts(
+                    console=console, window_start=0, window_end=0, attack_type="__list__")
             window_start = normalize_timestamp(window_start)
             if window_start is None:
                 raise ValueError("window_start: invalid or missing timestamp value")
@@ -548,6 +554,17 @@ Start with a narrow window (1-2 days) and widen only if needed."""
                     window_start=0,
                     window_end=0,
                     transition_matching_mode="contains",
+                )
+
+            # Discovery mode: list available attack types
+            if attack_type == "__list__":
+                return sb_get_security_control_drifts(
+                    console=console,
+                    security_control=security_control,
+                    window_start=0,
+                    window_end=0,
+                    transition_matching_mode="contains",
+                    attack_type="__list__",
                 )
 
             window_start = normalize_timestamp(window_start)
