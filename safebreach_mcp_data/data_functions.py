@@ -1929,6 +1929,23 @@ def _list_attack_types(console: str) -> Dict[str, Any]:
     }
 
 
+def _validate_attack_type(console: str, attack_type: Optional[str]) -> None:
+    """Validate attack_type against known values. Raises ValueError with valid options."""
+    if attack_type is None or attack_type == "__list__":
+        return
+    from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+    try:
+        valid_types = get_suggestions_for_collection(console, "attack_type")
+    except Exception:
+        return  # If suggestions API fails, skip validation and let the drift API handle it
+    if valid_types and attack_type not in valid_types:
+        raise ValueError(
+            f"Invalid attack_type '{attack_type}' (case-sensitive exact match). "
+            f"Valid values on this console: {valid_types}. "
+            f"Use attack_type='__list__' to discover available values."
+        )
+
+
 _REMOVABLE_FILTERS = {
     "from_status", "to_status", "from_final_status", "to_final_status",
     "drift_type", "attack_id", "attack_type",
@@ -2181,6 +2198,7 @@ def sb_get_simulation_result_drifts(
     """
     if attack_type == "__list__":
         return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
 
     # Validate result-mode specific params
     if from_status is not None and from_status.upper() not in _VALID_RESULT_STATUSES:
@@ -2266,6 +2284,7 @@ def sb_get_simulation_status_drifts(
     """
     if attack_type == "__list__":
         return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
 
     # Validate final-status specific params
     if from_final_status is not None and from_final_status.lower() not in _VALID_FINAL_STATUSES:
@@ -2553,6 +2572,7 @@ def sb_get_security_control_drifts(
     # 0b. Discovery mode: list available attack types
     if attack_type == "__list__":
         return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
 
     # 1. Validate transition_matching_mode
     if transition_matching_mode not in _VALID_TRANSITION_MODES:

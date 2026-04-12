@@ -1644,6 +1644,47 @@ class TestSbGetSimulationResultDrifts:
         assert "case-sensitive" in result["hint_to_agent"].lower()
         mock_suggestions.assert_called_once_with("demo", "attack_type")
 
+    @patch("safebreach_mcp_core.suggestions.get_suggestions_for_collection",
+           return_value=["Suspicious File Creation", "Hidden Malware Transfer"])
+    def test_result_drifts_invalid_attack_type_raises(self, mock_suggestions):
+        """Wrong-case attack_type raises ValueError listing valid values."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        with pytest.raises(ValueError, match="Suspicious File Creation") as exc_info:
+            sb_get_simulation_result_drifts(
+                console="demo",
+                window_start=1709251200000,
+                window_end=1709337600000,
+                attack_type="suspicious file creation",
+            )
+        assert "case-sensitive" in str(exc_info.value).lower()
+
+    @patch("safebreach_mcp_core.suggestions.get_suggestions_for_collection",
+           return_value=["Suspicious File Creation"])
+    @patch("safebreach_mcp_data.data_functions.requests.post")
+    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_api_base_url",
+           return_value="https://demo.safebreach.com")
+    @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
+    def test_result_drifts_valid_attack_type_passes(
+        self, _acct, _url, _sec, mock_post, mock_suggestions
+    ):
+        """Valid attack_type passes validation and proceeds to API call."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_post.return_value = mock_resp
+
+        result = sb_get_simulation_result_drifts(
+            console="demo",
+            window_start=1709251200000,
+            window_end=1709337600000,
+            attack_type="Suspicious File Creation",
+        )
+        assert result["applied_filters"]["attack_type"] == "Suspicious File Creation"
+
     def test_invalid_from_status_raises(self):
         """Invalid from_status raises ValueError."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_result_drifts
@@ -2016,6 +2057,20 @@ class TestSbGetSimulationStatusDrifts:
         assert result["attack_types"][0]["name"] == "host"
         mock_suggestions.assert_called_once_with("demo", "attack_type")
 
+    @patch("safebreach_mcp_core.suggestions.get_suggestions_for_collection",
+           return_value=["host", "exfil"])
+    def test_status_drifts_invalid_attack_type_raises(self, mock_suggestions):
+        """Wrong-case attack_type raises ValueError listing valid values."""
+        from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
+
+        with pytest.raises(ValueError, match="host"):
+            sb_get_simulation_status_drifts(
+                console="demo",
+                window_start=1709251200000,
+                window_end=1709337600000,
+                attack_type="HOST",
+            )
+
     def test_invalid_from_final_status_raises(self):
         """Invalid from_final_status raises ValueError."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
@@ -2287,6 +2342,17 @@ class TestSbGetSecurityControlDrifts:
         assert result["total"] == 1
         assert result["attack_types"][0]["name"] == "Remote Control"
         mock_suggestions.assert_called_once_with("demo", "attack_type")
+
+    @patch("safebreach_mcp_core.suggestions.get_suggestions_for_collection",
+           return_value=["Remote Control", "Malware Transfer"])
+    def test_sc_drifts_invalid_attack_type_raises(self, mock_suggestions):
+        """Wrong-case attack_type raises ValueError listing valid values."""
+        from safebreach_mcp_data.data_functions import sb_get_security_control_drifts
+
+        with pytest.raises(ValueError, match="Remote Control"):
+            sb_get_security_control_drifts(
+                **{**self.COMMON_KWARGS, "attack_type": "remote control"},
+            )
 
     # --- Validation tests (no mocks needed) ---
 
