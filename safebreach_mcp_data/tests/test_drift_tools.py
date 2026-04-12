@@ -253,6 +253,24 @@ class TestBuildDriftApiPayload:
         )
         assert "attackName" not in result
 
+    def test_build_payload_attack_name_rejects_comma_separated(self):
+        """Comma-separated attack_name raises ValueError."""
+        with pytest.raises(ValueError, match="single value"):
+            build_drift_api_payload(
+                window_start=1709251200000,
+                window_end=1709337600000,
+                attack_name="Upload File over SMB,Space after Filename",
+            )
+
+    def test_build_payload_attack_type_rejects_comma_separated(self):
+        """Comma-separated attack_type raises ValueError."""
+        with pytest.raises(ValueError, match="single value"):
+            build_drift_api_payload(
+                window_start=1709251200000,
+                window_end=1709337600000,
+                attack_type="Suspicious File Creation,Lateral Movement",
+            )
+
     def test_build_payload_all_params(self):
         """All parameters supplied at once produce a complete payload."""
         result = build_drift_api_payload(
@@ -738,6 +756,16 @@ class TestBuildSecurityControlDriftPayload:
         """attack_name is included as attackName."""
         payload = self._build_minimal(attack_name="Malware Drop")
         assert payload["attackName"] == "Malware Drop"
+
+    def test_build_sc_payload_attack_name_rejects_comma_separated(self):
+        """Comma-separated attack_name raises ValueError."""
+        with pytest.raises(ValueError, match="single value"):
+            self._build_minimal(attack_name="Upload File over SMB,Space after Filename")
+
+    def test_build_sc_payload_attack_type_rejects_comma_separated(self):
+        """Comma-separated attack_type raises ValueError."""
+        with pytest.raises(ValueError, match="single value"):
+            self._build_minimal(attack_type="Suspicious File Creation,Lateral Movement")
 
     def test_build_sc_payload_attack_params_none_excluded(self):
         """None attack params are not in the payload."""

@@ -615,6 +615,15 @@ def _epoch_ms_to_iso(epoch_ms: int) -> str:
     )
 
 
+def _validate_single_value(name: str, value: Optional[str]) -> None:
+    """Raise if a string filter contains commas (multi-value not supported by API)."""
+    if value is not None and "," in value:
+        raise ValueError(
+            f"{name} accepts a single value only, not comma-separated lists. "
+            f"Got: '{value}'. Make separate calls to filter by multiple values."
+        )
+
+
 def build_drift_api_payload(
     window_start: int,
     window_end: int,
@@ -652,8 +661,10 @@ def build_drift_api_payload(
         )
     if attack_id is not None:
         payload["attackId"] = attack_id
+    _validate_single_value("attack_type", attack_type)
     if attack_type is not None:
         payload["attackType"] = attack_type
+    _validate_single_value("attack_name", attack_name)
     if attack_name is not None:
         payload["attackName"] = attack_name
     if from_status is not None:
@@ -839,8 +850,10 @@ def build_security_control_drift_payload(
 
     if attack_id is not None:
         payload["attackId"] = attack_id
+    _validate_single_value("attack_type", attack_type)
     if attack_type is not None:
         payload["attackType"] = attack_type
+    _validate_single_value("attack_name", attack_name)
     if attack_name is not None:
         payload["attackName"] = attack_name
 
