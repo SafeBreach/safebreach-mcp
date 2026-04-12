@@ -338,6 +338,10 @@ Parameters:
   to_status: Filter by destination result status. Valid: 'FAIL', 'SUCCESS'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type — CASE-SENSITIVE exact match (e.g., 'Suspicious File Creation'). \
+Pass '__list__' to discover all valid attack type values on this console. \
+Wrong case silently returns zero results, so always use '__list__' first or copy exact values from attack_summary.
+  attack_name: Filter by attack name — case-insensitive phrase match (e.g., 'Upload File over SMB').
   drift_key: Drill-down key from summary (e.g., 'fail-success'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
   look_back_time: How far back to search for baseline (pre-drift) simulations. \
@@ -356,10 +360,15 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
             to_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
+            attack_type: Optional[str] = None,
+            attack_name: Optional[str] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
             look_back_time: Optional[str | int] = None
         ) -> dict:
+            if attack_type == "__list__":
+                return sb_get_simulation_result_drifts(
+                    console=console, window_start=0, window_end=0, attack_type="__list__")
             window_start = normalize_timestamp(window_start)
             if window_start is None:
                 raise ValueError("window_start: invalid or missing timestamp value")
@@ -375,6 +384,8 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
                 to_status=to_status,
                 drift_type=drift_type,
                 attack_id=attack_id,
+                attack_type=attack_type,
+                attack_name=attack_name,
                 drift_key=drift_key,
                 page_number=page_number,
                 look_back_time=look_back_time
@@ -412,6 +423,10 @@ Parameters:
 'missed', 'inconsistent'.
   drift_type: Filter by drift classification. Valid: 'improvement', 'regression', 'not_applicable'.
   attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type — CASE-SENSITIVE exact match (e.g., 'Suspicious File Creation'). \
+Pass '__list__' to discover all valid attack type values on this console. \
+Wrong case silently returns zero results, so always use '__list__' first or copy exact values from attack_summary.
+  attack_name: Filter by attack name — case-insensitive phrase match (e.g., 'Upload File over SMB').
   drift_key: Drill-down key from summary (e.g., 'prevented-logged'). Omit for grouped summary.
   page_number: Page number for drill-down mode (default 0, 10 records per page).
   look_back_time: How far back to search for baseline (pre-drift) simulations. \
@@ -430,10 +445,15 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
             to_final_status: Optional[str] = None,
             drift_type: Optional[str] = None,
             attack_id: Optional[int] = None,
+            attack_type: Optional[str] = None,
+            attack_name: Optional[str] = None,
             drift_key: Optional[str] = None,
             page_number: int = 0,
             look_back_time: Optional[str | int] = None
         ) -> dict:
+            if attack_type == "__list__":
+                return sb_get_simulation_status_drifts(
+                    console=console, window_start=0, window_end=0, attack_type="__list__")
             window_start = normalize_timestamp(window_start)
             if window_start is None:
                 raise ValueError("window_start: invalid or missing timestamp value")
@@ -449,6 +469,8 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
                 to_final_status=to_final_status,
                 drift_type=drift_type,
                 attack_id=attack_id,
+                attack_type=attack_type,
+                attack_name=attack_name,
                 drift_key=drift_key,
                 page_number=page_number,
                 look_back_time=look_back_time
@@ -494,6 +516,11 @@ Boolean filters for destination capability state. Omit to match any.
   earliest_search_time: How far back to search for baseline simulations. \
 Epoch ms/seconds or ISO 8601 string. Defaults to 7 days before window_start.
   max_outside_window_executions: Max executions outside window to consider (integer).
+  attack_id: Filter by specific playbook attack ID (integer).
+  attack_type: Filter by attack type — CASE-SENSITIVE exact match (e.g., 'Suspicious File Creation'). \
+Pass '__list__' to discover all valid attack type values on this console. \
+Wrong case silently returns zero results, so always use '__list__' first or copy exact values from attack_summary.
+  attack_name: Filter by attack name — case-insensitive phrase match (e.g., 'Upload File over SMB').
   group_by: How to group results. 'transition' (default) groups by boolean capability changes. \
 'drift_type' groups by Improvement/Regression.
   drift_key: Drill-down key from summary. Omit for grouped summary.
@@ -518,6 +545,9 @@ Start with a narrow window (1-2 days) and widen only if needed."""
             drift_type: str | None = None,
             earliest_search_time: str | int | None = None,
             max_outside_window_executions: int | None = None,
+            attack_id: int | None = None,
+            attack_type: str | None = None,
+            attack_name: str | None = None,
             group_by: str = "transition",
             drift_key: str | None = None,
             page_number: int = 0,
@@ -530,6 +560,17 @@ Start with a narrow window (1-2 days) and widen only if needed."""
                     window_start=0,
                     window_end=0,
                     transition_matching_mode="contains",
+                )
+
+            # Discovery mode: list available attack types
+            if attack_type == "__list__":
+                return sb_get_security_control_drifts(
+                    console=console,
+                    security_control=security_control,
+                    window_start=0,
+                    window_end=0,
+                    transition_matching_mode="contains",
+                    attack_type="__list__",
                 )
 
             window_start = normalize_timestamp(window_start)
@@ -565,6 +606,9 @@ Start with a narrow window (1-2 days) and widen only if needed."""
                 drift_type=drift_type,
                 earliest_search_time=earliest_search_time,
                 max_outside_window_executions=max_outside_window_executions,
+                attack_id=attack_id,
+                attack_type=attack_type,
+                attack_name=attack_name,
                 group_by=group_by,
                 drift_key=drift_key,
                 page_number=page_number,

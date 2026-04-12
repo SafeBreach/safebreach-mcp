@@ -1909,6 +1909,43 @@ def _fetch_and_cache_simulation_drifts(
     return records, elapsed
 
 
+def _list_attack_types(console: str) -> Dict[str, Any]:
+    """Return available attack_type values for a console via suggestions API."""
+    from safebreach_mcp_core.suggestions import _fetch_suggestions_entries
+    entries = _fetch_suggestions_entries(console, "attack_type")
+    attack_types = [
+        {"name": e["key"], "occurrences": e.get("doc_count", 0)}
+        for e in entries
+    ]
+    attack_types.sort(key=lambda a: a["occurrences"], reverse=True)
+    return {
+        "attack_types": attack_types,
+        "total": len(attack_types),
+        "hint_to_agent": (
+            "Valid attack_type values for this console (case-sensitive exact match). "
+            "Pass one of these as attack_type to filter drifts. "
+            "Note: attack_name is case-insensitive, but attack_type is NOT."
+        ),
+    }
+
+
+def _validate_attack_type(console: str, attack_type: Optional[str]) -> None:
+    """Validate attack_type against known values. Raises ValueError with valid options."""
+    if attack_type is None or attack_type == "__list__":
+        return
+    from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+    try:
+        valid_types = get_suggestions_for_collection(console, "attack_type")
+    except Exception:
+        return  # If suggestions API fails, skip validation and let the drift API handle it
+    if valid_types and attack_type not in valid_types:
+        raise ValueError(
+            f"Invalid attack_type '{attack_type}' (case-sensitive exact match). "
+            f"Valid values on this console: {valid_types}. "
+            f"Use attack_type='__list__' to discover available values."
+        )
+
+
 _REMOVABLE_FILTERS = {
     "from_status", "to_status", "from_final_status", "to_final_status",
     "drift_type", "attack_id", "attack_type",
@@ -2090,6 +2127,7 @@ def _group_and_paginate_drifts(
             if aid not in attack_counts:
                 attack_counts[aid] = {
                     "attack_id": aid,
+                    "attack_name": d.get("attackName"),
                     "attack_types": d.get("attackTypes", []),
                     "count": 0,
                 }
@@ -2131,6 +2169,7 @@ def sb_get_simulation_result_drifts(
     drift_type: Optional[str] = None,
     attack_id: Optional[int] = None,
     attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     from_status: Optional[str] = None,
     to_status: Optional[str] = None,
     drift_key: Optional[str] = None,
@@ -2154,8 +2193,13 @@ def sb_get_simulation_result_drifts(
             Defaults to 7 days before window_start.
 
     Returns:
-        Summary (no drift_key) or paginated drill-down (with drift_key)
+        Summary (no drift_key), paginated drill-down (with drift_key),
+        or attack type list (attack_type="__list__")
     """
+    if attack_type == "__list__":
+        return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
+
     # Validate result-mode specific params
     if from_status is not None and from_status.upper() not in _VALID_RESULT_STATUSES:
         raise ValueError(
@@ -2175,6 +2219,7 @@ def sb_get_simulation_result_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_status=from_status,
         to_status=to_status,
         look_back_time=look_back_time,
@@ -2182,7 +2227,7 @@ def sb_get_simulation_result_drifts(
 
     cache_key = (
         f"result_drifts_{console}_{window_start}_{window_end}"
-        f"_{drift_type}_{attack_id}_{attack_type}_{from_status}_{to_status}"
+        f"_{drift_type}_{attack_id}_{attack_type}_{attack_name}_{from_status}_{to_status}"
         f"_{look_back_time}"
     )
 
@@ -2192,6 +2237,7 @@ def sb_get_simulation_result_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_status=from_status,
         to_status=to_status,
     )
@@ -2209,6 +2255,7 @@ def sb_get_simulation_status_drifts(
     drift_type: Optional[str] = None,
     attack_id: Optional[int] = None,
     attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     from_final_status: Optional[str] = None,
     to_final_status: Optional[str] = None,
     drift_key: Optional[str] = None,
@@ -2232,8 +2279,13 @@ def sb_get_simulation_status_drifts(
             Defaults to 7 days before window_start.
 
     Returns:
-        Summary (no drift_key) or paginated drill-down (with drift_key)
+        Summary (no drift_key), paginated drill-down (with drift_key),
+        or attack type list (attack_type="__list__")
     """
+    if attack_type == "__list__":
+        return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
+
     # Validate final-status specific params
     if from_final_status is not None and from_final_status.lower() not in _VALID_FINAL_STATUSES:
         raise ValueError(
@@ -2255,6 +2307,7 @@ def sb_get_simulation_status_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_final_status=from_final_status,
         to_final_status=to_final_status,
         look_back_time=look_back_time,
@@ -2262,7 +2315,7 @@ def sb_get_simulation_status_drifts(
 
     cache_key = (
         f"status_drifts_{console}_{window_start}_{window_end}"
-        f"_{drift_type}_{attack_id}_{attack_type}_{from_final_status}_{to_final_status}"
+        f"_{drift_type}_{attack_id}_{attack_type}_{attack_name}_{from_final_status}_{to_final_status}"
         f"_{look_back_time}"
     )
 
@@ -2272,6 +2325,7 @@ def sb_get_simulation_status_drifts(
         drift_type=drift_type,
         attack_id=attack_id,
         attack_type=attack_type,
+        attack_name=attack_name,
         from_final_status=from_final_status,
         to_final_status=to_final_status,
     )
@@ -2459,6 +2513,9 @@ def sb_get_security_control_drifts(
     drift_type: Optional[str] = None,
     earliest_search_time: Optional[int] = None,
     max_outside_window_executions: Optional[int] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     group_by: str = "transition",
     drift_key: Optional[str] = None,
     page_number: int = 0,
@@ -2481,6 +2538,9 @@ def sb_get_security_control_drifts(
         drift_type: Filter by drift type (improvement/regression/not_applicable)
         earliest_search_time: Baseline lookback (epoch ms, default 7d before window_start)
         max_outside_window_executions: Max executions outside window
+        attack_id: Filter by playbook attack ID
+        attack_type: Filter by attack type
+        attack_name: Filter by attack name
         group_by: "transition" (default) or "drift_type"
         drift_key: Drill into a specific group
         page_number: Page number for drill-down (0-based)
@@ -2508,6 +2568,11 @@ def sb_get_security_control_drifts(
                 "Pass one of these names as security_control to query drifts."
             ),
         }
+
+    # 0b. Discovery mode: list available attack types
+    if attack_type == "__list__":
+        return _list_attack_types(console)
+    _validate_attack_type(console, attack_type)
 
     # 1. Validate transition_matching_mode
     if transition_matching_mode not in _VALID_TRANSITION_MODES:
@@ -2542,6 +2607,9 @@ def sb_get_security_control_drifts(
         drift_type=drift_type,
         earliest_search_time=earliest_search_time,
         max_outside_window_executions=max_outside_window_executions,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        attack_name=attack_name,
     )
 
     # 6. Build cache key
@@ -2550,7 +2618,7 @@ def sb_get_security_control_drifts(
         f"_{transition_matching_mode}_{from_prevented}_{from_reported}"
         f"_{from_logged}_{from_alerted}_{to_prevented}_{to_reported}"
         f"_{to_logged}_{to_alerted}_{drift_type}_{earliest_search_time}"
-        f"_{max_outside_window_executions}"
+        f"_{max_outside_window_executions}_{attack_id}_{attack_type}_{attack_name}"
     )
 
     # 7. Fetch via shared helper with v2 api_path
@@ -2563,6 +2631,9 @@ def sb_get_security_control_drifts(
     # 8. Build applied filters and group/paginate
     applied_filters = _build_applied_filters(
         drift_type=drift_type,
+        attack_id=attack_id,
+        attack_type=attack_type,
+        attack_name=attack_name,
         from_prevented=from_prevented,
         from_reported=from_reported,
         from_logged=from_logged,

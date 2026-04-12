@@ -615,12 +615,22 @@ def _epoch_ms_to_iso(epoch_ms: int) -> str:
     )
 
 
+def _validate_single_value(name: str, value: Optional[str]) -> None:
+    """Raise if a string filter contains commas (multi-value not supported by API)."""
+    if value is not None and "," in value:
+        raise ValueError(
+            f"{name} accepts a single value only, not comma-separated lists. "
+            f"Got: '{value}'. Make separate calls to filter by multiple values."
+        )
+
+
 def build_drift_api_payload(
     window_start: int,
     window_end: int,
     drift_type: Optional[str] = None,
     attack_id: Optional[int] = None,
     attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
     from_status: Optional[str] = None,
     to_status: Optional[str] = None,
     from_final_status: Optional[str] = None,
@@ -651,8 +661,12 @@ def build_drift_api_payload(
         )
     if attack_id is not None:
         payload["attackId"] = attack_id
+    _validate_single_value("attack_type", attack_type)
     if attack_type is not None:
         payload["attackType"] = attack_type
+    _validate_single_value("attack_name", attack_name)
+    if attack_name is not None:
+        payload["attackName"] = attack_name
     if from_status is not None:
         payload["fromStatus"] = from_status
     if to_status is not None:
@@ -775,6 +789,9 @@ def build_security_control_drift_payload(
     drift_type: Optional[str] = None,
     earliest_search_time: Optional[int] = None,
     max_outside_window_executions: Optional[int] = None,
+    attack_id: Optional[int] = None,
+    attack_type: Optional[str] = None,
+    attack_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the POST body for the v2 security control drift API.
 
@@ -830,6 +847,15 @@ def build_security_control_drift_payload(
 
     if max_outside_window_executions is not None:
         payload["maxOutsideWindowExecutions"] = max_outside_window_executions
+
+    if attack_id is not None:
+        payload["attackId"] = attack_id
+    _validate_single_value("attack_type", attack_type)
+    if attack_type is not None:
+        payload["attackType"] = attack_type
+    _validate_single_value("attack_name", attack_name)
+    if attack_name is not None:
+        payload["attackName"] = attack_name
 
     return payload
 
