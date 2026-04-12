@@ -136,7 +136,7 @@ focused on its API contract. The duplication is 3 optional params with trivial m
 - [x] Unit tests cover all new params at payload builder, function, and MCP tool layers
 - [x] All existing tests continue to pass
 - [x] Tool descriptions updated to document new attack filter parameters
-- [ ] Product reviewed — user can query "drifts for CrowdStrike against attack X last 7 days"
+- [x] Product reviewed — user can query "drifts for CrowdStrike against attack X last 7 days"
 
 ## 8. Testing Strategy
 
@@ -465,6 +465,18 @@ is indistinguishable from "no drifts exist." The suggestions API at
 | Cache key explosion with more filter params | Low | Bounded cache (maxsize=3, TTL=600s) handles this |
 | `attackName` match_phrase may return unexpected results | Low | This is backend behavior, MCP is pass-through |
 
+### Design Decision: No `__list__` mode for `attack_name`
+
+`attack_name` uses **case-insensitive phrase match** on the backend (`match_phrase` on the
+`moveName` text field). Unlike `attack_type`, wrong case and partial strings work correctly:
+- `"upload file over smb"` → 12 drifts (case-insensitive)
+- `"Upload File"` → 12 drifts (partial phrase match)
+
+The suggestions API has no `attack_name` collection; the closest is `playbook_method` (527
+values). Since the filter is already forgiving and the agent has `get_playbook_attacks` to
+browse attack names, adding `__list__` and validation for `attack_name` would add complexity
+without solving a real usability problem. Accepted as-is.
+
 ## 12. Executive Summary
 
 - **Issue**: MCP drift tools lack attack-specific filtering, requiring post-processing to analyze
@@ -488,3 +500,5 @@ is indistinguishable from "no drifts exist." The suggestions API at
 | 2026-04-09 12:00 | Phase 3 complete — SC drifts attack filtering (7 unit + 1 E2E) |
 | 2026-04-09 12:30 | E2E tests upgraded to verify non-empty filtered results on staging |
 | 2026-04-12 | Added Phase 6: attack_type discovery mode — addresses case-sensitive exact match usability issue |
+| 2026-04-12 | Phase 6 complete + attack_type validation + multi-value rejection |
+| 2026-04-12 | Decision: no __list__ for attack_name — case-insensitive phrase match is sufficient |
