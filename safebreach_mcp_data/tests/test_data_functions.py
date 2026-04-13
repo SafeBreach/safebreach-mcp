@@ -4,8 +4,12 @@ Tests for SafeBreach Data Functions
 This module tests the data functions that handle test and simulation operations.
 """
 
+import copy
+import logging
+
 import pytest
 import json
+from requests.exceptions import HTTPError
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_data.data_functions import (
     sb_get_tests_history,
@@ -18,6 +22,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_test_findings_details,
     sb_get_test_drifts,
     sb_get_full_simulation_logs,
+    sb_get_peer_benchmark_score,
     _get_all_tests_from_cache_or_api,
     _apply_filters,
     _apply_ordering,
@@ -36,6 +41,7 @@ from safebreach_mcp_data.data_functions import (
     security_control_events_cache,
     findings_cache,
     full_simulation_logs_cache,
+    peer_benchmark_cache,
     PAGE_SIZE
 )
 
@@ -3002,3 +3008,463 @@ class TestDataFunctions:
         assert result['attacker']['os_version'] == 'Ubuntu 22.04'
         assert result['attacker']['error'] == 'connection refused'
         assert result['attacker']['simulation_steps'] == [{'message': 'attacker step'}]
+
+
+# Standardized epoch-ms test values (real values, NOT mocked — real
+# convert_epoch_to_datetime will produce deterministic ISO strings).
+_START_MS = 1709251200000  # 2024-03-01T00:00:00Z
+_END_MS = 1711929600000    # 2024-04-01T00:00:00Z
+
+
+class TestPeerBenchmarkFunction:
+    """Test suite for sb_get_peer_benchmark_score (SAF-29415 Phase 2)."""
+
+    def setup_method(self):
+        """Clear the peer benchmark cache before each test."""
+        peer_benchmark_cache.clear()
+
+    @pytest.fixture
+    def happy_backend_response(self):
+        """Full happy-path backend /score response payload."""
+        return {
+            "startDate": "2024-03-01T00:00:00.000Z",
+            "endDate": "2024-04-01T00:00:00.000Z",
+            "snapshotMonth": "2024-03",
+            "dataThroughDate": "2024-03-31",
+            "attackIds": ["7001", "7002"],
+            "attackIdsQueried": 2,
+            "customAttackIdsFiltered": 0,
+            "customerScore": {
+                "score": 0.68,
+                "scoreBlocked": 0.40,
+                "scoreDetected": 0.18,
+                "scoreUnblocked": 0.10,
+                "totalSimulations": 500,
+                "securityControlCategory": [
+                    {"name": "Network Inspection", "score": 0.50,
+                     "scoreBlocked": 0.30, "scoreDetected": 0.10,
+                     "scoreUnblocked": 0.10},
+                ],
+            },
+            "peerScore": {
+                "score": 0.75,
+                "scoreBlocked": 0.50,
+                "scoreDetected": 0.20,
+                "scoreUnblocked": 0.05,
+                "securityControlCategory": [
+                    {"name": "Network Inspection", "score": 0.75,
+                     "scoreBlocked": 0.50, "scoreDetected": 0.20},
+                ],
+            },
+            "industryScores": [
+                {
+                    "industry": "Information Technology",
+                    "score": 0.69,
+                    "scoreBlocked": 0.45,
+                    "scoreDetected": 0.19,
+                    "scoreUnblocked": 0.05,
+                    "securityControlCategory": [
+                        {"name": "Network Inspection", "score": 0.70,
+                         "scoreBlocked": 0.45, "scoreDetected": 0.20},
+                    ],
+                },
+            ],
+        }
+
+    @pytest.fixture
+    def make_post_response(self):
+        """Factory fixture: build a MagicMock POST response."""
+        def _factory(status_code=200, json_data=None, raise_for_status_effect=None):
+            resp = Mock()
+            resp.status_code = status_code
+            resp.json.return_value = json_data
+            if raise_for_status_effect is not None:
+                resp.raise_for_status.side_effect = raise_for_status_effect
+            else:
+                resp.raise_for_status.return_value = None
+            return resp
+        return _factory
+
+    # ---- Test 1 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_happy_path_no_filters(self, mock_post, mock_secret, mock_base_url,
+                                   mock_account_id, happy_backend_response,
+                                   make_post_response):
+        """Happy path: no filters -> correct URL, headers, body, timeout, shape."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+
+        # URL pattern
+        called_url = args[0] if args else kwargs.get('url')
+        assert "/accounts/123/score" in called_url
+
+        # Headers: x-apitoken (not Bearer) + Content-Type
+        headers = kwargs['headers']
+        assert headers.get('x-apitoken') == "test-token"
+        assert headers.get('Content-Type') == "application/json"
+        assert 'Authorization' not in headers  # NO Bearer
+
+        # Body: ISO-Z dates, no filter keys
+        body = kwargs['json']
+        assert body['startDate'].endswith('Z')
+        assert body['endDate'].endswith('Z')
+        assert 'includeTestIds' not in body
+        assert 'excludeTestIds' not in body
+
+        # Timeout
+        assert kwargs['timeout'] == 120
+
+        # Return value has renamed keys
+        assert 'customer_score' in result
+        assert 'all_peers_score' in result
+        assert 'customer_industry_scores' in result
+
+    # ---- Test 2 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_include_only_filter(self, mock_post, mock_secret, mock_base_url,
+                                 mock_account_id, happy_backend_response,
+                                 make_post_response):
+        """Include filter is trimmed, split, sent as includeTestIds."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+            include_test_ids_filter="a, b , c",
+        )
+
+        body = mock_post.call_args.kwargs['json']
+        assert body.get('includeTestIds') == ["a", "b", "c"]
+        assert 'excludeTestIds' not in body
+
+    # ---- Test 3 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_exclude_only_filter(self, mock_post, mock_secret, mock_base_url,
+                                 mock_account_id, happy_backend_response,
+                                 make_post_response):
+        """Exclude filter is trimmed, split, sent as excludeTestIds."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+            exclude_test_ids_filter="x, y",
+        )
+
+        body = mock_post.call_args.kwargs['json']
+        assert body.get('excludeTestIds') == ["x", "y"]
+        assert 'includeTestIds' not in body
+
+    # ---- Test 4 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_mutual_exclusivity_raises_value_error(self, mock_post, mock_secret,
+                                                   mock_base_url, mock_account_id):
+        """Both filters non-empty -> ValueError; requests.post never called."""
+        mock_secret.return_value = "test-token"
+
+        with pytest.raises(ValueError) as excinfo:
+            sb_get_peer_benchmark_score(
+                "test-console", start_date=_START_MS, end_date=_END_MS,
+                include_test_ids_filter="a",
+                exclude_test_ids_filter="b",
+            )
+
+        assert "Cannot provide both" in str(excinfo.value)
+        mock_post.assert_not_called()
+
+    # ---- Test 5 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_empty_filter_strings_treated_as_absent(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        happy_backend_response, make_post_response,
+    ):
+        """Empty string and None for filters -> no filter keys in body."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+            include_test_ids_filter="",
+            exclude_test_ids_filter=None,
+        )
+
+        body = mock_post.call_args.kwargs['json']
+        assert 'includeTestIds' not in body
+        assert 'excludeTestIds' not in body
+
+    # ---- Test 6 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_date_ordering_validation(self, mock_post, mock_secret,
+                                      mock_base_url, mock_account_id):
+        """start_date >= end_date -> ValueError; requests.post never called."""
+        mock_secret.return_value = "test-token"
+
+        # start > end
+        with pytest.raises(ValueError) as excinfo:
+            sb_get_peer_benchmark_score(
+                "test-console", start_date=_END_MS, end_date=_START_MS,
+            )
+        assert "start_date must be before end_date" in str(excinfo.value)
+
+        # start == end
+        with pytest.raises(ValueError):
+            sb_get_peer_benchmark_score(
+                "test-console", start_date=_START_MS, end_date=_START_MS,
+            )
+
+        mock_post.assert_not_called()
+
+    # ---- Test 7 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_epoch_to_iso_conversion(self, mock_post, mock_secret, mock_base_url,
+                                     mock_account_id, happy_backend_response,
+                                     make_post_response):
+        """Epoch ms -> ISO 8601 UTC Z strings in body."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        body = mock_post.call_args.kwargs['json']
+        assert body['startDate'].endswith('Z')
+        assert body['endDate'].endswith('Z')
+
+    # ---- Test 8 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_http_204_handling(self, mock_post, mock_secret, mock_base_url,
+                               mock_account_id, make_post_response):
+        """HTTP 204 -> empty-shape result + hint mentioning no executions/custom."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(status_code=204, json_data=None)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert result['customer_score'] is None
+        assert result['all_peers_score'] is None
+        assert result['customer_industry_scores'] == []
+        assert 'hint_to_agent' in result
+        hint_lower = result['hint_to_agent'].lower()
+        assert ('no executions' in hint_lower) or ('custom' in hint_lower)
+
+    # ---- Test 9 -----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_null_customer_score_hint(self, mock_post, mock_secret, mock_base_url,
+                                      mock_account_id, happy_backend_response,
+                                      make_post_response):
+        """200 with customerScore: None -> hint explains no customer executions."""
+        mock_secret.return_value = "test-token"
+        payload = copy.deepcopy(happy_backend_response)
+        payload["customerScore"] = None
+        mock_post.return_value = make_post_response(200, payload)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert 'hint_to_agent' in result
+        hint_lower = result['hint_to_agent'].lower()
+        assert ('no executions' in hint_lower) or ('customer' in hint_lower)
+
+    # ---- Test 10 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_null_peer_score_hint(self, mock_post, mock_secret, mock_base_url,
+                                  mock_account_id, happy_backend_response,
+                                  make_post_response):
+        """200 with peerScore: None -> hint mentions all-peers missing."""
+        mock_secret.return_value = "test-token"
+        payload = copy.deepcopy(happy_backend_response)
+        payload["peerScore"] = None
+        mock_post.return_value = make_post_response(200, payload)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert 'hint_to_agent' in result
+        hint_lower = result['hint_to_agent'].lower()
+        assert 'peer' in hint_lower
+
+    # ---- Test 11 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_empty_industry_scores_hint(self, mock_post, mock_secret, mock_base_url,
+                                        mock_account_id, happy_backend_response,
+                                        make_post_response):
+        """200 with industryScores: [] -> hint mentions customer-industry missing."""
+        mock_secret.return_value = "test-token"
+        payload = copy.deepcopy(happy_backend_response)
+        payload["industryScores"] = []
+        mock_post.return_value = make_post_response(200, payload)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert 'hint_to_agent' in result
+        hint_lower = result['hint_to_agent'].lower()
+        assert 'industry' in hint_lower
+
+    # ---- Test 12 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_composed_hint_multiple_nulls(self, mock_post, mock_secret, mock_base_url,
+                                          mock_account_id, happy_backend_response,
+                                          make_post_response):
+        """peerScore null AND industryScores empty -> hint joins fragments with '; '."""
+        mock_secret.return_value = "test-token"
+        payload = copy.deepcopy(happy_backend_response)
+        payload["peerScore"] = None
+        payload["industryScores"] = []
+        mock_post.return_value = make_post_response(200, payload)
+
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert 'hint_to_agent' in result
+        hint = result['hint_to_agent']
+        hint_lower = hint.lower()
+        assert 'peer' in hint_lower
+        assert 'industry' in hint_lower
+        assert '; ' in hint  # fragments joined with "; "
+
+    # ---- Test 13 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_500_backend_error_logging(self, mock_post, mock_secret, mock_base_url,
+                                       mock_account_id, make_post_response, caplog):
+        """500 -> logger.error called, HTTPError re-raised, no token in log."""
+        mock_secret.return_value = "test-token-secret-value"
+        mock_post.return_value = make_post_response(
+            status_code=500,
+            raise_for_status_effect=HTTPError("500 Server Error"),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="safebreach_mcp_data.data_functions"):
+            with pytest.raises(HTTPError):
+                sb_get_peer_benchmark_score(
+                    "test-console", start_date=_START_MS, end_date=_END_MS,
+                )
+
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(error_records) >= 1, "expected at least one ERROR-level log record"
+
+        # Security regression: token must never appear in log messages
+        for record in caplog.records:
+            assert "test-token-secret-value" not in record.getMessage(), (
+                f"API token leaked in log: {record.getMessage()!r}"
+            )
+
+    # ---- Test 14 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_cache_hit(self, mock_post, mock_secret, mock_base_url, mock_account_id,
+                       mock_cache_enabled, happy_backend_response, make_post_response):
+        """Cache enabled + identical calls -> requests.post called once."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        first = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        second = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert mock_post.call_count == 1
+        assert first == second
+
+    # ---- Test 15 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_cache_disabled(self, mock_post, mock_secret, mock_base_url, mock_account_id,
+                            mock_cache_disabled, happy_backend_response, make_post_response):
+        """Cache disabled -> identical calls hit backend each time."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+
+        assert mock_post.call_count == 2
+
+    # ---- Test 16 ----------------------------------------------------
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_cache_key_order_independence(self, mock_post, mock_secret, mock_base_url,
+                                          mock_account_id, mock_cache_enabled,
+                                          happy_backend_response, make_post_response):
+        """Same IDs in different order -> second call hits cache (key uses sorted list)."""
+        mock_secret.return_value = "test-token"
+        mock_post.return_value = make_post_response(200, happy_backend_response)
+
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+            include_test_ids_filter="b,a",
+        )
+        sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+            include_test_ids_filter="a,b",
+        )
+
+        assert mock_post.call_count == 1
