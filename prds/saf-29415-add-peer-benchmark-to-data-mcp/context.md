@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29415
 
 ## Status
-Phase 5: Brainstorm Complete
+Phase 6: PRD Created
 
 ## Mode
 Improving
@@ -240,7 +240,7 @@ GATEWAY_RESPONSE = {
      | `customAttackIdsFiltered` | `custom_attacks_filtered_count` | clarify count; "IDs filtered" ambiguous |
      | `customerScore` | `customer_score` | snake_case |
      | `peerScore` | `all_peers_score` | disambiguate: **all SafeBreach peers** (not customer's industry peers) |
-     | `industryScores` | `industry_scores` | snake_case |
+     | `industryScores` | `customer_industry_scores` | explicit scope: customer's own industry only (Salesforce mapping, server-side, not overridable) |
      | `industry` (inside) | `industry_name` | explicit |
      | `score` / `scoreBlocked` / `scoreDetected` / `scoreUnblocked` | `score` / `score_blocked` / `score_detected` / `score_unblocked` | snake_case |
      | `totalSimulations` | `total_simulations` | snake_case |
