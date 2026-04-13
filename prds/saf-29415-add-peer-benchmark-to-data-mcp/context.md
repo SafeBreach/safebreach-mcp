@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29415
 
 ## Status
-Phase 8: JIRA Updated
+Phase 4: Document Findings (planning-dev-task)
 
 ## Mode
 Improving
@@ -104,6 +104,93 @@ Toggle via `SB_MCP_CACHE_DATA=true`. Size convention for data tools: `maxsize=3,
 - Cache-config env var docs (no new env var; reuses `SB_MCP_CACHE_DATA`)
 
 **No pre-existing peer/benchmark code** in `safebreach_mcp_data/` — greenfield addition.
+
+### SafeBreach backend `data` service (/Users/yossiattas/projects/data) — ground-truth research
+
+Route: `POST /data/v1/accounts/{accountId}/score`, OperationId `getScore`, defined in `src/api/dashboardapi.json` (OpenAPI 2.0 Swagger). Handler chain:
+- `src/dashboardApi/api/scoreApi.js` — `ScoreApi.getScore({accountId, params})`
+- `src/dashboardApi/controller/scoreController.js` — business logic
+- `src/common/dal/executionsHistoryDao.js` — Elasticsearch aggregation
+- `src/dashboardApi/service/dataInsightsService.js` — POST `/api/v1.0/peer-benchmark` to data-insights-gateway
+
+**Auth**: standard signed-request via `@safebreach/common` (x-account-id + signed header). **No endpoint-level RBAC** — all users in an account can call it.
+
+**Request schema** (body as `params`):
+- `startDate` (required, ISO 8601 date-time string, UTC)
+- `endDate` (required, ISO 8601 date-time string, UTC)
+- `includeTestIds` (optional, array of strings — planRunIds)
+- `excludeTestIds` (optional, array of strings — planRunIds)
+- **No other fields.** No query-string params. No pagination. No platform/industry override.
+
+**Backend validation** (scoreApi.js `validateParams`, lines ~37-53):
+1. `startDate` and `endDate` both required → 400 `"startDate and endDate are required"`
+2. `startDate < endDate` enforced → 400 `"startDate must be before endDate"`
+3. `includeTestIds` XOR `excludeTestIds` (mutually exclusive when both non-empty) → 400 `"Cannot provide both includeTestIds and excludeTestIds..."`
+4. Empty/omitted both → defaults to "all tests in range"
+5. Dates are ISO-only — **no epoch accepted at backend**
+
+**Response schema** — authoritative, from Swagger + handler + tests:
+
+Top-level `ScoreResponse` fields (all present unless noted):
+- `startDate`, `endDate` — echo of request
+- `snapshotMonth` — `YYYY-MM`; backend falls back to `endDate.slice(0,7)` if gateway omits
+- `dataThroughDate` — `YYYY-MM-DD`; **can be `null`** if gateway has no snapshot
+- `attackIds: string[]` — standard (non-custom) attack IDs queried
+- `attackIdsQueried: int`
+- `customAttackIdsFiltered: int` — count of custom attacks (moveId ≥ `10_000_000`) filtered out
+- `customerScore: ScoreBreakdown | null` — null when no executions
+- `peerScore: ScoreBreakdown | null` — null when gateway has no `all_industries` bucket
+- `industryScores: ScoreBreakdown[]` — filtered to non-null scores; can be empty
+
+`ScoreBreakdown`:
+- `score: float` (= 1.0 × blocked + 0.5 × detected)
+- `scoreBlocked: float`
+- `scoreDetected: float`
+- `scoreUnblocked: float`
+- `totalSimulations: int` — **customerScore only**
+- `industry: string` — **industryScores elements only**
+- `securityControlCategory: ControlScore[]`
+
+`ControlScore`:
+- `name: string` (e.g., "Network Inspection", "Network Access", "Email")
+- `score`, `scoreBlocked`, `scoreDetected` — floats
+- `scoreUnblocked: float` — **customerScore entries only; omitted in peer/industry**
+
+**HTTP response codes**:
+- `200 OK` — normal success (with payload above)
+- `204 No Content` — empty body when: no executions in ES match the filters, OR all returned attacks are custom (moveId ≥ 10,000,000). **Real code path, not error.**
+- `400` — validation failures (see list)
+- `401` — signed-auth failure (upstream middleware)
+- `403` — not expected from this endpoint (no RBAC gate), but possible from upstream deployment blocker
+- `404` — not returned by this endpoint
+- `500` — ES query failure or gateway timeout/unavailable
+
+**Business-logic nuggets** (for docstring accuracy):
+- `customAttackIdsFiltered` semantics: custom-attack IDs (≥ 10M) are never unique across accounts, so they are excluded from peer comparison automatically
+- Industry of customer is determined server-side from Salesforce mapping; callers cannot override
+- Peer aggregation uses a monthly S3 snapshot via data-insights-gateway; no caching on data service itself
+- Staging / private-dev gateways use a frozen prod snapshot
+- Score formula documented literally: `score = 1.0 × blocked + 0.5 × detected`
+
+**Test fixture example** (from `test/dashboardApi/api/scoreApi.test.js`):
+```js
+GATEWAY_RESPONSE = {
+  snapshot_month: '2026-02',
+  data_through_date: '2026-02-28',
+  scores: [
+    { attackid: '10054', industry_bucket: 'all_industries', security_control_category: 'Network Inspection', blocked_percentage: 0.7, detected_percentage: 0.04, total_all: 48000 },
+    { attackid: '10054', industry_bucket: 'Healthcare', security_control_category: 'Network Inspection', blocked_percentage: 0.75, detected_percentage: 0.01, total_all: 6000 },
+  ]
+}
+```
+
+**Key implications for MCP tool**:
+1. Must handle HTTP 204 — `response.status_code == 204` → return a friendly structured result with `hint_to_agent` explaining "no executions in window or all attacks are custom".
+2. Must handle null `customerScore` / `peerScore` / `dataThroughDate` and empty `industryScores[]` gracefully — include `hint_to_agent` per condition.
+3. `include_test_ids_filter` vs `exclude_test_ids_filter` — decide whether to enforce mutual exclusivity client-side or let backend 400 be surfaced. (Decision deferred to brainstorm.)
+4. Date validation at MCP boundary is optional (backend validates), but catching `start >= end` locally gives better UX.
+5. Tool docstring should explicitly document the custom-attack threshold (`moveId ≥ 10_000_000`), the 204 case, null fields, and the peer industry mapping (server-side, not overridable).
+6. No RBAC gating needed — remove 403 test from the AC's unit-test list (keep generic "API error" case).
 
 ## Problem Analysis
 
