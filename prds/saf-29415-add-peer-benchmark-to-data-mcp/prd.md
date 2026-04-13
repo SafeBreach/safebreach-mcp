@@ -20,9 +20,9 @@
 | Field | Value |
 |---|---|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-04-13 15:40 |
+| **Last Updated** | 2026-04-13 16:10 |
 | **Owner** | Yossi Attas (with AI assistance) |
-| **Current Phase** | Phase 2 of 5 complete |
+| **Current Phase** | Phase 3 of 5 complete |
 
 ---
 
@@ -289,8 +289,8 @@ sequenceDiagram
 ## 7. Definition of Done
 
 **Core Functionality**
-- [ ] `get_peer_benchmark_score` MCP tool registered on the Data Server (port 8001) via `@self.mcp.tool(...)` in `data_server.py`, mirroring the `get_tests_history_tool` pattern.
-- [ ] Tool accepts `console`, `start_date`, `end_date`, `include_test_ids_filter`, `exclude_test_ids_filter` with the types and defaults defined in Component C.
+- [x] `get_peer_benchmark_score` MCP tool registered on the Data Server (port 8001) via `@self.mcp.tool(...)` in `data_server.py`, mirroring the `get_tests_history_tool` pattern.
+- [x] Tool accepts `console`, `start_date`, `end_date`, `include_test_ids_filter`, `exclude_test_ids_filter` with the types and defaults defined in Component C.
 - [x] Business logic function `sb_get_peer_benchmark_score` implemented in `data_functions.py` per Component B.
 - [x] Rename mapping and transform helper implemented in `data_types.py` per Component A.
 - [x] HTTP 204 handled explicitly; null `customer_score` / `all_peers_score` / empty `customer_industry_scores` produce a `hint_to_agent`.
@@ -360,7 +360,7 @@ tests belong to which Red-Green-Refactor cycle.
 |---|---|---|---|---|
 | Phase 1: Rename mapping + transform helper (TDD) | ✅ Complete | 2026-04-13 | (pending commit) | 10 tests green; 376-test Data MCP suite still green |
 | Phase 2: Business logic + cache (TDD) | ✅ Complete | 2026-04-13 | (pending commit) | 16 tests green; 392-test Data MCP suite green |
-| Phase 3: MCP tool registration (TDD) | ⏳ Pending | - | - | |
+| Phase 3: MCP tool registration (TDD) | ✅ Complete | 2026-04-13 | (pending commit) | 10 wrapper tests green; 402-test Data MCP suite green |
 | Phase 4: E2E test (pinned to staging) | ⏳ Pending | - | - | |
 | Phase 5: Docs (CLAUDE.md) | ⏳ Pending | - | - | |
 
@@ -788,3 +788,4 @@ Re-run wrapper tests → all green. Run the broader suite: `uv run pytest safebr
 | 2026-04-13 14:45 | Restructured to TDD: merged standalone Phase 4 unit tests into Phases 1–3 (Red-Green-Refactor per phase); renumbered E2E → Phase 4 and Docs → Phase 5; rewrote Testing Strategy to describe the TDD flow and allocate test cases per phase |
 | 2026-04-13 15:10 | Phase 1 complete — 10 TestPeerBenchmarkTransform tests green; peer_benchmark_rename_mapping + peer_benchmark_score_field_mapping + peer_benchmark_control_field_mapping dicts and get_reduced_peer_benchmark_response helper added to data_types.py; 376 Data MCP tests still pass |
 | 2026-04-13 15:40 | Phase 2 complete — 16 TestPeerBenchmarkFunction tests green; sb_get_peer_benchmark_score function and peer_benchmark_cache (maxsize=3, ttl=600) added to data_functions.py; convert_epoch_to_datetime + get_reduced_peer_benchmark_response wired in; HTTP 204 / null-score hint composition / mutual-exclusivity / ISO conversion / token-leak protection all verified; 392 Data MCP tests pass |
+| 2026-04-13 16:10 | Phase 3 complete — 10 TestPeerBenchmarkToolWrapper tests green; get_peer_benchmark_score MCP tool registered on SafeBreachDataServer with full peers-vs-industry docstring (drives LLM tool selection); wrapper normalizes dates via normalize_timestamp, validates required dates, and delegates to sb_get_peer_benchmark_score by kwargs; new test_data_server.py uses asyncio.run + direct _tool_manager access; 402 Data MCP tests pass |
