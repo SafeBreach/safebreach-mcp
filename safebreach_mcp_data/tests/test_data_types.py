@@ -4,6 +4,9 @@ Tests for SafeBreach Data Types
 This module tests the data type mappings and transformations for security control events.
 """
 
+import copy
+import logging
+
 import pytest
 from safebreach_mcp_data.data_types import (
     get_nested_value,
@@ -15,6 +18,7 @@ from safebreach_mcp_data.data_types import (
     get_full_simulation_logs_mapping,
     get_reduced_test_summary_mapping,
     _build_node_data,
+    get_reduced_peer_benchmark_response,
 )
 
 
@@ -750,3 +754,338 @@ class TestTestSummaryMapping:
         result = get_reduced_test_summary_mapping(entity)
         assert result["findings_count"] == 0
         assert result["compromised_hosts"] == 0
+
+
+class TestPeerBenchmarkTransform:
+    """Test suite for the peer benchmark score rename mapping and transform helper (SAF-29415)."""
+
+    @pytest.fixture
+    def full_backend_response(self):
+        """Full backend /score payload with all fields populated.
+
+        Customer control entries include ``scoreUnblocked``; peer and industry control
+        entries deliberately omit it (proving the conditional logic in tests 1, 2).
+        """
+        return {
+            "startDate": "2026-03-01T00:00:00.000Z",
+            "endDate": "2026-04-01T00:00:00.000Z",
+            "snapshotMonth": "2026-03",
+            "dataThroughDate": "2026-03-15",
+            "attackIds": ["7001", "7002", "7003"],
+            "attackIdsQueried": 3,
+            "customAttackIdsFiltered": 1,
+            "customerScore": {
+                "score": 0.68,
+                "scoreBlocked": 0.40,
+                "scoreDetected": 0.18,
+                "scoreUnblocked": 0.10,
+                "totalSimulations": 500,
+                "securityControlCategory": [
+                    {
+                        "name": "Network Inspection",
+                        "score": 0.50,
+                        "scoreBlocked": 0.30,
+                        "scoreDetected": 0.10,
+                        "scoreUnblocked": 0.10,
+                    },
+                    {
+                        "name": "Endpoint Protection",
+                        "score": 0.80,
+                        "scoreBlocked": 0.60,
+                        "scoreDetected": 0.15,
+                        "scoreUnblocked": 0.05,
+                    },
+                ],
+            },
+            "peerScore": {
+                "score": 0.75,
+                "scoreBlocked": 0.50,
+                "scoreDetected": 0.20,
+                "scoreUnblocked": 0.05,
+                "securityControlCategory": [
+                    # Order intentionally differs from customer's order (Endpoint
+                    # Protection / Network Inspection) so sort tests have signal.
+                    {
+                        "name": "Network Inspection",
+                        "score": 0.75,
+                        "scoreBlocked": 0.50,
+                        "scoreDetected": 0.20,
+                        # NOTE: no scoreUnblocked for peer control entries
+                    },
+                    {
+                        "name": "Endpoint Protection",
+                        "score": 0.78,
+                        "scoreBlocked": 0.55,
+                        "scoreDetected": 0.18,
+                    },
+                ],
+            },
+            "industryScores": [
+                {
+                    "industry": "Information Technology",
+                    "score": 0.69,
+                    "scoreBlocked": 0.45,
+                    "scoreDetected": 0.19,
+                    "scoreUnblocked": 0.05,
+                    "securityControlCategory": [
+                        # Same here — peer-style ordering; sort test will verify.
+                        {
+                            "name": "Network Inspection",
+                            "score": 0.70,
+                            "scoreBlocked": 0.45,
+                            "scoreDetected": 0.20,
+                            # NOTE: no scoreUnblocked for industry control entries
+                        },
+                        {
+                            "name": "Endpoint Protection",
+                            "score": 0.72,
+                            "scoreBlocked": 0.50,
+                            "scoreDetected": 0.20,
+                        },
+                    ],
+                },
+            ],
+        }
+
+    # Test 1
+    def test_full_shape_happy_path(self, full_backend_response):
+        """Full payload -> every top-level + nested field renamed per the mapping tables."""
+        result = get_reduced_peer_benchmark_response(full_backend_response)
+
+        # Top-level renamed keys present
+        expected_top = {
+            "start_date", "end_date", "peer_snapshot_month", "peer_data_through_date",
+            "attack_ids", "attack_ids_count", "custom_attacks_filtered_count",
+            "customer_score", "all_peers_score", "customer_industry_scores",
+        }
+        assert expected_top.issubset(set(result.keys()))
+
+        # No camelCase backend keys remain at the top level
+        legacy_camel = {
+            "startDate", "endDate", "snapshotMonth", "dataThroughDate", "attackIds",
+            "attackIdsQueried", "customAttackIdsFiltered", "customerScore", "peerScore",
+            "industryScores",
+        }
+        assert legacy_camel.isdisjoint(set(result.keys()))
+
+        # Top-level values
+        assert result["start_date"] == "2026-03-01T00:00:00.000Z"
+        assert result["end_date"] == "2026-04-01T00:00:00.000Z"
+        assert result["peer_snapshot_month"] == "2026-03"
+        assert result["peer_data_through_date"] == "2026-03-15"
+        assert result["attack_ids"] == ["7001", "7002", "7003"]
+        assert result["attack_ids_count"] == 3
+        assert result["custom_attacks_filtered_count"] == 1
+
+        # Always-on metadata fields (response is self-contained for the agent)
+        assert result["scoring_formula"] == "score = 1.0 * blocked + 0.5 * detected"
+        assert "scope_note" in result
+        assert "customer score" in result["scope_note"].lower()
+        assert "full" in result["scope_note"].lower() and "month" in result["scope_note"].lower()
+
+        # customer_score shape (note: score_missed replaces score_unblocked)
+        customer = result["customer_score"]
+        assert isinstance(customer, dict)
+        for key in ("score", "score_blocked", "score_detected", "score_missed",
+                    "total_simulations", "security_control_breakdown"):
+            assert key in customer, f"customer_score missing {key}"
+        # legacy name must be gone
+        assert "score_unblocked" not in customer
+        assert customer["score"] == 0.68
+        assert customer["total_simulations"] == 500
+        assert isinstance(customer["security_control_breakdown"], list)
+        assert len(customer["security_control_breakdown"]) == 2
+        for ctrl in customer["security_control_breakdown"]:
+            for key in ("control_category_name", "score", "score_blocked",
+                        "score_detected", "score_missed"):
+                assert key in ctrl, f"customer control entry missing {key}"
+            assert "score_unblocked" not in ctrl
+        # security_control_breakdown is alphabetically sorted by control_category_name
+        assert customer["security_control_breakdown"][0]["control_category_name"] == "Endpoint Protection"
+        assert customer["security_control_breakdown"][1]["control_category_name"] == "Network Inspection"
+
+        # all_peers_score shape (no total_simulations)
+        peers = result["all_peers_score"]
+        assert isinstance(peers, dict)
+        for key in ("score", "score_blocked", "score_detected", "score_missed",
+                    "security_control_breakdown"):
+            assert key in peers, f"all_peers_score missing {key}"
+        assert "score_unblocked" not in peers
+        assert peers["score"] == 0.75
+
+        # customer_industry_scores shape
+        industries = result["customer_industry_scores"]
+        assert isinstance(industries, list)
+        assert len(industries) == 1
+        industry = industries[0]
+        for key in ("industry_name", "score", "score_blocked", "score_detected",
+                    "score_missed", "security_control_breakdown"):
+            assert key in industry, f"industry entry missing {key}"
+        assert "score_unblocked" not in industry
+
+        # No hint_to_agent when no hint passed
+        assert "hint_to_agent" not in result
+
+    # Test 2
+    def test_customer_only_score_missed_in_controls(self, full_backend_response):
+        """score_missed present in customer control entries, absent in peer/industry control entries.
+
+        score_missed replaced the misleading score_unblocked name (per Claude Desktop UX
+        feedback): "missed" means neither blocked nor detected, aligning with the `missed`
+        simulation status used elsewhere in the data MCP.
+        """
+        result = get_reduced_peer_benchmark_response(full_backend_response)
+
+        # Customer controls: score_missed present and renamed (key by name to be sort-independent)
+        customer_ctrls_by_name = {
+            c["control_category_name"]: c
+            for c in result["customer_score"]["security_control_breakdown"]
+        }
+        assert customer_ctrls_by_name["Network Inspection"]["score_missed"] == 0.10
+        assert customer_ctrls_by_name["Endpoint Protection"]["score_missed"] == 0.05
+        # Legacy key must be gone everywhere
+        for ctrl in customer_ctrls_by_name.values():
+            assert "score_unblocked" not in ctrl
+
+        # Peer controls: no score_missed (and no score_unblocked) key injected
+        peer_ctrl = result["all_peers_score"]["security_control_breakdown"][0]
+        assert "score_missed" not in peer_ctrl
+        assert "score_unblocked" not in peer_ctrl
+
+        # Industry controls: no score_missed (and no score_unblocked) key injected
+        industry_ctrl = result["customer_industry_scores"][0]["security_control_breakdown"][0]
+        assert "score_missed" not in industry_ctrl
+        assert "score_unblocked" not in industry_ctrl
+
+    # Test 3
+    def test_customer_score_null_passthrough(self, full_backend_response):
+        """customerScore == None -> customer_score is None (not empty dict, not missing)."""
+        payload = copy.deepcopy(full_backend_response)
+        payload["customerScore"] = None
+
+        result = get_reduced_peer_benchmark_response(payload)
+
+        assert "customer_score" in result
+        assert result["customer_score"] is None
+
+    # Test 4
+    def test_peer_score_null_passthrough(self, full_backend_response):
+        """peerScore == None -> all_peers_score is None."""
+        payload = copy.deepcopy(full_backend_response)
+        payload["peerScore"] = None
+
+        result = get_reduced_peer_benchmark_response(payload)
+
+        assert "all_peers_score" in result
+        assert result["all_peers_score"] is None
+
+    # Test 5
+    def test_industry_scores_empty_passthrough(self, full_backend_response):
+        """industryScores == [] -> customer_industry_scores is []."""
+        payload = copy.deepcopy(full_backend_response)
+        payload["industryScores"] = []
+
+        result = get_reduced_peer_benchmark_response(payload)
+
+        assert "customer_industry_scores" in result
+        assert result["customer_industry_scores"] == []
+
+    # Test 6
+    def test_data_through_date_null_passthrough(self, full_backend_response):
+        """dataThroughDate == None -> peer_data_through_date is None."""
+        payload = copy.deepcopy(full_backend_response)
+        payload["dataThroughDate"] = None
+
+        result = get_reduced_peer_benchmark_response(payload)
+
+        assert "peer_data_through_date" in result
+        assert result["peer_data_through_date"] is None
+
+    # Test 7
+    def test_hint_attached(self, full_backend_response):
+        """hint='x' -> result has hint_to_agent='x' at the top level."""
+        result = get_reduced_peer_benchmark_response(
+            full_backend_response, hint="Some helpful hint for the agent"
+        )
+
+        assert "hint_to_agent" in result
+        assert result["hint_to_agent"] == "Some helpful hint for the agent"
+
+    # Test 8
+    def test_hint_omitted_or_empty(self, full_backend_response):
+        """hint is None or '' -> no hint_to_agent key in output."""
+        result_none = get_reduced_peer_benchmark_response(full_backend_response, hint=None)
+        assert "hint_to_agent" not in result_none
+
+        result_empty = get_reduced_peer_benchmark_response(full_backend_response, hint="")
+        assert "hint_to_agent" not in result_empty
+
+    # Test 9
+    def test_unknown_top_level_key_defensive_fallthrough(self, full_backend_response, caplog):
+        """Unknown top-level key -> WARNING log + known fields preserved + unknown key dropped."""
+        payload = copy.deepcopy(full_backend_response)
+        payload["unexpectedNewField"] = "some_value"
+
+        with caplog.at_level(logging.WARNING, logger="safebreach_mcp_data.data_types"):
+            result = get_reduced_peer_benchmark_response(payload)
+
+        # Known fields still work
+        assert result["start_date"] == "2026-03-01T00:00:00.000Z"
+        assert result["customer_score"] is not None
+        assert result["customer_score"]["score"] == 0.68
+
+        # Unknown key is NOT passed through
+        assert "unexpectedNewField" not in result
+
+        # At least one WARNING record mentioning the unknown key
+        warning_messages = [
+            record.message for record in caplog.records
+            if record.levelno == logging.WARNING
+        ]
+        assert any("unexpectedNewField" in message for message in warning_messages), (
+            f"expected a WARNING mentioning 'unexpectedNewField'; got: {warning_messages}"
+        )
+
+    # Test 10
+    def test_industry_name_inside_industry_scores(self, full_backend_response):
+        """industry field inside industryScores[] becomes industry_name in output."""
+        result = get_reduced_peer_benchmark_response(full_backend_response)
+
+        industry_entry = result["customer_industry_scores"][0]
+        assert industry_entry["industry_name"] == "Information Technology"
+        assert "industry" not in industry_entry
+
+    # Test 11
+    def test_security_control_breakdown_sorted_alphabetically(self, full_backend_response):
+        """Each security_control_breakdown[] is sorted alphabetically by control_category_name.
+
+        The backend returns customer / peer / industry breakdowns in inconsistent orders
+        (e.g., Endpoint first in customer, Network Inspection first in peers). Without sort,
+        agents merging the lists must key by name. We sort uniformly to remove that fragility
+        (per Claude Desktop UX feedback).
+        """
+        result = get_reduced_peer_benchmark_response(full_backend_response)
+
+        def _names(breakdown):
+            return [c["control_category_name"] for c in breakdown]
+
+        # Customer
+        customer_names = _names(result["customer_score"]["security_control_breakdown"])
+        assert customer_names == sorted(customer_names)
+        assert customer_names == ["Endpoint Protection", "Network Inspection"]
+
+        # All-peers — fixture has them reverse-alphabetical; expect alphabetical out
+        peer_names = _names(result["all_peers_score"]["security_control_breakdown"])
+        assert peer_names == sorted(peer_names)
+        assert peer_names == ["Endpoint Protection", "Network Inspection"]
+
+        # Industry — same expectation
+        industry_names = _names(
+            result["customer_industry_scores"][0]["security_control_breakdown"]
+        )
+        assert industry_names == sorted(industry_names)
+        assert industry_names == ["Endpoint Protection", "Network Inspection"]
+
+        # Customer order matches peer order (this is the comparison-friendliness property
+        # the agent relies on).
+        assert customer_names == peer_names == industry_names

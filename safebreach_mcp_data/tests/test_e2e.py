@@ -17,7 +17,7 @@ from typing import Dict, Any
 
 from safebreach_mcp_data.data_functions import (
     sb_get_tests_history,
-    sb_get_test_details, 
+    sb_get_test_details,
     sb_get_test_simulations,
     sb_get_simulation_details,
     sb_get_security_controls_events,
@@ -25,7 +25,8 @@ from safebreach_mcp_data.data_functions import (
     sb_get_test_findings_counts,
     sb_get_test_findings_details,
     sb_get_test_drifts,
-    sb_get_full_simulation_logs
+    sb_get_full_simulation_logs,
+    sb_get_peer_benchmark_score,
 )
 
 
@@ -689,3 +690,112 @@ class TestDataServerE2E:
         
         print(f"  ✅ Error handling validation completed successfully")
         print(f"==================================\n")
+
+
+# ---------------------------------------------------------------------
+# Peer benchmark score E2E (SAF-29415 Phase 4)
+# ---------------------------------------------------------------------
+# This test is pinned to the `staging` console because the backend
+# /api/data/v1/accounts/{id}/score endpoint (SAF-27621) is deployed on
+# staging.sbops.com but NOT yet on pentest01.safebreach.com (the default
+# E2E_CONSOLE for this repo as of 2026-04-13). Reusing the shared
+# `e2e_console` fixture would point at pentest01 and cause a 404.
+#
+# TODO (SAF-29415 follow-up): once /score lands on pentest01, retire the
+# `peer_benchmark_e2e_console` fixture and switch this test to use the
+# shared `e2e_console` fixture.
+
+@pytest.fixture(scope="class")
+def peer_benchmark_e2e_console():
+    """Resolve the console for the peer benchmark E2E test.
+
+    Defaults to `staging` (where the backend /score endpoint lives).
+    Override via PEER_BENCHMARK_E2E_CONSOLE. Skips (does not fail) when
+    the resolved console isn't configured locally — neither environments
+    metadata nor a credential is set.
+    """
+    console = os.environ.get('PEER_BENCHMARK_E2E_CONSOLE', 'staging')
+    skip_msg = (
+        "Peer Benchmark E2E skipped: endpoint not yet deployed on the "
+        "default E2E console; set PEER_BENCHMARK_E2E_CONSOLE to a console "
+        "that has POST /api/data/v1/accounts/{id}/score live, or configure "
+        "credentials for the 'staging' console."
+    )
+
+    # Defer imports so collection-time failures here don't affect other tests.
+    from safebreach_mcp_core.environments_metadata import get_environment_by_name
+    from safebreach_mcp_core.secret_utils import get_secret_for_console
+
+    try:
+        get_environment_by_name(console)
+    except Exception:
+        pytest.skip(skip_msg)
+
+    try:
+        token = get_secret_for_console(console)
+        if not token:
+            pytest.skip(skip_msg)
+    except Exception:
+        pytest.skip(skip_msg)
+
+    return console
+
+
+class TestPeerBenchmarkScoreE2E:
+    """End-to-end smoke test for sb_get_peer_benchmark_score (SAF-29415)."""
+
+    @pytest.mark.e2e
+    def test_peer_benchmark_score_e2e(self, peer_benchmark_e2e_console):
+        """Smoke: 30-day window against staging; assert renamed top-level shape."""
+        import time
+
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - (30 * 24 * 60 * 60 * 1000)  # 30 days back
+
+        print(f"\n=== Peer Benchmark E2E ===")
+        print(f"  Console: {peer_benchmark_e2e_console}")
+        print(f"  Window: {start_ms} -> {end_ms} (30 days)")
+
+        result = sb_get_peer_benchmark_score(
+            console=peer_benchmark_e2e_console,
+            start_date=start_ms,
+            end_date=end_ms,
+        )
+
+        # Top-level renamed keys must always be present (even on 204 path).
+        assert isinstance(result, dict)
+        for required_key in (
+            "start_date", "end_date",
+            "customer_score", "all_peers_score", "customer_industry_scores",
+        ):
+            assert required_key in result, f"missing required key: {required_key}"
+
+        # Scores: each is either None or a dict with the expected sub-keys.
+        for score_key in ("customer_score", "all_peers_score"):
+            value = result[score_key]
+            assert value is None or isinstance(value, dict), (
+                f"{score_key} must be None or dict, got {type(value).__name__}"
+            )
+            if isinstance(value, dict):
+                for sub_key in ("score", "score_blocked", "score_detected"):
+                    assert sub_key in value, f"{score_key} missing {sub_key}"
+
+        # customer_industry_scores must be a list (possibly empty);
+        # each element (if any) must be a dict carrying industry_name.
+        industries = result["customer_industry_scores"]
+        assert isinstance(industries, list)
+        for entry in industries:
+            assert isinstance(entry, dict)
+            assert "industry_name" in entry
+            assert "score" in entry
+
+        # Surface useful operational signal — if the staging snapshot is
+        # frozen or the window has no data, the hint explains it. The
+        # test still passes because the structured empty shape is valid.
+        if "hint_to_agent" in result:
+            print(f"  hint_to_agent: {result['hint_to_agent']}")
+        else:
+            print(f"  customer_score.score: {result['customer_score'].get('score') if result['customer_score'] else None}")
+            print(f"  all_peers_score.score: {result['all_peers_score'].get('score') if result['all_peers_score'] else None}")
+        print(f"  ✅ Peer benchmark E2E shape verified")
+        print(f"==========================\n")

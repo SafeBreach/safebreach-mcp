@@ -29,6 +29,7 @@ from .data_functions import (
     sb_get_simulation_status_drifts,
     sb_get_security_control_drifts,
     sb_get_simulation_lineage,
+    sb_get_peer_benchmark_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -652,6 +653,57 @@ Parameters:
                 console=console,
                 tracking_code=tracking_code,
                 page_number=page_number,
+            )
+
+        @self.mcp.tool(
+            name="get_peer_benchmark_score",
+            description="""Returns the customer's security posture score compared to SafeBreach peers for a given time window.
+Wraps POST /api/data/v1/accounts/{account_id}/score (SAF-27621).
+
+Parameters:
+  console (default 'default'): SafeBreach console name.
+  start_date (required): epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'. Start of the scoring window.
+  end_date (required): epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'. End of the scoring window.
+  include_test_ids_filter: comma-separated planRunIds to restrict scoring to. \
+Mutually exclusive with exclude_test_ids_filter.
+  exclude_test_ids_filter: comma-separated planRunIds to exclude from scoring. \
+Mutually exclusive with include_test_ids_filter.
+
+Peers vs industry distinction: all_peers_score reflects the average across ALL SafeBreach customers regardless of \
+industry (sourced from the backend's all_industries bucket). customer_industry_scores is an array scoped to the \
+customer's OWN industry only — determined server-side from a Salesforce industry mapping and not overridable by the \
+caller. In practice the array has 0 or 1 elements.
+
+Response fields:
+  peer_snapshot_month — the full-month peer snapshot used for comparison; peer and industry aggregation is always \
+full-month even when the query window is shorter.
+  peer_data_through_date — ETL freshness date; may be null when the gateway has no snapshot.
+  custom_attacks_filtered_count — count of custom attacks (moveId >= 10_000_000) auto-excluded from the peer comparison.
+  hint_to_agent — present when data is missing (e.g., no executions, no peer snapshot); guides the LLM's next step.
+
+Score formula: score = 1.0 * blocked + 0.5 * detected.
+
+HTTP 204 behavior: when the backend returns no-content (no executions in the window or all matched attacks are \
+custom), this tool returns the empty-shape response with a hint_to_agent — the caller does NOT need to handle an \
+exception."""
+        )
+        async def get_peer_benchmark_score_tool(
+            console: str = "default",
+            start_date: Optional[str | int] = None,
+            end_date: Optional[str | int] = None,
+            include_test_ids_filter: Optional[str] = None,
+            exclude_test_ids_filter: Optional[str] = None,
+        ) -> dict:
+            start_date = normalize_timestamp(start_date) if start_date is not None else None
+            end_date = normalize_timestamp(end_date) if end_date is not None else None
+            if start_date is None or end_date is None:
+                raise ValueError("start_date and end_date are required")
+            return sb_get_peer_benchmark_score(
+                console=console,
+                start_date=start_date,
+                end_date=end_date,
+                include_test_ids_filter=include_test_ids_filter,
+                exclude_test_ids_filter=exclude_test_ids_filter,
             )
 
 def parse_external_config(server_type: str) -> bool:
