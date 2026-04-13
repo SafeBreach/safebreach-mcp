@@ -5,9 +5,12 @@ This module provides data type mappings and transformations for SafeBreach data,
 specifically for test and simulation entities.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from safebreach_mcp_data.drifts_metadata import drift_types_mapping
+
+logger = logging.getLogger(__name__)
 
 # Test summary mapping
 reduced_test_summary_mapping = {
@@ -956,4 +959,146 @@ def group_sc_drift_records(
         })
 
     result.sort(key=lambda g: g["count"], reverse=True)
+    return result
+
+
+# ------------------------------------------------------------------
+# Peer benchmark score (SAF-29415) — rename mappings + transform
+# ------------------------------------------------------------------
+# The SafeBreach data backend exposes POST /api/data/v1/accounts/{id}/score.
+# These mappings translate the backend's camelCase response into the
+# MCP-facing snake_case shape described in the SAF-29415 PRD. Values are
+# preserved verbatim; only key names and empty/None handling are adjusted.
+
+peer_benchmark_rename_mapping = {
+    'start_date': 'startDate',
+    'end_date': 'endDate',
+    'peer_snapshot_month': 'snapshotMonth',
+    'peer_data_through_date': 'dataThroughDate',
+    'attack_ids': 'attackIds',
+    'attack_ids_count': 'attackIdsQueried',
+    'custom_attacks_filtered_count': 'customAttackIdsFiltered',
+    'customer_score': 'customerScore',
+    'all_peers_score': 'peerScore',
+    'customer_industry_scores': 'industryScores',
+}
+
+# ScoreBreakdown mapping — applied to customerScore, peerScore, and each
+# industryScores[] element. `total_simulations` is populated by the
+# backend for customerScore only, and `industry` is handled separately
+# (industryScores elements only) via the `include_industry_name` flag
+# on `_rename_score_breakdown`.
+peer_benchmark_score_field_mapping = {
+    'score': 'score',
+    'score_blocked': 'scoreBlocked',
+    'score_detected': 'scoreDetected',
+    'score_unblocked': 'scoreUnblocked',
+    'total_simulations': 'totalSimulations',
+    'security_control_breakdown': 'securityControlCategory',
+}
+
+# ControlScore mapping — applied to each entry within a
+# security_control_breakdown[] list. `score_unblocked` is preserved
+# when present in the source; the backend omits it for peer/industry
+# control entries, so `map_reduced_entity` naturally drops it there.
+peer_benchmark_control_field_mapping = {
+    'control_category_name': 'name',
+    'score': 'score',
+    'score_blocked': 'scoreBlocked',
+    'score_detected': 'scoreDetected',
+    'score_unblocked': 'scoreUnblocked',
+}
+
+
+def _rename_control_entry(control_entity: Dict[str, Any]) -> Dict[str, Any]:
+    """Rename a single ControlScore dict from backend shape to MCP shape.
+
+    `score_unblocked` is only emitted when the source dict already contains
+    `scoreUnblocked` — peer/industry control entries omit it upstream, so
+    the key is naturally dropped for those without special-casing here.
+    """
+    return map_reduced_entity(control_entity, peer_benchmark_control_field_mapping)
+
+
+def _rename_score_breakdown(
+    score_entity: Dict[str, Any],
+    include_industry_name: bool = False,
+) -> Dict[str, Any]:
+    """Rename a ScoreBreakdown dict (customerScore / peerScore / industry entry).
+
+    Recursively transforms the nested `securityControlCategory` list into
+    `security_control_breakdown`. When `include_industry_name` is True, the
+    source `industry` field is renamed to `industry_name` — this applies to
+    entries in `industryScores[]` only.
+    """
+    result = map_reduced_entity(score_entity, peer_benchmark_score_field_mapping)
+
+    controls = result.get('security_control_breakdown')
+    if controls is not None:
+        result['security_control_breakdown'] = [
+            _rename_control_entry(ctrl) for ctrl in controls
+        ]
+
+    if include_industry_name and 'industry' in score_entity:
+        result['industry_name'] = score_entity['industry']
+
+    return result
+
+
+def get_reduced_peer_benchmark_response(
+    backend_json: Dict[str, Any],
+    hint: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Transform a backend peer benchmark /score response into MCP shape.
+
+    Renames camelCase keys to self-explanatory snake_case keys per the
+    peer_benchmark_rename_mapping tables, recursively transforming nested
+    ScoreBreakdown and ControlScore structures. Semantic values are
+    preserved verbatim (no score re-computation, no field drops beyond
+    unknown top-level keys which are warned and skipped defensively).
+
+    Args:
+        backend_json: Raw dict parsed from the backend response body.
+        hint: Optional hint string. When truthy, attached to the output
+            as ``hint_to_agent`` at the top level; otherwise omitted.
+
+    Returns:
+        A dict with renamed top-level keys. `customer_score` /
+        `all_peers_score` pass ``None`` through unchanged.
+        `customer_industry_scores` is always a list (possibly empty).
+    """
+    result: Dict[str, Any] = {}
+    known_backend_keys = set(peer_benchmark_rename_mapping.values())
+
+    # Warn and drop any unknown top-level keys (defensive fallthrough —
+    # the helper should not crash when the backend introduces new fields).
+    for backend_key in backend_json:
+        if backend_key not in known_backend_keys:
+            logger.warning(
+                "Unknown top-level key '%s' in peer benchmark response; skipping.",
+                backend_key,
+            )
+
+    for mcp_key, backend_key in peer_benchmark_rename_mapping.items():
+        if backend_key not in backend_json:
+            continue
+
+        value = backend_json[backend_key]
+
+        if backend_key in ('customerScore', 'peerScore'):
+            result[mcp_key] = (
+                _rename_score_breakdown(value) if value is not None else None
+            )
+        elif backend_key == 'industryScores':
+            result[mcp_key] = (
+                [_rename_score_breakdown(entry, include_industry_name=True)
+                 for entry in value]
+                if value is not None else None
+            )
+        else:
+            result[mcp_key] = value
+
+    if hint:
+        result['hint_to_agent'] = hint
+
     return result
