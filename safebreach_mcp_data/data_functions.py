@@ -16,6 +16,7 @@ from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.suggestions import get_suggestions_for_collection
+from safebreach_mcp_core.datetime_utils import convert_epoch_to_datetime
 from .data_types import (
     get_reduced_test_summary_mapping,
     get_reduced_simulation_result_entity,
@@ -23,6 +24,7 @@ from .data_types import (
     get_reduced_security_control_events_mapping,
     get_full_security_control_events_mapping,
     group_and_enrich_drift_records,
+    get_reduced_peer_benchmark_response,
 )
 from .drifts_metadata import drift_types_mapping
 
@@ -33,6 +35,7 @@ tests_cache = SafeBreachCache(name="tests", maxsize=5, ttl=1800)
 simulations_cache = SafeBreachCache(name="simulations", maxsize=3, ttl=600)
 security_control_events_cache = SafeBreachCache(name="security_control_events", maxsize=3, ttl=600)
 simulation_drifts_cache = SafeBreachCache(name="simulation_drifts", maxsize=3, ttl=600)
+peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -2774,3 +2777,159 @@ def sb_get_simulation_lineage(
         "simulations": page_sims,
         "hint_to_agent": hint,
     }
+
+
+# ------------------------------------------------------------------
+# Peer benchmark score (SAF-29415) — POST /api/data/v1/accounts/{id}/score
+# ------------------------------------------------------------------
+# Hint fragments composed when the backend response indicates partial or
+# missing data. Strings are tuned for natural-language reasoning by the
+# LLM consumer and to the substring assertions in the unit tests.
+_PEER_BENCHMARK_204_HINT = (
+    "No executions in the requested window, or all matched attacks were "
+    "custom (peer benchmark excludes custom attack IDs >= 10,000,000)."
+)
+_PEER_BENCHMARK_NULL_CUSTOMER_HINT = "No customer executions in this window."
+_PEER_BENCHMARK_NULL_PEER_HINT = (
+    "No all-peers data for this window "
+    "(possibly frozen snapshot on staging/private-dev)."
+)
+_PEER_BENCHMARK_EMPTY_INDUSTRY_HINT = (
+    "No customer-industry data for this window "
+    "(possibly frozen snapshot on staging/private-dev)."
+)
+
+
+def sb_get_peer_benchmark_score(
+    console: str,
+    start_date: int,
+    end_date: int,
+    include_test_ids_filter: Optional[str] = None,
+    exclude_test_ids_filter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch the peer benchmark score for the given window via the SafeBreach
+    Data API and return the MCP-shaped response.
+
+    Wraps ``POST /api/data/v1/accounts/{account_id}/score`` (delivered in
+    SAF-27621). Validates inputs at the MCP boundary, caches per-(console,
+    window, sorted filters), converts epoch dates to ISO 8601 UTC for the
+    request body, handles HTTP 204 explicitly, composes a ``hint_to_agent``
+    when scores are null/empty, and runs the response through the Phase 1
+    transform helper.
+
+    Args:
+        console: SafeBreach console name (resolved via environments_metadata).
+        start_date: Epoch milliseconds for the start of the window.
+        end_date: Epoch milliseconds for the end of the window.
+        include_test_ids_filter: Comma-separated planRunIds to restrict
+            scoring to. Mutually exclusive with ``exclude_test_ids_filter``.
+        exclude_test_ids_filter: Comma-separated planRunIds to exclude.
+
+    Returns:
+        Dict with snake_case keys per ``peer_benchmark_rename_mapping``.
+        ``customer_score`` and ``all_peers_score`` may be None;
+        ``customer_industry_scores`` may be []. ``hint_to_agent`` is
+        included when any of those conditions hold or when the backend
+        returns HTTP 204.
+
+    Raises:
+        ValueError: When both filters are non-empty, or when
+            ``start_date >= end_date``.
+        requests.HTTPError: Propagated from the backend on non-2xx
+            responses other than 204.
+    """
+    inc = (
+        [v.strip() for v in include_test_ids_filter.split(",") if v.strip()]
+        if include_test_ids_filter else []
+    )
+    exc = (
+        [v.strip() for v in exclude_test_ids_filter.split(",") if v.strip()]
+        if exclude_test_ids_filter else []
+    )
+
+    if inc and exc:
+        raise ValueError(
+            "Cannot provide both include_test_ids_filter and "
+            "exclude_test_ids_filter. Omit both to include all tests."
+        )
+
+    if start_date >= end_date:
+        raise ValueError("start_date must be before end_date.")
+
+    cache_key = (
+        f"peer_benchmark_{console}_{start_date}_{end_date}_"
+        f"{','.join(sorted(inc))}_{','.join(sorted(exc))}"
+    )
+    if is_caching_enabled("data"):
+        cached = peer_benchmark_cache.get(cache_key)
+        if cached is not None:
+            logger.info(
+                "Retrieved peer benchmark score from cache for console '%s'",
+                console,
+            )
+            return cached
+
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/score"
+
+    iso_start = convert_epoch_to_datetime(start_date)["iso_datetime"]
+    iso_end = convert_epoch_to_datetime(end_date)["iso_datetime"]
+
+    body: Dict[str, Any] = {"startDate": iso_start, "endDate": iso_end}
+    if inc:
+        body["includeTestIds"] = inc
+    if exc:
+        body["excludeTestIds"] = exc
+
+    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+
+    logger.info(
+        "Fetching peer benchmark score for console '%s' "
+        "(start=%s, end=%s, include=%d, exclude=%d)",
+        console, iso_start, iso_end, len(inc), len(exc),
+    )
+    response = requests.post(api_url, headers=headers, json=body, timeout=120)
+
+    if response.status_code == 204:
+        result = {
+            "start_date": iso_start,
+            "end_date": iso_end,
+            "customer_score": None,
+            "all_peers_score": None,
+            "customer_industry_scores": [],
+            "hint_to_agent": _PEER_BENCHMARK_204_HINT,
+        }
+        if is_caching_enabled("data"):
+            peer_benchmark_cache.set(cache_key, result)
+        return result
+
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        # Log without the API token — only console, URL, and status code.
+        logger.error(
+            "Peer benchmark API request failed for console '%s' "
+            "(URL: %s, status: %s)",
+            console, api_url, response.status_code,
+        )
+        raise
+
+    backend_json = response.json()
+
+    hint_fragments = []
+    if backend_json.get("customerScore") is None:
+        hint_fragments.append(_PEER_BENCHMARK_NULL_CUSTOMER_HINT)
+    if backend_json.get("peerScore") is None:
+        hint_fragments.append(_PEER_BENCHMARK_NULL_PEER_HINT)
+    if not backend_json.get("industryScores"):
+        hint_fragments.append(_PEER_BENCHMARK_EMPTY_INDUSTRY_HINT)
+    hint = "; ".join(hint_fragments) if hint_fragments else None
+
+    result = get_reduced_peer_benchmark_response(backend_json, hint=hint)
+
+    if is_caching_enabled("data"):
+        peer_benchmark_cache.set(cache_key, result)
+
+    return result
