@@ -988,32 +988,49 @@ peer_benchmark_rename_mapping = {
 # backend for customerScore only, and `industry` is handled separately
 # (industryScores elements only) via the `include_industry_name` flag
 # on `_rename_score_breakdown`.
+#
+# Note: backend `scoreUnblocked` is renamed to `score_missed` (not
+# `score_unblocked`) — "missed" is the unambiguous term for the
+# fully-evaded portion (`1 - blocked - detected`) and aligns with the
+# `missed` simulation status used elsewhere in the data MCP.
 peer_benchmark_score_field_mapping = {
     'score': 'score',
     'score_blocked': 'scoreBlocked',
     'score_detected': 'scoreDetected',
-    'score_unblocked': 'scoreUnblocked',
+    'score_missed': 'scoreUnblocked',
     'total_simulations': 'totalSimulations',
     'security_control_breakdown': 'securityControlCategory',
 }
 
 # ControlScore mapping — applied to each entry within a
-# security_control_breakdown[] list. `score_unblocked` is preserved
-# when present in the source; the backend omits it for peer/industry
-# control entries, so `map_reduced_entity` naturally drops it there.
+# security_control_breakdown[] list. `score_missed` is preserved when
+# present in the source; the backend omits it for peer/industry control
+# entries, so `map_reduced_entity` naturally drops it there.
 peer_benchmark_control_field_mapping = {
     'control_category_name': 'name',
     'score': 'score',
     'score_blocked': 'scoreBlocked',
     'score_detected': 'scoreDetected',
-    'score_unblocked': 'scoreUnblocked',
+    'score_missed': 'scoreUnblocked',
 }
+
+# Always-on metadata appended to every transformed peer-benchmark
+# response. These make the response self-contained for the LLM consumer
+# (per Claude Desktop UX feedback): the agent can synthesize without
+# having to carry the formula or the scope asymmetry in-context.
+PEER_BENCHMARK_SCORING_FORMULA = "score = 1.0 * blocked + 0.5 * detected"
+PEER_BENCHMARK_SCOPE_NOTE = (
+    "Customer score reflects the exact requested window. "
+    "All-peers and customer-industry scores are always full-month aggregates "
+    "of the snapshot identified by peer_snapshot_month, even when the requested "
+    "window is shorter — keep this asymmetry in mind for narrow windows."
+)
 
 
 def _rename_control_entry(control_entity: Dict[str, Any]) -> Dict[str, Any]:
     """Rename a single ControlScore dict from backend shape to MCP shape.
 
-    `score_unblocked` is only emitted when the source dict already contains
+    `score_missed` is only emitted when the source dict already contains
     `scoreUnblocked` — peer/industry control entries omit it upstream, so
     the key is naturally dropped for those without special-casing here.
     """
@@ -1027,17 +1044,21 @@ def _rename_score_breakdown(
     """Rename a ScoreBreakdown dict (customerScore / peerScore / industry entry).
 
     Recursively transforms the nested `securityControlCategory` list into
-    `security_control_breakdown`. When `include_industry_name` is True, the
-    source `industry` field is renamed to `industry_name` — this applies to
-    entries in `industryScores[]` only.
+    `security_control_breakdown`, and sorts that list alphabetically by
+    `control_category_name` so customer / peer / industry breakdowns share
+    a stable order an agent can iterate position-wise.
+
+    When `include_industry_name` is True, the source `industry` field is
+    renamed to `industry_name` — this applies to entries in
+    `industryScores[]` only.
     """
     result = map_reduced_entity(score_entity, peer_benchmark_score_field_mapping)
 
     controls = result.get('security_control_breakdown')
     if controls is not None:
-        result['security_control_breakdown'] = [
-            _rename_control_entry(ctrl) for ctrl in controls
-        ]
+        renamed = [_rename_control_entry(ctrl) for ctrl in controls]
+        renamed.sort(key=lambda c: c.get('control_category_name', ''))
+        result['security_control_breakdown'] = renamed
 
     if include_industry_name and 'industry' in score_entity:
         result['industry_name'] = score_entity['industry']
@@ -1097,6 +1118,10 @@ def get_reduced_peer_benchmark_response(
             )
         else:
             result[mcp_key] = value
+
+    # Always-on metadata so the response is self-contained for the agent.
+    result['scoring_formula'] = PEER_BENCHMARK_SCORING_FORMULA
+    result['scope_note'] = PEER_BENCHMARK_SCOPE_NOTE
 
     if hint:
         result['hint_to_agent'] = hint

@@ -3280,6 +3280,10 @@ class TestPeerBenchmarkFunction:
         assert 'hint_to_agent' in result
         hint_lower = result['hint_to_agent'].lower()
         assert ('no executions' in hint_lower) or ('custom' in hint_lower)
+        # The 204 path must also surface the always-on metadata so the agent
+        # can synthesize a useful response without re-fetching context.
+        assert result['scoring_formula'] == "score = 1.0 * blocked + 0.5 * detected"
+        assert 'scope_note' in result and isinstance(result['scope_note'], str)
 
     # ---- Test 9 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
@@ -3468,3 +3472,66 @@ class TestPeerBenchmarkFunction:
         )
 
         assert mock_post.call_count == 1
+
+    # ---- Test 17 (hint sanitization) -------------------------------
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_hints_do_not_leak_internal_details(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        happy_backend_response, make_post_response,
+    ):
+        """All hint paths must avoid leaking internal infra terms.
+
+        Per Claude Desktop UX feedback: hint_to_agent text reaches end-users
+        verbatim through the LLM. It must not mention internal environment
+        names ("staging", "private-dev", "frozen snapshot") or implementation
+        constants (the `>= 10_000_000` custom-attack threshold).
+        """
+        mock_secret.return_value = "test-token"
+        forbidden = ["staging", "private-dev", "frozen snapshot", "10_000_000", "10000000"]
+
+        def _assert_clean(hint, scenario):
+            lower = hint.lower()
+            for term in forbidden:
+                assert term.lower() not in lower, (
+                    f"{scenario!r} hint leaked '{term}': {hint!r}"
+                )
+
+        # Scenario A: HTTP 204
+        mock_post.return_value = make_post_response(status_code=204, json_data=None)
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        _assert_clean(result["hint_to_agent"], "204")
+
+        # Scenario B: 200 with customerScore=None
+        peer_benchmark_cache.clear()
+        payload = copy.deepcopy(happy_backend_response)
+        payload["customerScore"] = None
+        mock_post.return_value = make_post_response(200, payload)
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        _assert_clean(result["hint_to_agent"], "null customerScore")
+
+        # Scenario C: 200 with peerScore=None
+        peer_benchmark_cache.clear()
+        payload = copy.deepcopy(happy_backend_response)
+        payload["peerScore"] = None
+        mock_post.return_value = make_post_response(200, payload)
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        _assert_clean(result["hint_to_agent"], "null peerScore")
+
+        # Scenario D: 200 with empty industryScores
+        peer_benchmark_cache.clear()
+        payload = copy.deepcopy(happy_backend_response)
+        payload["industryScores"] = []
+        mock_post.return_value = make_post_response(200, payload)
+        result = sb_get_peer_benchmark_score(
+            "test-console", start_date=_START_MS, end_date=_END_MS,
+        )
+        _assert_clean(result["hint_to_agent"], "empty industryScores")

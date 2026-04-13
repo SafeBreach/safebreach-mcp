@@ -294,9 +294,13 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   `exclude_test_ids_filter` (comma-separated planRunIds, mutually exclusive). Returns `customer_score`,
   `all_peers_score` (across **all** SafeBreach customers), and `customer_industry_scores` (scoped to the customer's
   **own** industry only via server-side Salesforce mapping; not overridable; typically 0 or 1 element). Each score
-  includes `score_blocked` / `score_detected` / `score_unblocked` and a `security_control_breakdown[]`. Surfaces
-  `peer_snapshot_month`, `peer_data_through_date` (ETL freshness; may be null), `custom_attacks_filtered_count`
-  (auto-excluded custom attacks with `moveId >= 10_000_000`), and a `hint_to_agent` when data is missing or HTTP 204.
+  includes `score_blocked` / `score_detected` / `score_missed` (the fully-evaded portion; aligns with the `missed`
+  simulation status) and a `security_control_breakdown[]` sorted alphabetically by `control_category_name` so
+  customer / peer / industry breakdowns can be merged position-wise. Always-on response metadata: `scoring_formula`
+  (the literal `"score = 1.0 * blocked + 0.5 * detected"`), `scope_note` (explains that customer score is the exact
+  window while peer/industry scores are full-month aggregates of `peer_snapshot_month`), `peer_snapshot_month`,
+  `peer_data_through_date` (ETL freshness; may be null), and `custom_attacks_filtered_count`. A `hint_to_agent` is
+  added when data is missing or HTTP 204.
 
 **Playbook Server (Port 8003):**
 16. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering

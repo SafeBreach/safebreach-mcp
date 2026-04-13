@@ -2783,20 +2783,23 @@ def sb_get_simulation_lineage(
 # Peer benchmark score (SAF-29415) — POST /api/data/v1/accounts/{id}/score
 # ------------------------------------------------------------------
 # Hint fragments composed when the backend response indicates partial or
-# missing data. Strings are tuned for natural-language reasoning by the
-# LLM consumer and to the substring assertions in the unit tests.
+# missing data. These strings reach end-users verbatim through the LLM,
+# so they must remain free of internal infra terms (no env names, no
+# implementation constants). They are deliberately phrased for an
+# end-user audience.
 _PEER_BENCHMARK_204_HINT = (
-    "No executions in the requested window, or all matched attacks were "
-    "custom (peer benchmark excludes custom attack IDs >= 10,000,000)."
+    "No comparable executions in the requested window. This may happen when no "
+    "tests ran during the window, or when all matched attacks were "
+    "customer-defined (peer benchmark only compares standard SafeBreach attacks)."
 )
-_PEER_BENCHMARK_NULL_CUSTOMER_HINT = "No customer executions in this window."
+_PEER_BENCHMARK_NULL_CUSTOMER_HINT = (
+    "No customer executions matched the requested window."
+)
 _PEER_BENCHMARK_NULL_PEER_HINT = (
-    "No all-peers data for this window "
-    "(possibly frozen snapshot on staging/private-dev)."
+    "Peer benchmark data is not available for the requested window."
 )
 _PEER_BENCHMARK_EMPTY_INDUSTRY_HINT = (
-    "No customer-industry data for this window "
-    "(possibly frozen snapshot on staging/private-dev)."
+    "Industry benchmark data is not available for the requested window."
 )
 
 
@@ -2893,14 +2896,20 @@ def sb_get_peer_benchmark_score(
     response = requests.post(api_url, headers=headers, json=body, timeout=120)
 
     if response.status_code == 204:
-        result = {
-            "start_date": iso_start,
-            "end_date": iso_end,
-            "customer_score": None,
-            "all_peers_score": None,
-            "customer_industry_scores": [],
-            "hint_to_agent": _PEER_BENCHMARK_204_HINT,
+        # Route the empty-shape response through the transform helper so
+        # always-on metadata (scoring_formula, scope_note) appears uniformly
+        # on both 204 and 200 paths — no duplicated copy of the response
+        # envelope here.
+        empty_payload = {
+            "startDate": iso_start,
+            "endDate": iso_end,
+            "customerScore": None,
+            "peerScore": None,
+            "industryScores": [],
         }
+        result = get_reduced_peer_benchmark_response(
+            empty_payload, hint=_PEER_BENCHMARK_204_HINT,
+        )
         if is_caching_enabled("data"):
             peer_benchmark_cache.set(cache_key, result)
         return result

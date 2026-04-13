@@ -19,8 +19,8 @@
 
 | Field | Value |
 |---|---|
-| **PRD Status** | Complete |
-| **Last Updated** | 2026-04-13 16:50 |
+| **PRD Status** | Complete (post-UX-feedback polish applied) |
+| **Last Updated** | 2026-04-13 17:30 |
 | **Owner** | Yossi Attas (with AI assistance) |
 | **Current Phase** | Complete (5 of 5 phases done) |
 
@@ -791,3 +791,4 @@ Re-run wrapper tests → all green. Run the broader suite: `uv run pytest safebr
 | 2026-04-13 16:10 | Phase 3 complete — 10 TestPeerBenchmarkToolWrapper tests green; get_peer_benchmark_score MCP tool registered on SafeBreachDataServer with full peers-vs-industry docstring (drives LLM tool selection); wrapper normalizes dates via normalize_timestamp, validates required dates, and delegates to sb_get_peer_benchmark_score by kwargs; new test_data_server.py uses asyncio.run + direct _tool_manager access; 402 Data MCP tests pass |
 | 2026-04-13 16:35 | Phase 4 complete — peer_benchmark_e2e_console fixture added to test_e2e.py (defaults to `staging`, override via PEER_BENCHMARK_E2E_CONSOLE; skips with explanatory message when staging creds missing); TestPeerBenchmarkScoreE2E.test_peer_benchmark_score_e2e smoke test added; verified green against real staging.sbops.com (customer_score 0.80 vs all_peers 0.53, 30-day window); non-e2e suite still 402 green; TODO comment notes follow-up to retire the dedicated fixture once /score lands on pentest01 |
 | 2026-04-13 16:50 | Phase 5 complete — CLAUDE.md updated: get_peer_benchmark_score added at item 15 of Data Server tools list with full peers-vs-industry explainer; downstream Playbook + Utilities tools renumbered (15→16, 16→17, 17→18, 18→19); `peer_benchmark (3/600s)` appended to Data Server cache line. PRD Status set to Complete (5/5 phases done). |
+| 2026-04-13 17:30 | Post-UX-feedback polish (Claude Desktop testing): (1) renamed `score_unblocked` → `score_missed` everywhere (top-level + control entries) — aligns with `missed` simulation-status vocabulary; (2) added always-on top-level `scoring_formula` and `scope_note` fields so the response is self-contained for the agent (no need to carry the formula or peer-snapshot scope asymmetry in-context); (3) sorted `security_control_breakdown[]` alphabetically by `control_category_name` so customer / peer / industry breakdowns can be merged position-wise; (4) neutralized all 4 `hint_to_agent` strings to drop internal infra terms ("staging", "private-dev", "frozen snapshot", `>= 10_000_000`) — they reach end-users verbatim; (5) refactored 204 path to route through `get_reduced_peer_benchmark_response` so metadata applies uniformly. Tests +2 (new sort test + new sanitization test). Total 404 non-e2e + 1 live-verified E2E (customer 0.80 vs all-peers 0.53) green. CLAUDE.md updated. |
