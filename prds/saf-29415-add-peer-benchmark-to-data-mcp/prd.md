@@ -20,7 +20,7 @@
 | Field | Value |
 |---|---|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-04-13 14:30 |
+| **Last Updated** | 2026-04-13 14:45 |
 | **Owner** | Yossi Attas (with AI assistance) |
 | **Current Phase** | N/A (not yet in implementation) |
 
@@ -312,29 +312,39 @@ sequenceDiagram
 
 ## 8. Testing Strategy
 
-### Unit Testing
-- **Scope**: `sb_get_peer_benchmark_score` (main logic), `get_reduced_peer_benchmark_response` (transform), the wrapper's parameter normalization.
+### TDD Approach (applies to Phases 1–3)
+
+Tests lead implementation. For each code phase:
+
+1. **Red** — write the unit tests for that phase's code first. Run `uv run pytest <scope> -v -m "not e2e"`
+   and confirm the new tests fail for the right reason (import error / missing function / assertion
+   mismatch — not a setup bug).
+2. **Green** — implement the minimum code needed to make those tests pass. Run the suite again and confirm
+   green, plus no regression in the rest of the Data MCP tests.
+3. **Refactor** — tighten naming, extract helpers, improve docstrings. Tests stay green.
+
+Each phase's commit should contain **both** the test file changes and the implementation file changes,
+so the commit alone demonstrates the contract it's introducing.
+
+### Unit Testing — overall allocation
+
 - **Framework**: `pytest` + `unittest.mock` (same stack as `test_data_functions.py`).
-- **Coverage target**: maintain existing file's baseline.
-- **Key scenarios**:
-  - Happy path with both filters absent.
-  - Include-only filter.
-  - Exclude-only filter.
-  - Both non-empty → raises `ValueError`.
-  - Epoch-ms input for dates → ISO conversion happens correctly in the POST body.
-  - ISO string input for dates → pass through unchanged.
-  - HTTP 204 → empty-shape response + hint.
-  - 200 with `customerScore: null` → hint composed.
-  - 200 with `peerScore: null` → hint composed (all-peers missing).
-  - 200 with `industryScores: []` → hint composed (customer-industry missing).
-  - 500 from backend → `logger.error` called, exception re-raised.
-  - Cache hit: second identical call returns cached value without a second `requests.post`.
-- **Mocks**: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`. `setup_method` clears `peer_benchmark_cache`.
+- **Coverage target**: maintain the existing `safebreach_mcp_data` baseline or better.
+- **Shared mocks** (used by Phase 2 + Phase 3 tests): `requests.post`, `get_secret_for_console`,
+  `get_api_base_url`, `get_api_account_id`.
+- **Cache hygiene**: every test class's `setup_method` clears `peer_benchmark_cache` to avoid cross-test
+  leakage.
+
+Test cases are enumerated inside each phase below (Phase 1 / 2 / 3 sections), so it's obvious which
+tests belong to which Red-Green-Refactor cycle.
 
 ### Integration / E2E Testing
 - **Scope**: tool exercised against a real console with benchmark data.
-- **Test env**: requires `E2E_CONSOLE` env var and valid API token per the existing `e2e_console` fixture.
-- **Assertions**: response has `start_date`, `end_date`, `peer_snapshot_month`, `customer_score` (may be null), `all_peers_score` (may be null), `customer_industry_scores` (list). Do not assert specific numeric scores (data changes).
+- **Test env**: dedicated `peer_benchmark_e2e_console` fixture (see Phase 4) — defaults to `staging`;
+  does **not** reuse the shared `e2e_console` fixture while the backend endpoint is not yet on pentest01.
+- **Assertions**: response has `start_date`, `end_date`, `peer_snapshot_month`, `customer_score`
+  (may be null), `all_peers_score` (may be null), `customer_industry_scores` (list). Do not assert
+  specific numeric scores (data changes).
 
 ### Coverage Gaps
 - No UI test (MCP has no UI).
@@ -348,147 +358,313 @@ sequenceDiagram
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |---|---|---|---|---|
-| Phase 1: Rename mapping + transform helper | ⏳ Pending | - | - | |
-| Phase 2: Business logic function + cache | ⏳ Pending | - | - | |
-| Phase 3: MCP tool registration | ⏳ Pending | - | - | |
-| Phase 4: Unit tests | ⏳ Pending | - | - | |
-| Phase 5: E2E test | ⏳ Pending | - | - | |
-| Phase 6: Docs (CLAUDE.md) | ⏳ Pending | - | - | |
+| Phase 1: Rename mapping + transform helper (TDD) | ⏳ Pending | - | - | |
+| Phase 2: Business logic + cache (TDD) | ⏳ Pending | - | - | |
+| Phase 3: MCP tool registration (TDD) | ⏳ Pending | - | - | |
+| Phase 4: E2E test (pinned to staging) | ⏳ Pending | - | - | |
+| Phase 5: Docs (CLAUDE.md) | ⏳ Pending | - | - | |
 
-### Phase 1 — Rename mapping + transform helper
+Phases 1–3 each follow a Red-Green-Refactor cycle: tests first, then implementation, then cleanup.
+A phase is complete only when its tests are green and no existing tests regressed.
 
-**Semantic change**: add the data-shape translator in `data_types.py` without wiring it in anywhere.
+### Phase 1 — Rename mapping + transform helper (TDD)
 
-**Deliverables**: a module-level `peer_benchmark_rename_mapping` dict and a `get_reduced_peer_benchmark_response(backend_json, hint=None)` helper.
+**Semantic change**: add the data-shape translator in `data_types.py`, driven by unit tests written first.
 
-**Implementation details**:
-- **What**: define a dict that maps every backend field (top-level, ScoreBreakdown, ControlScore) to its MCP-facing name per Section 4's tables.
-- **Inputs / Outputs** of `get_reduced_peer_benchmark_response`:
-  - Input: `backend_json` (dict returned by the backend; may contain `null` at various levels), optional `hint` string.
-  - Output: dict with the renamed keys; preserves all values verbatim; adds `hint_to_agent` when `hint` is provided.
-- **Algorithm**:
-  1. Build the top-level result dict by iterating the backend payload keys and applying the mapping.
-  2. For `customer_score` / `all_peers_score` / `industry_scores` children, apply the ScoreBreakdown mapping recursively — if the value is `None`, pass `None` through.
-  3. For each `security_control_breakdown[]` element, apply the ControlScore mapping; preserve `score_unblocked` only when present in the source.
-  4. If `hint` is provided and non-empty, attach `result["hint_to_agent"] = hint`.
-- **Error scenarios**: defensive fallthrough — if the backend returns an unexpected shape, log a warning and return the partial result (do not crash). Missing keys are simply skipped (not error'd).
-- **Data flow**: backend JSON → this helper → cache + MCP response.
+**Deliverables**:
+- A module-level `peer_benchmark_rename_mapping` dict (plus nested `peer_benchmark_score_field_mapping`,
+  `peer_benchmark_control_field_mapping`).
+- A `get_reduced_peer_benchmark_response(backend_json, hint=None)` helper.
+- Unit tests in `safebreach_mcp_data/tests/test_data_types.py` (or extend existing test file in that
+  module if one already exists — otherwise create it).
+
+#### Red — write the tests
+
+Add tests covering the transform helper in isolation. All tests use small inline dict fixtures; no HTTP
+is involved at this layer.
+
+**Test cases (Phase 1 — transform only)**:
+1. **Full-shape happy path** — full backend payload (all fields populated) → asserts every top-level key is
+   renamed per Section 4's tables; nested `customer_score`, `all_peers_score`, each `customer_industry_scores[]`
+   element have all `ScoreBreakdown` fields renamed; each `security_control_breakdown[]` entry has
+   `control_category_name` populated.
+2. **Customer-only `scoreUnblocked` in controls** — customer's `securityControlCategory[]` entries include
+   `scoreUnblocked` and must produce `score_unblocked` in the MCP shape; peer/industry control entries
+   without `scoreUnblocked` must not have the key injected.
+3. **`customerScore: null` pass-through** — input has `customerScore: None` → output has
+   `customer_score: None` (not an empty dict, not missing).
+4. **`peerScore: null` pass-through** — same for `all_peers_score`.
+5. **`industryScores: []` pass-through** — empty array stays as `customer_industry_scores: []`.
+6. **`dataThroughDate: null` pass-through** — output has `peer_data_through_date: None`.
+7. **Hint attached** — calling with `hint="x"` adds `hint_to_agent: "x"` at the top level.
+8. **Hint omitted / empty** — no `hint_to_agent` key present when `hint` is `None` or `""`.
+9. **Unknown top-level key defensive fallthrough** — payload contains a key not in the mapping → helper
+   logs a warning (use `caplog`) and still returns the known fields (not crash).
+10. **`industry` inside each `industryScores[]`** — top-level `industry` field becomes `industry_name`
+    inside each element of `customer_industry_scores`.
+
+Run: `uv run pytest safebreach_mcp_data/tests/test_data_types.py -v` → all new tests FAIL with
+`ImportError` (no helper yet) or `AttributeError`. This is the correct red state.
+
+#### Green — implement
+
+- Define the three mapping dicts at module top.
+- Implement `get_reduced_peer_benchmark_response(backend_json, hint=None)`:
+  1. Iterate known top-level keys, apply the mapping; for unknown keys, `logger.warning(...)` and skip.
+  2. For `customerScore` / `peerScore` children: if `None`, pass `None`; else apply ScoreBreakdown mapping
+     recursively — including the nested `securityControlCategory` → `security_control_breakdown`
+     transformation.
+  3. For `industryScores` elements: apply ScoreBreakdown mapping plus pick up `industry` → `industry_name`.
+  4. Inside each control entry, copy `scoreUnblocked` → `score_unblocked` only if the source key is present.
+  5. Attach `hint_to_agent` when `hint` is truthy.
+
+Re-run tests → all green. Run the broader suite: `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"`
+— must stay green (no behavioral change to existing code).
+
+#### Refactor
+
+- Extract per-level helpers (`_rename_score_breakdown`, `_rename_control_entry`) if the main function grows
+  past ~30 lines.
+- Align naming with the existing `data_types.py` helper naming (`get_reduced_*`, `map_*`).
+- Docstrings for each helper; no code-change to the public contract.
 
 **Changes**:
 
 | File | Change |
 |---|---|
-| `safebreach_mcp_data/data_types.py` | Add `peer_benchmark_rename_mapping`, `peer_benchmark_score_field_mapping`, `peer_benchmark_control_field_mapping`; add `get_reduced_peer_benchmark_response`. |
+| `safebreach_mcp_data/data_types.py` | Add three mapping dicts + `get_reduced_peer_benchmark_response`. |
+| `safebreach_mcp_data/tests/test_data_types.py` | Add a `TestPeerBenchmarkTransform` class with the 10 test cases above. |
 
-**Verification**: `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` still green (no behavioral change yet).
+**Verification**:
+- `uv run pytest safebreach_mcp_data/tests/test_data_types.py -v` → all green.
+- `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` → still green.
 
-**Suggested commit**: `feat(data-types): add peer benchmark rename mapping and transform helper (SAF-29415)`
+**Suggested commit**: `feat(data-types): add peer benchmark rename mapping and transform helper with unit tests (SAF-29415)`
 
 ---
 
-### Phase 2 — Business logic function + cache
+### Phase 2 — Business logic + cache (TDD)
 
-**Semantic change**: implement `sb_get_peer_benchmark_score` plus the new cache in `data_functions.py`.
+**Semantic change**: implement `sb_get_peer_benchmark_score` plus the new `peer_benchmark_cache` in
+`data_functions.py`, driven by unit tests written first.
 
-**Deliverables**: a new async-compatible function that validates inputs, caches, POSTs to the backend, handles 204, composes hints, and returns the transformed response.
+**Deliverables**:
+- `peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)` declared alongside
+  existing caches at module top.
+- `sb_get_peer_benchmark_score(console, start_date, end_date, include_test_ids_filter=None,
+  exclude_test_ids_filter=None)` function.
+- Unit tests in `safebreach_mcp_data/tests/test_data_functions.py` under a new
+  `TestPeerBenchmarkFunction` class.
 
-**Implementation details**:
-- **What**: declare `peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)` alongside the other caches at the top of `data_functions.py`. Import `get_reduced_peer_benchmark_response` from `data_types`.
-- **Function signature**: `sb_get_peer_benchmark_score(console, start_date, end_date, include_test_ids_filter=None, exclude_test_ids_filter=None)`.
-- **Inputs**: `console: str`; `start_date: int` (epoch ms, already normalized by the wrapper); `end_date: int`; `include_test_ids_filter` / `exclude_test_ids_filter: Optional[str]` (comma-separated or None).
-- **Output**: dict matching the shape defined in Section 4 (renamed fields) plus optional `hint_to_agent`.
-- **Algorithm**:
-  1. **Parse filters**: for each of the two filter strings, produce a list by splitting on `,` and stripping; empty list when input is None/empty.
-  2. **Validate mutual exclusivity**: if both lists are non-empty, raise `ValueError` with the backend's own message ("Cannot provide both include_test_ids_filter and exclude_test_ids_filter...") for agent clarity.
-  3. **Validate date ordering**: if `start_date >= end_date`, raise `ValueError` ("start_date must be before end_date").
-  4. **Build cache key**: `f"peer_benchmark_{console}_{start_date}_{end_date}_{','.join(sorted(inc))}_{','.join(sorted(exc))}"`.
-  5. **Cache check**: if `is_caching_enabled("data")` and key present, return cached dict.
-  6. **Resolve API config**: `apitoken = get_secret_for_console(console)`; `base_url = get_api_base_url(console, 'data')`; `account_id = get_api_account_id(console)`.
-  7. **Convert dates**: epoch ms → ISO 8601 UTC string via `convert_epoch_to_datetime(ms)["iso_datetime"]`. Both start and end.
-  8. **Build request body**: `{"startDate": ..., "endDate": ...}`; conditionally add `includeTestIds` (when inc non-empty) or `excludeTestIds` (when exc non-empty). Never both — prevented by step 2.
-  9. **POST**: `requests.post(f"{base_url}/api/data/v1/accounts/{account_id}/score", headers={"x-apitoken": apitoken, "Content-Type": "application/json"}, json=body, timeout=120)`.
-  10. **Handle 204**: if `response.status_code == 204`, construct the empty-shape result manually (echo `start_date` / `end_date`, all scores `None`, `customer_industry_scores: []`, `hint_to_agent: "No executions in the requested window, or all matched attacks were custom (peer benchmark excludes custom attack IDs >= 10_000_000)."`), cache and return.
-  11. **Handle other errors**: `response.raise_for_status()` — any HTTPError is logged via `logger.error` and re-raised.
-  12. **Parse JSON**, build a hint string by inspecting `customerScore == null` (no executions), `peerScore == null` (no all-peers data), `industryScores == []` (no customer-industry breakdown — note this is the customer's own industry, not a cross-industry comparison); join with `"; "` and prepend an appropriate summary. If none applies, hint is `None`.
-  13. **Transform**: call `get_reduced_peer_benchmark_response(backend_json, hint=hint)`.
-  14. **Cache set + return**.
-- **Error scenarios**: covered in steps 2, 3, 11 (ValueError; HTTPError). No custom exception class introduced — conforms to existing Data MCP function style.
-- **Data flow**: MCP tool → this function → backend → transform → cache → return.
+#### Red — write the tests
+
+All tests mock `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`.
+`setup_method` clears `peer_benchmark_cache`. Fixtures: `happy_backend_response` (full payload),
+`null_customer_response`, `null_peer_response`, `empty_industry_response` (each derived from the real
+backend shape).
+
+**Test cases (Phase 2 — business logic only)**:
+
+1. **Happy path, no filters** — both filter strings `None`. Asserts:
+   - `requests.post` called once with correct URL pattern `.../accounts/<id>/score`.
+   - Headers contain `x-apitoken` (not Bearer) and `Content-Type: application/json`.
+   - Request body has `startDate` / `endDate` in ISO 8601 UTC `Z` format; no `includeTestIds` /
+     `excludeTestIds` keys.
+   - `timeout=120` passed to `requests.post`.
+   - Return value matches the transformed shape (renamed keys).
+2. **Include-only filter** — `include_test_ids_filter="a, b , c"`. Request body contains
+   `includeTestIds=["a","b","c"]` (trimmed); no `excludeTestIds` key.
+3. **Exclude-only filter** — mirror of test 2 for `excludeTestIds`.
+4. **Mutual exclusivity** — both filters non-empty → `pytest.raises(ValueError)`; `requests.post` never
+   called.
+5. **Empty filter strings treated as absent** — `include_test_ids_filter=""` and
+   `exclude_test_ids_filter=None` → body has no filter keys.
+6. **Date ordering validation** — `start_date >= end_date` → `pytest.raises(ValueError)`; `requests.post`
+   never called.
+7. **Epoch → ISO conversion** — pass epoch ms integers; assert body's `startDate` / `endDate` end with `Z`.
+8. **HTTP 204 handling** — mocked response `status_code == 204` with empty body. Asserts:
+   - Function does **not** raise.
+   - Return dict has `customer_score: None`, `all_peers_score: None`,
+     `customer_industry_scores: []`, and a `hint_to_agent` mentioning "no executions" or "custom".
+9. **Null customerScore** — 200 with `customerScore: null`. `hint_to_agent` contains a substring
+   explaining no executions.
+10. **Null peerScore** — 200 with `peerScore: null`. `hint_to_agent` mentions all-peers data missing.
+11. **Empty industryScores** — 200 with `industryScores: []`. `hint_to_agent` mentions
+    customer-industry missing.
+12. **Composed hint** — 200 with both `peerScore: null` AND `industryScores: []`. `hint_to_agent`
+    contains both fragments joined (e.g., via `"; "`).
+13. **500 backend error** — mocked `response.raise_for_status()` raises `HTTPError`. Asserts:
+    - `logger.error` called (verified via `caplog`).
+    - The `HTTPError` propagates to the caller.
+    - The error log does **not** contain the API token string (security regression test).
+14. **Cache hit** — caching enabled; call the function twice with identical args. `requests.post` called
+    exactly once; second return value equals the first.
+15. **Cache disabled** — `is_caching_enabled("data")` patched to `False`. Two identical calls →
+    `requests.post.call_count == 2`.
+16. **Cache-key order-independence** — caching enabled; call once with `include_test_ids_filter="b,a"`,
+    then with `"a,b"`. Second call hits cache (key built from sorted list).
+
+Run: `uv run pytest safebreach_mcp_data/tests/test_data_functions.py::TestPeerBenchmarkFunction -v` →
+all FAIL (no function yet). Correct red state.
+
+#### Green — implement
+
+- Declare `peer_benchmark_cache` at module top alongside existing caches.
+- Import `get_reduced_peer_benchmark_response` from `.data_types`.
+- Implement `sb_get_peer_benchmark_score`:
+  1. Parse both filter strings via `[v.strip() for v in s.split(",") if v.strip()]`; `None` / empty → `[]`.
+  2. If both lists non-empty, raise `ValueError("Cannot provide both include_test_ids_filter and
+     exclude_test_ids_filter. Omit both to include all tests.")`.
+  3. If `start_date >= end_date`, raise `ValueError("start_date must be before end_date.")`.
+  4. Build cache key: sorted filter lists joined by `","`.
+  5. If `is_caching_enabled("data")` and key present → return cached dict.
+  6. Resolve API config (token, base URL, account id).
+  7. Convert epoch ms → ISO 8601 UTC `Z` strings via `convert_epoch_to_datetime(ms)["iso_datetime"]`.
+  8. Build body `{"startDate": ..., "endDate": ...}`; conditionally add `includeTestIds` or
+     `excludeTestIds` when its list is non-empty.
+  9. `requests.post(url, headers={...}, json=body, timeout=120)`.
+  10. If `response.status_code == 204`: build empty-shape result + 204-hint; cache; return.
+  11. `response.raise_for_status()` inside `try/except`; on failure, `logger.error(...)` (message must
+      not contain the token value); re-raise.
+  12. Parse JSON; inspect `customerScore` / `peerScore` / `industryScores` and compose hint from
+      applicable fragments joined with `"; "`.
+  13. Call `get_reduced_peer_benchmark_response(backend_json, hint=hint)`.
+  14. Cache (if enabled); return.
+
+Re-run tests → all green. Run the broader suite: `uv run pytest safebreach_mcp_data/tests/ -v -m
+"not e2e"` — still green.
+
+#### Refactor
+
+- If the body-building logic grows, extract a `_build_score_request_body(...)` helper inside the module
+  (private).
+- Extract the 204-empty-shape literal into a module-level constant or helper for reuse by tests and
+  implementation.
+- Improve log messages; ensure they include the console name but never the token.
 
 **Changes**:
 
 | File | Change |
 |---|---|
 | `safebreach_mcp_data/data_functions.py` | Add `peer_benchmark_cache`; add `sb_get_peer_benchmark_score`; import transform helper. |
+| `safebreach_mcp_data/tests/test_data_functions.py` | Add `TestPeerBenchmarkFunction` class with the 16 test cases above. |
 
-**Verification**: `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` — unit tests added in Phase 4 will exercise this. For now, lint passes and the module still imports.
+**Verification**:
+- `uv run pytest safebreach_mcp_data/tests/test_data_functions.py::TestPeerBenchmarkFunction -v` → all green.
+- `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` → still green.
 
-**Suggested commit**: `feat(data-functions): implement sb_get_peer_benchmark_score with caching and 204 handling (SAF-29415)`
+**Suggested commit**: `feat(data-functions): implement sb_get_peer_benchmark_score with caching, 204 handling, and unit tests (SAF-29415)`
 
 ---
 
-### Phase 3 — MCP tool registration
+### Phase 3 — MCP tool registration (TDD)
 
-**Semantic change**: register the `get_peer_benchmark_score` tool on the Data Server so it's reachable over MCP.
+**Semantic change**: register `get_peer_benchmark_score` on the Data Server as a thin wrapper over
+`sb_get_peer_benchmark_score`, driven by unit tests for the wrapper's contract.
 
-**Deliverables**: a new `@self.mcp.tool(...)` block inside `SafeBreachDataServer._register_tools()` that delegates to `sb_get_peer_benchmark_score`.
+**Deliverables**:
+- A new `@self.mcp.tool(name="get_peer_benchmark_score", ...)` block inside
+  `SafeBreachDataServer._register_tools()`.
+- Import of `sb_get_peer_benchmark_score` into `data_server.py`.
+- Unit tests exercising the wrapper's normalization / validation / delegation contract.
 
-**Implementation details**:
-- **What**: new async `get_peer_benchmark_score_tool(console, start_date, end_date, include_test_ids_filter, exclude_test_ids_filter)` that validates + normalizes, then calls the business function.
-- **Inputs / Outputs**: match Component C; output is the dict returned by the business function.
-- **Algorithm**:
-  1. Coerce `start_date` / `end_date` via `normalize_timestamp(value)`; if either becomes `None`, raise `ValueError("start_date and end_date are required")`.
-  2. Delegate: `return sb_get_peer_benchmark_score(console=console, start_date=..., end_date=..., include_test_ids_filter=..., exclude_test_ids_filter=...)`.
-- **Docstring content** (to write — the docstring doubles as the tool's MCP description, so clarity drives how the LLM chooses and interprets the tool):
+#### Red — write the tests
+
+Wrapper tests focus on (a) datetime normalization, (b) required-field validation, (c) delegation.
+They mock `sb_get_peer_benchmark_score` (the business function) directly so this layer's tests do not
+re-prove Phase 2 behavior.
+
+Tests live in `safebreach_mcp_data/tests/test_data_server.py` under a new
+`TestPeerBenchmarkToolWrapper` class (create the file if it doesn't exist — follow the existing pattern
+used by other server-level tests if present; otherwise use a lightweight `pytest.fixture` that
+instantiates `SafeBreachDataServer` and resolves the registered tool via `mcp.list_tools()` or by
+invoking the registered function directly through the server instance).
+
+**Test cases (Phase 3 — wrapper only)**:
+
+1. **Tool is registered** — after instantiating `SafeBreachDataServer`, `get_peer_benchmark_score`
+   appears in the list of registered MCP tools with the expected name.
+2. **Epoch input normalization** — calling the wrapper with `start_date=1700000000`,
+   `end_date=1702592000` → the mocked `sb_get_peer_benchmark_score` is called with both args
+   normalized to epoch milliseconds.
+3. **ISO input normalization** — calling with `start_date="2026-03-01T00:00:00Z"`,
+   `end_date="2026-03-31T23:59:59Z"` → business function receives the equivalent epoch-ms ints.
+4. **Missing `start_date` raises** — `start_date=None` (or omitted / empty string) →
+   `pytest.raises(ValueError)` matching "start_date and end_date are required"; business function
+   never called.
+5. **Missing `end_date` raises** — same as above for `end_date`.
+6. **Invalid `start_date` string raises** — passing a non-parseable string → `normalize_timestamp`
+   returns `None`, wrapper raises `ValueError`; business function never called.
+7. **Filters pass through** — `include_test_ids_filter="a,b"`, `exclude_test_ids_filter=None` are
+   forwarded to the business function unchanged.
+8. **Console default** — when `console` is not provided, the business function is called with
+   `console="default"`.
+9. **Return value pass-through** — the wrapper returns exactly what the business function returned
+   (identity test with a sentinel dict).
+10. **ValueError from business function propagates** — when the mocked business function raises
+    `ValueError` (e.g., mutual exclusivity), the wrapper surfaces the same exception unchanged.
+
+Run: `uv run pytest safebreach_mcp_data/tests/test_data_server.py::TestPeerBenchmarkToolWrapper -v` →
+all FAIL until the tool is registered. Correct red state.
+
+#### Green — implement
+
+- Import `sb_get_peer_benchmark_score` in `data_server.py`.
+- Inside `_register_tools()`, register the tool:
+  1. Async function `get_peer_benchmark_score_tool(console="default", start_date=None, end_date=None,
+     include_test_ids_filter=None, exclude_test_ids_filter=None)`.
+  2. Normalize both dates via `normalize_timestamp(value)`.
+  3. If either is `None` after normalization, raise `ValueError("start_date and end_date are required")`.
+  4. Delegate: `return sb_get_peer_benchmark_score(console=console, start_date=..., end_date=...,
+     include_test_ids_filter=..., exclude_test_ids_filter=...)`.
+- Docstring (doubles as the MCP tool description and drives LLM tool-selection):
   - Purpose statement and API this wraps.
-  - Parameter block with the stock phrase "epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'" for the dates.
-  - Explanation of `include_test_ids_filter` / `exclude_test_ids_filter` (comma-separated, mutually exclusive).
-  - **Explicit peers-vs-industry distinction**: the docstring must state, in its own paragraph, that `all_peers_score` reflects the average across **all** SafeBreach customers regardless of industry (from the backend's `all_industries` bucket), whereas `customer_industry_scores` is an array scoped to the customer's **own** industry only — determined server-side from a Salesforce industry mapping and not overridable by the caller. In practice the array has 0 or 1 elements (empty when no industry data is available).
-  - Explanation of other returned fields: `peer_snapshot_month` (monthly peer snapshot used; peer/industry aggregation is always full-month even when the query window is shorter), `peer_data_through_date` (ETL freshness — may be null), `custom_attacks_filtered_count` (count of custom attacks with `moveId >= 10_000_000` that were auto-excluded from the peer comparison), the `hint_to_agent` field when data is missing.
+  - Parameter block with the stock phrase "epoch ms/seconds or ISO 8601 string, e.g.
+    '2026-03-01T00:00:00Z'" for the dates.
+  - Explanation of `include_test_ids_filter` / `exclude_test_ids_filter` (comma-separated, mutually
+    exclusive).
+  - **Explicit peers-vs-industry distinction** (dedicated paragraph): `all_peers_score` reflects the
+    average across **all** SafeBreach customers regardless of industry (from the backend's
+    `all_industries` bucket); `customer_industry_scores` is an array scoped to the customer's **own**
+    industry only — determined server-side from a Salesforce industry mapping and not overridable by
+    the caller. In practice the array has 0 or 1 elements.
+  - Other fields: `peer_snapshot_month` (full-month peer snapshot used for comparison — peer/industry
+    aggregation is always full-month even when the query window is shorter), `peer_data_through_date`
+    (ETL freshness — may be null), `custom_attacks_filtered_count` (count of custom attacks with
+    `moveId >= 10_000_000` that were auto-excluded from the peer comparison), the `hint_to_agent`
+    field when data is missing.
   - Score formula: `score = 1.0 * blocked + 0.5 * detected`.
-  - HTTP 204 behavior: if the backend returns no-content (no executions in window, or all matched attacks are custom), the tool returns the empty-shape response plus a `hint_to_agent` — the caller does not need to handle an exception.
-- **Error scenarios**: `ValueError` on missing/invalid dates; `ValueError` on both-filters-non-empty (raised by the business function).
-- **Data flow**: MCP client → tool wrapper → `normalize_timestamp` → `sb_get_peer_benchmark_score` → backend.
+  - HTTP 204 behavior: if the backend returns no-content (no executions in window, or all matched
+    attacks are custom), the tool returns the empty-shape response plus a `hint_to_agent` — the caller
+    does not need to handle an exception.
+
+Re-run wrapper tests → all green. Run the broader suite: `uv run pytest safebreach_mcp_data/tests/ -v
+-m "not e2e"` — still green.
+
+#### Refactor
+
+- Factor out the docstring into a module-level constant if it's noisy, per the pattern used by other
+  Data MCP tools. Ensure the description still renders in MCP tool listings.
+- Minor cleanup (typing, formatting). Tests stay green.
 
 **Changes**:
 
 | File | Change |
 |---|---|
-| `safebreach_mcp_data/data_server.py` | Add `get_peer_benchmark_score_tool` registration and import `sb_get_peer_benchmark_score`. |
+| `safebreach_mcp_data/data_server.py` | Register `get_peer_benchmark_score_tool`; import business function. |
+| `safebreach_mcp_data/tests/test_data_server.py` | Add `TestPeerBenchmarkToolWrapper` class with the 10 test cases above (create file if missing). |
 
-**Verification**: start the data server locally and list tools via the MCP client; confirm the new tool appears and a trivial call returns a 400 about missing dates when both are omitted.
+**Verification**:
+- `uv run pytest safebreach_mcp_data/tests/test_data_server.py::TestPeerBenchmarkToolWrapper -v` → green.
+- `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` → still green.
+- Manually start the data server: `uv run -m safebreach_mcp_data.data_server` and verify the tool
+  appears in the registered tool list.
 
-**Suggested commit**: `feat(data-server): register get_peer_benchmark_score MCP tool (SAF-29415)`
-
----
-
-### Phase 4 — Unit tests
-
-**Semantic change**: add unit tests covering all cases in Section 8.
-
-**Deliverables**: a new test class in `safebreach_mcp_data/tests/test_data_functions.py` (or a new file `test_peer_benchmark.py` if preferred by the reviewer — default to extending the existing file to match the repo's pattern).
-
-**Implementation details**:
-- **What**: 12 test methods matching the Key scenarios list. Mocks: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`.
-- **Fixtures**: a `mock_backend_response` fixture returning a realistic payload; a second fixture for a 204 empty response.
-- **Algorithm**: each test patches the imports, calls `sb_get_peer_benchmark_score` with specific arguments, asserts return shape and `hint_to_agent` content; the cache test calls twice and asserts `mock_post.call_count == 1`.
-- **Error scenarios**: `pytest.raises(ValueError)` for both-filters-both-non-empty and invalid date ordering; `pytest.raises(requests.HTTPError)` for the 500 case.
-- **Setup**: `setup_method` clears `peer_benchmark_cache` before each test.
-- **Data flow**: tests → mocked `requests.post` → business function → assertions.
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_data/tests/test_data_functions.py` | Add test class for peer benchmark (or new file — decide during implementation). |
-
-**Verification**: `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` all green.
-
-**Suggested commit**: `test(data): add unit tests for sb_get_peer_benchmark_score (SAF-29415)`
+**Suggested commit**: `feat(data-server): register get_peer_benchmark_score MCP tool with wrapper unit tests (SAF-29415)`
 
 ---
 
-### Phase 5 — E2E test
+### Phase 4 — E2E test
 
 **Semantic change**: add one `@pytest.mark.e2e` smoke test pinned to an environment where the backend endpoint is already deployed.
 
@@ -524,7 +700,7 @@ sequenceDiagram
 
 ---
 
-### Phase 6 — Docs (CLAUDE.md)
+### Phase 5 — Docs (CLAUDE.md)
 
 **Semantic change**: update developer documentation to reflect the new tool and cache.
 
@@ -553,7 +729,7 @@ sequenceDiagram
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| `/score` endpoint not yet deployed on `pentest01.safebreach.com` (only on `staging.sbops.com` as of 2026-04-13) | Medium | E2E test pinned to `staging` via a dedicated fixture (see Phase 5); shared `e2e_console` fixture is not reused. Once pentest01 gets the endpoint, follow up by retiring the dedicated fixture. |
+| `/score` endpoint not yet deployed on `pentest01.safebreach.com` (only on `staging.sbops.com` as of 2026-04-13) | Medium | E2E test pinned to `staging` via a dedicated fixture (see Phase 4); shared `e2e_console` fixture is not reused. Once pentest01 gets the endpoint, follow up by retiring the dedicated fixture. |
 | Backend response schema drift (new fields, renamed fields) | Medium | Transform helper skips unknown keys rather than erroring; E2E catches catastrophic mismatches; PR reviewers familiar with the `data` service double-check schema references. |
 | Backend performance on large date ranges | Low | Interactive use typically requests ≤ 1 month; `timeout=120` prevents indefinite blocking. |
 | `data-insights-gateway` downtime | Low | Backend returns 500; tool logs and raises; agent surfaces the error. No offline fallback needed. |
@@ -565,7 +741,7 @@ sequenceDiagram
 - **Account scoping**: the existing `get_api_account_id(console)` returns the correct account for the target console (holds for all existing Data MCP tools). Confirmed by the generic backend URL pattern.
 - **`x-apitoken` header works for this endpoint**: confirmed — same header is used by every other Data MCP tool hitting `/api/data/v1/...`.
 - **ETL / snapshot semantics won't change during implementation**: monitored via SAF-27621 updates; if the response structure changes, Phase 1's rename mapping is the single point to adjust.
-- **Availability**: `/api/data/v1/accounts/{id}/score` is live on `staging.sbops.com` today (2026-04-13) but not yet on `pentest01.safebreach.com`. Unit tests use mocked HTTP and are unaffected. E2E is pinned to staging; see Phase 5 for the fixture.
+- **Availability**: `/api/data/v1/accounts/{id}/score` is live on `staging.sbops.com` today (2026-04-13) but not yet on `pentest01.safebreach.com`. Unit tests use mocked HTTP and are unaffected. E2E is pinned to staging; see Phase 4 for the fixture.
 
 ### Risk Mitigation Strategies
 - Each phase is independently committable and revertable.
@@ -609,3 +785,4 @@ sequenceDiagram
 | 2026-04-13 14:00 | PRD created — initial draft |
 | 2026-04-13 14:20 | Renamed `industry_scores` → `customer_industry_scores` for scope clarity; strengthened docstring requirements to include explicit peers-vs-industry distinction |
 | 2026-04-13 14:30 | Phase 5 pinned E2E test to `staging.sbops.com` via dedicated fixture (endpoint not yet deployed on pentest01); added corresponding risk entry |
+| 2026-04-13 14:45 | Restructured to TDD: merged standalone Phase 4 unit tests into Phases 1–3 (Red-Green-Refactor per phase); renumbered E2E → Phase 4 and Docs → Phase 5; rewrote Testing Strategy to describe the TDD flow and allocate test cases per phase |
