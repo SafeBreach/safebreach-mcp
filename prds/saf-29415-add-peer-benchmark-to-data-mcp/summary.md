@@ -32,7 +32,7 @@
 - **Caching**: `SafeBreachCache` thread-safe TTLCache; convention for Data tools is `maxsize=3, ttl=600`; gate with `is_caching_enabled("data")`.
 - **Datetime mismatch**: `normalize_timestamp()` produces epoch ms (matches most SafeBreach APIs). Peer Benchmark API takes ISO 8601; use `convert_epoch_to_datetime(ms)["iso_datetime"]` to render back before POSTing.
 - **Tool-registration template**: `get_test_simulations_tool` (`data_server.py:100-137`) — typed Optional params + normalization + delegate.
-- **Test patterns** in `safebreach_mcp_data/tests/` — unit mocks `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`; E2E uses `@pytest.mark.e2e` + `e2e_console` fixture.
+- **Test patterns** in `safebreach_mcp_data/tests/` — unit mocks `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`; E2E uses `@pytest.mark.e2e` + `e2e_console` fixture. <!-- pragma: allowlist secret -->
 - **Relevant files**:
   - `safebreach_mcp_data/data_server.py`
   - `safebreach_mcp_data/data_functions.py`
