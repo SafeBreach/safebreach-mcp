@@ -19,10 +19,10 @@
 
 | Field | Value |
 |---|---|
-| **PRD Status** | In Progress |
-| **Last Updated** | 2026-04-13 16:35 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-04-13 16:50 |
 | **Owner** | Yossi Attas (with AI assistance) |
-| **Current Phase** | Phase 4 of 5 complete |
+| **Current Phase** | Complete (5 of 5 phases done) |
 
 ---
 
@@ -297,16 +297,16 @@ sequenceDiagram
 - [x] Mutual exclusivity of include/exclude filters enforced at the MCP boundary (raises `ValueError` before calling the backend).
 
 **Quality Gates**
-- [ ] Unit tests cover all cases listed in Section 8 and pass with `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"`.
+- [x] Unit tests cover all cases listed in Section 8 and pass with `uv run pytest safebreach_mcp_data/tests/ -v -m "not e2e"` (402 passed).
 - [x] One E2E test (`@pytest.mark.e2e`) passes against a real console with benchmark data (verified against `staging.sbops.com`: customer_score 0.80 vs all_peers 0.53).
-- [ ] Full cross-server test suite green: `uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ -m "not e2e"`.
-- [ ] No secrets committed; pre-commit hooks pass.
-- [ ] `CLAUDE.md` updated (Data Server tools list + Caching Strategy) so reviewers see the new tool and its cache.
+- [x] Full cross-server test suite green: `uv run pytest safebreach_mcp_config/tests/ safebreach_mcp_data/tests/ safebreach_mcp_utilities/tests/ safebreach_mcp_playbook/tests/ -m "not e2e"` (604 passed).
+- [x] No secrets committed; pre-commit hooks pass (every commit on this branch passed the `Check for added large files` and secrets scan hooks).
+- [x] `CLAUDE.md` updated (Data Server tools list + Caching Strategy) so reviewers see the new tool and its cache.
 
 **Deployment Readiness**
-- [ ] No feature flag needed; tool is available as soon as merged.
+- [x] No feature flag needed; tool is available as soon as merged.
 - [ ] Validated end-to-end from Claude Desktop (manual smoke) or the console AI chat (per DOD in the ticket).
-- [ ] Rollback: revert the PR; no DB/infra state to unwind.
+- [x] Rollback: revert the PR; no DB/infra state to unwind.
 
 ---
 
@@ -362,7 +362,7 @@ tests belong to which Red-Green-Refactor cycle.
 | Phase 2: Business logic + cache (TDD) | ✅ Complete | 2026-04-13 | (pending commit) | 16 tests green; 392-test Data MCP suite green |
 | Phase 3: MCP tool registration (TDD) | ✅ Complete | 2026-04-13 | (pending commit) | 10 wrapper tests green; 402-test Data MCP suite green |
 | Phase 4: E2E test (pinned to staging) | ✅ Complete | 2026-04-13 | (pending commit) | Smoke test added with `peer_benchmark_e2e_console` fixture; verified green against real `staging.sbops.com` |
-| Phase 5: Docs (CLAUDE.md) | ⏳ Pending | - | - | |
+| Phase 5: Docs (CLAUDE.md) | ✅ Complete | 2026-04-13 | (pending commit) | Tools list entry added (item 15); peer_benchmark cache added to Data Server cache line; downstream items renumbered |
 
 Phases 1–3 each follow a Red-Green-Refactor cycle: tests first, then implementation, then cleanup.
 A phase is complete only when its tests are green and no existing tests regressed.
@@ -790,3 +790,4 @@ Re-run wrapper tests → all green. Run the broader suite: `uv run pytest safebr
 | 2026-04-13 15:40 | Phase 2 complete — 16 TestPeerBenchmarkFunction tests green; sb_get_peer_benchmark_score function and peer_benchmark_cache (maxsize=3, ttl=600) added to data_functions.py; convert_epoch_to_datetime + get_reduced_peer_benchmark_response wired in; HTTP 204 / null-score hint composition / mutual-exclusivity / ISO conversion / token-leak protection all verified; 392 Data MCP tests pass |
 | 2026-04-13 16:10 | Phase 3 complete — 10 TestPeerBenchmarkToolWrapper tests green; get_peer_benchmark_score MCP tool registered on SafeBreachDataServer with full peers-vs-industry docstring (drives LLM tool selection); wrapper normalizes dates via normalize_timestamp, validates required dates, and delegates to sb_get_peer_benchmark_score by kwargs; new test_data_server.py uses asyncio.run + direct _tool_manager access; 402 Data MCP tests pass |
 | 2026-04-13 16:35 | Phase 4 complete — peer_benchmark_e2e_console fixture added to test_e2e.py (defaults to `staging`, override via PEER_BENCHMARK_E2E_CONSOLE; skips with explanatory message when staging creds missing); TestPeerBenchmarkScoreE2E.test_peer_benchmark_score_e2e smoke test added; verified green against real staging.sbops.com (customer_score 0.80 vs all_peers 0.53, 30-day window); non-e2e suite still 402 green; TODO comment notes follow-up to retire the dedicated fixture once /score lands on pentest01 |
+| 2026-04-13 16:50 | Phase 5 complete — CLAUDE.md updated: get_peer_benchmark_score added at item 15 of Data Server tools list with full peers-vs-industry explainer; downstream Playbook + Utilities tools renumbered (15→16, 16→17, 17→18, 18→19); `peer_benchmark (3/600s)` appended to Data Server cache line. PRD Status set to Complete (5/5 phases done). |

@@ -252,7 +252,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to bound memory:
 - **Config Server**: `simulators` — maxsize=5, TTL=3600s
 - **Data Server**: `tests` (5/1800s), `simulations` (3/600s), `security_control_events` (3/600s),
-  `findings` (3/600s), `full_simulation_logs` (2/300s)
+  `findings` (3/600s), `full_simulation_logs` (2/300s), `peer_benchmark` (3/600s)
 - **Playbook Server**: `playbook_attacks` — maxsize=5, TTL=1800s
 - **Studio Server**: `studio_drafts` — maxsize=5, TTL=1800s
 - **Cache Monitoring**: Background task logs stats every 5 minutes, warns when caches are at capacity
@@ -288,9 +288,18 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 12. `get_full_simulation_logs` ✨ **NEW** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
 13. `get_simulation_result_drifts` ✨ **NEW** - Time-window-based **posture-level** drift analysis showing transitions between blocked (FAIL) and not-blocked (SUCCESS) states. Two-phase usage: summary (grouped counts by result transition) then drill-down (paginated records). Groups by FAIL/SUCCESS for coarse posture view. Includes `final_status_breakdown`, `attack_summary` (with `attack_name`), `look_back_time` (7-day default), and zero-results smart hints. Supports `attack_id`, `attack_type`, and `attack_name` filters.
 14. `get_simulation_status_drifts` ✨ **NEW** - Time-window-based **security-control-level** drift analysis showing transitions between final statuses (prevented, stopped, detected, logged, missed, inconsistent). Two-phase usage: summary then drill-down. Groups by finalStatus for fine-grained control view. Includes `attack_summary` (with `attack_name`), `look_back_time`, and zero-results smart hints. Supports `attack_id`, `attack_type`, and `attack_name` filters.
+15. `get_peer_benchmark_score` ✨ **NEW** - Returns the customer's security posture score compared to SafeBreach peers
+  for a given time window. Wraps `POST /api/data/v1/accounts/{account_id}/score` (delivered in SAF-27621). Required
+  `start_date` / `end_date` accept epoch ms/seconds or ISO 8601 strings; optional `include_test_ids_filter` /
+  `exclude_test_ids_filter` (comma-separated planRunIds, mutually exclusive). Returns `customer_score`,
+  `all_peers_score` (across **all** SafeBreach customers), and `customer_industry_scores` (scoped to the customer's
+  **own** industry only via server-side Salesforce mapping; not overridable; typically 0 or 1 element). Each score
+  includes `score_blocked` / `score_detected` / `score_unblocked` and a `security_control_breakdown[]`. Surfaces
+  `peer_snapshot_month`, `peer_data_through_date` (ETL freshness; may be null), `custom_attacks_filtered_count`
+  (auto-excluded custom attacks with `moveId >= 10_000_000`), and a `hint_to_agent` when data is missing or HTTP 204.
 
 **Playbook Server (Port 8003):**
-15. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
+16. `get_playbook_attacks` ✨ **Enhanced** - Filtered and paginated playbook attacks with comprehensive filtering
   (name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics, attacker/target platform) and pagination.
   Supports `include_mitre_techniques`, `mitre_technique_filter` (comma-separated, OR logic),
   `mitre_tactic_filter` (comma-separated, OR logic),
@@ -298,12 +307,12 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   and `target_platform_filter` (comma-separated, OR logic, case-insensitive partial match).
   Each attack always includes `attacker_platform` and `target_platform` fields.
   Attacks without platform data are included when platform filters are active (None pass-through)
-16. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
+17. `get_playbook_attack_details` ✨ **Enhanced** - Detailed attack information with verbosity options
   (fix suggestions, tags, parameters, MITRE ATT&CK data with URLs) for specific attack techniques
 
 **Utilities Server (Port 8002):**
-17. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
-18. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
+18. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
+19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 
 ## Filtering and Search Capabilities
