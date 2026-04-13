@@ -136,7 +136,7 @@ SafeBreach's Peer Benchmark Score API (delivered in SAF-27621) exposes `POST /ap
 - [ ] New cache `peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)` declared alongside existing caches in `data_functions.py`. Cache gated by `is_caching_enabled("data")`. Cache key format: `f"peer_benchmark_{console}_{start_ms}_{end_ms}_{sorted_includes}_{sorted_excludes}"`.
 - [ ] Errors handled with the existing convention: `response.raise_for_status()` inside `try/except`, `logger.error(...)` on failure, no token leakage in logs.
 - [ ] Tool docstring documents all parameters (stock phrasing where possible), `snapshotMonth`, `dataThroughDate`, `customAttackIdsFiltered`, score formula (`1.0*blocked + 0.5*detected`), and the ISO-datetime contract.
-- [ ] Unit tests in `test_data_functions.py` cover: happy path, include-only filter, exclude-only filter, epoch-input normalization, ISO-input normalization, empty peer/industry → `hint_to_agent`, 403 error, 400 error. Mocks: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`. `setup_method` clears `peer_benchmark_cache`.
+- [ ] Unit tests in `test_data_functions.py` cover: happy path, include-only filter, exclude-only filter, epoch-input normalization, ISO-input normalization, empty peer/industry → `hint_to_agent`, 403 error, 400 error. Mocks: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`. `setup_method` clears `peer_benchmark_cache`. <!-- pragma: allowlist secret -->
 - [ ] One E2E test in `test_e2e.py` (`@pytest.mark.e2e` + `e2e_console` fixture) validates the tool against a real console.
 - [ ] `CLAUDE.md` updated: Data Server tools list gains the new tool; Caching Strategy bullet list gains a `peer_benchmark — maxsize=3, ttl=600s` line.
 - [ ] Tool is accessible from the console AI chat (per DOD).
@@ -222,7 +222,7 @@ SafeBreach's Peer Benchmark Score API (delivered in SAF-27621) exposes `POST /ap
 * New cache `peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)` declared alongside existing caches; gated by `is_caching_enabled("data")`; key `f"peer_benchmark_{console}_{start_ms}_{end_ms}_{sorted_includes}_{sorted_excludes}"`
 * RBAC (403) and API errors handled via `response.raise_for_status()` inside `try/except` with `logger.error(...)`; no token leakage
 * Tool docstring documents all params, `snapshotMonth`, `dataThroughDate`, `customAttackIdsFiltered`, score formula (`1.0*blocked + 0.5*detected`), ISO-datetime contract
-* Unit tests in `test_data_functions.py` cover: happy path, include-only, exclude-only, epoch input, ISO input, empty peer/industry hint, 403, 400 — mocks: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`; `setup_method` clears `peer_benchmark_cache`
+* Unit tests in `test_data_functions.py` cover: happy path, include-only, exclude-only, epoch input, ISO input, empty peer/industry hint, 403, 400 — mocks: `requests.post`, `get_secret_for_console`, `get_api_base_url`, `get_api_account_id`; `setup_method` clears `peer_benchmark_cache` <!-- pragma: allowlist secret -->
 * One E2E test (`@pytest.mark.e2e` + `e2e_console` fixture) in `test_e2e.py` validates against a real console
 * `CLAUDE.md` updated: Data Server tools list + Caching Strategy adds `peer_benchmark — maxsize=3, ttl=600s` line
 * Tool accessible from console AI chat (per DOD)
