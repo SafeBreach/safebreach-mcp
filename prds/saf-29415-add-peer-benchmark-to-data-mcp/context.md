@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29415
 
 ## Status
-Phase 4: Document Findings (planning-dev-task)
+Phase 5: Brainstorm Complete
 
 ## Mode
 Improving
@@ -222,5 +222,61 @@ GATEWAY_RESPONSE = {
 
 **Non-Goals**: NL intent parsing (MCP client's job); new datetime helpers; explainability computed locally.
 
-## Proposed Improvements
-(Phase 6)
+## Brainstorm Outcomes (Phase 5)
+
+**Locked-in decisions** (all approved by user):
+
+1. **Response shape — A1: Pass-through with rename mapping + additive hint_to_agent.**
+   - Applied via a key-rename mapping in `data_types.py` (same pattern as `reduced_test_summary_mapping` at lines 13-20).
+   - Semantic content preserved 1:1; no field dropped; no score re-computation.
+   - Rename mapping:
+     | Backend (camelCase) | MCP response | Why |
+     |---|---|---|
+     | `startDate` / `endDate` | `start_date` / `end_date` | snake_case |
+     | `snapshotMonth` | `peer_snapshot_month` | clarify this is peer snapshot, not query window |
+     | `dataThroughDate` | `peer_data_through_date` | explicit: peer data freshness |
+     | `attackIds` | `attack_ids` | snake_case |
+     | `attackIdsQueried` | `attack_ids_count` | clarify it's a count |
+     | `customAttackIdsFiltered` | `custom_attacks_filtered_count` | clarify count; "IDs filtered" ambiguous |
+     | `customerScore` | `customer_score` | snake_case |
+     | `peerScore` | `all_peers_score` | disambiguate: **all SafeBreach peers** (not customer's industry peers) |
+     | `industryScores` | `industry_scores` | snake_case |
+     | `industry` (inside) | `industry_name` | explicit |
+     | `score` / `scoreBlocked` / `scoreDetected` / `scoreUnblocked` | `score` / `score_blocked` / `score_detected` / `score_unblocked` | snake_case |
+     | `totalSimulations` | `total_simulations` | snake_case |
+     | `securityControlCategory` (array) | `security_control_breakdown` | it's a breakdown *by* category |
+     | `name` (inside breakdown) | `control_category_name` | explicit |
+   - Additive top-level field: `hint_to_agent: str` — only present when HTTP 204 or any of `customer_score` / `all_peers_score` / `industry_scores` are null/empty.
+
+2. **Caching — B1: Full-key cache.**
+   - `peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600)`.
+   - Key: `f"peer_benchmark_{console}_{start_ms}_{end_ms}_{sorted_includes_csv}_{sorted_excludes_csv}"`.
+   - Gated by `is_caching_enabled("data")` (env var `SB_MCP_CACHE_DATA`).
+
+3. **Filter-ID style — C1: Comma-separated string + `_filter` suffix.**
+   - `include_test_ids_filter: Optional[str] = None`, `exclude_test_ids_filter: Optional[str] = None`.
+   - Split via `[v.strip() for v in s.split(",") if v.strip()]`.
+   - Omitted from API body when empty/null.
+
+4. **Mutual exclusivity — validate at MCP boundary.**
+   - If both `include_test_ids_filter` and `exclude_test_ids_filter` are non-empty after parsing, raise a clean `ValueError` with a clear message (faster agent feedback than a backend 400).
+   - Still surface backend 400s gracefully in case of ordering / date issues.
+
+5. **HTTP 204 / null scores — structured empty result with hint.**
+   - On 204: return `{start_date, end_date, customer_score: None, all_peers_score: None, industry_scores: [], hint_to_agent: "No executions in the requested window, or all matched attacks were custom (peer benchmark excludes custom attack IDs >= 10_000_000)."}`.
+   - On 200 with `customerScore == null`: pass through with hint explaining "no executions in window".
+   - On 200 with `peerScore == null` / `industryScores == []`: hint explaining "no peer data for this window (possibly frozen snapshot on staging/private-dev)".
+   - Hints are composed when multiple conditions apply.
+
+6. **Docstring requirements** (from backend findings):
+   - Document custom-attack threshold: `moveId >= 10_000_000`.
+   - Document that industry is server-side determined (Salesforce mapping, not overridable).
+   - Document peer snapshot monthly granularity + ETL daily-update behavior.
+   - Document 204 handling.
+   - Drop 403 from unit tests (no RBAC on this endpoint); keep generic 500/backend-error case.
+
+**Out of scope (confirmed non-goals)**:
+- NL intent parsing (MCP client's responsibility).
+- Score re-computation.
+- Explainability beyond what API returns.
+- Platform / industry override (API doesn't support it).
