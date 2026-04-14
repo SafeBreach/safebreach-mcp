@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29966
 
 ## Status
-Phase 3: Create Working Branch and PRD Context
+Phase 6: PRD Created
 
 ## Mode
 Improving
@@ -140,3 +140,60 @@ Each step has: `name`, `draft` (bool), `systemFilter`, `targetFilter`, `attacker
 
 ### Ordering Options
 name (default), step_count, created_at, updated_at — asc/desc
+
+## Implementation Pattern Details (Phase 4 Deep Dive)
+
+### Config Server Tool Pattern
+- Tools return `-> dict` (not str like Playbook)
+- Functions are `async def`
+- Single-tenant auto-resolve: check `if not safebreach_envs:` then override console name
+- Import: `from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs`
+
+### Pagination Pattern (from playbook_types.py:561-600)
+- 0-based page numbering, PAGE_SIZE=10
+- Ceiling division: `total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE`
+- Slice: `start = page * PAGE_SIZE`, `end = min(start + PAGE_SIZE, total)`
+- Response keys: `page_number`, `total_pages`, `total_scenarios`, `scenarios_in_page`, `hint_to_agent`
+- `hint_to_agent` = None on last page
+- Invalid page returns `error` key with empty list
+
+### Filtering Pattern (from playbook_types.py:369-497)
+- Copy input list, chain sequential filters (AND logic)
+- Case-insensitive partial match: `filter.lower() in item['name'].lower()`
+- Use `.get()` for safe access
+- `applied_filters` dict tracks only provided (non-default) filters
+
+### Cache Pattern
+- `scenarios_cache = SafeBreachCache(name="scenarios", maxsize=5, ttl=1800)`
+- `categories_cache = SafeBreachCache(name="scenario_categories", maxsize=5, ttl=3600)`
+- Check `is_caching_enabled("config")` before get/set
+- Cache key: `f"scenarios_{console}"`, `f"categories_{console}"`
+
+### Test Pattern (from config tests)
+- `setup_method()`: clear caches
+- `@pytest.fixture` for mock data matching API response structure
+- `@patch()` decorators for `requests.get`, `get_secret_for_console`, `get_api_base_url`
+- Config does NOT need `get_api_account_id` for scenarios (no account_id in path)
+- Assert dict structure and pagination metadata
+
+### Naming Convention (confirmed with user)
+- **Tool input params**: snake_case (`name_filter`, `page_number`)
+- **Pagination/metadata keys**: snake_case (`total_pages`, `hint_to_agent`, `applied_filters`)
+- **Entity fields from API**: Preserve API names (`createdBy`, `createdAt`, `updatedAt`)
+- **New computed fields**: snake_case (`step_count`, `is_ready_to_run`, `category_names`)
+
+## Brainstorming Results
+
+### Chosen Approach: Single API Call + Client-Side Everything (Approach A)
+- Fetch all scenarios in one `/scenarios` call, cache full objects
+- Categories fetched separately with dedicated cache (TTL=3600s)
+- Filter, compute ready-to-run, join categories, paginate — all client-side
+- `get_scenario_details` looks up by ID from cached list (free, no extra API call)
+- Matches proven playbook server pattern exactly
+
+### Key Design Decisions
+1. **get_scenario_details returns full raw payload** (for future queue API use)
+2. **get_scenarios list view is minimal**: step_count only, no step names
+3. **Categories**: Separate cache, lazy-loaded, TTL=3600s
+4. **Scenarios**: Cache full objects, TTL=1800s, maxsize=5
+5. **is_ready_to_run computed from steps** during transform (not stored in API)
