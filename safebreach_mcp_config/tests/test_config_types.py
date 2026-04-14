@@ -370,7 +370,7 @@ class TestFilterScenariosByCriteria:
 
     def test_category_filter_partial(self, sample_reduced_scenarios):
         result = filter_scenarios_by_criteria(
-            sample_reduced_scenarios, category_filter="Threat"
+            sample_reduced_scenarios, category_filter="Groups"
         )
         assert len(result) == 1
         assert "Threat Groups" in result[0]["category_names"]
