@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29966
 
 ## Status
-Phase 6: Summary Created
+Phase 3: Create Working Branch and PRD Context
 
 ## Mode
 Improving
@@ -48,7 +48,7 @@ Scenario APIs use `/api/content-manager/vLatest/` — similar content domain as 
 ### Auth Pattern
 - Token: `get_secret_for_console(console)` → header `{"x-apitoken": token}`
 - Base URL: `get_api_base_url(console, endpoint_type)` → e.g., `https://console.safebreach.com`
-- Note: Scenario API uses `x-token` header (JWT), which differs from existing `x-apitoken` pattern
+- Confirmed: `x-apitoken` works with `/api/content-manager/vLatest/` endpoints (tested live)
 
 ### Caching
 - `SafeBreachCache(name=..., maxsize=..., ttl=...)` wrapper around `cachetools.TTLCache`
@@ -93,11 +93,50 @@ Two new MCP tools needed in the Config Server to expose SafeBreach scenario mana
 5. **Pagination**: Follow existing PAGE_SIZE=10 pattern if scenario list is large
 
 ### Risks & Edge Cases
-- **API response structure unknown**: Need actual API response to design transforms accurately
-- **Category join**: If categories are separate, need to fetch both and join client-side
-- **No account_id in path**: Scenario API may use different URL structure than config API
-- **Large scenario lists**: May need pagination if response is large
-- **OOB vs custom distinction**: Need to identify which field in API response indicates this
+- **Category join**: Categories are separate endpoint, need client-side join by integer ID
+- **No account_id in path**: Scenario API uses `/api/content-manager/vLatest/scenarios` (no account_id)
+- **Large scenario lists**: 443 scenarios on pentest01 — pagination essential
+- **Null-safe handling**: `tags` and `description` can be null
 
-## Proposed Improvements
-(Phase 6)
+## Real API Response Analysis (from pentest01 console)
+
+### Scenario Object Fields
+`id` (UUID), `name`, `description` (nullable), `createdBy`, `recommended` (bool),
+`categories` (int[]), `tags` (str[] or null), `createdAt`, `updatedAt`,
+`steps` (step objects), `order`, `actions`, `edges`, `phases`, `minApiVer`, `maxApiVer`
+
+### Category Object Fields
+`id` (int), `name`, `description`, `icon`, `scenarioIcon`, `cardBackGround`, `order`, `minApiVer`
+
+### Data Volume
+- 443 scenarios total (all `createdBy: "SafeBreach"` on this console, but field supports custom)
+- 15 categories (static reference data)
+- 6 recommended scenarios
+- 206 scenarios with tags
+- Steps per scenario: 0-16, avg 6.3
+- 1 scenario has no steps
+
+### Ready-to-Run Definition (confirmed with user)
+A scenario is "ready to run" when ALL steps have BOTH `targetFilter` AND `attackerFilter`
+with at least one key containing non-empty `values` arrays (e.g., `os`, `role`, `simulators`
+with actual IDs). Empty `simulators.values: []` does NOT qualify.
+- 4 of 443 are ready on pentest01
+- targetFilter keys found: `os`, `simulators`
+- attackerFilter keys found: `os`, `role`, `simulators`
+
+### Step Structure
+Each step has: `name`, `draft` (bool), `systemFilter`, `targetFilter`, `attackerFilter`,
+`attacksFilter` (references attacks by `playbook` IDs or `tags` criteria)
+
+### Proposed Filters
+| Filter | Type | Field Source |
+|--------|------|-------------|
+| `name_filter` | Partial match (case-insensitive) | `name` |
+| `creator_filter` | "safebreach"/"custom" | `createdBy` |
+| `category_filter` | Category name partial match | `categories[]` → join |
+| `recommended_filter` | Boolean | `recommended` |
+| `tag_filter` | Partial match (case-insensitive) | `tags[]` |
+| `ready_to_run_filter` | Boolean | computed from steps |
+
+### Ordering Options
+name (default), step_count, created_at, updated_at — asc/desc
