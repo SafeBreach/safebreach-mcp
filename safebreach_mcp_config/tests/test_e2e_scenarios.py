@@ -109,16 +109,17 @@ class TestScenarioE2E:
             assert 'page_number=1' in result['hint_to_agent']
 
     def test_get_scenario_details(self):
-        """Test getting full scenario details by ID."""
+        """Test getting full scenario details by ID (passes both UUID and int IDs)."""
         list_result = sb_get_scenarios(console=E2E_CONSOLE, page_number=0)
         first_id = list_result['scenarios_in_page'][0]['id']
 
-        detail = sb_get_scenario_details(first_id, console=E2E_CONSOLE)
+        # Pass as string to support both UUID (OOB) and integer (custom plan) IDs
+        detail = sb_get_scenario_details(str(first_id), console=E2E_CONSOLE)
 
-        assert detail['id'] == first_id
+        assert str(detail['id']) == str(first_id)
         assert 'name' in detail
         assert 'steps' in detail
-        assert 'categories' in detail
+        assert 'source_type' in detail
         assert 'category_names' in detail
         assert isinstance(detail['category_names'], list)
 
@@ -129,13 +130,51 @@ class TestScenarioE2E:
 
     def test_scenario_details_has_full_payload(self):
         """Test that details include full payload fields needed for queue API."""
-        list_result = sb_get_scenarios(console=E2E_CONSOLE, page_number=0)
+        # Get an OOB scenario specifically to check phases/createdBy fields
+        list_result = sb_get_scenarios(
+            console=E2E_CONSOLE, creator_filter="safebreach", page_number=0
+        )
         first_id = list_result['scenarios_in_page'][0]['id']
 
-        detail = sb_get_scenario_details(first_id, console=E2E_CONSOLE)
+        detail = sb_get_scenario_details(str(first_id), console=E2E_CONSOLE)
 
         assert 'steps' in detail
         assert 'phases' in detail
         assert 'createdBy' in detail
         assert 'createdAt' in detail
         assert 'updatedAt' in detail
+        assert detail['source_type'] == 'oob'
+
+    def test_custom_scenarios_returned(self):
+        """Custom plans should be fetched and returned with source_type='custom'."""
+        result = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="custom")
+
+        assert result['total_scenarios'] > 0, \
+            "Expected custom plans on pentest01 (My Scenarios tab)"
+        for scenario in result['scenarios_in_page']:
+            assert scenario['source_type'] == 'custom'
+            assert scenario['category_names'] == []
+            assert scenario['recommended'] is False
+
+    def test_merged_oob_and_custom_by_default(self):
+        """No filter should return both OOB scenarios and custom plans."""
+        result = sb_get_scenarios(console=E2E_CONSOLE, page_number=0)
+
+        # Sanity: there should be more than just OOB on pentest01
+        oob_only = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="safebreach")
+        custom_only = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="custom")
+
+        assert result['total_scenarios'] == \
+            oob_only['total_scenarios'] + custom_only['total_scenarios']
+
+    def test_get_custom_plan_details_by_integer_id(self):
+        """Custom plan details should be retrievable by their integer ID."""
+        list_result = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="custom")
+        first_custom = list_result['scenarios_in_page'][0]
+        plan_id = first_custom['id']
+
+        detail = sb_get_scenario_details(str(plan_id), console=E2E_CONSOLE)
+
+        assert detail['source_type'] == 'custom'
+        assert str(detail['id']) == str(plan_id)
+        assert 'steps' in detail

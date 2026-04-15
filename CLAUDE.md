@@ -250,7 +250,8 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
 
 **Caching Strategy**: All caches use bounded `SafeBreachCache` (wraps `cachetools.TTLCache`) with
 per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to bound memory:
-- **Config Server**: `simulators` (5/3600s), `scenarios` (5/1800s), `scenario_categories` (5/3600s)
+- **Config Server**: `simulators` (5/3600s), `scenarios` (5/1800s), `scenario_categories` (5/3600s),
+  `plans` (5/1800s)
 - **Data Server**: `tests` (5/1800s), `simulations` (3/600s), `security_control_events` (3/600s),
   `findings` (3/600s), `full_simulation_logs` (2/300s), `peer_benchmark` (3/600s)
 - **Playbook Server**: `playbook_attacks` — maxsize=5, TTL=1800s
@@ -275,13 +276,16 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 1. `get_console_simulators` ✨ **Enhanced** - Filtered simulator retrieval with status, name, label, OS type,
   and criticality filtering plus customizable ordering
 2. `get_simulator_details` - Get detailed simulator information
-3. `get_scenarios` ✨ **NEW** - Filtered and paginated scenario listing with name, creator (OOB/custom),
-  category, recommended, tag, and ready-to-run filtering. Categories resolved from separate endpoint.
+3. `get_scenarios` ✨ **NEW** - Filtered and paginated listing of BOTH OOB (SafeBreach-published)
+  scenarios AND custom (user-created) plans. Each item has `source_type='oob'|'custom'`. By default
+  returns both sources merged; `creator_filter='safebreach'` returns OOB only, `creator_filter='custom'`
+  returns plans only. Other filters: name, category (OOB only), recommended (OOB only), tag, ready-to-run.
   Ready-to-run = all steps have both targetFilter AND attackerFilter with non-empty criteria values.
   Supports ordering by name, step_count, createdAt, updatedAt (asc/desc). PAGE_SIZE=10 with hint_to_agent.
-4. `get_scenario_details` ✨ **NEW** - Full scenario payload by UUID including all steps with attack
-  filters, system filters, target/attacker filters, phases, actions, edges, and resolved category names.
-  Full payload preserved for future queue API integration.
+4. `get_scenario_details` ✨ **NEW** - Full scenario/plan payload by ID. Accepts UUID string (OOB) or
+  integer-as-string (custom plan). Returns complete payload including all steps with attack filters,
+  system/target/attacker filters, phases, actions, edges, plus `source_type` and resolved category names
+  (empty for custom). Full payload preserved for future queue API integration.
 
 **Data Server (Port 8001):**
 3. `get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering

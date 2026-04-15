@@ -107,15 +107,21 @@ def compute_is_ready_to_run(scenario: Dict[str, Any]) -> bool:
     return True
 
 
+def _truncate_description(description: Optional[str]) -> Optional[str]:
+    """Truncate description to 200 chars with ellipsis if longer."""
+    if description and len(description) > 200:
+        return description[:200] + "..."
+    return description
+
+
 def get_reduced_scenario_mapping(
     scenario: Dict[str, Any],
     categories_map: Dict[int, str]
 ) -> Dict[str, Any]:
-    """Transform a full scenario object into a reduced representation for list view."""
-    description = scenario.get('description')
-    if description and len(description) > 200:
-        description = description[:200] + "..."
+    """Transform a full OOB scenario object into a reduced representation for list view.
 
+    Returns a dict with source_type='oob'. For custom plans use get_reduced_plan_mapping.
+    """
     category_names = [
         categories_map[cat_id]
         for cat_id in scenario.get('categories', [])
@@ -124,8 +130,9 @@ def get_reduced_scenario_mapping(
 
     return {
         "id": scenario.get("id"),
+        "source_type": "oob",
         "name": scenario.get("name"),
-        "description": description,
+        "description": _truncate_description(scenario.get('description')),
         "createdBy": scenario.get("createdBy"),
         "recommended": scenario.get("recommended", False),
         "category_names": category_names,
@@ -134,6 +141,32 @@ def get_reduced_scenario_mapping(
         "is_ready_to_run": compute_is_ready_to_run(scenario),
         "createdAt": scenario.get("createdAt"),
         "updatedAt": scenario.get("updatedAt"),
+        "userId": None,
+        "originalScenarioId": None,
+    }
+
+
+def get_reduced_plan_mapping(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform a full custom plan object into a reduced representation for list view.
+
+    Returns a dict with source_type='custom'. Plans come from the
+    /api/config/v2/accounts/{id}/plans endpoint and have a different schema than OOB scenarios.
+    """
+    return {
+        "id": plan.get("id"),
+        "source_type": "custom",
+        "name": plan.get("name"),
+        "description": _truncate_description(plan.get('description')),
+        "createdBy": None,  # Custom plans don't have createdBy; see userId instead
+        "recommended": False,  # Custom plans don't have the recommended concept
+        "category_names": [],  # Custom plans don't have categories
+        "tags": plan.get("tags") if plan.get("tags") else None,
+        "step_count": len(plan.get("steps", [])),
+        "is_ready_to_run": compute_is_ready_to_run(plan),
+        "createdAt": plan.get("createdAt"),
+        "updatedAt": plan.get("updatedAt"),
+        "userId": plan.get("userId"),
+        "originalScenarioId": plan.get("originalScenarioId"),
     }
 
 
@@ -155,15 +188,9 @@ def filter_scenarios_by_criteria(
 
     if creator_filter:
         if creator_filter.lower() == 'safebreach':
-            filtered = [
-                s for s in filtered
-                if s.get('createdBy', '').lower() == 'safebreach'
-            ]
+            filtered = [s for s in filtered if s.get('source_type') == 'oob']
         elif creator_filter.lower() == 'custom':
-            filtered = [
-                s for s in filtered
-                if s.get('createdBy', '').lower() != 'safebreach'
-            ]
+            filtered = [s for s in filtered if s.get('source_type') == 'custom']
 
     if category_filter:
         cat_lower = category_filter.lower()

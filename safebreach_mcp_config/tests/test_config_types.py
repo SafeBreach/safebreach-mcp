@@ -10,6 +10,7 @@ import pytest
 from safebreach_mcp_config.config_types import (
     compute_is_ready_to_run,
     get_reduced_scenario_mapping,
+    get_reduced_plan_mapping,
     filter_scenarios_by_criteria,
     apply_scenario_ordering,
     paginate_scenarios,
@@ -161,6 +162,7 @@ def sample_reduced_scenarios():
             "id": "aaa-111",
             "name": "CISA Alert AA24 (StopRansomware: Akira Ransomware)",
             "description": "Based on a joint Cybersecurity Advisory",
+            "source_type": "oob",
             "createdBy": "SafeBreach",
             "recommended": True,
             "category_names": ["Known Threats Series"],
@@ -174,6 +176,7 @@ def sample_reduced_scenarios():
             "id": "bbb-222",
             "name": "KongTuke",
             "description": None,
+            "source_type": "oob",
             "createdBy": "SafeBreach",
             "recommended": False,
             "category_names": ["Threat Groups"],
@@ -187,6 +190,7 @@ def sample_reduced_scenarios():
             "id": "ccc-333",
             "name": "Step 1 - Fortify your Network Perimeter",
             "description": "Fortify network perimeter defenses",
+            "source_type": "oob",
             "createdBy": "SafeBreach",
             "recommended": False,
             "category_names": ["Baseline Scenarios"],
@@ -197,12 +201,13 @@ def sample_reduced_scenarios():
             "updatedAt": "2025-12-01T00:00:00.000Z",
         },
         {
-            "id": "ddd-444",
+            "id": 444,
             "name": "Custom Data Exfil Scenario",
             "description": "A custom scenario for testing data exfiltration",
-            "createdBy": "john.doe@company.com",
+            "source_type": "custom",
+            "createdBy": None,
             "recommended": False,
-            "category_names": ["Known Threats Series"],
+            "category_names": [],
             "tags": None,
             "step_count": 2,
             "is_ready_to_run": False,
@@ -213,6 +218,7 @@ def sample_reduced_scenarios():
             "id": "eee-555",
             "name": "Email - Attachment - Infiltration - Baseline",
             "description": "Email attachment infiltration baseline scenario",
+            "source_type": "oob",
             "createdBy": "SafeBreach",
             "recommended": True,
             "category_names": ["Getting Started"],
@@ -285,11 +291,12 @@ class TestGetReducedScenarioMapping:
     def test_all_expected_keys_present(self, sample_scenario_ready, sample_categories_map):
         result = get_reduced_scenario_mapping(sample_scenario_ready, sample_categories_map)
         expected_keys = {
-            "id", "name", "description", "createdBy", "recommended",
+            "id", "source_type", "name", "description", "createdBy", "recommended",
             "category_names", "tags", "step_count", "is_ready_to_run",
-            "createdAt", "updatedAt"
+            "createdAt", "updatedAt", "userId", "originalScenarioId"
         }
         assert set(result.keys()) == expected_keys
+        assert result["source_type"] == "oob"
 
     def test_description_truncation(self, sample_categories_map):
         scenario = {
@@ -338,6 +345,81 @@ class TestGetReducedScenarioMapping:
         assert result["category_names"] == ["Known Threats Series"]
 
 
+class TestGetReducedPlanMapping:
+    """Test the get_reduced_plan_mapping function for custom plans."""
+
+    @pytest.fixture
+    def sample_plan(self):
+        """A custom plan from the /plans endpoint."""
+        return {
+            "id": 119,
+            "name": "CISA Alert AA23-347A (APT29)",
+            "description": "A custom scenario description",
+            "accountId": 3471166703,
+            "originalScenarioId": "938be06a-1e47-4a68-a10d-a4d04167896b",
+            "userId": 347116670300054,
+            "deploymentId": None,
+            "systemFilter": None,
+            "tags": [],
+            "emailRecipients": None,
+            "successCriteria": None,
+            "actions": [],
+            "edges": [],
+            "createdAt": "2026-02-23T08:19:46.295Z",
+            "updatedAt": "2026-02-23T08:19:46.295Z",
+            "steps": [
+                {
+                    "name": "Step 1",
+                    "systemFilter": {},
+                    "targetFilter": {"os": {"values": ["WINDOWS"]}},
+                    "attackerFilter": {"role": {"values": ["isInfiltration"]}},
+                    "attacksFilter": {},
+                }
+            ],
+        }
+
+    def test_source_type_is_custom(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["source_type"] == "custom"
+
+    def test_all_expected_keys_present(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        expected_keys = {
+            "id", "source_type", "name", "description", "createdBy", "recommended",
+            "category_names", "tags", "step_count", "is_ready_to_run",
+            "createdAt", "updatedAt", "userId", "originalScenarioId"
+        }
+        assert set(result.keys()) == expected_keys
+
+    def test_custom_has_no_categories_or_recommended(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["category_names"] == []
+        assert result["recommended"] is False
+        assert result["createdBy"] is None
+
+    def test_custom_preserves_user_and_original(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["userId"] == 347116670300054
+        assert result["originalScenarioId"] == "938be06a-1e47-4a68-a10d-a4d04167896b"
+
+    def test_empty_tags_list_becomes_none(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["tags"] is None  # empty list normalized to None
+
+    def test_integer_id_preserved(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["id"] == 119
+        assert isinstance(result["id"], int)
+
+    def test_step_count_computed_for_plans(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["step_count"] == 1
+
+    def test_is_ready_to_run_for_plans(self, sample_plan):
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["is_ready_to_run"] is True
+
+
 class TestFilterScenariosByCriteria:
     """Test the filter_scenarios_by_criteria function."""
 
@@ -359,14 +441,15 @@ class TestFilterScenariosByCriteria:
             sample_reduced_scenarios, creator_filter="safebreach"
         )
         assert len(result) == 4
-        assert all(s["createdBy"] == "SafeBreach" for s in result)
+        assert all(s["source_type"] == "oob" for s in result)
 
     def test_creator_filter_custom(self, sample_reduced_scenarios):
         result = filter_scenarios_by_criteria(
             sample_reduced_scenarios, creator_filter="custom"
         )
         assert len(result) == 1
-        assert result[0]["createdBy"] == "john.doe@company.com"
+        assert result[0]["source_type"] == "custom"
+        assert result[0]["name"] == "Custom Data Exfil Scenario"
 
     def test_category_filter_partial(self, sample_reduced_scenarios):
         result = filter_scenarios_by_criteria(

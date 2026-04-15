@@ -16,6 +16,7 @@ from .config_types import (
     get_minimal_simulator_mapping,
     get_full_simulator_mapping,
     get_reduced_scenario_mapping,
+    get_reduced_plan_mapping,
     filter_scenarios_by_criteria,
     apply_scenario_ordering,
     paginate_scenarios,
@@ -29,6 +30,7 @@ simulators_cache = SafeBreachCache(name="simulators", maxsize=5, ttl=3600)
 # Scenario caches
 scenarios_cache = SafeBreachCache(name="scenarios", maxsize=5, ttl=1800)
 categories_cache = SafeBreachCache(name="scenario_categories", maxsize=5, ttl=3600)
+plans_cache = SafeBreachCache(name="plans", maxsize=5, ttl=1800)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -339,6 +341,59 @@ def clear_categories_cache():
     categories_cache.clear()
 
 
+def clear_plans_cache():
+    """Clear the plans cache (for testing)."""
+    plans_cache.clear()
+
+
+def _get_all_plans_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """
+    Get all custom plans (user-created scenarios) from cache or API.
+
+    Plans live at /api/config/v2/accounts/{account_id}/plans?details=true and have
+    a different schema than OOB scenarios.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        List of full plan dictionaries
+    """
+    cache_key = f"plans_{console}"
+
+    if is_caching_enabled("config"):
+        cached = plans_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved {len(cached)} plans from cache for console '{console}'")
+            return cached
+
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'config')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/config/v2/accounts/{account_id}/plans?details=true"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+        logger.info(f"Fetching custom plans from API for console '{console}'")
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+
+        response_data = response.json()
+        # Plans API wraps the list in {"data": [...]}
+        plans = response_data.get("data", []) if isinstance(response_data, dict) else response_data
+
+        if is_caching_enabled("config"):
+            plans_cache.set(cache_key, plans)
+
+        logger.info(f"Retrieved {len(plans)} custom plans from API for console '{console}'")
+        return plans
+
+    except Exception as e:
+        logger.error(f"Error fetching plans from API for console '{console}': {str(e)}")
+        raise
+
+
 def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     """
     Get all scenarios from cache or API.
@@ -465,12 +520,22 @@ def sb_get_scenarios(
         raise ValueError(f"page_number must be >= 0, got {page_number}")
 
     try:
-        all_scenarios = _get_all_scenarios_from_cache_or_api(console)
-        categories_map = _get_categories_map_from_cache_or_api(console)
+        # Determine which sources to fetch based on creator_filter
+        fetch_oob = creator_filter is None or creator_filter.lower() == 'safebreach'
+        fetch_custom = creator_filter is None or creator_filter.lower() == 'custom'
 
-        reduced = [
-            get_reduced_scenario_mapping(s, categories_map) for s in all_scenarios
-        ]
+        reduced = []
+
+        if fetch_oob:
+            all_scenarios = _get_all_scenarios_from_cache_or_api(console)
+            categories_map = _get_categories_map_from_cache_or_api(console)
+            reduced.extend(
+                get_reduced_scenario_mapping(s, categories_map) for s in all_scenarios
+            )
+
+        if fetch_custom:
+            all_plans = _get_all_plans_from_cache_or_api(console)
+            reduced.extend(get_reduced_plan_mapping(p) for p in all_plans)
 
         filtered = filter_scenarios_by_criteria(
             reduced,
@@ -517,21 +582,39 @@ def sb_get_scenarios(
 def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[str, Any]:
     """
     Get full details of a specific scenario by ID.
+
+    Searches both OOB scenarios (UUID IDs) and custom plans (integer IDs).
+    Returns the full raw payload with source_type='oob'|'custom' added, plus
+    resolved category_names for OOB scenarios.
     """
-    if not scenario_id or not scenario_id.strip():
+    if scenario_id is None or (isinstance(scenario_id, str) and not scenario_id.strip()):
         raise ValueError("scenario_id parameter is required and cannot be empty")
 
+    # Normalize to string for unified comparison (UUIDs and integer plan IDs)
+    scenario_id = str(scenario_id).strip()
+
+    # Try OOB scenarios first (UUID string IDs)
     all_scenarios = _get_all_scenarios_from_cache_or_api(console)
     categories_map = _get_categories_map_from_cache_or_api(console)
 
     for scenario in all_scenarios:
-        if scenario.get("id") == scenario_id:
+        if str(scenario.get("id")) == scenario_id:
             result = dict(scenario)
+            result["source_type"] = "oob"
             result["category_names"] = [
                 categories_map[cat_id]
                 for cat_id in scenario.get("categories", [])
                 if cat_id in categories_map
             ]
+            return result
+
+    # Fall back to custom plans (integer IDs, stringified for comparison)
+    all_plans = _get_all_plans_from_cache_or_api(console)
+    for plan in all_plans:
+        if str(plan.get("id")) == scenario_id:
+            result = dict(plan)
+            result["source_type"] = "custom"
+            result["category_names"] = []  # Custom plans don't have categories
             return result
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")

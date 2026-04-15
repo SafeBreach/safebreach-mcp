@@ -18,10 +18,13 @@ from safebreach_mcp_config.config_functions import (
     sb_get_scenario_details,
     _get_all_scenarios_from_cache_or_api,
     _get_categories_map_from_cache_or_api,
+    _get_all_plans_from_cache_or_api,
     scenarios_cache,
     categories_cache,
+    plans_cache,
     clear_scenarios_cache,
     clear_categories_cache,
+    clear_plans_cache,
 )
 
 class TestConfigFunctions:
@@ -615,14 +618,17 @@ class TestSbGetScenarios:
     def setup_method(self):
         clear_scenarios_cache()
         clear_categories_cache()
+        clear_plans_cache()
 
     def teardown_method(self):
         clear_scenarios_cache()
         clear_categories_cache()
+        clear_plans_cache()
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_full_orchestration(self, mock_scenarios, mock_categories):
+    def test_full_orchestration(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
 
@@ -635,9 +641,10 @@ class TestSbGetScenarios:
         assert result["total_scenarios"] == 2
         assert result["page_number"] == 0
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_pagination_with_large_dataset(self, mock_scenarios, mock_categories):
+    def test_pagination_with_large_dataset(self, mock_scenarios, mock_categories, mock_plans):
         large_list = [
             {
                 "id": f"scenario-{i}", "name": f"Scenario {i}",
@@ -667,9 +674,10 @@ class TestSbGetScenarios:
         with pytest.raises(ValueError, match="Invalid creator_filter"):
             sb_get_scenarios("test-console", creator_filter="invalid")
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_api_failure_returns_error_dict(self, mock_scenarios, mock_categories):
+    def test_api_failure_returns_error_dict(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.side_effect = Exception("API timeout")
 
         result = sb_get_scenarios("test-console")
@@ -678,9 +686,10 @@ class TestSbGetScenarios:
         assert "API timeout" in result["error"]
         assert result["console"] == "test-console"
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_applied_filters_metadata(self, mock_scenarios, mock_categories):
+    def test_applied_filters_metadata(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
 
@@ -694,6 +703,113 @@ class TestSbGetScenarios:
         assert result["applied_filters"]["name_filter"] == "Akira"
         assert result["applied_filters"]["creator_filter"] == "safebreach"
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
+    def test_merges_oob_and_custom(self, mock_scenarios, mock_categories, mock_plans):
+        """No filter should return both OOB scenarios and custom plans."""
+        mock_scenarios.return_value = MOCK_SCENARIO_DATA  # 2 OOB
+        mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
+        mock_plans.return_value = [
+            {
+                "id": 100, "name": "Custom Plan A",
+                "description": None, "tags": [], "userId": 1,
+                "originalScenarioId": None, "steps": [],
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+            }
+        ]
+
+        result = sb_get_scenarios("test-console")
+
+        assert result["total_scenarios"] == 3  # 2 OOB + 1 custom
+        source_types = {s["source_type"] for s in result["scenarios_in_page"]}
+        assert source_types == {"oob", "custom"}
+
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
+    def test_creator_filter_custom_only_fetches_plans(self, mock_scenarios, mock_categories, mock_plans):
+        """creator_filter='custom' should skip fetching OOB scenarios."""
+        mock_plans.return_value = [
+            {
+                "id": 100, "name": "Custom Plan A",
+                "description": None, "tags": [], "userId": 1,
+                "originalScenarioId": None, "steps": [],
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+            }
+        ]
+
+        result = sb_get_scenarios("test-console", creator_filter="custom")
+
+        assert result["total_scenarios"] == 1
+        assert result["scenarios_in_page"][0]["source_type"] == "custom"
+        mock_scenarios.assert_not_called()
+        mock_plans.assert_called_once()
+
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
+    def test_creator_filter_safebreach_only_fetches_scenarios(self, mock_scenarios, mock_categories, mock_plans):
+        """creator_filter='safebreach' should skip fetching custom plans."""
+        mock_scenarios.return_value = MOCK_SCENARIO_DATA
+        mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
+
+        result = sb_get_scenarios("test-console", creator_filter="safebreach")
+
+        assert result["total_scenarios"] == 2
+        assert all(s["source_type"] == "oob" for s in result["scenarios_in_page"])
+        mock_plans.assert_not_called()
+
+
+class TestGetAllPlansFromCacheOrApi:
+    """Test _get_all_plans_from_cache_or_api function."""
+
+    def setup_method(self):
+        clear_plans_cache()
+
+    def teardown_method(self):
+        clear_plans_cache()
+
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123456')
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_api_call_success_unwraps_data(self, mock_get, mock_secret, mock_base_url, mock_account):
+        mock_response = Mock()
+        mock_response.json.return_value = {"data": [{"id": 1, "name": "Plan 1"}]}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _get_all_plans_from_cache_or_api("test-console")
+
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+        # Verify URL contains the plans path with account_id
+        call_args = str(mock_get.call_args)
+        assert '/api/config/v2/accounts/123456/plans' in call_args
+
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_cache_hit_skips_api(self, mock_get, mock_cache_enabled):
+        plans_cache.set("plans_test-console", [{"id": 99, "name": "Cached"}])
+
+        result = _get_all_plans_from_cache_or_api("test-console")
+
+        assert result[0]["id"] == 99
+        mock_get.assert_not_called()
+
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_api_error_propagates(self, mock_get, mock_secret, mock_base_url, mock_account):
+        mock_get.side_effect = Exception("API unreachable")
+
+        with pytest.raises(Exception, match="API unreachable"):
+            _get_all_plans_from_cache_or_api("test-console")
+
 
 class TestSbGetScenarioDetails:
     """Test sb_get_scenario_details function."""
@@ -701,28 +817,49 @@ class TestSbGetScenarioDetails:
     def setup_method(self):
         clear_scenarios_cache()
         clear_categories_cache()
+        clear_plans_cache()
 
     def teardown_method(self):
         clear_scenarios_cache()
         clear_categories_cache()
+        clear_plans_cache()
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_found_returns_full_payload(self, mock_scenarios, mock_categories):
+    def test_found_returns_full_payload(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
 
         result = sb_get_scenario_details("aaa-111-222-333", "test-console")
 
         assert result["id"] == "aaa-111-222-333"
+        assert result["source_type"] == "oob"
         assert result["name"] == "CISA Alert Akira Ransomware"
         assert "steps" in result
         assert "category_names" in result
         assert result["category_names"] == ["Known Threats Series"]
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api', return_value=[])
+    def test_finds_custom_plan_by_integer_id(self, mock_scenarios, mock_categories, mock_plans):
+        """Custom plan lookup by integer ID (passed as string) should work."""
+        mock_categories.return_value = {}
+        mock_plans.return_value = [
+            {"id": 119, "name": "Custom Plan", "steps": [], "userId": 1}
+        ]
+
+        result = sb_get_scenario_details("119", "test-console")
+
+        assert result["id"] == 119
+        assert result["source_type"] == "custom"
+        assert result["category_names"] == []
+
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_not_found_raises_value_error(self, mock_scenarios, mock_categories):
+    def test_not_found_raises_value_error(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series"}
 
@@ -733,9 +870,10 @@ class TestSbGetScenarioDetails:
         with pytest.raises(ValueError, match="scenario_id"):
             sb_get_scenario_details("", "test-console")
 
+    @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_preserves_full_payload(self, mock_scenarios, mock_categories):
+    def test_preserves_full_payload(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series"}
 
@@ -745,3 +883,4 @@ class TestSbGetScenarioDetails:
         assert "actions" in result
         assert "edges" in result
         assert "phases" in result
+        assert result["source_type"] == "oob"

@@ -617,3 +617,4 @@ console to validate scenario tools work against real data.
 |------|-------------------|
 | 2026-04-14 18:30 | PRD created — initial draft |
 | 2026-04-14 18:45 | Restructured to pure TDD phases (RED → GREEN), added E2E test phase against pentest01 |
+| 2026-04-15 12:00 | Added Phase 8 — integrate custom scenarios (plans API) discovered after initial impl. Added source_type field to unify OOB and custom. |
