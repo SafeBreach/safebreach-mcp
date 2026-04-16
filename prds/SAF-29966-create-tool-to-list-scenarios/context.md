@@ -42,7 +42,7 @@ Scenario APIs use `/api/content-manager/vLatest/` — similar content domain as 
 - **types.py**: Transform API dicts → reduced/full output dicts, client-side filtering, pagination (PAGE_SIZE=10)
 - **functions.py**: `requests.get()` with `x-apitoken` header, 120s timeout, optional `SafeBreachCache` (TTLCache)
 - **server.py**: `@self.mcp.tool()` decorator, returns `str` (formatted text, not JSON), error wrapping
-- **tests/**: `@patch()` mocking of `requests.get`, `get_secret_for_console`, `get_api_base_url`;
+- **tests/**: `@patch()` mocking of `requests.get`, credential helpers, `get_api_base_url`;
   `@pytest.fixture` for test data; class-based grouping with `setup_method`/`teardown_method`
 
 ### Auth Pattern
