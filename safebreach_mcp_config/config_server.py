@@ -14,7 +14,12 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from safebreach_mcp_core import SafeBreachMCPBase
-from .config_functions import sb_get_console_simulators, sb_get_simulator_details
+from .config_functions import (
+    sb_get_console_simulators,
+    sb_get_simulator_details,
+    sb_get_scenarios,
+    sb_get_scenario_details,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,63 @@ label_filter (partial label match), os_type_filter (OS type match), critical_onl
                 if console_name != 'default' and console not in safebreach_envs:
                     console = console_name
             return sb_get_simulator_details(simulator_id, console)
+
+        @self.mcp.tool(
+            name="get_scenarios",
+            description="""Returns a filtered and paginated list of SafeBreach scenarios for a given console.
+Scenarios are multi-step attack workflows. Each scenario includes metadata about its type (OOB/custom),
+category, readiness status, and step count. Results are paginated (10 per page) and ordered by name ascending by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+creator_filter ('safebreach' for OOB or 'custom' for user-created), category_filter (partial category name match),
+recommended_filter (True/False), tag_filter (partial tag match), ready_to_run_filter (True/False - whether all steps
+have simulator selection criteria configured), order_by ('name'/'step_count'/'createdAt'/'updatedAt'),
+order_direction ('asc'/'desc')"""
+        )
+        async def get_scenarios_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            creator_filter: Optional[str] = None,
+            category_filter: Optional[str] = None,
+            recommended_filter: Optional[bool] = None,
+            tag_filter: Optional[str] = None,
+            ready_to_run_filter: Optional[bool] = None,
+            order_by: str = "name",
+            order_direction: str = "asc"
+        ) -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_scenarios(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                creator_filter=creator_filter,
+                category_filter=category_filter,
+                recommended_filter=recommended_filter,
+                tag_filter=tag_filter,
+                ready_to_run_filter=ready_to_run_filter,
+                order_by=order_by,
+                order_direction=order_direction,
+            )
+
+        @self.mcp.tool(
+            name="get_scenario_details",
+            description="""Gets the full details of a specific SafeBreach scenario by its UUID.
+Returns the complete scenario payload including all steps with attack filters, system filters,
+target/attacker filters, phases, actions, and edges. Also includes resolved category names.
+This full payload can be used for scenario inspection and future queue API integration.
+Parameters: scenario_id (required, UUID string), console (required)"""
+        )
+        async def get_scenario_details_tool(scenario_id: str, console: str = "default") -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_scenario_details(scenario_id, console)
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""
