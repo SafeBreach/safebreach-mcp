@@ -201,14 +201,14 @@ def sample_reduced_scenarios():
             "updatedAt": "2025-12-01T00:00:00.000Z",
         },
         {
-            "id": 444,
+            "id": "444",
             "name": "Custom Data Exfil Scenario",
             "description": "A custom scenario for testing data exfiltration",
             "source_type": "custom",
             "createdBy": None,
             "recommended": False,
             "category_names": [],
-            "tags": None,
+            "tags": [],
             "step_count": 2,
             "is_ready_to_run": False,
             "createdAt": "2026-03-01T00:00:00.000Z",
@@ -325,7 +325,7 @@ class TestGetReducedScenarioMapping:
 
     def test_null_tags_and_description(self, sample_scenario_not_ready, sample_categories_map):
         result = get_reduced_scenario_mapping(sample_scenario_not_ready, sample_categories_map)
-        assert result["tags"] is None
+        assert result["tags"] == []
         assert result["description"] == "Scenario with empty simulator filter values"
 
     def test_unknown_category_id_skipped(self, sample_categories_map):
@@ -402,14 +402,14 @@ class TestGetReducedPlanMapping:
         assert result["userId"] == 347116670300054
         assert result["originalScenarioId"] == "938be06a-1e47-4a68-a10d-a4d04167896b"
 
-    def test_empty_tags_list_becomes_none(self, sample_plan):
+    def test_empty_tags_list_becomes_empty_list(self, sample_plan):
         result = get_reduced_plan_mapping(sample_plan)
-        assert result["tags"] is None  # empty list normalized to None
+        assert result["tags"] == []
 
-    def test_integer_id_preserved(self, sample_plan):
+    def test_id_is_always_string(self, sample_plan):
         result = get_reduced_plan_mapping(sample_plan)
-        assert result["id"] == 119
-        assert isinstance(result["id"], int)
+        assert result["id"] == "119"
+        assert isinstance(result["id"], str)
 
     def test_step_count_computed_for_plans(self, sample_plan):
         result = get_reduced_plan_mapping(sample_plan)

@@ -129,14 +129,14 @@ def get_reduced_scenario_mapping(
     ]
 
     return {
-        "id": scenario.get("id"),
+        "id": str(scenario.get("id")),
         "source_type": "oob",
         "name": scenario.get("name"),
         "description": _truncate_description(scenario.get('description')),
         "createdBy": scenario.get("createdBy"),
         "recommended": scenario.get("recommended", False),
         "category_names": category_names,
-        "tags": scenario.get("tags"),
+        "tags": scenario.get("tags") or [],
         "step_count": len(scenario.get("steps", [])),
         "is_ready_to_run": compute_is_ready_to_run(scenario),
         "createdAt": scenario.get("createdAt"),
@@ -153,14 +153,14 @@ def get_reduced_plan_mapping(plan: Dict[str, Any]) -> Dict[str, Any]:
     /api/config/v2/accounts/{id}/plans endpoint and have a different schema than OOB scenarios.
     """
     return {
-        "id": plan.get("id"),
+        "id": str(plan.get("id")),
         "source_type": "custom",
         "name": plan.get("name"),
         "description": _truncate_description(plan.get('description')),
         "createdBy": None,  # Custom plans don't have createdBy; see userId instead
         "recommended": False,  # Custom plans don't have the recommended concept
         "category_names": [],  # Custom plans don't have categories
-        "tags": plan.get("tags") if plan.get("tags") else None,
+        "tags": plan.get("tags") or [],
         "step_count": len(plan.get("steps", [])),
         "is_ready_to_run": compute_is_ready_to_run(plan),
         "createdAt": plan.get("createdAt"),
@@ -431,12 +431,12 @@ def get_scenario_detail_view(
         ]
 
     return {
-        "id": scenario.get("id"),
+        "id": str(scenario.get("id")),
         "source_type": source_type,
         "name": scenario.get("name"),
         "description": scenario.get("description"),
         "category_names": category_names,
-        "tags": scenario.get("tags") if scenario.get("tags") else None,
+        "tags": scenario.get("tags") or [],
         "recommended": scenario.get("recommended", False) if source_type == 'oob' else False,
         "createdBy": scenario.get("createdBy") if source_type == 'oob' else None,
         "createdAt": scenario.get("createdAt"),

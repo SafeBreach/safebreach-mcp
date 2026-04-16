@@ -834,12 +834,14 @@ class TestSbGetScenarioDetails:
         result = sb_get_scenario_details("aaa-111-222-333", "test-console")
 
         assert result["id"] == "aaa-111-222-333"
+        assert isinstance(result["id"], str)
         assert result["source_type"] == "oob"
         assert result["name"] == "CISA Alert Akira Ransomware"
         assert "steps" in result
         assert result["category_names"] == ["Known Threats Series"]
         assert result["step_count"] == 1
         assert result["is_ready_to_run"] is False
+        assert isinstance(result["tags"], list)
         # Simplified: no raw execution mechanics
         assert "actions" not in result
         assert "edges" not in result
@@ -859,7 +861,8 @@ class TestSbGetScenarioDetails:
 
         result = sb_get_scenario_details("119", "test-console")
 
-        assert result["id"] == 119
+        assert result["id"] == "119"
+        assert isinstance(result["id"], str)
         assert result["source_type"] == "custom"
         assert result["category_names"] == []
         assert result["steps"] == []
