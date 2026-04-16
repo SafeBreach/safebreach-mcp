@@ -827,7 +827,7 @@ class TestSbGetScenarioDetails:
     @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_found_returns_full_payload(self, mock_scenarios, mock_categories, mock_plans):
+    def test_returns_simplified_view(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series", 3: "Threat Groups"}
 
@@ -837,14 +837,21 @@ class TestSbGetScenarioDetails:
         assert result["source_type"] == "oob"
         assert result["name"] == "CISA Alert Akira Ransomware"
         assert "steps" in result
-        assert "category_names" in result
         assert result["category_names"] == ["Known Threats Series"]
+        assert result["step_count"] == 1
+        assert result["is_ready_to_run"] is False
+        # Simplified: no raw execution mechanics
+        assert "actions" not in result
+        assert "edges" not in result
+        assert "phases" not in result
+        # Steps are simplified
+        assert result["steps"][0]["name"] == "Network Infiltration"
+        assert "attack_selection" in result["steps"][0]
 
     @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api', return_value=[])
     def test_finds_custom_plan_by_integer_id(self, mock_scenarios, mock_categories, mock_plans):
-        """Custom plan lookup by integer ID (passed as string) should work."""
         mock_categories.return_value = {}
         mock_plans.return_value = [
             {"id": 119, "name": "Custom Plan", "steps": [], "userId": 1}
@@ -855,6 +862,7 @@ class TestSbGetScenarioDetails:
         assert result["id"] == 119
         assert result["source_type"] == "custom"
         assert result["category_names"] == []
+        assert result["steps"] == []
 
     @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
@@ -873,14 +881,16 @@ class TestSbGetScenarioDetails:
     @patch('safebreach_mcp_config.config_functions._get_all_plans_from_cache_or_api', return_value=[])
     @patch('safebreach_mcp_config.config_functions._get_categories_map_from_cache_or_api')
     @patch('safebreach_mcp_config.config_functions._get_all_scenarios_from_cache_or_api')
-    def test_preserves_full_payload(self, mock_scenarios, mock_categories, mock_plans):
+    def test_has_simplified_step_format(self, mock_scenarios, mock_categories, mock_plans):
         mock_scenarios.return_value = MOCK_SCENARIO_DATA
         mock_categories.return_value = {2: "Known Threats Series"}
 
         result = sb_get_scenario_details("aaa-111-222-333", "test-console")
 
-        assert "order" in result
-        assert "actions" in result
-        assert "edges" in result
-        assert "phases" in result
         assert result["source_type"] == "oob"
+        assert "has_wait_steps" in result
+        for step in result["steps"]:
+            assert "name" in step
+            assert "attack_selection" in step
+            assert "target_criteria" in step
+            assert "attacker_criteria" in step

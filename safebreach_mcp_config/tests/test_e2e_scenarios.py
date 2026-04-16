@@ -109,11 +109,10 @@ class TestScenarioE2E:
             assert 'page_number=1' in result['hint_to_agent']
 
     def test_get_scenario_details(self):
-        """Test getting full scenario details by ID (passes both UUID and int IDs)."""
+        """Test getting simplified scenario details by ID."""
         list_result = sb_get_scenarios(console=E2E_CONSOLE, page_number=0)
         first_id = list_result['scenarios_in_page'][0]['id']
 
-        # Pass as string to support both UUID (OOB) and integer (custom plan) IDs
         detail = sb_get_scenario_details(str(first_id), console=E2E_CONSOLE)
 
         assert str(detail['id']) == str(first_id)
@@ -121,16 +120,23 @@ class TestScenarioE2E:
         assert 'steps' in detail
         assert 'source_type' in detail
         assert 'category_names' in detail
+        assert 'step_count' in detail
+        assert 'is_ready_to_run' in detail
+        assert 'has_wait_steps' in detail
         assert isinstance(detail['category_names'], list)
+        # Steps are simplified
+        for step in detail['steps']:
+            assert 'name' in step
+            assert 'attack_selection' in step
+            assert 'mode' in step['attack_selection']
 
     def test_get_scenario_details_not_found(self):
         """Test that non-existent scenario ID raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
             sb_get_scenario_details("00000000-0000-0000-0000-000000000000", console=E2E_CONSOLE)
 
-    def test_scenario_details_has_full_payload(self):
-        """Test that details include full payload fields needed for queue API."""
-        # Get an OOB scenario specifically to check phases/createdBy fields
+    def test_scenario_details_simplified_format(self):
+        """Test that details return simplified LLM-readable format."""
         list_result = sb_get_scenarios(
             console=E2E_CONSOLE, creator_filter="safebreach", page_number=0
         )
@@ -138,12 +144,15 @@ class TestScenarioE2E:
 
         detail = sb_get_scenario_details(str(first_id), console=E2E_CONSOLE)
 
+        assert detail['source_type'] == 'oob'
         assert 'steps' in detail
-        assert 'phases' in detail
         assert 'createdBy' in detail
         assert 'createdAt' in detail
         assert 'updatedAt' in detail
-        assert detail['source_type'] == 'oob'
+        # Simplified — no raw execution mechanics
+        assert 'actions' not in detail
+        assert 'edges' not in detail
+        assert 'phases' not in detail
 
     def test_custom_scenarios_returned(self):
         """Custom plans should be fetched and returned with source_type='custom'."""
@@ -168,7 +177,7 @@ class TestScenarioE2E:
             oob_only['total_scenarios'] + custom_only['total_scenarios']
 
     def test_get_custom_plan_details_by_integer_id(self):
-        """Custom plan details should be retrievable by their integer ID."""
+        """Custom plan details should be retrievable and in simplified format."""
         list_result = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="custom")
         first_custom = list_result['scenarios_in_page'][0]
         plan_id = first_custom['id']
@@ -178,3 +187,8 @@ class TestScenarioE2E:
         assert detail['source_type'] == 'custom'
         assert str(detail['id']) == str(plan_id)
         assert 'steps' in detail
+        assert 'has_wait_steps' in detail
+        # Same simplified step format as OOB
+        for step in detail['steps']:
+            assert 'name' in step
+            assert 'attack_selection' in step

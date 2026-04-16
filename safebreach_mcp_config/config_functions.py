@@ -17,6 +17,7 @@ from .config_types import (
     get_full_simulator_mapping,
     get_reduced_scenario_mapping,
     get_reduced_plan_mapping,
+    get_scenario_detail_view,
     filter_scenarios_by_criteria,
     apply_scenario_ordering,
     paginate_scenarios,
@@ -599,22 +600,12 @@ def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[
 
     for scenario in all_scenarios:
         if str(scenario.get("id")) == scenario_id:
-            result = dict(scenario)
-            result["source_type"] = "oob"
-            result["category_names"] = [
-                categories_map[cat_id]
-                for cat_id in scenario.get("categories", [])
-                if cat_id in categories_map
-            ]
-            return result
+            return get_scenario_detail_view(scenario, categories_map, source_type="oob")
 
     # Fall back to custom plans (integer IDs, stringified for comparison)
     all_plans = _get_all_plans_from_cache_or_api(console)
     for plan in all_plans:
         if str(plan.get("id")) == scenario_id:
-            result = dict(plan)
-            result["source_type"] = "custom"
-            result["category_names"] = []  # Custom plans don't have categories
-            return result
+            return get_scenario_detail_view(plan, categories_map, source_type="custom")
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")
