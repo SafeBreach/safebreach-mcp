@@ -315,6 +315,8 @@ def _simplify_step(step: Dict[str, Any]) -> Dict[str, Any]:
             attack_selection["attack_types"] = attack_types
         if attack_tags:
             attack_selection["attack_tags"] = attack_tags
+        if not attack_types and not attack_tags:
+            attack_selection["note"] = "broad match — criteria resolved at runtime by the platform"
 
     # Target criteria (only include non-empty entries)
     target_criteria = {}
