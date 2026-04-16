@@ -15,10 +15,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-04-14 18:30 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-04-16 10:30 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Complete (9 of 9) |
 
 ## 2. Solution Description
 
@@ -208,13 +208,15 @@ _Omitted — backend-only MCP tool changes, no UI workflow._
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: RED — Types Tests | ⏳ Pending | - | - | Write tests first (all fail) |
-| Phase 2: GREEN — Types Implementation | ⏳ Pending | - | - | Implement to make tests pass |
-| Phase 3: RED — Functions Tests | ⏳ Pending | - | - | Write tests first (all fail) |
-| Phase 4: GREEN — Functions Implementation | ⏳ Pending | - | - | Implement to make tests pass |
-| Phase 5: MCP Tool Registration | ⏳ Pending | - | - | |
-| Phase 6: RED/GREEN — E2E Tests | ⏳ Pending | - | - | Against pentest01 console |
-| Phase 7: Documentation | ⏳ Pending | - | - | |
+| Phase 1: RED — Types Tests | ✅ Complete | 2026-04-14 | 1aeb1c6 | 29 test cases |
+| Phase 2: GREEN — Types Implementation | ✅ Complete | 2026-04-14 | 202d816 | 5 transform functions |
+| Phase 3: RED — Functions Tests | ✅ Complete | 2026-04-14 | ea9a82f | 16 test cases |
+| Phase 4: GREEN — Functions Implementation | ✅ Complete | 2026-04-14 | 0c56b15 | API calls, caching, orchestration |
+| Phase 5: MCP Tool Registration | ✅ Complete | 2026-04-14 | 740bc80 | 2 new MCP tools |
+| Phase 6: RED/GREEN — E2E Tests | ✅ Complete | 2026-04-14 | 19b5651 | 10 E2E tests against pentest01 |
+| Phase 7: Documentation | ✅ Complete | 2026-04-14 | da1686e | CLAUDE.md updated |
+| Phase 8: Custom Plans Integration | ✅ Complete | 2026-04-15 | ceee3c4 | Merged OOB + custom (plans API) |
+| Phase 9: Simplified Detail View | ✅ Complete | 2026-04-16 | 36e9b6c | Unified LLM-readable format |
 
 ### Phase 1: RED — Types Tests
 
@@ -617,4 +619,6 @@ console to validate scenario tools work against real data.
 |------|-------------------|
 | 2026-04-14 18:30 | PRD created — initial draft |
 | 2026-04-14 18:45 | Restructured to pure TDD phases (RED → GREEN), added E2E test phase against pentest01 |
-| 2026-04-15 12:00 | Added Phase 8 — integrate custom scenarios (plans API) discovered after initial impl. Added source_type field to unify OOB and custom. |
+| 2026-04-15 12:00 | Phase 8: Integrate custom scenarios (plans API). OOB + custom merged with source_type field. |
+| 2026-04-16 10:00 | Phase 9: Simplified get_scenario_details for LLM consumption. Raw payload replaced with unified step format. DAG traversal for custom plans. |
+| 2026-04-16 10:30 | All 9 phases complete. 82 unit + 13 E2E tests passing. PRD marked complete. |
