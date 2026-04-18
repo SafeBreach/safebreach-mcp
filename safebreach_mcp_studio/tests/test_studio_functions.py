@@ -6593,3 +6593,121 @@ class TestRunScenarioWithOverrides:
                 console="test-console",
                 step_overrides="not valid json{{"
             )
+
+
+# =====================================================================
+# Slice 4: Custom Plan Augmentation Tests (SAF-29967)
+# =====================================================================
+
+
+class TestCustomPlanAugmentation:
+    """Test that augmented custom plans use full payload, not planId."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    def _mock_get_oob_empty_plans_found(self, mock_get, plan):
+        """Mock GET: OOB returns empty, plans returns the plan."""
+        oob_resp = MagicMock()
+        oob_resp.json.return_value = []
+        oob_resp.raise_for_status.return_value = None
+
+        plans_resp = MagicMock()
+        plans_resp.json.return_value = {"data": [plan]}
+        plans_resp.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_resp, plans_resp]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_augmented_custom_plan_uses_full_payload(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_custom_plan,
+        mock_queue_response_scenario
+    ):
+        """Custom plan with step_overrides sends full payload (not planId)."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        # Make plan not ready by clearing filters
+        import copy
+        not_ready_plan = copy.deepcopy(mock_custom_plan)
+        for step in not_ready_plan['steps']:
+            step['targetFilter'] = {}
+            step['attackerFilter'] = {}
+
+        self._mock_get_oob_empty_plans_found(mock_get, not_ready_plan)
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        overrides = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                          "name": "os"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                          "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="130", console="test-console",
+            step_overrides=overrides
+        )
+
+        assert result['status'] == 'queued'
+
+        # Verify FULL payload (not planId)
+        payload = mock_post.call_args[1]['json']
+        assert 'steps' in payload['plan']
+        assert 'actions' in payload['plan']
+        assert 'edges' in payload['plan']
+        assert 'planId' not in payload['plan']
+        assert len(payload['plan']['steps']) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_ready_custom_plan_no_overrides_still_uses_planid(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_custom_plan,
+        mock_queue_response_scenario
+    ):
+        """Ready custom plan without overrides keeps using planId reference."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get_oob_empty_plans_found(mock_get, mock_custom_plan)
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        result = sb_run_scenario(scenario_id="130", console="test-console")
+
+        assert result['status'] == 'queued'
+
+        # Verify planId payload (not full)
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['planId'] == 130
+        assert 'steps' not in payload['plan']
+        assert 'actions' not in payload['plan']
