@@ -883,23 +883,54 @@ The phases below describe intent; implementation details will be filled in after
 
 ## Slice 4: Non-ready Custom Plan + Augmentation
 
-**Goal**: Same augmentation capability for custom plans.
+**Goal**: Augment non-ready custom plans and run them using full payload (not `planId`).
 
 **Pre-requisite**: Slice 3 E2E sign-off passed.
 
-**Note**: Custom plan augmentation may differ from OOB (plans use `planId` reference,
-so augmentation may need a different approach — perhaps converting to full payload or
-using a plan-specific augmentation endpoint). Details refined after Slice 3.
+**Design**: Apply the same flow as OOB augmentation:
+1. Pull full plan from plans API (already fetched — has steps, actions, edges, UUIDs)
+2. Apply `step_overrides` to augment missing filters (same `_apply_step_overrides`)
+3. Call statistics with augmented steps (same `_get_scenario_statistics`)
+4. **Send full payload** to queue API (like OOB) instead of `planId` reference
+
+The key change: when `step_overrides` is provided for a custom plan, switch from `planId`
+payload to full payload with augmented steps, actions, and edges. Ready custom plans
+without overrides continue to use `planId`.
+
+```
+Custom plan, no overrides    → planId reference (existing Slice 2 behavior)
+Custom plan, with overrides  → full payload with augmented steps (like OOB)
+```
+
+Custom plans from the plans API already have `actions`, `edges`, and step `uuid`s populated
+(unlike OOB from content-manager). No DAG generation needed — relay as-is after augmentation.
 
 ### Phase 4.1: RED — Custom Plan Augmentation Tests
+
+**Semantic Change**: Tests for augmented custom plan using full payload instead of planId.
+
+**Implementation Details**:
+- **`test_custom_plan_with_overrides_uses_full_payload`**: Mock custom plan with overrides.
+  Verify: queue payload has `steps`, `actions`, `edges` (NOT `planId`).
+- **`test_custom_plan_no_overrides_still_uses_planid`**: Verify: ready custom plan
+  without overrides continues to use `planId` reference payload.
 
 **Git Commit**: `test(studio): add RED tests for custom plan augmentation`
 
 ### Phase 4.2: GREEN — Custom Plan Augmentation Implementation
 
+**Semantic Change**: When `step_overrides` applied to a custom plan, build full payload.
+
+**Implementation Details**:
+- In the payload construction branch: if `is_custom_plan` AND `parsed_overrides`,
+  use full OOB-style payload with `steps`, `actions`, `edges` from the plan.
+- The plan already has these fields populated (not None like OOB).
+
 **Git Commit**: `feat(studio): implement custom plan augmentation (GREEN)`
 
 ### Phase 4.3: E2E Sign-off
+
+**Semantic Change**: E2E test augmenting and running non-ready custom plans on pentest01.
 
 **Git Commit**: `test(studio): add E2E tests for non-ready custom plan augmentation`
 
@@ -943,7 +974,7 @@ step structures. Details refined after Slice 4.
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Queue API rejects relayed payload fields | Medium | Confirmed via pentest01 curl — full relay works |
-| Custom plan augmentation differs from OOB | Medium | Deferred to Slice 4 design; user provides samples |
+| Custom plan augmentation differs from OOB | Low | Resolved: use full payload (like OOB) when overrides applied |
 | Propagate scenarios need different queue params | Low | Deferred to Slice 5; E2E will validate |
 | Scenario fetch returns stale data (no cache) | Low | Fresh fetch ensures latest definitions |
 | Rate limiting on queue API | Low | Execution is infrequent |
@@ -989,3 +1020,4 @@ step structures. Details refined after Slice 4.
 | 2026-04-18 11:30 | Added queue→start→simulations→cancel E2E pattern with cancel API |
 | 2026-04-18 12:00 | Added zero-mocks rule for E2E tests |
 | 2026-04-18 14:00 | Added statistics pre-flight validation (Phase 1.8) with allow_partial_steps parameter |
+| 2026-04-18 18:00 | Slices 1-3 complete. Slice 4 design: full payload for augmented custom plans (not planId) |
