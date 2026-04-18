@@ -2,7 +2,7 @@
 End-to-End Tests for run_scenario (SAF-29967 — Slice 1: OOB Ready-to-Run)
 
 Tests the complete scenario execution pipeline using real API calls.
-Pattern: queue → wait for test start → wait for >5 simulations → cancel.
+Pattern: queue → wait for >5 simulations (filtered by test_id) → cancel.
 
 ZERO MOCKS — all calls hit real SafeBreach APIs on pentest01.
 
@@ -25,6 +25,10 @@ from safebreach_mcp_studio.studio_functions import (
     compute_scenario_readiness,
     _fetch_all_scenarios,
 )
+from safebreach_mcp_data.data_functions import (
+    sb_get_test_simulations,
+    simulations_cache,
+)
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 
@@ -40,23 +44,16 @@ skip_e2e = pytest.mark.skipif(
 
 
 # ---------------------------------------------------------------------------
-# E2E helpers — direct API calls, zero mocks
+# E2E helpers — real API calls, zero mocks
 # ---------------------------------------------------------------------------
-
-
-def _get_auth(console):
-    """Get auth headers and base URLs for direct API calls."""
-    apitoken = get_secret_for_console(console)
-    account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
-    return apitoken, account_id, headers
 
 
 def _cancel_test(test_id, console):
     """Cancel a running/queued test via DELETE on the queue API. Best-effort."""
     try:
-        apitoken, account_id, _ = _get_auth(console)
+        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'orchestrator')
+        account_id = get_api_account_id(console)
         api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
         response = requests.delete(api_url, headers={"x-apitoken": apitoken}, timeout=30)
         logger.info(f"Cancel test {test_id}: HTTP {response.status_code}")
@@ -64,51 +61,30 @@ def _cancel_test(test_id, console):
         logger.warning(f"Failed to cancel test {test_id}: {e}")
 
 
-def _get_simulation_count(test_id, console):
-    """Get the count of completed simulations for a test via the Data API.
+def _get_simulation_count_for_test(test_id, console):
+    """Get simulation count for a specific test using the Data Server function.
 
-    Uses the executionsHistoryResults endpoint directly — works even for
-    tests that haven't finished (partial results are available).
+    Uses sb_get_test_simulations which POSTs to executionsHistoryResults
+    with runId filter — correctly scoped to this test only.
     """
-    apitoken, account_id, headers = _get_auth(console)
-    base_url = get_api_base_url(console, 'data')
-
-    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
-    params = {
-        "planRunId": test_id,
-        "page": 1,
-        "pageSize": 1,  # We only need the total count, not the data
-    }
-
     try:
-        response = requests.get(api_url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        # The total count is usually in a 'totalRecords' or pagination field
-        if isinstance(data, dict):
-            total = data.get('totalRecords', data.get('total', 0))
-            if total:
-                return total
-            # Some APIs return the count in the items length
-            items = data.get('data', data.get('items', data.get('results', [])))
-            if isinstance(items, list) and len(items) > 0:
-                # If we got data back, there are at least some simulations
-                return len(items)
-        elif isinstance(data, list):
-            return len(data)
+        simulations_cache.clear()  # Force fresh fetch
+        result = sb_get_test_simulations(test_id=test_id, console=console, page_number=0)
+        total = result.get('total_simulations', 0)
+        return total
     except Exception as e:
         logger.debug(f"Error getting simulation count for {test_id}: {e}")
-    return 0
+        return 0
 
 
 def _wait_for_simulations(test_id, console, min_count=5, timeout=600):
-    """Poll simulation count until at least min_count simulations exist.
+    """Poll until at least min_count simulations exist for THIS specific test.
 
-    Uses direct Data API call to executionsHistoryResults endpoint.
+    Uses sb_get_test_simulations (Data Server) which filters by runId.
     """
     start = time.time()
     while time.time() - start < timeout:
-        count = _get_simulation_count(test_id, console)
+        count = _get_simulation_count_for_test(test_id, console)
         if count >= min_count:
             logger.info(f"Test {test_id}: {count} simulations (>= {min_count})")
             return count
@@ -162,7 +138,7 @@ class TestRunScenarioE2E:
             assert len(result['step_run_ids']) > 0
             assert result['status'] == 'queued'
 
-            # Wait for at least 5 simulations to complete
+            # Wait for at least 5 simulations to complete FOR THIS TEST
             _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
 
         finally:
@@ -221,7 +197,7 @@ class TestRunScenarioE2E:
             assert test_id, "test_id should be non-empty"
             assert result['test_name'] == custom_name
 
-            # Wait for at least 5 simulations to complete
+            # Wait for at least 5 simulations to complete FOR THIS TEST
             _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
 
         finally:

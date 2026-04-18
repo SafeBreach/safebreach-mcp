@@ -5411,9 +5411,11 @@ class TestRunScenario:
         assert payload['plan']['name'] == "Step 1 - Fortify your Network Perimeter"
         assert payload['plan']['originalScenarioId'] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
         assert len(payload['plan']['steps']) == 2
-        assert payload['plan']['actions'] == mock_oob_scenario['actions']
-        assert payload['plan']['edges'] == mock_oob_scenario['edges']
         assert payload['plan']['systemTags'] == []
+
+        # Verify actions and edges were used from the scenario fixture (not generated)
+        assert len(payload['plan']['actions']) == 3  # 2 multiAttack + 1 wait
+        assert len(payload['plan']['edges']) == 3    # entry + step1→wait + wait→step2
 
         # Verify query params
         assert call_kwargs['params']['enableFeedbackLoop'] == "true"
@@ -5581,3 +5583,68 @@ class TestRunScenario:
         assert result['step_count'] == 5
         assert len(result['step_run_ids']) == 5
         assert result['step_run_ids'] == [f"step-{i}" for i in range(5)]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_none_fields_builds_dag(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Scenarios with None actions/edges/systemTags/uuids get DAG built for them."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # Simulate content-manager returning None (real API behavior)
+        import copy
+        scenario_with_nones = copy.deepcopy(mock_oob_scenario)
+        scenario_with_nones['actions'] = None
+        scenario_with_nones['edges'] = None
+        scenario_with_nones['systemTags'] = None
+        for step in scenario_with_nones['steps']:
+            step['uuid'] = None
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [scenario_with_nones]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        payload = mock_post.call_args[1]['json']
+        plan = payload['plan']
+
+        # systemTags should be empty array
+        assert plan['systemTags'] == []
+
+        # Steps should have generated UUIDs
+        for step in plan['steps']:
+            assert step['uuid'] is not None
+            assert len(step['uuid']) == 36  # UUID format
+
+        # Actions: 2 multiAttack + 1 wait (for 2 steps)
+        assert len(plan['actions']) == 3
+        multi_attacks = [a for a in plan['actions'] if a['type'] == 'multiAttack']
+        waits = [a for a in plan['actions'] if a['type'] == 'wait']
+        assert len(multi_attacks) == 2
+        assert len(waits) == 1
+
+        # Each multiAttack action references the correct step UUID
+        assert multi_attacks[0]['data']['uuid'] == plan['steps'][0]['uuid']
+        assert multi_attacks[1]['data']['uuid'] == plan['steps'][1]['uuid']
+
+        # Edges: entry + step1→wait + wait→step2 = 3
+        assert len(plan['edges']) == 3
+        assert plan['edges'][0] == {"to": 1}  # Entry point

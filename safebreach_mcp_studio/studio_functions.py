@@ -1774,17 +1774,63 @@ def sb_run_scenario(
         "Content-Type": "application/json"
     }
 
-    # Build payload — relay scenario as-is inside {"plan": ...}
-    # Note: content-manager API returns None (not []) for actions/edges/systemTags
-    # on some scenarios, but the queue API requires arrays.
+    # Build payload for queue API.
+    # The content-manager API returns None for actions, edges, systemTags, and step
+    # UUIDs. The queue API requires all of these. We generate UUIDs for steps and
+    # build a sequential DAG (actions + edges) matching the UI's pattern.
+    import uuid as uuid_module
+
+    steps = scenario['steps']
+    for step in steps:
+        if not step.get('uuid'):
+            step['uuid'] = str(uuid_module.uuid4())
+
+    # Build actions and edges if not provided by the API
+    actions = scenario.get('actions')
+    edges = scenario.get('edges')
+
+    if not actions or not edges:
+        actions = []
+        edges = []
+
+        for i, step in enumerate(steps):
+            action_id = i + 1
+            actions.append({
+                "id": action_id,
+                "type": "multiAttack",
+                "data": {"uuid": step['uuid']}
+            })
+
+        # Add wait actions between steps (N-1 waits for N steps)
+        for i in range(len(steps) - 1):
+            wait_id = 1001 + i
+            actions.append({
+                "id": wait_id,
+                "type": "wait",
+                "data": {"seconds": 0}
+            })
+
+        # Build edges: sequential DAG
+        # Entry point → first step
+        if steps:
+            edges.append({"to": 1})
+
+        # Chain: step → wait → next step
+        for i in range(len(steps) - 1):
+            step_id = i + 1
+            wait_id = 1001 + i
+            next_step_id = i + 2
+            edges.append({"from": step_id, "to": wait_id})
+            edges.append({"from": wait_id, "to": next_step_id})
+
     payload = {
         "plan": {
             "name": effective_test_name,
             "originalScenarioId": scenario['id'],
-            "steps": scenario['steps'],
-            "actions": scenario.get('actions') or [],
-            "edges": scenario.get('edges') or [],
-            "systemTags": scenario.get('systemTags') or []
+            "steps": steps,
+            "systemTags": scenario.get('systemTags') or [],
+            "actions": actions,
+            "edges": edges
         }
     }
 
