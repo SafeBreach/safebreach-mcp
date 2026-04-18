@@ -6409,11 +6409,11 @@ class TestApplyStepOverrides:
         assert scenario['steps'][0]['targetFilter']['os']['values'] == ["WINDOWS"]
         assert scenario['steps'][1]['targetFilter']['os']['values'] == ["LINUX"]
 
-    def test_merge_with_existing_filter(self, mock_scenario_partial_missing):
-        """Override merges into existing filter (doesn't replace)."""
+    def test_replace_existing_filter(self, mock_scenario_partial_missing):
+        """Override replaces the entire filter (not merge)."""
         import copy
         scenario = copy.deepcopy(mock_scenario_partial_missing)
-        # Step 2 already has attackerFilter.role, add targetFilter.os
+        # Step 2 already has attackerFilter.role, replace targetFilter
         overrides = {
             "2": {
                 "targetFilter": {
@@ -6423,9 +6423,11 @@ class TestApplyStepOverrides:
         }
         _apply_step_overrides(scenario, overrides)
 
-        # New filter applied
-        assert scenario['steps'][1]['targetFilter']['os']['values'] == ["WINDOWS"]
-        # Existing attackerFilter preserved
+        # New filter replaces old
+        assert scenario['steps'][1]['targetFilter'] == {
+            "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+        }
+        # Existing attackerFilter untouched (no override for it)
         assert 'role' in scenario['steps'][1]['attackerFilter']
 
     def test_invalid_step_number_raises(self, mock_scenario_all_missing):

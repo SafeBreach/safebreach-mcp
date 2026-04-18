@@ -1749,9 +1749,9 @@ def _apply_step_overrides(scenario, overrides):
             )
         step = steps[step_num - 1]
         if 'targetFilter' in override:
-            step['targetFilter'].update(override['targetFilter'])
+            step['targetFilter'] = override['targetFilter']
         if 'attackerFilter' in override:
-            step['attackerFilter'].update(override['attackerFilter'])
+            step['attackerFilter'] = override['attackerFilter']
 
 
 def _fetch_all_scenarios(console):
@@ -2019,10 +2019,19 @@ def sb_run_scenario(
                 edges.append({"from": step_id, "to": wait_id})
                 edges.append({"from": wait_id, "to": next_step_id})
 
+        # For OOB: originalScenarioId = scenario UUID
+        # For augmented custom plans: use the plan's originalScenarioId field
+        # (the UUID of the OOB scenario it was cloned from)
+        original_id = (
+            scenario.get('originalScenarioId') or str(scenario['id'])
+            if is_custom_plan
+            else scenario['id']
+        )
+
         payload = {
             "plan": {
                 "name": effective_test_name,
-                "originalScenarioId": scenario['id'],
+                "originalScenarioId": original_id,
                 "steps": steps,
                 "systemTags": scenario.get('systemTags') or [],
                 "actions": actions,
