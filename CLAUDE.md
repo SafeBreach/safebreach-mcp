@@ -330,6 +330,14 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 18. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
 19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
+**Studio Server (Port 8004):**
+20. `run_scenario` ✨ **NEW** - Execute a ready-to-run SafeBreach scenario. Fetches OOB scenarios from
+  the content-manager API, validates readiness (`is_ready_to_run`), and relays the full scenario
+  payload to the orchestrator queue API. Accepts `scenario_id` (UUID), `console`, and optional
+  `test_name`. Returns test_id for tracking via Data Server's `get_test_details`.
+  Only ready-to-run OOB scenarios supported in this version. Custom plans and Propagate type
+  support planned for future slices.
+
 
 ## Filtering and Search Capabilities
 
