@@ -154,8 +154,8 @@ class TestRunScenarioE2E:
                 console=E2E_CONSOLE,
             )
 
-    def test_run_scenario_not_ready(self):
-        """Non-ready scenario raises ValueError (if one exists on the console)."""
+    def test_run_scenario_not_ready_returns_diagnostic(self):
+        """Non-ready scenario returns diagnostic (two-turn workflow)."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
         not_ready_scenario = None
         for s in scenarios:
@@ -166,11 +166,13 @@ class TestRunScenarioE2E:
         if not_ready_scenario is None:
             pytest.skip("All scenarios on this console are ready-to-run")
 
-        with pytest.raises(ValueError, match="not ready to run"):
-            sb_run_scenario(
-                scenario_id=str(not_ready_scenario['id']),
-                console=E2E_CONSOLE,
-            )
+        result = sb_run_scenario(
+            scenario_id=str(not_ready_scenario['id']),
+            console=E2E_CONSOLE,
+        )
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
+        assert len(result['diagnostic']['missing_steps']) > 0
 
     def test_run_scenario_custom_name(self):
         """Custom test_name appears in the response."""

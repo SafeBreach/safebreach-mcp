@@ -1690,6 +1690,70 @@ def compute_scenario_readiness(scenario):
     return True
 
 
+def diagnose_scenario_readiness(scenario):
+    """
+    Diagnose scenario readiness with detailed per-step analysis.
+
+    Returns a dict with:
+    - ready: bool
+    - total_steps: int
+    - missing_steps: list of dicts with step_number, step_name, missing_filters, attacksFilter
+    """
+    steps = scenario.get('steps', [])
+    if not steps:
+        return {'ready': False, 'total_steps': 0, 'missing_steps': []}
+
+    missing_steps = []
+    for i, step in enumerate(steps):
+        target = step.get('targetFilter', {})
+        attacker = step.get('attackerFilter', {})
+        missing_filters = []
+        if not _has_real_filter_criteria(target):
+            missing_filters.append('targetFilter')
+        if not _has_real_filter_criteria(attacker):
+            missing_filters.append('attackerFilter')
+        if missing_filters:
+            missing_steps.append({
+                'step_number': i + 1,
+                'step_name': step.get('name', f'Step {i + 1}'),
+                'missing_filters': missing_filters,
+                'attacksFilter': step.get('attacksFilter', {}),
+            })
+
+    return {
+        'ready': len(missing_steps) == 0,
+        'total_steps': len(steps),
+        'missing_steps': missing_steps,
+    }
+
+
+def _apply_step_overrides(scenario, overrides):
+    """
+    Apply per-step filter overrides to a scenario's steps.
+
+    Args:
+        scenario: Scenario dict (modified in-place)
+        overrides: Dict mapping step number strings (1-indexed) to filter overrides.
+            Each value is a dict with optional 'targetFilter' and/or 'attackerFilter'.
+
+    Raises:
+        ValueError: If a step number is out of range
+    """
+    steps = scenario.get('steps', [])
+    for step_num_str, override in overrides.items():
+        step_num = int(step_num_str)
+        if step_num < 1 or step_num > len(steps):
+            raise ValueError(
+                f"Invalid step {step_num} in step_overrides — "
+                f"scenario has {len(steps)} steps (1-indexed)"
+            )
+        step = steps[step_num - 1]
+        if 'targetFilter' in override:
+            step['targetFilter'].update(override['targetFilter'])
+        if 'attackerFilter' in override:
+            step['attackerFilter'].update(override['attackerFilter'])
+
+
 def _fetch_all_scenarios(console):
     """
     Fetch all OOB scenarios from the content-manager API.
@@ -1782,27 +1846,41 @@ def sb_run_scenario(
     console: str = "default",
     test_name: str = None,
     allow_partial_steps: bool = False,
+    step_overrides: str = None,
 ) -> Dict[str, Any]:
     """
-    Run an OOB scenario by relaying its payload to the orchestrator queue API.
+    Run a scenario (OOB or custom plan) via the orchestrator queue API.
+
+    Two-turn workflow for non-ready scenarios:
+    1. Call without step_overrides → returns diagnostic if not ready
+    2. Call with step_overrides (JSON string) → augments and runs
 
     Args:
-        scenario_id: UUID string of the OOB scenario to execute
+        scenario_id: UUID (OOB) or integer string (custom plan)
         console: SafeBreach console identifier (default: "default")
-        test_name: Custom name for the test execution (optional, defaults to scenario name)
+        test_name: Custom name for the test (optional, defaults to scenario name)
         allow_partial_steps: If False (default), refuse if any step produces 0 simulations.
-            If True, allow running as long as at least one step produces >0.
+        step_overrides: JSON string mapping step numbers (1-indexed) to filter overrides.
+            Example: '{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}'
 
     Returns:
-        Dictionary containing test_id, test_name, scenario_id, scenario_name,
-        step_count, step_run_ids, status
+        If ready (or made ready via overrides): dict with test_id, status='queued', etc.
+        If not ready and no overrides: dict with status='not_ready', diagnostic info.
 
     Raises:
-        ValueError: If scenario_id is invalid, scenario not found, or not ready to run
+        ValueError: If scenario_id is invalid, not found, or step_overrides JSON is invalid
         Exception: For API errors
     """
     if not scenario_id or (isinstance(scenario_id, str) and not scenario_id.strip()):
         raise ValueError("scenario_id is required and cannot be empty")
+
+    # Parse step_overrides JSON if provided
+    parsed_overrides = None
+    if step_overrides is not None:
+        try:
+            parsed_overrides = json.loads(step_overrides)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise ValueError(f"Invalid step_overrides JSON: {e}")
 
     scenario_id = str(scenario_id).strip()
 
@@ -1827,12 +1905,22 @@ def sb_run_scenario(
     if scenario is None:
         raise ValueError(f"Scenario '{scenario_id}' not found")
 
-    # Validate readiness
-    if not compute_scenario_readiness(scenario):
-        raise ValueError(
-            f"Scenario '{scenario.get('name', scenario_id)}' is not ready to run. "
-            "All steps must have both targetFilter and attackerFilter with non-empty values."
-        )
+    # Apply step overrides if provided (deep copy to avoid mutating cached data)
+    import copy
+    scenario = copy.deepcopy(scenario)
+    if parsed_overrides:
+        _apply_step_overrides(scenario, parsed_overrides)
+
+    # Check readiness — return diagnostic if not ready (two-turn workflow)
+    diagnostic = diagnose_scenario_readiness(scenario)
+    if not diagnostic['ready']:
+        return {
+            'status': 'not_ready',
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name', ''),
+            'source_type': 'custom' if is_custom_plan else 'oob',
+            'diagnostic': diagnostic,
+        }
 
     # Statistics pre-flight: predict simulation counts per step
     step_counts = _get_scenario_statistics(scenario['steps'], console)

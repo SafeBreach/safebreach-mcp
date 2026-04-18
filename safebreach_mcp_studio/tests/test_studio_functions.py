@@ -5495,7 +5495,7 @@ class TestRunScenario:
     def test_run_scenario_not_ready(
         self, mock_secret, mock_base_url, mock_get, mock_oob_scenario_not_ready
     ):
-        """Non-ready scenario raises ValueError."""
+        """Non-ready scenario returns diagnostic (not error)."""
         mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
@@ -5504,11 +5504,12 @@ class TestRunScenario:
         mock_get_response.raise_for_status.return_value = None
         mock_get.return_value = mock_get_response
 
-        with pytest.raises(ValueError, match="not ready to run"):
-            sb_run_scenario(
-                scenario_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                console="test-console"
-            )
+        result = sb_run_scenario(
+            scenario_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            console="test-console"
+        )
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
 
     def test_run_scenario_empty_id(self):
         """Empty scenario_id raises ValueError."""
@@ -6143,7 +6144,7 @@ class TestRunScenarioCustomPlan:
         self, mock_secret, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats
     ):
-        """Custom plan that is not ready-to-run raises ValueError."""
+        """Custom plan that is not ready-to-run returns diagnostic."""
         self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
 
         not_ready_plan = {
@@ -6164,8 +6165,9 @@ class TestRunScenarioCustomPlan:
 
         mock_get.side_effect = [oob_response, plans_response]
 
-        with pytest.raises(ValueError, match="not ready to run"):
-            sb_run_scenario(scenario_id="999", console="test-console")
+        result = sb_run_scenario(scenario_id="999", console="test-console")
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
