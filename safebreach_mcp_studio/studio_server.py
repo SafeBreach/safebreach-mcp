@@ -990,12 +990,14 @@ IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the 
 scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
 and verify is_ready_to_run=True.
 
-Currently supports OOB (SafeBreach-published) scenarios only. The scenario's built-in filters
-(target, attacker, attack selection) are used as-is — no simulator selection needed.
+Supports both OOB (SafeBreach-published) scenarios and custom plans. The scenario's built-in
+filters (target, attacker, attack selection) are used as-is — no simulator selection needed.
+Before submitting, calls the statistics API to predict simulation counts per step.
 
 Parameters:
-- scenario_id (required, str): UUID of the OOB scenario to execute. Get this from get_scenarios
-  on the Config Server. Only scenarios with is_ready_to_run=True can be executed.
+- scenario_id (required, str): UUID of an OOB scenario OR integer string ID of a custom plan.
+  Get these from get_scenarios on the Config Server. Only scenarios/plans with
+  is_ready_to_run=True can be executed.
 - console (required, str): SafeBreach console name. Use get_scenarios from Config Server to
   discover available consoles.
 - test_name (optional, str): Custom name for the test execution. Defaults to the scenario name.
@@ -1004,12 +1006,15 @@ Parameters:
   If True, allows running as long as at least one step produces simulations. Always refuses if
   ALL steps produce 0.
 
-Returns: Markdown summary with test_id, predicted simulation counts, step info, and next steps.
+Returns: Markdown summary with test_id, predicted simulation counts per step, and next steps.
 
 Use the returned test_id with get_test_details (Data Server) to track execution progress.
 
-Example:
-run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")"""
+Example (OOB scenario):
+run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
+
+Example (custom plan):
+run_scenario(scenario_id="130", console="demo")"""
         )
         def run_scenario(
             scenario_id: str,
@@ -1050,7 +1055,7 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
                     "",
                     f"**Test ID:** `{result.get('test_id')}`",
                     f"**Test Name:** {result.get('test_name')}",
-                    f"**Scenario:** {result.get('scenario_name')} (`{result.get('scenario_id')}`)",
+                    f"**Scenario:** {result.get('scenario_name')} (`{result.get('scenario_id')}`, {result.get('source_type', 'oob')})",
                     f"**Steps Queued:** {result.get('step_count')}",
                     f"**Step Run IDs:** {step_ids_display}",
                     f"**Predicted Simulations:** {predicted_total:,} total",

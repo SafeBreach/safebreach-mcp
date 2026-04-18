@@ -1970,6 +1970,7 @@ def sb_run_scenario(
         'test_name': data.get('name', effective_test_name),
         'scenario_id': scenario_id,
         'scenario_name': scenario['name'],
+        'source_type': 'custom' if is_custom_plan else 'oob',
         'step_count': len(steps),
         'step_run_ids': [s.get('stepRunId', '') for s in steps],
         'predicted_simulations': total_predicted,

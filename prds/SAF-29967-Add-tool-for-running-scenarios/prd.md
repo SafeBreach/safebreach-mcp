@@ -375,18 +375,18 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 
 | Phase | Slice | Status | Completed | Commit SHA | Notes |
 |-------|-------|--------|-----------|------------|-------|
-| 1.1 | S1 | ⏳ Pending | - | - | RED: readiness + fetch tests |
-| 1.2 | S1 | ⏳ Pending | - | - | GREEN: readiness + fetch impl |
-| 1.3 | S1 | ⏳ Pending | - | - | RED: run OOB scenario tests |
-| 1.4 | S1 | ⏳ Pending | - | - | GREEN: run OOB scenario impl |
-| 1.5 | S1 | ⏳ Pending | - | - | MCP tool registration |
-| 1.6 | S1 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
-| 1.7 | S1 | ⏳ Pending | - | - | Documentation |
-| 1.8 | S1 | ⏳ Pending | - | - | Statistics pre-flight + allow_partial_steps |
-| 2.1 | S2 | ⏳ Pending | - | - | RED: custom plan fetch + run tests |
-| 2.2 | S2 | ⏳ Pending | - | - | GREEN: custom plan fetch + run impl |
-| 2.3 | S2 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
-| 2.4 | S2 | ⏳ Pending | - | - | Documentation update |
+| 1.1 | S1 | ✅ Complete | 2026-04-18 | 47663d1 | RED: readiness + fetch tests (18 cases) |
+| 1.2 | S1 | ✅ Complete | 2026-04-18 | 4c552c8 | GREEN: readiness + fetch impl |
+| 1.3 | S1 | ✅ Complete | 2026-04-18 | cd846c7 | RED: run OOB scenario tests (8 cases) |
+| 1.4 | S1 | ✅ Complete | 2026-04-18 | 7553bed | GREEN: run OOB scenario impl |
+| 1.5 | S1 | ✅ Complete | 2026-04-18 | b5825a2 | MCP tool registration |
+| 1.6 | S1 | ✅ Complete | 2026-04-18 | f157e2e | E2E sign-off (4/4 pass pentest01) |
+| 1.7 | S1 | ✅ Complete | 2026-04-18 | 449065c | Documentation |
+| 1.8 | S1 | ✅ Complete | 2026-04-18 | 455cc11 | Statistics pre-flight + allow_partial_steps |
+| 2.1 | S2 | ✅ Complete | 2026-04-18 | 058c915 | RED: custom plan fetch + run tests (7 cases) |
+| 2.2 | S2 | ✅ Complete | 2026-04-18 | f9f9c81 | GREEN: custom plan fetch + run impl |
+| 2.3 | S2 | ✅ Complete | 2026-04-18 | de9d30c | E2E sign-off (5/5 pass pentest01) |
+| 2.4 | S2 | ✅ Complete | 2026-04-18 | c888e23 | Documentation update |
 | 3.1 | S3 | ⏳ Pending | - | - | RED: diagnostic readiness + augmentation tests |
 | 3.2 | S3 | ⏳ Pending | - | - | GREEN: diagnostic readiness + augmentation impl |
 | 3.3 | S3 | ⏳ Pending | - | - | MCP tool parameter extension |
