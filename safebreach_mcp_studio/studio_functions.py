@@ -1966,8 +1966,8 @@ def sb_run_scenario(
     }
 
     # Build payload for queue API — different structure for OOB vs custom plans
-    if is_custom_plan:
-        # Custom plans: just send planId — server has the full plan stored
+    if is_custom_plan and not parsed_overrides:
+        # Ready custom plans without overrides: just send planId
         payload = {
             "plan": {
                 "name": effective_test_name,
