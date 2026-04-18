@@ -392,10 +392,10 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 3.3 | S3 | ✅ Complete | 2026-04-18 | 9362212 | MCP tool step_overrides + diagnostic markdown |
 | 3.4 | S3 | ✅ Complete | 2026-04-18 | 2a361a1 | E2E: 8 pass + 1 skip (custom plan → Slice 4) |
 | 3.5 | S3 | ✅ Complete | 2026-04-18 | - | Documentation update |
-| 4.1 | S4 | ⏳ Pending | - | - | RED: custom plan augmentation tests |
-| 4.2 | S4 | ⏳ Pending | - | - | GREEN: custom plan augmentation impl |
-| 4.3 | S4 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
-| 4.4 | S4 | ⏳ Pending | - | - | Documentation update |
+| 4.1 | S4 | ✅ Complete | 2026-04-18 | c02db5c | RED: augmented plan uses full payload (2 cases) |
+| 4.2 | S4 | ✅ Complete | 2026-04-18 | a01dfd0 | GREEN: one-line change + replace semantics fix |
+| 4.3 | S4 | ✅ Complete | 2026-04-18 | aff9e19 | E2E: 9/9 pass incl custom plan augmentation |
+| 4.4 | S4 | ✅ Complete | 2026-04-18 | - | Documentation update |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
