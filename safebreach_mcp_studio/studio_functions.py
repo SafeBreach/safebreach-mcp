@@ -1642,3 +1642,74 @@ def sb_set_studio_attack_status(
         "new_status": new_status,
         "implications": implications,
     }
+
+
+# =====================================================================
+# Scenario Execution (SAF-29967)
+# =====================================================================
+
+
+def _has_real_filter_criteria(filter_dict):
+    """
+    Check if a filter dict has at least one key with non-empty values.
+
+    A filter like {"os": {"operator": "is", "values": ["WINDOWS"]}} qualifies.
+    A filter like {"simulators": {"operator": "is", "values": []}} does NOT.
+    An empty dict or None does NOT qualify.
+    """
+    if not filter_dict:
+        return False
+    for value in filter_dict.values():
+        if isinstance(value, dict):
+            vals = value.get('values', [])
+            if vals:
+                return True
+        elif value:
+            return True
+    return False
+
+
+def compute_scenario_readiness(scenario):
+    """
+    Determine if a scenario is ready to run.
+
+    A scenario is ready when ALL steps have BOTH targetFilter AND attackerFilter
+    with at least one key containing non-empty values arrays.
+
+    Returns bool. Named differently from config_types' compute_is_ready_to_run
+    because this will evolve in future slices to return diagnostic info.
+    """
+    steps = scenario.get('steps', [])
+    if not steps:
+        return False
+    for step in steps:
+        target = step.get('targetFilter', {})
+        attacker = step.get('attackerFilter', {})
+        if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):
+            return False
+    return True
+
+
+def _fetch_all_scenarios(console):
+    """
+    Fetch all OOB scenarios from the content-manager API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        List of full scenario dictionaries
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'content-manager')
+
+    api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    scenarios = response.json()
+    logger.info(f"Retrieved {len(scenarios)} scenarios for console '{console}'")
+    return scenarios
