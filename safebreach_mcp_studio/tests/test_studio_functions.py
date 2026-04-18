@@ -20,6 +20,7 @@ from safebreach_mcp_studio.studio_functions import (
     _has_real_filter_criteria,
     compute_scenario_readiness,
     _fetch_all_scenarios,
+    _get_scenario_statistics,
     sb_run_scenario,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
@@ -5648,3 +5649,268 @@ class TestRunScenario:
         # Edges: entry + step1→wait + wait→step2 = 3
         assert len(plan['edges']) == 3
         assert plan['edges'][0] == {"to": 1}  # Entry point
+
+
+# =====================================================================
+# Statistics Pre-flight Validation Tests (SAF-29967 — Slice 1 addition)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_statistics_response_all_good():
+    """Statistics response where all 2 steps produce simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 1676, "moves": {"281": 216}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 2198, "moves": {"226": 144}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def mock_statistics_response_one_empty():
+    """Statistics response where step 2 produces 0 simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 1676, "moves": {"281": 216}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def mock_statistics_response_all_zero():
+    """Statistics response where ALL steps produce 0 simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+class TestGetScenarioStatistics:
+    """Test the _get_scenario_statistics function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_returns_per_step_counts(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Returns list of simulationCount per step."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_statistics_response_all_good
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        assert result == [1676, 2198]
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_correct_url_and_payload(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Verify correct URL, query params, and payload structure."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_statistics_response_all_good
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        call_args = mock_post.call_args
+        url = call_args[0][0]
+        assert "/api/orch/v1/accounts/1234567890/plan/statistics" in url
+        assert "limit=500000" in url
+        assert "includeDisabled=true" in url
+
+        payload = call_args[1]['json']
+        assert payload['name'] == ''
+        assert len(payload['steps']) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_api_error_propagates(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario
+    ):
+        """API errors propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = Exception("Statistics API 500")
+        mock_post.return_value = mock_response
+
+        with pytest.raises(Exception, match="Statistics API 500"):
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+
+class TestRunScenarioWithStatistics:
+    """Test sb_run_scenario statistics pre-flight and allow_partial_steps."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    def _mock_get(self, mock_get, scenarios):
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = scenarios
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+    def _mock_post_sequence(self, mock_post, stats_response, queue_response):
+        """Mock POST to return stats on first call, queue on second call."""
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = stats_response
+        stats_resp.raise_for_status.return_value = None
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = queue_response
+        queue_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [stats_resp, queue_resp]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_steps_good_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_all_good,
+        mock_queue_response_scenario
+    ):
+        """All steps produce simulations — proceeds to queue."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+        self._mock_post_sequence(mock_post, mock_statistics_response_all_good,
+                                 mock_queue_response_scenario)
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['status'] == 'queued'
+        assert mock_post.call_count == 2  # statistics + queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_one_empty_step_default_refuses(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_one_empty
+    ):
+        """One step with 0 simulations + allow_partial_steps=False (default) → refuse."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = mock_statistics_response_one_empty
+        stats_resp.raise_for_status.return_value = None
+        mock_post.return_value = stats_resp
+
+        with pytest.raises(ValueError, match="0 simulations"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console"
+            )
+
+        assert mock_post.call_count == 1  # only statistics, no queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_one_empty_step_partial_allowed_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_one_empty,
+        mock_queue_response_scenario
+    ):
+        """One step with 0 + allow_partial_steps=True → proceeds to queue."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+        self._mock_post_sequence(mock_post, mock_statistics_response_one_empty,
+                                 mock_queue_response_scenario)
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            allow_partial_steps=True
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert mock_post.call_count == 2  # statistics + queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_zero_always_refuses(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_all_zero
+    ):
+        """All steps 0 simulations → always refuse, even with allow_partial_steps=True."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = mock_statistics_response_all_zero
+        stats_resp.raise_for_status.return_value = None
+        mock_post.return_value = stats_resp
+
+        with pytest.raises(ValueError, match="0 simulations"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console",
+                allow_partial_steps=True
+            )

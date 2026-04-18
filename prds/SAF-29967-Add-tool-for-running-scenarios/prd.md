@@ -94,6 +94,33 @@ Config's version stays as a simple boolean filter.
   per-step diagnostic info (which steps are missing which filters, what values are needed).
   This guides the LLM to call the tool with the right augmenting parameters.
 
+### Component A.5: Statistics Pre-flight Validation (`studio_functions.py`)
+
+**Purpose**: Predict simulation counts per step before submitting to queue. Prevents
+wasted queue slots and gives the agent confidence about what will happen.
+
+**All slices**:
+- `_get_scenario_statistics(steps, console)` — Calls
+  `POST /api/orch/v1/accounts/{account_id}/plan/statistics?limit=500000&includeDisabled=true`
+  with the scenario steps. Returns per-step `simulationCount` from the response.
+- Called in `sb_run_scenario` after readiness check, before queue submission.
+- `allow_partial_steps` parameter (bool, default `False`):
+  - `False`: ALL steps must produce >0 simulations. If any step has 0, refuse with error
+    listing which steps are empty.
+  - `True`: Allow running if at least one step produces >0. Report empty steps in response.
+  - ALL steps 0: Always refuse regardless of flag.
+- Predicted simulation counts included in the markdown response (total + per-step).
+
+**Statistics API Response Structure**:
+```
+data.steps[] — one per scenario step, in order:
+  simulationCount: int      — total simulations this step will produce
+  moves: {moveId: count}    — per-attack breakdown
+  targetSimulators: {uuid: count}
+  attackerSimulators: {uuid: count}
+  simulators: {uuid: count}
+```
+
 ### Component B: Scenario Fetch (`studio_functions.py`)
 
 **Purpose**: Fetch scenario data from SafeBreach APIs.
@@ -108,8 +135,10 @@ Config's version stays as a simple boolean filter.
 
 **Purpose**: Main orchestration: find scenario → validate → build payload → queue.
 
-**Slice 1**: `sb_run_scenario(scenario_id, console, test_name)` — OOB-only.
-Finds by UUID, validates readiness, builds full relay payload, POSTs to queue.
+**Slice 1**: `sb_run_scenario(scenario_id, console, test_name, allow_partial_steps)` — OOB-only.
+Finds by UUID, validates readiness, calls statistics pre-flight, builds full relay payload,
+POSTs to queue. `allow_partial_steps` (default False) controls whether steps with 0
+predicted simulations block execution.
 
 **Slice 2**: Extends to search custom plans when OOB lookup misses. Custom plan payload
 uses `planId` reference (no steps/actions/edges).
@@ -123,7 +152,7 @@ uses `planId` reference (no steps/actions/edges).
 
 **Purpose**: Register `run_scenario` as an MCP tool, evolving its parameters per slice.
 
-**Slice 1**: `scenario_id`, `console`, `test_name`
+**Slice 1**: `scenario_id`, `console`, `test_name`, `allow_partial_steps`
 **Slice 2**: Same parameters (custom plans discovered automatically by ID type)
 **Slice 3-4**: Adds augmenting parameters for missing filters
 **Slice 5**: Adds `scenario_type` parameter
@@ -225,7 +254,15 @@ E2E tests run against pentest01 and gate progression to the next slice.
 }
 ```
 
-**Queue Status API** (optional pre-flight, future enhancement):
+**Plan Statistics API** (pre-flight validation, all slices):
+- **URL**: `POST /api/orch/v1/accounts/{account_id}/plan/statistics?limit=500000&includeDisabled=true`
+- **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
+- **Base URL Resolution**: `get_api_base_url(console, 'orchestrator')`
+- **Payload**: `{"name": "", "steps": [...]}` — same step filter structure, no DAG needed
+- **Response**: `{"data": {"steps": [{"simulationCount": N, "moves": {...}, ...}]}}`
+- **Purpose**: Predict per-step simulation counts before queue submission
+
+**Queue Status API** (optional, future enhancement):
 - **URL**: `GET /api/orch/v4/accounts/{account_id}/queue`
 - **Purpose**: Check if free slots are available before submitting
 
@@ -345,6 +382,7 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 1.5 | S1 | ⏳ Pending | - | - | MCP tool registration |
 | 1.6 | S1 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
 | 1.7 | S1 | ⏳ Pending | - | - | Documentation |
+| 1.8 | S1 | ⏳ Pending | - | - | Statistics pre-flight + allow_partial_steps |
 | 2.1 | S2 | ⏳ Pending | - | - | RED: custom plan fetch + run tests |
 | 2.2 | S2 | ⏳ Pending | - | - | GREEN: custom plan fetch + run impl |
 | 2.3 | S2 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -950,3 +988,4 @@ step structures. Details refined after Slice 4.
 | 2026-04-18 11:00 | Restructured to elephant carpaccio: 5 vertical slices with per-slice TDD + E2E gates |
 | 2026-04-18 11:30 | Added queue→start→simulations→cancel E2E pattern with cancel API |
 | 2026-04-18 12:00 | Added zero-mocks rule for E2E tests |
+| 2026-04-18 14:00 | Added statistics pre-flight validation (Phase 1.8) with allow_partial_steps parameter |
