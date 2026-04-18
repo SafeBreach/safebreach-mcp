@@ -24,6 +24,7 @@ from .studio_functions import (
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
+    sb_run_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -978,6 +979,87 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
             except Exception as e:
                 logger.error(f"Error in set_studio_attack_status: {e}")
                 return f"Error changing attack status: {str(e)}"
+
+        # --- Scenario Execution (SAF-29967) ---
+
+        @self.mcp.tool(
+            name="run_scenario",
+            description="""Executes a ready-to-run SafeBreach scenario on the platform.
+
+IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
+scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
+and verify is_ready_to_run=True.
+
+Currently supports OOB (SafeBreach-published) scenarios only. The scenario's built-in filters
+(target, attacker, attack selection) are used as-is — no simulator selection needed.
+
+Parameters:
+- scenario_id (required, str): UUID of the OOB scenario to execute. Get this from get_scenarios
+  on the Config Server. Only scenarios with is_ready_to_run=True can be executed.
+- console (required, str): SafeBreach console name. Use get_scenarios from Config Server to
+  discover available consoles.
+- test_name (optional, str): Custom name for the test execution. Defaults to the scenario name.
+
+Returns: Markdown summary with test_id, scenario info, step count, and next steps.
+
+Use the returned test_id with get_test_details (Data Server) to track execution progress.
+
+Example:
+run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")"""
+        )
+        def run_scenario(
+            scenario_id: str,
+            console: str = "default",
+            test_name: str = None,
+        ) -> str:
+            """Execute a ready-to-run OOB scenario."""
+            try:
+                # Single-tenant console auto-resolve
+                from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+                if not safebreach_envs:
+                    console_name = get_console_name()
+                    if console_name != 'default' and console not in safebreach_envs:
+                        console = console_name
+
+                result = sb_run_scenario(
+                    scenario_id=scenario_id,
+                    console=console,
+                    test_name=test_name,
+                )
+
+                # Format step_run_ids for display
+                step_ids = result.get('step_run_ids', [])
+                if len(step_ids) <= 3:
+                    step_ids_display = ", ".join(step_ids)
+                else:
+                    step_ids_display = f"{step_ids[0]}, ... , {step_ids[-1]}"
+
+                response_parts = [
+                    "## Scenario Execution Queued",
+                    "",
+                    f"**Test ID:** `{result.get('test_id')}`",
+                    f"**Test Name:** {result.get('test_name')}",
+                    f"**Scenario:** {result.get('scenario_name')} (`{result.get('scenario_id')}`)",
+                    f"**Steps Queued:** {result.get('step_count')}",
+                    f"**Step Run IDs:** {step_ids_display}",
+                    f"**Status:** {result.get('status')}",
+                    "",
+                    "### Next Steps",
+                    "",
+                    f"Use `get_test_details` on the Data Server with test_id "
+                    f"`{result.get('test_id')}` to track execution progress and view results.",
+                    "",
+                    "**Scenario successfully queued for execution!**"
+                ]
+
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Run scenario error: {e}")
+                return f"Run Scenario Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in run_scenario: {e}")
+                return f"Error running scenario: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:
