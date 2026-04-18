@@ -20,6 +20,7 @@ from safebreach_mcp_studio.studio_functions import (
     _has_real_filter_criteria,
     compute_scenario_readiness,
     _fetch_all_scenarios,
+    sb_run_scenario,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -5356,3 +5357,222 @@ class TestFetchAllScenarios:
 
         result = _fetch_all_scenarios("test-console")
         assert result == []
+
+
+class TestRunScenario:
+    """Test the sb_run_scenario orchestration function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_success(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Successfully queue an OOB scenario for execution."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # Mock GET (scenario fetch)
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock POST (queue)
+        mock_post_response = MagicMock()
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        # Verify result structure
+        assert result['test_id'] == "1776488350786.15"
+        assert result['scenario_id'] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+        assert result['scenario_name'] == "Step 1 - Fortify your Network Perimeter"
+        assert result['step_count'] == 2
+        assert len(result['step_run_ids']) == 2
+        assert result['step_run_ids'][0] == "1776488350786.1"
+        assert result['status'] == 'queued'
+
+        # Verify POST payload structure
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        payload = call_kwargs['json']
+        assert payload['plan']['name'] == "Step 1 - Fortify your Network Perimeter"
+        assert payload['plan']['originalScenarioId'] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+        assert len(payload['plan']['steps']) == 2
+        assert payload['plan']['actions'] == mock_oob_scenario['actions']
+        assert payload['plan']['edges'] == mock_oob_scenario['edges']
+        assert payload['plan']['systemTags'] == []
+
+        # Verify query params
+        assert call_kwargs['params']['enableFeedbackLoop'] == "true"
+        assert call_kwargs['params']['retrySimulations'] == "true"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_custom_test_name(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Custom test_name overrides scenario name in payload."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            test_name="My Custom Test"
+        )
+
+        # Verify custom name in payload
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['name'] == "My Custom Test"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_not_found(
+        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario
+    ):
+        """Scenario ID not in the fetched list raises ValueError."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        with pytest.raises(ValueError, match="not found"):
+            sb_run_scenario(
+                scenario_id="nonexistent-uuid-1234",
+                console="test-console"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_not_ready(
+        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario_not_ready
+    ):
+        """Non-ready scenario raises ValueError."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario_not_ready]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        with pytest.raises(ValueError, match="not ready to run"):
+            sb_run_scenario(
+                scenario_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                console="test-console"
+            )
+
+    def test_run_scenario_empty_id(self):
+        """Empty scenario_id raises ValueError."""
+        with pytest.raises(ValueError):
+            sb_run_scenario(scenario_id="", console="test-console")
+
+    def test_run_scenario_none_id(self):
+        """None scenario_id raises ValueError."""
+        with pytest.raises(ValueError):
+            sb_run_scenario(scenario_id=None, console="test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_api_error(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_oob_scenario
+    ):
+        """Queue API error propagates."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.raise_for_status.side_effect = Exception("Queue API 500")
+        mock_post.return_value = mock_post_response
+
+        with pytest.raises(Exception, match="Queue API 500"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_multi_step_response(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_oob_scenario
+    ):
+        """Multi-step scenario response returns all stepRunIds."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # 5-step response
+        five_step_response = {
+            "data": {
+                "planRunId": "test-plan-run-id",
+                "name": "Test Scenario",
+                "steps": [
+                    {"stepRunId": f"step-{i}"} for i in range(5)
+                ]
+            }
+        }
+        mock_post_response = MagicMock()
+        mock_post_response.json.return_value = five_step_response
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        assert result['step_count'] == 5
+        assert len(result['step_run_ids']) == 5
+        assert result['step_run_ids'] == [f"step-{i}" for i in range(5)]
