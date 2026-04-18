@@ -153,11 +153,18 @@ E2E tests run against pentest01 and gate progression to the next slice.
 - **Response**: `{"data": [...]}` wrapping plan objects. Each contains: `id` (integer),
   `name`, `steps[]`, `tags`, `userId`, `originalScenarioId`, `createdAt`, `updatedAt`
 
-**Orchestrator Queue API** — All slices:
+**Orchestrator Queue API — Submit** (all slices):
 - **URL**: `POST /api/orch/v4/accounts/{account_id}/queue`
 - **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
 - **Query Parameters**: `enableFeedbackLoop=true`, `retrySimulations=true`
 - **Base URL Resolution**: `get_api_base_url(console, 'orchestrator')`
+
+**Orchestrator Queue API — Cancel** (E2E testing):
+- **URL**: `DELETE /api/orch/v4/accounts/{account_id}/queue/{planRunId}`
+- **Headers**: `x-apitoken: {token}`
+- **Purpose**: Cancel a running/queued test. Used by E2E tests to clean up after
+  verifying the queue response — avoids waiting for long-running tests to complete.
+- **Pattern**: queue → verify response has valid test_id → cancel immediately
 
 **OOB Scenario Run Payload** (Slice 1, confirmed via pentest01):
 ```
@@ -289,13 +296,38 @@ E2E tests run against pentest01 and gate progression to the next slice.
 - **Autonomy**: pentest01 has scenarios of all types — development is fully autonomous.
   If blocked on a specific scenario ID, user provides qualified payloads.
 
+**E2E Pattern: Queue → Wait for Start → Wait for Simulations → Cancel**
+
+Getting a `test_id` back only proves the queue API accepted the payload. To confirm the
+scenario **actually executed**, E2E tests must verify simulations completed:
+
+1. Call `sb_run_scenario(...)` — verify response has valid `test_id`
+2. **Poll test status** until the test transitions from queued to running
+   (use Data Server's test details API or direct API call)
+3. **Poll simulation count** until >5 simulations have completed — this proves the
+   orchestrator parsed the payload, resolved attacks, dispatched to simulators, and
+   got results back
+4. **Cancel the running test** via `DELETE /queue/{planRunId}` — no need to wait for
+   full completion
+5. Assert all verification steps passed
+
+E2E helpers leverage existing Data Server functions (no new polling code needed):
+- `_wait_for_test_start(test_id, console, timeout=120)` — polls
+  `sb_get_test_details(test_id, console)` from `safebreach_mcp_data.data_functions`
+  until test status indicates running (not queued). Retries with short sleep.
+- `_wait_for_simulations(test_id, console, min_count=5, timeout=300)` — polls
+  `sb_get_test_simulations(test_id, console)` from `safebreach_mcp_data.data_functions`
+  until `total_simulations >= min_count`. The `simulations_statistics` field in test
+  details also provides status counts without pagination.
+- `_cancel_test(test_id, console)` — `DELETE /queue/{planRunId}`, best-effort cleanup
+
 | Slice | E2E Gate Test |
 |-------|--------------|
-| 1 | Run ready-to-run OOB scenario, verify test_id returned |
-| 2 | Run ready-to-run custom plan, verify test_id returned |
-| 3 | Augment non-ready OOB scenario, run, verify test_id |
-| 4 | Augment non-ready custom plan, run, verify test_id |
-| 5 | Run Propagate scenario, verify test_id |
+| 1 | Run OOB scenario → wait for start → >5 simulations complete → cancel |
+| 2 | Run custom plan → wait for start → >5 simulations complete → cancel |
+| 3 | Augment non-ready OOB → run → >5 simulations complete → cancel |
+| 4 | Augment non-ready custom → run → >5 simulations complete → cancel |
+| 5 | Run Propagate scenario → >5 simulations complete → cancel |
 
 ## 9. Implementation Phases
 
@@ -575,18 +607,37 @@ All tests will fail (RED) because the function doesn't exist yet.
 
 **Implementation Details**:
 
-1. **`TestRunScenarioE2E`** class
+1. **E2E helper functions** (in test file, not production code)
+   - `_cancel_test(test_id, console)` — `DELETE /api/orch/v4/accounts/{account_id}/queue/{test_id}`.
+     Best-effort: log errors but don't fail the test. Called in `finally` block.
+   - `_wait_for_test_start(test_id, console, timeout=120)` — Polls
+     `sb_get_test_details(test_id, console)` from `safebreach_mcp_data.data_functions`.
+     Waits until test status indicates running (not queued). Retries with short sleep
+     intervals. Raises `TimeoutError` if not started within timeout.
+   - `_wait_for_simulations(test_id, console, min_count=5, timeout=300)` — Polls
+     `sb_get_test_details(test_id, console)` and checks `simulations_statistics` for
+     total completed count (sum of all status counts). Waits until >= `min_count`
+     simulations have completed. This proves the orchestrator parsed the payload,
+     resolved attacks, dispatched to simulators, and got real results back.
+
+2. **`TestRunScenarioE2E`** class
    - **`test_run_ready_oob_scenario`**: Fetch all scenarios from pentest01, find one
      where `compute_scenario_readiness` returns True, call `sb_run_scenario` with its
      ID. Verify: non-empty `test_id`, `step_count > 0`, `status='queued'`,
-     `step_run_ids` is a non-empty list.
+     `step_run_ids` is a non-empty list. Then:
+     1. Wait for test to start (status = running)
+     2. Wait for >5 completed simulations
+     3. Cancel the running test
    - **`test_run_scenario_not_found`**: Call with fake UUID, verify ValueError.
+     (No cancel needed — nothing was queued.)
    - **`test_run_scenario_not_ready`**: Find a non-ready scenario (if any), verify
-     ValueError. Skip if all happen to be ready.
+     ValueError. Skip if all happen to be ready. (No cancel needed.)
    - **`test_run_scenario_custom_name`**: Run with custom `test_name`, verify response
-     matches.
+     `test_name` matches. Wait for start + simulations, then cancel.
 
-2. **Infrastructure**: `@pytest.mark.e2e`, `@skip_e2e`, `E2E_CONSOLE` env var
+3. **Infrastructure**: `@pytest.mark.e2e`, `@skip_e2e`, `E2E_CONSOLE` env var
+4. **Zero mocks** — E2E tests call real APIs only. No `@patch`, no `Mock`, no fakes.
+   The entire point is to validate the real pipeline end-to-end.
 
 **Changes**:
 
@@ -897,3 +948,5 @@ step structures. Details refined after Slice 4.
 |------|-------------------|
 | 2026-04-18 10:00 | PRD created — initial draft with 7 monolithic phases |
 | 2026-04-18 11:00 | Restructured to elephant carpaccio: 5 vertical slices with per-slice TDD + E2E gates |
+| 2026-04-18 11:30 | Added queue→start→simulations→cancel E2E pattern with cancel API |
+| 2026-04-18 12:00 | Added zero-mocks rule for E2E tests |
