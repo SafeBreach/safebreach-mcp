@@ -1715,10 +1715,45 @@ def _fetch_all_scenarios(console):
     return scenarios
 
 
+def _get_scenario_statistics(steps, console):
+    """
+    Predict per-step simulation counts using the plan statistics API.
+
+    Args:
+        steps: List of scenario step dicts (with filter fields)
+        console: SafeBreach console name
+
+    Returns:
+        List of simulationCount integers, one per step
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+
+    api_url = (
+        f"{base_url}/api/orch/v1/accounts/{account_id}"
+        f"/plan/statistics?limit=500000&includeDisabled=true"
+    )
+    payload = {"name": "", "steps": steps}
+
+    logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'")
+    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    response.raise_for_status()
+
+    data = response.json().get('data', {})
+    step_stats = data.get('steps', [])
+    counts = [s.get('simulationCount', 0) for s in step_stats]
+
+    logger.info(f"Statistics: {counts} (total: {sum(counts)})")
+    return counts
+
+
 def sb_run_scenario(
     scenario_id: str,
     console: str = "default",
     test_name: str = None,
+    allow_partial_steps: bool = False,
 ) -> Dict[str, Any]:
     """
     Run an OOB scenario by relaying its payload to the orchestrator queue API.
@@ -1727,6 +1762,8 @@ def sb_run_scenario(
         scenario_id: UUID string of the OOB scenario to execute
         console: SafeBreach console identifier (default: "default")
         test_name: Custom name for the test execution (optional, defaults to scenario name)
+        allow_partial_steps: If False (default), refuse if any step produces 0 simulations.
+            If True, allow running as long as at least one step produces >0.
 
     Returns:
         Dictionary containing test_id, test_name, scenario_id, scenario_name,
@@ -1761,9 +1798,39 @@ def sb_run_scenario(
             "All steps must have both targetFilter and attackerFilter with non-empty values."
         )
 
+    # Statistics pre-flight: predict simulation counts per step
+    step_counts = _get_scenario_statistics(scenario['steps'], console)
+    total_predicted = sum(step_counts)
+    empty_steps = [
+        i + 1 for i, count in enumerate(step_counts) if count == 0
+    ]
+
+    if total_predicted == 0:
+        step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
+        raise ValueError(
+            f"Scenario '{scenario.get('name', scenario_id)}' would produce 0 simulations "
+            f"across all {len(step_counts)} steps. No matching simulators or attacks found. "
+            f"Steps: {step_names}"
+        )
+
+    if empty_steps and not allow_partial_steps:
+        step_details = []
+        for idx in empty_steps:
+            step_name = scenario['steps'][idx - 1].get('name', f'Step {idx}')
+            step_details.append(f"Step {idx} ({step_name})")
+        raise ValueError(
+            f"Scenario '{scenario.get('name', scenario_id)}' has steps with 0 simulations: "
+            f"{', '.join(step_details)}. "
+            f"Set allow_partial_steps=True to run anyway with partial coverage, "
+            f"or check simulator availability."
+        )
+
     effective_test_name = test_name or scenario['name']
 
-    logger.info(f"Running scenario '{scenario['name']}' ({scenario_id}) on console: {console}")
+    logger.info(
+        f"Running scenario '{scenario['name']}' ({scenario_id}) on console: {console} "
+        f"(predicted: {total_predicted} simulations, empty steps: {empty_steps})"
+    )
 
     # Get authentication and base URL for orchestrator
     apitoken = get_secret_for_console(console)
@@ -1864,6 +1931,9 @@ def sb_run_scenario(
         'scenario_name': scenario['name'],
         'step_count': len(steps),
         'step_run_ids': [s.get('stepRunId', '') for s in steps],
+        'predicted_simulations': total_predicted,
+        'predicted_per_step': step_counts,
+        'empty_steps': empty_steps,
         'status': 'queued',
     }
 

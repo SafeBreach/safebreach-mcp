@@ -5361,8 +5361,14 @@ class TestFetchAllScenarios:
 
 
 class TestRunScenario:
-    """Test the sb_run_scenario orchestration function."""
+    """Test the sb_run_scenario orchestration function.
 
+    These tests patch _get_scenario_statistics to bypass the statistics pre-flight,
+    focusing on the core orchestration logic. Statistics integration is tested
+    separately in TestRunScenarioWithStatistics.
+    """
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5370,7 +5376,7 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_success(
         self, mock_secret, mock_base_url, mock_account_id,
-        mock_get, mock_post,
+        mock_get, mock_post, mock_stats,
         mock_oob_scenario, mock_queue_response_scenario
     ):
         """Successfully queue an OOB scenario for execution."""
@@ -5422,6 +5428,7 @@ class TestRunScenario:
         assert call_kwargs['params']['enableFeedbackLoop'] == "true"
         assert call_kwargs['params']['retrySimulations'] == "true"
 
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5429,7 +5436,7 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_custom_test_name(
         self, mock_secret, mock_base_url, mock_account_id,
-        mock_get, mock_post,
+        mock_get, mock_post, mock_stats,
         mock_oob_scenario, mock_queue_response_scenario
     ):
         """Custom test_name overrides scenario name in payload."""
@@ -5510,6 +5517,7 @@ class TestRunScenario:
         with pytest.raises(ValueError):
             sb_run_scenario(scenario_id=None, console="test-console")
 
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5517,7 +5525,7 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_api_error(
         self, mock_secret, mock_base_url, mock_account_id,
-        mock_get, mock_post, mock_oob_scenario
+        mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
         """Queue API error propagates."""
         mock_secret.return_value = "test-token"
@@ -5541,6 +5549,7 @@ class TestRunScenario:
                 console="test-console"
             )
 
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5548,7 +5557,7 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_multi_step_response(
         self, mock_secret, mock_base_url, mock_account_id,
-        mock_get, mock_post, mock_oob_scenario
+        mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
         """Multi-step scenario response returns all stepRunIds."""
         mock_secret.return_value = "test-token"
@@ -5585,6 +5594,7 @@ class TestRunScenario:
         assert len(result['step_run_ids']) == 5
         assert result['step_run_ids'] == [f"step-{i}" for i in range(5)]
 
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5592,7 +5602,7 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_none_fields_builds_dag(
         self, mock_secret, mock_base_url, mock_account_id,
-        mock_get, mock_post, mock_oob_scenario, mock_queue_response_scenario
+        mock_get, mock_post, mock_stats, mock_oob_scenario, mock_queue_response_scenario
     ):
         """Scenarios with None actions/edges/systemTags/uuids get DAG built for them."""
         mock_secret.return_value = "test-token"

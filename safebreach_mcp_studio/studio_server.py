@@ -999,8 +999,12 @@ Parameters:
 - console (required, str): SafeBreach console name. Use get_scenarios from Config Server to
   discover available consoles.
 - test_name (optional, str): Custom name for the test execution. Defaults to the scenario name.
+- allow_partial_steps (optional, bool, default False): Controls behavior when some steps would
+  produce 0 simulations. If False (default), refuses to run unless ALL steps produce simulations.
+  If True, allows running as long as at least one step produces simulations. Always refuses if
+  ALL steps produce 0.
 
-Returns: Markdown summary with test_id, scenario info, step count, and next steps.
+Returns: Markdown summary with test_id, predicted simulation counts, step info, and next steps.
 
 Use the returned test_id with get_test_details (Data Server) to track execution progress.
 
@@ -1011,6 +1015,7 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
             scenario_id: str,
             console: str = "default",
             test_name: str = None,
+            allow_partial_steps: bool = False,
         ) -> str:
             """Execute a ready-to-run OOB scenario."""
             try:
@@ -1025,6 +1030,7 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
                     scenario_id=scenario_id,
                     console=console,
                     test_name=test_name,
+                    allow_partial_steps=allow_partial_steps,
                 )
 
                 # Format step_run_ids for display
@@ -1034,6 +1040,11 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
                 else:
                     step_ids_display = f"{step_ids[0]}, ... , {step_ids[-1]}"
 
+                # Format predicted simulations per step
+                predicted_per_step = result.get('predicted_per_step', [])
+                predicted_total = result.get('predicted_simulations', 0)
+                empty_steps = result.get('empty_steps', [])
+
                 response_parts = [
                     "## Scenario Execution Queued",
                     "",
@@ -1042,7 +1053,27 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
                     f"**Scenario:** {result.get('scenario_name')} (`{result.get('scenario_id')}`)",
                     f"**Steps Queued:** {result.get('step_count')}",
                     f"**Step Run IDs:** {step_ids_display}",
+                    f"**Predicted Simulations:** {predicted_total:,} total",
                     f"**Status:** {result.get('status')}",
+                ]
+
+                # Add per-step breakdown
+                if predicted_per_step:
+                    response_parts.append("")
+                    response_parts.append("### Predicted Simulations Per Step")
+                    response_parts.append("")
+                    for i, count in enumerate(predicted_per_step):
+                        marker = " (0 simulations)" if count == 0 else ""
+                        response_parts.append(f"- Step {i + 1}: {count:,}{marker}")
+
+                if empty_steps:
+                    response_parts.append("")
+                    response_parts.append(
+                        f"**Note:** Steps {empty_steps} will produce 0 simulations "
+                        f"(running with partial coverage)."
+                    )
+
+                response_parts.extend([
                     "",
                     "### Next Steps",
                     "",
@@ -1050,7 +1081,7 @@ run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
                     f"`{result.get('test_id')}` to track execution progress and view results.",
                     "",
                     "**Scenario successfully queued for execution!**"
-                ]
+                ])
 
                 return "\n".join(response_parts)
 
