@@ -23,6 +23,7 @@ import requests
 from safebreach_mcp_studio.studio_functions import (
     sb_run_scenario,
     compute_scenario_readiness,
+    diagnose_scenario_readiness,
     _fetch_all_scenarios,
     _fetch_all_plans,
 )
@@ -239,6 +240,154 @@ class TestRunScenarioE2E:
 
             _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
 
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    # --- Slice 3: Non-ready Scenario Augmentation E2E Tests ---
+
+    def _build_broad_overrides(self, scenario):
+        """Build step_overrides that apply broad OS filters to all missing steps."""
+        import json
+        diag = diagnose_scenario_readiness(scenario)
+        overrides = {}
+        for step_info in diag['missing_steps']:
+            step_num = str(step_info['step_number'])
+            step_override = {}
+            if 'targetFilter' in step_info['missing_filters']:
+                step_override['targetFilter'] = {
+                    "os": {"operator": "is",
+                           "values": ["WINDOWS", "MAC", "LINUX", "DOCKER", "NETWORK"],
+                           "name": "os"}
+                }
+            if 'attackerFilter' in step_info['missing_filters']:
+                step_override['attackerFilter'] = {
+                    "os": {"operator": "is",
+                           "values": ["WINDOWS", "MAC", "LINUX", "DOCKER"],
+                           "name": "os"}
+                }
+            overrides[step_num] = step_override
+        return json.dumps(overrides)
+
+    def test_augment_non_ready_oob_scenario_1(self):
+        """Augment and run a non-ready OOB scenario (first one found)."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)]
+        assert len(not_ready) > 0, "No non-ready OOB scenarios on console"
+
+        scenario = not_ready[0]
+
+        # Turn 1: get diagnostic
+        result = sb_run_scenario(scenario_id=str(scenario['id']), console=E2E_CONSOLE)
+        assert result['status'] == 'not_ready'
+        assert len(result['diagnostic']['missing_steps']) > 0
+
+        # Turn 2: augment and run
+        overrides = self._build_broad_overrides(scenario)
+        test_id = None
+        try:
+            result = sb_run_scenario(
+                scenario_id=str(scenario['id']),
+                console=E2E_CONSOLE,
+                step_overrides=overrides,
+                allow_partial_steps=True,
+            )
+            assert result['status'] == 'queued'
+            test_id = result['test_id']
+            assert test_id
+            assert result['predicted_simulations'] > 0
+
+            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_augment_non_ready_oob_scenario_2(self):
+        """Augment and run a DIFFERENT non-ready OOB scenario (variety)."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)
+                     and len(s.get('steps', [])) >= 3]
+        assert len(not_ready) >= 2, "Need at least 2 multi-step non-ready OOB scenarios"
+
+        scenario = not_ready[1]
+
+        overrides = self._build_broad_overrides(scenario)
+        test_id = None
+        try:
+            result = sb_run_scenario(
+                scenario_id=str(scenario['id']),
+                console=E2E_CONSOLE,
+                step_overrides=overrides,
+                allow_partial_steps=True,
+            )
+            assert result['status'] == 'queued'
+            test_id = result['test_id']
+            assert result['predicted_simulations'] > 0
+
+            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_augment_non_ready_custom_plan(self):
+        """Augment and run a non-ready custom plan (tries multiple until one works)."""
+        plans = _fetch_all_plans(E2E_CONSOLE)
+        not_ready = [p for p in plans if not compute_scenario_readiness(p)]
+        assert len(not_ready) > 0, "No non-ready custom plans on console"
+
+        # Try plans until we find one that produces simulations when augmented
+        for plan in not_ready:
+            # Turn 1: diagnostic
+            result = sb_run_scenario(scenario_id=str(plan['id']), console=E2E_CONSOLE)
+            assert result['status'] == 'not_ready'
+
+            # Turn 2: augment and run
+            overrides = self._build_broad_overrides(plan)
+            test_id = None
+            try:
+                result = sb_run_scenario(
+                    scenario_id=str(plan['id']),
+                    console=E2E_CONSOLE,
+                    step_overrides=overrides,
+                    allow_partial_steps=True,
+                )
+                if result.get('status') == 'queued' and result.get('predicted_simulations', 0) > 0:
+                    test_id = result['test_id']
+                    _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
+                    return  # Success — test passes
+            except ValueError:
+                # Statistics returned 0 for this plan — try next one
+                continue
+            finally:
+                if test_id:
+                    _cancel_test(test_id, E2E_CONSOLE)
+
+        pytest.skip("No non-ready custom plans produced simulations when augmented")
+
+    def test_augment_large_oob_scenario(self):
+        """Augment a large OOB scenario (10+ steps) — tests scaling."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        large_not_ready = [s for s in scenarios if not compute_scenario_readiness(s)
+                           and len(s.get('steps', [])) >= 10]
+        assert len(large_not_ready) > 0, "No large non-ready OOB scenarios"
+
+        scenario = large_not_ready[0]
+
+        overrides = self._build_broad_overrides(scenario)
+        test_id = None
+        try:
+            result = sb_run_scenario(
+                scenario_id=str(scenario['id']),
+                console=E2E_CONSOLE,
+                step_overrides=overrides,
+                allow_partial_steps=True,
+            )
+            assert result['status'] == 'queued'
+            test_id = result['test_id']
+            assert result['predicted_simulations'] > 0
+            assert result['step_count'] >= 10
+
+            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
         finally:
             if test_id:
                 _cancel_test(test_id, E2E_CONSOLE)
