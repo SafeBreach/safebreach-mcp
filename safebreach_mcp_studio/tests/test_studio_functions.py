@@ -20,6 +20,7 @@ from safebreach_mcp_studio.studio_functions import (
     _has_real_filter_criteria,
     compute_scenario_readiness,
     _fetch_all_scenarios,
+    _fetch_all_plans,
     _get_scenario_statistics,
     sb_run_scenario,
     studio_draft_cache,
@@ -5924,3 +5925,301 @@ class TestRunScenarioWithStatistics:
                 console="test-console",
                 allow_partial_steps=True
             )
+
+
+# =====================================================================
+# Slice 2: Custom Plan Tests (SAF-29967)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_custom_plan():
+    """Custom plan matching pentest01 structure (integer ID, with actions/edges)."""
+    return {
+        "id": 130,
+        "name": "CISA Alert AA24-190A (APT40)",
+        "userId": 347116670300054,
+        "originalScenarioId": "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba",
+        "steps": [
+            {
+                "id": 1,
+                "uuid": "0e6018f0-7b3e-4e07-af3d-2badaed68669",
+                "name": "host infection",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Brute Force", "Credential Abuse"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "systemFilter": {
+                    "bypassProxy": {"operator": "is", "values": [True], "name": "bypassproxy"},
+                    "runAsRoot": {"operator": "is", "values": [True], "name": "runasroot"}
+                }
+            },
+            {
+                "id": 2,
+                "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "name": "exploitation",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Exploit Transfer"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "systemFilter": {
+                    "bypassProxy": {"operator": "is", "values": [True], "name": "bypassproxy"}
+                }
+            }
+        ],
+        "actions": [
+            {"id": 1, "type": "multiAttack", "data": {"uuid": "0e6018f0-7b3e-4e07-af3d-2badaed68669"}},
+            {"id": 2, "type": "multiAttack", "data": {"uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"}},
+            {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        ],
+        "edges": [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2}
+        ],
+        "systemTags": None,
+        "tags": ["APT40", "CISA"],
+        "createdAt": "2024-07-01T10:00:00Z",
+        "updatedAt": "2024-07-15T12:00:00Z"
+    }
+
+
+class TestFetchAllPlans:
+    """Test the _fetch_all_plans function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url,
+                              mock_account_id, mock_custom_plan):
+        """Successful fetch returns list of plans from data wrapper."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": [mock_custom_plan]}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_plans("test-console")
+
+        assert len(result) == 1
+        assert result[0]["id"] == 130
+        assert result[0]["name"] == "CISA Alert AA24-190A (APT40)"
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url,
+                                      mock_account_id):
+        """Verify correct URL with account_id and details=true."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": []}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        _fetch_all_plans("test-console")
+
+        call_args = mock_get.call_args
+        url = call_args[0][0]
+        assert "/api/config/v2/accounts/1234567890/plans" in url
+        assert "details=true" in url
+        mock_base_url.assert_called_with("test-console", "config")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url,
+                                   mock_account_id):
+        """API errors propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("HTTP 500")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(Exception, match="HTTP 500"):
+            _fetch_all_plans("test-console")
+
+
+class TestRunScenarioCustomPlan:
+    """Test sb_run_scenario with custom plans (Slice 2)."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_success(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_custom_plan, mock_queue_response_scenario
+    ):
+        """Custom plan found by integer ID, queued with planId payload."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        # GET: first call returns empty OOB list, second returns plans
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [mock_custom_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        # POST: queue response
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        result = sb_run_scenario(scenario_id="130", console="test-console")
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['scenario_id'] == "130"
+        assert result['scenario_name'] == "CISA Alert AA24-190A (APT40)"
+        assert result['status'] == 'queued'
+
+        # Verify queue payload uses planId (not full steps)
+        queue_call = mock_post.call_args
+        payload = queue_call[1]['json']
+        assert payload['plan']['planId'] == 130
+        assert payload['plan']['name'] == "CISA Alert AA24-190A (APT40)"
+        assert payload['plan']['systemTags'] == []
+        assert 'steps' not in payload['plan']
+        assert 'actions' not in payload['plan']
+        assert 'edges' not in payload['plan']
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_not_ready(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats
+    ):
+        """Custom plan that is not ready-to-run raises ValueError."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        not_ready_plan = {
+            "id": 999,
+            "name": "Incomplete Plan",
+            "steps": [{"attacksFilter": {}, "attackerFilter": {}, "targetFilter": {},
+                        "systemFilter": {}}],
+            "actions": [], "edges": [], "systemTags": None
+        }
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [not_ready_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        with pytest.raises(ValueError, match="not ready to run"):
+            sb_run_scenario(scenario_id="999", console="test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_found_in_either_source(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get
+    ):
+        """ID not found in OOB or custom plans raises ValueError."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": []}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        with pytest.raises(ValueError, match="not found"):
+            sb_run_scenario(scenario_id="nonexistent-id", console="test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_with_custom_name(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_custom_plan, mock_queue_response_scenario
+    ):
+        """Custom test_name overrides plan name in queue payload."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [mock_custom_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        sb_run_scenario(scenario_id="130", console="test-console",
+                        test_name="My Custom Plan Test")
+
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['name'] == "My Custom Plan Test"
