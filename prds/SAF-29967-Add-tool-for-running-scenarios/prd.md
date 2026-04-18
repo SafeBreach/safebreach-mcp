@@ -387,11 +387,11 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 2.2 | S2 | ✅ Complete | 2026-04-18 | f9f9c81 | GREEN: custom plan fetch + run impl |
 | 2.3 | S2 | ✅ Complete | 2026-04-18 | de9d30c | E2E sign-off (5/5 pass pentest01) |
 | 2.4 | S2 | ✅ Complete | 2026-04-18 | c888e23 | Documentation update |
-| 3.1 | S3 | ⏳ Pending | - | - | RED: diagnostic readiness + augmentation tests |
-| 3.2 | S3 | ⏳ Pending | - | - | GREEN: diagnostic readiness + augmentation impl |
-| 3.3 | S3 | ⏳ Pending | - | - | MCP tool parameter extension |
-| 3.4 | S3 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
-| 3.5 | S3 | ⏳ Pending | - | - | Documentation update |
+| 3.1 | S3 | ✅ Complete | 2026-04-18 | 2d22783 | RED: diagnostic readiness + augmentation tests (16 cases) |
+| 3.2 | S3 | ✅ Complete | 2026-04-18 | 1ad25f8 | GREEN: diagnostic readiness + augmentation impl |
+| 3.3 | S3 | ✅ Complete | 2026-04-18 | 9362212 | MCP tool step_overrides + diagnostic markdown |
+| 3.4 | S3 | ✅ Complete | 2026-04-18 | 2a361a1 | E2E: 8 pass + 1 skip (custom plan → Slice 4) |
+| 3.5 | S3 | ✅ Complete | 2026-04-18 | - | Documentation update |
 | 4.1 | S4 | ⏳ Pending | - | - | RED: custom plan augmentation tests |
 | 4.2 | S4 | ⏳ Pending | - | - | GREEN: custom plan augmentation impl |
 | 4.3 | S4 | ⏳ Pending | - | - | E2E sign-off (pentest01) |

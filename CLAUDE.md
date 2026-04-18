@@ -331,14 +331,18 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 **Studio Server (Port 8004):**
-20. `run_scenario` ✨ **NEW** - Execute a ready-to-run SafeBreach scenario (OOB or custom plan).
-  Fetches scenarios from content-manager API and custom plans from config API. Validates readiness
-  (`is_ready_to_run`), runs statistics pre-flight to predict per-step simulation counts, then
-  submits to orchestrator queue API. OOB scenarios relay full payload with DAG; custom plans use
-  minimal `planId` reference. Accepts `scenario_id` (UUID for OOB, integer string for custom),
-  `console`, optional `test_name`, and `allow_partial_steps` (default False — refuses if any step
-  produces 0 simulations). Returns markdown with test_id, predicted simulation counts per step,
-  and next steps guidance.
+20. `run_scenario` ✨ **NEW** - Execute a SafeBreach scenario (OOB or custom plan).
+  Supports both ready-to-run and non-ready scenarios via two-turn augmentation workflow.
+  Fetches scenarios from content-manager API and custom plans from config API. Validates readiness,
+  runs statistics pre-flight to predict per-step simulation counts, then submits to orchestrator
+  queue API. OOB scenarios relay full payload with DAG; custom plans use `planId` reference.
+  **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
+  `test_name`, `allow_partial_steps` (default False), `step_overrides` (JSON string for
+  augmenting non-ready scenarios with per-step filter overrides).
+  **Two-turn workflow**: Call without overrides → returns diagnostic showing which steps need
+  which filters. Call again with `step_overrides` providing the missing filters.
+  Returns markdown with test_id + predicted simulation counts (queued), or diagnostic info
+  showing missing filters per step with augmentation examples (not ready).
 
 
 ## Filtering and Search Capabilities
