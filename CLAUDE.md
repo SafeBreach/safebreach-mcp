@@ -331,12 +331,14 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
 **Studio Server (Port 8004):**
-20. `run_scenario` ✨ **NEW** - Execute a ready-to-run SafeBreach scenario. Fetches OOB scenarios from
-  the content-manager API, validates readiness (`is_ready_to_run`), and relays the full scenario
-  payload to the orchestrator queue API. Accepts `scenario_id` (UUID), `console`, and optional
-  `test_name`. Returns test_id for tracking via Data Server's `get_test_details`.
-  Only ready-to-run OOB scenarios supported in this version. Custom plans and Propagate type
-  support planned for future slices.
+20. `run_scenario` ✨ **NEW** - Execute a ready-to-run SafeBreach scenario (OOB or custom plan).
+  Fetches scenarios from content-manager API and custom plans from config API. Validates readiness
+  (`is_ready_to_run`), runs statistics pre-flight to predict per-step simulation counts, then
+  submits to orchestrator queue API. OOB scenarios relay full payload with DAG; custom plans use
+  minimal `planId` reference. Accepts `scenario_id` (UUID for OOB, integer string for custom),
+  `console`, optional `test_name`, and `allow_partial_steps` (default False — refuses if any step
+  produces 0 simulations). Returns markdown with test_id, predicted simulation counts per step,
+  and next steps guidance.
 
 
 ## Filtering and Search Capabilities
