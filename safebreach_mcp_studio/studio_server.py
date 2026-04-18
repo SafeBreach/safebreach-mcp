@@ -1005,24 +1005,36 @@ Parameters:
   produce 0 simulations. If False (default), refuses to run unless ALL steps produce simulations.
   If True, allows running as long as at least one step produces simulations. Always refuses if
   ALL steps produce 0.
+- step_overrides (optional, str): JSON string mapping step numbers (1-indexed) to filter
+  overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
+  need to provide missing targetFilter/attackerFilter for specific steps.
+  Format: '{"1": {"targetFilter": {...}, "attackerFilter": {...}}, "2": {...}}'
 
-Returns: Markdown summary with test_id, predicted simulation counts per step, and next steps.
+**Two-turn workflow for non-ready scenarios:**
+1. Call without step_overrides → returns diagnostic showing which steps need augmentation
+2. Use get_console_simulators (Config Server) to discover available simulators
+3. Call again with step_overrides providing the missing filters
 
-Use the returned test_id with get_test_details (Data Server) to track execution progress.
+Returns: Markdown summary with test_id and predicted counts (when queued), or diagnostic
+info showing missing filters per step (when not ready).
 
-Example (OOB scenario):
+Example (ready scenario):
 run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
 
 Example (custom plan):
-run_scenario(scenario_id="130", console="demo")"""
+run_scenario(scenario_id="130", console="demo")
+
+Example (non-ready with overrides):
+run_scenario(scenario_id="abc-123", console="demo", step_overrides='{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}, "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}}}}'"""
         )
         def run_scenario(
             scenario_id: str,
             console: str = "default",
             test_name: str = None,
             allow_partial_steps: bool = False,
+            step_overrides: str = None,
         ) -> str:
-            """Execute a ready-to-run OOB scenario."""
+            """Execute a scenario, or return diagnostic if not ready."""
             try:
                 # Single-tenant console auto-resolve
                 from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
@@ -1036,7 +1048,59 @@ run_scenario(scenario_id="130", console="demo")"""
                     console=console,
                     test_name=test_name,
                     allow_partial_steps=allow_partial_steps,
+                    step_overrides=step_overrides,
                 )
+
+                # Handle not_ready diagnostic response
+                if result.get('status') == 'not_ready':
+                    diag = result.get('diagnostic', {})
+                    missing = diag.get('missing_steps', [])
+
+                    parts = [
+                        "## Scenario Not Ready to Run",
+                        "",
+                        f"**Scenario:** {result.get('scenario_name')} "
+                        f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
+                        f"**Steps:** {diag.get('total_steps', 0)} total, "
+                        f"{len(missing)} need augmentation",
+                        "",
+                    ]
+
+                    for step_info in missing:
+                        parts.append(
+                            f"### Step {step_info['step_number']}: "
+                            f"{step_info['step_name']} "
+                            f"(NEEDS {', '.join(step_info['missing_filters'])})"
+                        )
+                        attacks = step_info.get('attacksFilter', {})
+                        if attacks:
+                            for key, val in attacks.items():
+                                if isinstance(val, dict) and 'values' in val:
+                                    parts.append(
+                                        f"- {key}: {val['values']}"
+                                    )
+                        parts.append("")
+
+                    parts.extend([
+                        "### How to Augment",
+                        "",
+                        "Provide `step_overrides` as a JSON string mapping step numbers "
+                        "to filter overrides.",
+                        "Use `get_console_simulators` (Config Server) to discover "
+                        "available simulators.",
+                        "",
+                        "**Filter options:**",
+                        '- OS: `{"os": {"operator": "is", '
+                        '"values": ["WINDOWS", "LINUX"], "name": "os"}}`',
+                        '- Role: `{"role": {"operator": "is", '
+                        '"values": ["isInfiltration"], "name": "role"}}`',
+                        '- Simulator IDs: `{"simulators": {"operator": "is", '
+                        '"values": ["uuid1"], "name": "simulators"}}`',
+                        '- All connected: `{"connection": {"operator": "is", '
+                        '"values": [true], "name": "connection"}}`',
+                    ])
+
+                    return "\n".join(parts)
 
                 # Format step_run_ids for display
                 step_ids = result.get('step_run_ids', [])
