@@ -24,6 +24,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_run_scenario,
     compute_scenario_readiness,
     _fetch_all_scenarios,
+    _fetch_all_plans,
 )
 from safebreach_mcp_data.data_functions import (
     sb_get_test_simulations,
@@ -198,6 +199,42 @@ class TestRunScenarioE2E:
             assert result['test_name'] == custom_name
 
             # Wait for at least 5 simulations to complete FOR THIS TEST
+            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
+
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    # --- Slice 2: Custom Plan E2E Tests ---
+
+    def test_run_ready_custom_plan(self):
+        """Queue a ready-to-run custom plan, wait for simulations, then cancel."""
+        plans = _fetch_all_plans(E2E_CONSOLE)
+        ready_plan = None
+        for p in plans:
+            if compute_scenario_readiness(p):
+                ready_plan = p
+                break
+
+        assert ready_plan is not None, (
+            f"No ready-to-run custom plan found on {E2E_CONSOLE}"
+        )
+
+        test_id = None
+        try:
+            result = sb_run_scenario(
+                scenario_id=str(ready_plan['id']),
+                console=E2E_CONSOLE,
+            )
+
+            test_id = result['test_id']
+            assert test_id, "test_id should be non-empty"
+            assert result['scenario_id'] == str(ready_plan['id'])
+            assert result['scenario_name'] == ready_plan['name']
+            assert result['step_count'] > 0
+            assert result['status'] == 'queued'
+            assert result['predicted_simulations'] > 0
+
             _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
 
         finally:
