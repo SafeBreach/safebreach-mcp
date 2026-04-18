@@ -6682,6 +6682,11 @@ class TestCustomPlanAugmentation:
         assert 'planId' not in payload['plan']
         assert len(payload['plan']['steps']) == 2
 
+        # originalScenarioId should be the plan's UUID (or string ID if no UUID)
+        assert isinstance(payload['plan']['originalScenarioId'], str)
+        # mock_custom_plan has originalScenarioId="da4a7098-..."
+        assert payload['plan']['originalScenarioId'] == "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba"
+
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
            return_value=[500, 300])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')

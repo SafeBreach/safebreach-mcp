@@ -1008,6 +1008,7 @@ Parameters:
 - step_overrides (optional, str): JSON string mapping step numbers (1-indexed) to filter
   overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
   need to provide missing targetFilter/attackerFilter for specific steps.
+  Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
   Format: '{"1": {"targetFilter": {...}, "attackerFilter": {...}}, "2": {...}}'
 
 **Two-turn workflow for non-ready scenarios:**

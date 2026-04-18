@@ -15,7 +15,7 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
+| **PRD Status** | In Progress |
 | **Last Updated** | 2026-04-18 11:00 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | N/A |
