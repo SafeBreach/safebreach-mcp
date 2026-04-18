@@ -19,6 +19,8 @@ from safebreach_mcp_studio.studio_functions import (
     sb_set_studio_attack_status,
     _has_real_filter_criteria,
     compute_scenario_readiness,
+    diagnose_scenario_readiness,
+    _apply_step_overrides,
     _fetch_all_scenarios,
     _fetch_all_plans,
     _get_scenario_statistics,
@@ -6223,3 +6225,369 @@ class TestRunScenarioCustomPlan:
 
         payload = mock_post.call_args[1]['json']
         assert payload['plan']['name'] == "My Custom Plan Test"
+
+
+# =====================================================================
+# Slice 3: Diagnostic Readiness + Augmentation Tests (SAF-29967)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_scenario_all_missing():
+    """OOB scenario with ALL steps missing both filters (common pattern)."""
+    return {
+        "id": "aaaa-bbbb-cccc-dddd",
+        "name": "Test Scenario All Missing",
+        "steps": [
+            {
+                "name": "Network Infection",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {"operator": "is", "values": ["Malware Transfer"],
+                                   "name": "attacktype"},
+                    "attackPhase": {"operator": "is", "values": [2], "name": "attackphase"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {},
+                "systemFilter": {}
+            },
+            {
+                "name": "Host Actions",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {"operator": "is", "values": ["Script Execution"],
+                                   "name": "attacktype"},
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {},
+                "systemFilter": {}
+            }
+        ],
+        "actions": None,
+        "edges": None,
+        "systemTags": None
+    }
+
+
+@pytest.fixture
+def mock_scenario_partial_missing():
+    """Scenario where step 1 is ready but step 2 is missing targetFilter only."""
+    return {
+        "id": "partial-missing-id",
+        "name": "Partial Missing Scenario",
+        "steps": [
+            {
+                "name": "Ready Step",
+                "attacksFilter": {"origin": {"operator": "is", "values": ["PLAYBOOK"]}},
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "systemFilter": {}
+            },
+            {
+                "name": "Missing Target Step",
+                "attacksFilter": {"origin": {"operator": "is", "values": ["PLAYBOOK"]}},
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {},
+                "systemFilter": {}
+            }
+        ],
+        "actions": None,
+        "edges": None,
+        "systemTags": None
+    }
+
+
+class TestDiagnoseScenarioReadiness:
+    """Test the diagnose_scenario_readiness function (Slice 3)."""
+
+    def test_ready_scenario(self, mock_oob_scenario):
+        """Ready scenario returns ready=True with no missing info."""
+        result = diagnose_scenario_readiness(mock_oob_scenario)
+        assert result['ready'] is True
+        assert result['missing_steps'] == []
+
+    def test_all_steps_missing(self, mock_scenario_all_missing):
+        """All steps missing both filters — returns detailed diagnostic."""
+        result = diagnose_scenario_readiness(mock_scenario_all_missing)
+        assert result['ready'] is False
+        assert len(result['missing_steps']) == 2
+
+        step1 = result['missing_steps'][0]
+        assert step1['step_number'] == 1
+        assert step1['step_name'] == "Network Infection"
+        assert 'targetFilter' in step1['missing_filters']
+        assert 'attackerFilter' in step1['missing_filters']
+        assert 'attacksFilter' in step1  # existing filters preserved for context
+
+    def test_partial_missing(self, mock_scenario_partial_missing):
+        """One step ready, one step missing targetFilter only."""
+        result = diagnose_scenario_readiness(mock_scenario_partial_missing)
+        assert result['ready'] is False
+        assert len(result['missing_steps']) == 1
+
+        step2 = result['missing_steps'][0]
+        assert step2['step_number'] == 2
+        assert step2['step_name'] == "Missing Target Step"
+        assert step2['missing_filters'] == ['targetFilter']
+
+    def test_empty_steps(self):
+        """No steps → not ready."""
+        result = diagnose_scenario_readiness({"steps": []})
+        assert result['ready'] is False
+
+    def test_includes_total_steps(self, mock_scenario_all_missing):
+        """Result includes total step count."""
+        result = diagnose_scenario_readiness(mock_scenario_all_missing)
+        assert result['total_steps'] == 2
+
+
+class TestApplyStepOverrides:
+    """Test the _apply_step_overrides function (Slice 3)."""
+
+    def test_apply_target_filter(self, mock_scenario_all_missing):
+        """Apply targetFilter override to a step."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['os']['values'] == ["WINDOWS", "LINUX"]
+        # Step 2 unchanged
+        assert scenario['steps'][1]['targetFilter'] == {}
+
+    def test_apply_both_filters(self, mock_scenario_all_missing):
+        """Apply both targetFilter and attackerFilter to a step."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert 'os' in scenario['steps'][0]['targetFilter']
+        assert 'role' in scenario['steps'][0]['attackerFilter']
+
+    def test_apply_to_multiple_steps(self, mock_scenario_all_missing):
+        """Apply overrides to multiple steps."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"], "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"], "name": "os"}}
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['os']['values'] == ["WINDOWS"]
+        assert scenario['steps'][1]['targetFilter']['os']['values'] == ["LINUX"]
+
+    def test_merge_with_existing_filter(self, mock_scenario_partial_missing):
+        """Override merges into existing filter (doesn't replace)."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_partial_missing)
+        # Step 2 already has attackerFilter.role, add targetFilter.os
+        overrides = {
+            "2": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        # New filter applied
+        assert scenario['steps'][1]['targetFilter']['os']['values'] == ["WINDOWS"]
+        # Existing attackerFilter preserved
+        assert 'role' in scenario['steps'][1]['attackerFilter']
+
+    def test_invalid_step_number_raises(self, mock_scenario_all_missing):
+        """Override for non-existent step raises ValueError."""
+        overrides = {"99": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}
+        with pytest.raises(ValueError, match="step 99"):
+            _apply_step_overrides(mock_scenario_all_missing, overrides)
+
+    def test_simulator_ids_filter(self, mock_scenario_all_missing):
+        """Override with specific simulator UUIDs."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "simulators": {"operator": "is",
+                                   "values": ["uuid-1", "uuid-2"],
+                                   "name": "simulators"}
+                },
+                "attackerFilter": {
+                    "simulators": {"operator": "is",
+                                   "values": ["uuid-3"],
+                                   "name": "simulators"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['simulators']['values'] == ["uuid-1", "uuid-2"]
+        assert scenario['steps'][0]['attackerFilter']['simulators']['values'] == ["uuid-3"]
+
+    def test_connection_filter(self, mock_scenario_all_missing):
+        """Override with all-connected filter."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "connection": {"operator": "is", "values": [True], "name": "connection"}
+                },
+                "attackerFilter": {
+                    "connection": {"operator": "is", "values": [True], "name": "connection"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['connection']['values'] == [True]
+
+
+class TestRunScenarioWithOverrides:
+    """Test sb_run_scenario two-turn workflow with step_overrides (Slice 3)."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_ready_no_overrides_returns_diagnostic(
+        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+    ):
+        """Not ready + no overrides → return diagnostic (not error)."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console"
+        )
+
+        # Should return diagnostic dict, not raise ValueError
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
+        assert len(result['diagnostic']['missing_steps']) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_ready_with_overrides_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_scenario_all_missing, mock_queue_response_scenario
+    ):
+        """Not ready + valid overrides → augment and queue."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        overrides_json = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides_json
+        )
+
+        assert result['status'] == 'queued'
+        assert result['test_id'] == "1776488350786.15"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_overrides_still_not_ready_returns_diagnostic(
+        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+    ):
+        """Overrides provided but still not ready (incomplete) → diagnostic."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Only override step 1, step 2 still missing
+        overrides_json = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides_json
+        )
+
+        # Still not ready — step 2 missing
+        assert result['status'] == 'not_ready'
+
+    def test_invalid_json_overrides_raises(self):
+        """Invalid JSON string raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid step_overrides JSON"):
+            sb_run_scenario(
+                scenario_id="aaaa-bbbb-cccc-dddd",
+                console="test-console",
+                step_overrides="not valid json{{"
+            )
