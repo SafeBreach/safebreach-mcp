@@ -1847,6 +1847,7 @@ def sb_run_scenario(
     test_name: str = None,
     allow_partial_steps: bool = False,
     step_overrides: str = None,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
     Run a scenario (OOB or custom plan) via the orchestrator queue API.
@@ -1862,6 +1863,7 @@ def sb_run_scenario(
         allow_partial_steps: If False (default), refuse if any step produces 0 simulations.
         step_overrides: JSON string mapping step numbers (1-indexed) to filter overrides.
             Example: '{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}'
+        dry_run: If True, predict simulation counts without actually queuing the test.
 
     Returns:
         If ready (or made ready via overrides): dict with test_id, status='queued', etc.
@@ -1929,6 +1931,24 @@ def sb_run_scenario(
         i + 1 for i, count in enumerate(step_counts) if count == 0
     ]
 
+    # dry_run: return prediction without queuing (before validation — the point is to preview)
+    if dry_run:
+        logger.info(
+            f"Dry run for scenario '{scenario.get('name')}' ({scenario_id}): "
+            f"predicted {total_predicted} simulations, empty steps: {empty_steps}"
+        )
+        return {
+            'status': 'dry_run',
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name', ''),
+            'source_type': 'custom' if is_custom_plan else 'oob',
+            'predicted_simulations': total_predicted,
+            'predicted_per_step': step_counts,
+            'empty_steps': empty_steps,
+            'step_count': len(scenario.get('steps', [])),
+        }
+
+    # Validate simulation counts (only for actual runs, not dry_run)
     if total_predicted == 0:
         step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
         raise ValueError(

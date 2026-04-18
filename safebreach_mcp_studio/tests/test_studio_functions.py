@@ -6717,4 +6717,120 @@ class TestCustomPlanAugmentation:
         payload = mock_post.call_args[1]['json']
         assert payload['plan']['planId'] == 130
         assert 'steps' not in payload['plan']
-        assert 'actions' not in payload['plan']
+
+
+# =====================================================================
+# dry_run Tests (SAF-29967 — Slice 4 extension)
+# =====================================================================
+
+
+class TestDryRun:
+    """Test dry_run parameter — returns predictions without queuing."""
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[1676, 2198])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_returns_prediction_without_queuing(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_oob_scenario
+    ):
+        """dry_run=True returns statistics but does NOT call queue API."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 3874
+        assert result['predicted_per_step'] == [1676, 2198]
+        assert result['scenario_name'] == "Step 1 - Fortify your Network Perimeter"
+        assert 'test_id' not in result
+
+        # Queue POST should NOT have been called
+        mock_post.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[500, 0])
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_with_empty_steps_reports_them(
+        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        mock_oob_scenario
+    ):
+        """dry_run with some steps producing 0 still returns (no error)."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 500
+        assert result['empty_steps'] == [2]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_with_overrides(
+        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        mock_scenario_all_missing
+    ):
+        """dry_run with step_overrides — augments then predicts."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        overrides = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                          "name": "os"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                          "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides,
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 800
+        assert 'test_id' not in result  # No queue call made

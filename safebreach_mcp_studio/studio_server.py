@@ -1010,6 +1010,9 @@ Parameters:
   need to provide missing targetFilter/attackerFilter for specific steps.
   Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
   Format: '{"1": {"targetFilter": {...}, "attackerFilter": {...}}, "2": {...}}'
+- dry_run (optional, bool, default False): If True, predict simulation counts per step
+  without actually queuing the test. Use this to preview what would happen before committing
+  to a real execution.
 
 **Two-turn workflow for non-ready scenarios:**
 1. Call without step_overrides → returns diagnostic showing which steps need augmentation
@@ -1034,8 +1037,9 @@ run_scenario(scenario_id="abc-123", console="demo", step_overrides='{"1": {"targ
             test_name: str = None,
             allow_partial_steps: bool = False,
             step_overrides: str = None,
+            dry_run: bool = False,
         ) -> str:
-            """Execute a scenario, or return diagnostic if not ready."""
+            """Execute a scenario, return diagnostic, or preview with dry_run."""
             try:
                 # Single-tenant console auto-resolve
                 from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
@@ -1050,6 +1054,7 @@ run_scenario(scenario_id="abc-123", console="demo", step_overrides='{"1": {"targ
                     test_name=test_name,
                     allow_partial_steps=allow_partial_steps,
                     step_overrides=step_overrides,
+                    dry_run=dry_run,
                 )
 
                 # Handle not_ready diagnostic response
@@ -1099,6 +1104,43 @@ run_scenario(scenario_id="abc-123", console="demo", step_overrides='{"1": {"targ
                         '"values": ["uuid1"], "name": "simulators"}}`',
                         '- All connected: `{"connection": {"operator": "is", '
                         '"values": [true], "name": "connection"}}`',
+                    ])
+
+                    return "\n".join(parts)
+
+                # Handle dry_run prediction response
+                if result.get('status') == 'dry_run':
+                    predicted_per_step = result.get('predicted_per_step', [])
+                    predicted_total = result.get('predicted_simulations', 0)
+                    empty_steps = result.get('empty_steps', [])
+
+                    parts = [
+                        "## Dry Run — Simulation Prediction",
+                        "",
+                        f"**Scenario:** {result.get('scenario_name')} "
+                        f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
+                        f"**Predicted Simulations:** {predicted_total:,} total",
+                        f"**Steps:** {result.get('step_count', 0)}",
+                        "",
+                        "### Per-Step Breakdown",
+                        "",
+                    ]
+
+                    for i, count in enumerate(predicted_per_step):
+                        marker = " (0 simulations)" if count == 0 else ""
+                        parts.append(f"- Step {i + 1}: {count:,}{marker}")
+
+                    if empty_steps:
+                        parts.extend([
+                            "",
+                            f"**Warning:** Steps {empty_steps} will produce "
+                            f"0 simulations.",
+                        ])
+
+                    parts.extend([
+                        "",
+                        "**No test was queued.** To execute, call again "
+                        "without `dry_run=True`.",
                     ])
 
                     return "\n".join(parts)
