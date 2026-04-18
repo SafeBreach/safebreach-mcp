@@ -1713,3 +1713,113 @@ def _fetch_all_scenarios(console):
     scenarios = response.json()
     logger.info(f"Retrieved {len(scenarios)} scenarios for console '{console}'")
     return scenarios
+
+
+def sb_run_scenario(
+    scenario_id: str,
+    console: str = "default",
+    test_name: str = None,
+) -> Dict[str, Any]:
+    """
+    Run an OOB scenario by relaying its payload to the orchestrator queue API.
+
+    Args:
+        scenario_id: UUID string of the OOB scenario to execute
+        console: SafeBreach console identifier (default: "default")
+        test_name: Custom name for the test execution (optional, defaults to scenario name)
+
+    Returns:
+        Dictionary containing test_id, test_name, scenario_id, scenario_name,
+        step_count, step_run_ids, status
+
+    Raises:
+        ValueError: If scenario_id is invalid, scenario not found, or not ready to run
+        Exception: For API errors
+    """
+    if not scenario_id or (isinstance(scenario_id, str) and not scenario_id.strip()):
+        raise ValueError("scenario_id is required and cannot be empty")
+
+    scenario_id = str(scenario_id).strip()
+
+    # Fetch all OOB scenarios
+    all_scenarios = _fetch_all_scenarios(console)
+
+    # Find the target scenario
+    scenario = None
+    for s in all_scenarios:
+        if str(s.get('id')) == scenario_id:
+            scenario = s
+            break
+
+    if scenario is None:
+        raise ValueError(f"Scenario '{scenario_id}' not found")
+
+    # Validate readiness
+    if not compute_scenario_readiness(scenario):
+        raise ValueError(
+            f"Scenario '{scenario.get('name', scenario_id)}' is not ready to run. "
+            "All steps must have both targetFilter and attackerFilter with non-empty values."
+        )
+
+    effective_test_name = test_name or scenario['name']
+
+    logger.info(f"Running scenario '{scenario['name']}' ({scenario_id}) on console: {console}")
+
+    # Get authentication and base URL for orchestrator
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {
+        "x-apitoken": apitoken,
+        "Content-Type": "application/json"
+    }
+
+    # Build payload — relay scenario as-is inside {"plan": ...}
+    payload = {
+        "plan": {
+            "name": effective_test_name,
+            "originalScenarioId": scenario['id'],
+            "steps": scenario['steps'],
+            "actions": scenario.get('actions', []),
+            "edges": scenario.get('edges', []),
+            "systemTags": scenario.get('systemTags', [])
+        }
+    }
+
+    # POST to queue API
+    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
+    params = {
+        "enableFeedbackLoop": "true",
+        "retrySimulations": "true"
+    }
+    logger.info(f"Calling queue API: {api_url}")
+
+    try:
+        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
+        response.raise_for_status()
+        api_response = response.json()
+        logger.info("Queue API call successful")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Queue API call failed: {e}")
+        raise
+
+    # Extract data from response
+    data = api_response.get('data', {})
+    steps = data.get('steps', [])
+
+    result = {
+        'test_id': data.get('planRunId', ''),
+        'test_name': data.get('name', effective_test_name),
+        'scenario_id': scenario_id,
+        'scenario_name': scenario['name'],
+        'step_count': len(steps),
+        'step_run_ids': [s.get('stepRunId', '') for s in steps],
+        'status': 'queued',
+    }
+
+    logger.info(
+        f"Successfully queued scenario '{scenario['name']}' "
+        f"(test_id: {result['test_id']}, steps: {result['step_count']})"
+    )
+
+    return result
