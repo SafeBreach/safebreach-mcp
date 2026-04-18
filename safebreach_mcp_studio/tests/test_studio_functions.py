@@ -5385,6 +5385,7 @@ class TestRunScenario:
 
         # Mock POST (queue)
         mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
         mock_post_response.json.return_value = mock_queue_response_scenario
         mock_post_response.raise_for_status.return_value = None
         mock_post.return_value = mock_post_response
@@ -5439,6 +5440,7 @@ class TestRunScenario:
         mock_get.return_value = mock_get_response
 
         mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
         mock_post_response.json.return_value = mock_queue_response_scenario
         mock_post_response.raise_for_status.return_value = None
         mock_post.return_value = mock_post_response
@@ -5525,6 +5527,8 @@ class TestRunScenario:
         mock_get.return_value = mock_get_response
 
         mock_post_response = MagicMock()
+        mock_post_response.status_code = 500
+        mock_post_response.text = "Internal Server Error"
         mock_post_response.raise_for_status.side_effect = Exception("Queue API 500")
         mock_post.return_value = mock_post_response
 
@@ -5564,6 +5568,7 @@ class TestRunScenario:
             }
         }
         mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
         mock_post_response.json.return_value = five_step_response
         mock_post_response.raise_for_status.return_value = None
         mock_post.return_value = mock_post_response

@@ -1775,14 +1775,16 @@ def sb_run_scenario(
     }
 
     # Build payload — relay scenario as-is inside {"plan": ...}
+    # Note: content-manager API returns None (not []) for actions/edges/systemTags
+    # on some scenarios, but the queue API requires arrays.
     payload = {
         "plan": {
             "name": effective_test_name,
             "originalScenarioId": scenario['id'],
             "steps": scenario['steps'],
-            "actions": scenario.get('actions', []),
-            "edges": scenario.get('edges', []),
-            "systemTags": scenario.get('systemTags', [])
+            "actions": scenario.get('actions') or [],
+            "edges": scenario.get('edges') or [],
+            "systemTags": scenario.get('systemTags') or []
         }
     }
 
@@ -1796,6 +1798,8 @@ def sb_run_scenario(
 
     try:
         response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
+        if response.status_code >= 400:
+            logger.error(f"Queue API error {response.status_code}: {response.text}")
         response.raise_for_status()
         api_response = response.json()
         logger.info("Queue API call successful")
