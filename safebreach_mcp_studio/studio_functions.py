@@ -1715,6 +1715,34 @@ def _fetch_all_scenarios(console):
     return scenarios
 
 
+def _fetch_all_plans(console):
+    """
+    Fetch all custom plans from the config API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        List of full plan dictionaries
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/config/v2/accounts/{account_id}/plans?details=true"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    logger.info(f"Fetching custom plans from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    response_data = response.json()
+    plans = response_data.get("data", []) if isinstance(response_data, dict) else response_data
+
+    logger.info(f"Retrieved {len(plans)} custom plans for console '{console}'")
+    return plans
+
+
 def _get_scenario_statistics(steps, console):
     """
     Predict per-step simulation counts using the plan statistics API.
@@ -1778,15 +1806,23 @@ def sb_run_scenario(
 
     scenario_id = str(scenario_id).strip()
 
-    # Fetch all OOB scenarios
-    all_scenarios = _fetch_all_scenarios(console)
-
-    # Find the target scenario
+    # Lookup: try OOB scenarios first, then custom plans
     scenario = None
+    is_custom_plan = False
+
+    all_scenarios = _fetch_all_scenarios(console)
     for s in all_scenarios:
         if str(s.get('id')) == scenario_id:
             scenario = s
             break
+
+    if scenario is None:
+        all_plans = _fetch_all_plans(console)
+        for p in all_plans:
+            if str(p.get('id')) == scenario_id:
+                scenario = p
+                is_custom_plan = True
+                break
 
     if scenario is None:
         raise ValueError(f"Scenario '{scenario_id}' not found")
@@ -1841,65 +1877,70 @@ def sb_run_scenario(
         "Content-Type": "application/json"
     }
 
-    # Build payload for queue API.
-    # The content-manager API returns None for actions, edges, systemTags, and step
-    # UUIDs. The queue API requires all of these. We generate UUIDs for steps and
-    # build a sequential DAG (actions + edges) matching the UI's pattern.
-    import uuid as uuid_module
-
-    steps = scenario['steps']
-    for step in steps:
-        if not step.get('uuid'):
-            step['uuid'] = str(uuid_module.uuid4())
-
-    # Build actions and edges if not provided by the API
-    actions = scenario.get('actions')
-    edges = scenario.get('edges')
-
-    if not actions or not edges:
-        actions = []
-        edges = []
-
-        for i, step in enumerate(steps):
-            action_id = i + 1
-            actions.append({
-                "id": action_id,
-                "type": "multiAttack",
-                "data": {"uuid": step['uuid']}
-            })
-
-        # Add wait actions between steps (N-1 waits for N steps)
-        for i in range(len(steps) - 1):
-            wait_id = 1001 + i
-            actions.append({
-                "id": wait_id,
-                "type": "wait",
-                "data": {"seconds": 0}
-            })
-
-        # Build edges: sequential DAG
-        # Entry point → first step
-        if steps:
-            edges.append({"to": 1})
-
-        # Chain: step → wait → next step
-        for i in range(len(steps) - 1):
-            step_id = i + 1
-            wait_id = 1001 + i
-            next_step_id = i + 2
-            edges.append({"from": step_id, "to": wait_id})
-            edges.append({"from": wait_id, "to": next_step_id})
-
-    payload = {
-        "plan": {
-            "name": effective_test_name,
-            "originalScenarioId": scenario['id'],
-            "steps": steps,
-            "systemTags": scenario.get('systemTags') or [],
-            "actions": actions,
-            "edges": edges
+    # Build payload for queue API — different structure for OOB vs custom plans
+    if is_custom_plan:
+        # Custom plans: just send planId — server has the full plan stored
+        payload = {
+            "plan": {
+                "name": effective_test_name,
+                "planId": scenario['id'],
+                "systemTags": scenario.get('systemTags') or []
+            }
         }
-    }
+    else:
+        # OOB scenarios: relay full payload with steps + DAG
+        # Content-manager API returns None for actions, edges, systemTags, and step
+        # UUIDs. Queue API requires all of these — generate when missing.
+        import uuid as uuid_module
+
+        steps = scenario['steps']
+        for step in steps:
+            if not step.get('uuid'):
+                step['uuid'] = str(uuid_module.uuid4())
+
+        actions = scenario.get('actions')
+        edges = scenario.get('edges')
+
+        if not actions or not edges:
+            actions = []
+            edges = []
+
+            for i, step in enumerate(steps):
+                action_id = i + 1
+                actions.append({
+                    "id": action_id,
+                    "type": "multiAttack",
+                    "data": {"uuid": step['uuid']}
+                })
+
+            for i in range(len(steps) - 1):
+                wait_id = 1001 + i
+                actions.append({
+                    "id": wait_id,
+                    "type": "wait",
+                    "data": {"seconds": 0}
+                })
+
+            if steps:
+                edges.append({"to": 1})
+
+            for i in range(len(steps) - 1):
+                step_id = i + 1
+                wait_id = 1001 + i
+                next_step_id = i + 2
+                edges.append({"from": step_id, "to": wait_id})
+                edges.append({"from": wait_id, "to": next_step_id})
+
+        payload = {
+            "plan": {
+                "name": effective_test_name,
+                "originalScenarioId": scenario['id'],
+                "steps": steps,
+                "systemTags": scenario.get('systemTags') or [],
+                "actions": actions,
+                "edges": edges
+            }
+        }
 
     # POST to queue API
     api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
