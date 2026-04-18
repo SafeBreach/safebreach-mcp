@@ -17,6 +17,9 @@ from safebreach_mcp_studio.studio_functions import (
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
+    _has_real_filter_criteria,
+    compute_scenario_readiness,
+    _fetch_all_scenarios,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -4974,3 +4977,382 @@ class TestSetStudioAttackStatus:
 
         # Cache entry should be removed
         assert cache_key not in studio_draft_cache
+
+
+# =====================================================================
+# Scenario Execution Tests (SAF-29967 — Slice 1: OOB Ready-to-Run)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_oob_scenario():
+    """Full OOB scenario matching pentest01 'Fortify Network Perimeter' structure."""
+    return {
+        "id": "3b8eade5-9285-43b8-b3e7-6350420983a5",
+        "name": "Step 1 - Fortify your Network Perimeter",
+        "description": "Test network perimeter controls",
+        "createdBy": "SafeBreach",
+        "recommended": True,
+        "categories": [1, 3],
+        "tags": ["Network", "Perimeter"],
+        "createdAt": "2023-01-15T10:00:00Z",
+        "updatedAt": "2024-06-01T12:00:00Z",
+        "steps": [
+            {
+                "name": "Exploitation",
+                "uuid": "18dc5291-5f6e-4594-8c93-db4930dd8799",
+                "attacksFilter": {
+                    "tags": {
+                        "Security Controls": {
+                            "operator": "is",
+                            "values": ["Network Inspection", "Network Access"],
+                            "name": "security controls"
+                        }
+                    },
+                    "origin": {
+                        "operator": "is",
+                        "values": ["PLAYBOOK"],
+                        "name": "origin"
+                    },
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Exploit Transfer", "Exploit Kit Infection"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {
+                        "operator": "is",
+                        "values": [2],
+                        "name": "attackphase"
+                    }
+                },
+                "attackerFilter": {
+                    "role": {
+                        "operator": "is",
+                        "values": ["isInfiltration"],
+                        "name": "role"
+                    }
+                },
+                "targetFilter": {
+                    "os": {
+                        "operator": "is",
+                        "values": ["WINDOWS", "MAC", "LINUX"],
+                        "name": "os"
+                    }
+                },
+                "systemFilter": {
+                    "bypassProxy": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "bypassproxy"
+                    },
+                    "runAsRoot": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "runasroot"
+                    }
+                }
+            },
+            {
+                "name": "Brute Force and Remote Control",
+                "uuid": "fbed861a-867c-4fc7-828c-ef5a845b1fc5",
+                "attacksFilter": {
+                    "tags": {
+                        "Security Controls": {
+                            "operator": "is",
+                            "values": ["Network Inspection"],
+                            "name": "security controls"
+                        }
+                    },
+                    "origin": {
+                        "operator": "is",
+                        "values": ["PLAYBOOK"],
+                        "name": "origin"
+                    },
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Brute Force", "Remote Control"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {
+                        "operator": "is",
+                        "values": [2],
+                        "name": "attackphase"
+                    }
+                },
+                "attackerFilter": {
+                    "role": {
+                        "operator": "is",
+                        "values": ["isInfiltration"],
+                        "name": "role"
+                    }
+                },
+                "targetFilter": {
+                    "os": {
+                        "operator": "is",
+                        "values": ["WINDOWS", "LINUX"],
+                        "name": "os"
+                    }
+                },
+                "systemFilter": {
+                    "bypassProxy": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "bypassproxy"
+                    }
+                }
+            }
+        ],
+        "actions": [
+            {"id": 1, "type": "multiAttack", "data": {"uuid": "18dc5291-5f6e-4594-8c93-db4930dd8799"}},
+            {"id": 2, "type": "multiAttack", "data": {"uuid": "fbed861a-867c-4fc7-828c-ef5a845b1fc5"}},
+            {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        ],
+        "edges": [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2}
+        ],
+        "systemTags": []
+    }
+
+
+@pytest.fixture
+def mock_oob_scenario_not_ready():
+    """OOB scenario that is NOT ready to run — missing attackerFilter."""
+    return {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "name": "Incomplete Scenario",
+        "steps": [
+            {
+                "name": "Step with missing attacker",
+                "uuid": "11111111-2222-3333-4444-555555555555",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "systemFilter": {}
+            }
+        ],
+        "actions": [],
+        "edges": [],
+        "systemTags": []
+    }
+
+
+@pytest.fixture
+def mock_queue_response_scenario():
+    """Mock queue API response for a scenario run (multi-step)."""
+    return {
+        "data": {
+            "name": "Step 1 - Fortify your Network Perimeter",
+            "steps": [
+                {"stepRunId": "1776488350786.1"},
+                {"stepRunId": "1776488350786.2"}
+            ],
+            "planRunId": "1776488350786.15",
+            "priority": "low",
+            "draft": False,
+            "ranBy": 347116670300007,
+            "retrySimulations": True
+        }
+    }
+
+
+class TestHasRealFilterCriteria:
+    """Test the _has_real_filter_criteria helper function."""
+
+    def test_empty_dict_returns_false(self):
+        assert _has_real_filter_criteria({}) is False
+
+    def test_none_returns_false(self):
+        assert _has_real_filter_criteria(None) is False
+
+    def test_dict_with_empty_values_returns_false(self):
+        """Filter with values: [] should not count as real criteria."""
+        filter_dict = {
+            "simulators": {
+                "operator": "is",
+                "values": [],
+                "name": "simulators"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is False
+
+    def test_dict_with_non_empty_values_returns_true(self):
+        """Filter with actual values should count as real criteria."""
+        filter_dict = {
+            "os": {
+                "operator": "is",
+                "values": ["WINDOWS", "LINUX"],
+                "name": "os"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_dict_with_role_filter_returns_true(self):
+        """Role-based filter with values should count."""
+        filter_dict = {
+            "role": {
+                "operator": "is",
+                "values": ["isInfiltration"],
+                "name": "role"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_non_dict_truthy_value_returns_true(self):
+        """Non-dict truthy value should count as real criteria."""
+        filter_dict = {"someKey": True}
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_multiple_keys_one_empty_one_real(self):
+        """If at least one key has real values, return True."""
+        filter_dict = {
+            "simulators": {"operator": "is", "values": [], "name": "simulators"},
+            "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+
+class TestComputeScenarioReadiness:
+    """Test the compute_scenario_readiness function."""
+
+    def test_all_steps_ready(self, mock_oob_scenario):
+        """Scenario with all steps having real target + attacker criteria."""
+        assert compute_scenario_readiness(mock_oob_scenario) is True
+
+    def test_empty_steps_returns_false(self):
+        """Scenario with no steps is not ready."""
+        scenario = {"steps": []}
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_no_steps_key_returns_false(self):
+        """Scenario without steps key is not ready."""
+        scenario = {"name": "No steps"}
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_missing_target_filter_returns_false(self):
+        """Step with missing targetFilter makes scenario not ready."""
+        scenario = {
+            "steps": [{
+                "name": "Missing target",
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {},
+                "systemFilter": {}
+            }]
+        }
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_missing_attacker_filter_returns_false(self, mock_oob_scenario_not_ready):
+        """Step with empty attackerFilter makes scenario not ready."""
+        assert compute_scenario_readiness(mock_oob_scenario_not_ready) is False
+
+    def test_empty_target_values_returns_false(self):
+        """Step with targetFilter having empty values is not ready."""
+        scenario = {
+            "steps": [{
+                "name": "Empty target values",
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": [], "name": "os"}
+                },
+                "systemFilter": {}
+            }]
+        }
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_mixed_steps_returns_false(self, mock_oob_scenario):
+        """If one step is ready but another is not, scenario is not ready."""
+        scenario = dict(mock_oob_scenario)
+        # Add a bad step
+        scenario["steps"] = list(scenario["steps"]) + [{
+            "name": "Bad step",
+            "uuid": "bad-step-uuid",
+            "attacksFilter": {},
+            "attackerFilter": {},
+            "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+            "systemFilter": {}
+        }]
+        assert compute_scenario_readiness(scenario) is False
+
+
+class TestFetchAllScenarios:
+    """Test the _fetch_all_scenarios function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url, mock_oob_scenario):
+        """Successful fetch returns list of scenarios."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = [mock_oob_scenario]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_scenarios("test-console")
+
+        assert len(result) == 1
+        assert result[0]["id"] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url):
+        """Verify the correct URL and headers are used."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        _fetch_all_scenarios("test-console")
+
+        mock_get.assert_called_once()
+        call_args = mock_get.call_args
+        assert call_args[0][0] == "https://test.safebreach.com/api/content-manager/vLatest/scenarios"
+        assert call_args[1]['headers']['x-apitoken'] == "test-token"
+        assert call_args[1]['headers']['Content-Type'] == "application/json"
+        mock_base_url.assert_called_once_with("test-console", "content-manager")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url):
+        """HTTP errors from the API should propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("HTTP 500")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(Exception, match="HTTP 500"):
+            _fetch_all_scenarios("test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_empty_response(self, mock_get, mock_secret, mock_base_url):
+        """Empty scenario list is returned as-is."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_scenarios("test-console")
+        assert result == []
