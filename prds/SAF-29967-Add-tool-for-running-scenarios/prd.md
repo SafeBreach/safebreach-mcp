@@ -16,7 +16,7 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-04-18 11:00 |
+| **Last Updated** | 2026-04-19 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | N/A |
 
@@ -408,13 +408,13 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.6 | S4 | ✅ Complete | 2026-04-19 | a7c6332 | Statistics breakdown + simulator roles + role cheat sheet |
 | 4.7 | S4 | ✅ Complete | 2026-04-19 | 6303226 | Smart per-step filter recommendations in diagnostic |
 | 4.8 | S4 | ✅ Complete | 2026-04-19 | cb6978d | Constraint diagnostics for zero-simulation steps |
-| 4.9 | S4 | ⏳ Pending | - | - | Partial-coverage constraint diagnostics (user's #1 ask) |
-| 4.10 | S4 | ⏳ Pending | - | - | Attack names in constraint diagnostics |
-| 4.11 | S4 | ⏳ Pending | - | - | Default key in step_overrides |
-| 4.12 | S4 | ⏳ Pending | - | - | Shorthand filter syntax |
-| 4.13 | S4 | ⏳ Pending | - | - | Unsolvable-from-overrides hints |
-| 4.14 | S4 | ⏳ Pending | - | - | Simulator capabilities in get_console_simulators |
-| 4.15 | S4 | ⏳ Pending | - | - | Matched simulators per attack in dry_run |
+| 4.9 | S4 | ✅ Complete | 2026-04-19 | 390848b | Partial-coverage constraint diagnostics |
+| 4.10 | S4 | ✅ Complete | 2026-04-19 | b03f2cb | Attack names in constraint diagnostics |
+| 4.11 | S4 | ✅ Complete | 2026-04-19 | 9e68052 | Default key in step_overrides |
+| 4.12 | S4 | ⏱ Deferred | - | - | Shorthand filter syntax (marginal after 4.11) |
+| 4.13 | S4 | ✅ Complete | 2026-04-19 | d3205f9 | Fixable/unfixable constraint classification |
+| 4.14 | S4 | ✅ Complete | 2026-04-19 | 4df01f0 | Simulator assets, proxy, simulation users |
+| 4.15 | S4 | ⏱ Deferred | - | - | Matched simulators per attack in dry_run |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -1116,19 +1116,17 @@ Not fixable: `missing_required_advanced_actions`, `simulator_is_not_mail_virtual
 
 ### Phase 4.14: Simulator capabilities in get_console_simulators
 
-**Problem**: Hidden capabilities (action types enabled, associated assets, pre-execution
-check status, proxy configuration) are only discoverable through constraint failures.
-The LLM guesses instead of planning.
+**Problem**: Hidden capabilities (associated assets, proxy config, impersonated users)
+are only discoverable through constraint failures. The LLM guesses instead of planning.
 
-**Solution**: Extend `get_minimal_simulator_mapping` in Config Server to include:
-- Action types enabled (advanced actions flags)
-- Associated assets count
-- Pre-execution check status
-- Proxy configuration
+**Solution**: Extended `get_minimal_simulator_mapping` in Config Server:
+- `assets`: Resolved from integer IDs to `{name, type}` via `/assets` API (cached 1hr)
+- `isProxySupported`: Boolean proxy capability flag
+- `simulationUsers`: Impersonated users with `name` + `username`
 
-**Note**: Config Server change — may be a separate ticket.
+Nodes API query changed to `assets=true&impersonatedUsers=true`.
 
-**Git Commit**: `feat(config): extend simulator listing with capability fields`
+**Git Commit**: `feat(config): add assets, proxy, simulation users to simulator listing`
 
 ### Phase 4.15: Matched simulators per attack in dry_run
 
@@ -1227,4 +1225,8 @@ step structures. Details refined after Slice 4.
 | 2026-04-19 | Slice 4 complete including dry_run. Replace semantics for overrides. originalScenarioId fix. |
 | 2026-04-19 | Phase 4.6-4.7: Statistics breakdown, simulator roles, per-step recommendations. |
 | 2026-04-19 | Phase 4.8 implemented: Constraint diagnostics for zero-simulation steps. |
-| 2026-04-19 | Phases 4.9-4.15 planned: LLM UX improvements from Claude Desktop manual testing feedback. |
+| 2026-04-19 | Phases 4.6-4.8: Statistics breakdown, simulator roles, per-step recommendations, constraint diagnostics. |
+| 2026-04-19 | Phases 4.9-4.11: Partial-coverage constraints, attack names, default key in step_overrides. |
+| 2026-04-19 | Phases 4.13-4.14: Fixable/unfixable hints, simulator capabilities (assets, proxy, sim users). |
+| 2026-04-19 | Phases 4.12, 4.15 deferred. Data Server: stale status fix + polling hint for non-terminal tests. |
+| 2026-04-19 | Config Server: userId→username resolution for custom plans (list + detail views). |
