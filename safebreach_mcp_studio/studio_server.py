@@ -1187,7 +1187,31 @@ Example (3-turn workflow for non-ready scenarios):
                                         parts.append(f"    - {desc} — {detail}")
                                     else:
                                         parts.append(f"    - {desc}")
-                        elif count == 0:
+                        # Aggregated constraint summary for partial-coverage steps
+                        if count > 0 and stats.get('constraint_summary_aggregated'):
+                            unmatched = stats.get('unmatched_attack_count', 0)
+                            parts.append("")
+                            parts.append(
+                                f"  **{unmatched} attacks produced 0 simulations:**"
+                            )
+                            for reason_group in stats['constraint_summary_aggregated']:
+                                desc = reason_group['description']
+                                n = reason_group['total_attacks']
+                                subs = reason_group.get('sub_reasons', [])
+                                if subs:
+                                    parts.append(f"  - {n} attacks: {desc}")
+                                    for sub in subs[:3]:
+                                        parts.append(
+                                            f"    - {sub['attack_count']} attacks: "
+                                            f"{sub['detail']}"
+                                        )
+                                    if len(subs) > 3:
+                                        parts.append(
+                                            f"    - ... and {len(subs) - 3} more variants"
+                                        )
+                                else:
+                                    parts.append(f"  - {n} attacks: {desc}")
+                        elif count == 0 and not stats.get('constraint_summary'):
                             parts.append(
                                 "  - **0 viable pairings** — rerun with "
                                 "`dry_run=True` for constraint details"

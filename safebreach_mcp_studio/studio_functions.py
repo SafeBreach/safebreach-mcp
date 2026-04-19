@@ -2028,6 +2028,54 @@ def _summarize_constraints(simulator_constraints):
     return result
 
 
+def _summarize_constraints_aggregated(simulator_constraints):
+    """Aggregate constraint failures by reason code across all attacks.
+
+    Used for partial-coverage steps where per-attack detail is too verbose.
+    Returns a list of dicts: [{code, description, count, details: [{detail, attack_count}]}]
+    """
+    # First get per-attack breakdown
+    per_attack = _summarize_constraints(simulator_constraints)
+
+    # Aggregate by (code, detail) across attacks
+    reason_groups = {}
+    for attack in per_attack:
+        for reason in attack['reasons']:
+            code = reason['code']
+            detail = reason.get('detail') or ''
+            key = (code, detail)
+            if key not in reason_groups:
+                reason_groups[key] = {
+                    'code': code,
+                    'description': reason['description'],
+                    'detail': detail,
+                    'attack_count': 0,
+                    'move_ids': [],
+                }
+            reason_groups[key]['attack_count'] += 1
+            reason_groups[key]['move_ids'].append(attack['move_id'])
+
+    # Group by code, then sub-group by detail
+    code_groups = {}
+    for (code, detail), info in reason_groups.items():
+        if code not in code_groups:
+            code_groups[code] = {
+                'code': code,
+                'description': info['description'],
+                'total_attacks': 0,
+                'sub_reasons': [],
+            }
+        code_groups[code]['total_attacks'] += info['attack_count']
+        if detail:
+            code_groups[code]['sub_reasons'].append({
+                'detail': detail,
+                'attack_count': info['attack_count'],
+            })
+
+    # Sort by total attacks descending
+    return sorted(code_groups.values(), key=lambda x: -x['total_attacks'])
+
+
 def _get_scenario_statistics(steps, console, include_constraints=False):
     """
     Predict per-step simulation counts using the plan statistics API.
@@ -2079,11 +2127,20 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
             'totalAttacks': len(moves),
         }
 
-        # Add constraint summary for zero-simulation steps
-        if include_constraints and sim_count == 0:
+        # Add constraint diagnostics when there are unmatched attacks
+        if include_constraints:
+            unmatched = sum(1 for v in moves.values() if v == 0)
             constraints = s.get('simulatorConstraints', {})
-            if constraints:
-                step_result['constraint_summary'] = _summarize_constraints(constraints)
+            if constraints and unmatched > 0:
+                if sim_count == 0:
+                    # Zero sims: per-attack detail (few attacks, individual diagnosis)
+                    step_result['constraint_summary'] = _summarize_constraints(constraints)
+                else:
+                    # Partial coverage: aggregated summary (many attacks, pattern diagnosis)
+                    step_result['constraint_summary_aggregated'] = (
+                        _summarize_constraints_aggregated(constraints)
+                    )
+                    step_result['unmatched_attack_count'] = unmatched
 
         result.append(step_result)
 
