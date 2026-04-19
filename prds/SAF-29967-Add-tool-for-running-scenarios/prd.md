@@ -415,6 +415,10 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.13 | S4 | ✅ Complete | 2026-04-19 | d3205f9 | Fixable/unfixable constraint classification |
 | 4.14 | S4 | ✅ Complete | 2026-04-19 | 4df01f0 | Simulator assets, proxy, simulation users |
 | 4.15 | S4 | ⏱ Deferred | - | - | Matched simulators per attack in dry_run |
+| 4.16 | S4 | ⏳ Pending | - | - | Fix: reclassify role-based constraints as fixable |
+| 4.17 | S4 | ⏳ Pending | - | - | Fix: clarify aggregated constraint header wording |
+| 4.18 | S4 | ⏳ Pending | - | - | Resolved attacks per step in dry_run |
+| 4.19 | S4 | ⏳ Pending | - | - | verbose_failures flag for per-attack detail on partial steps |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -1139,6 +1143,84 @@ by constraint diagnostics.
 
 **Git Commit**: `feat(studio): show matched simulator IDs per attack in dry_run`
 
+### Phase 4.16: Fix — Reclassify role-based constraints as fixable
+
+**Problem**: `simulator_is_not_aws_attacker`, `simulator_is_not_aws_simulator`, and
+`simulator_is_not_mail_virtual_simulator` are classified as `fixable: False`, but they
+ARE fixable by selecting a simulator that has the required role (e.g., pz-mde has
+`isAWSAttacker: true`). The LLM incorrectly accepts a lower coverage ceiling.
+
+**Solution**: Reclassify these three constraints as `fixable: True` in
+`CONSTRAINT_REASON_DESCRIPTIONS`. Update their descriptions to guide the LLM:
+"Requires AWS attacker role — check `get_console_simulators` for candidates."
+
+Truly unfixable constraints remain: `missing_required_advanced_actions`,
+`simulator_failed_schema_validation`, `simulator_didnt_pass_pre_execution_prerequisite_tests`,
+`port_in_use`, `move_does_not_support_root_simulation_user`,
+`move_doesnt_requires_proxy_ignoring_proxy_variant`.
+
+**Git Commit**: `fix(studio): reclassify role-based constraints as fixable`
+
+### Phase 4.17: Fix — Clarify aggregated constraint header wording
+
+**Problem**: "5 attacks: Proxy configuration mismatch" reads as "all 5 attacks are fully
+blocked by proxy" but actually means "proxy mismatch tripped on at least one simulator
+pairing for 5 attacks." Some of those attacks may still succeed on other pairings. The
+LLM reasons incorrectly about coverage ceilings.
+
+**Solution**: Change the aggregated constraint header to clarify:
+- "Constraints hit on at least one simulator pairing (not necessarily blocking):"
+- Or split into: constraints blocking the attack entirely vs constraints hit on some pairs.
+
+Simpler approach: prefix the section with a clarifying note:
+"The following constraints were hit on at least one simulator×attack pairing.
+An attack may still produce simulations via other pairings."
+
+**Git Commit**: `fix(studio): clarify aggregated constraint header wording`
+
+### Phase 4.18: Resolved attacks per step in dry_run
+
+**Priority**: Highest leverage — eliminates the "force-zero trick" workaround.
+
+**Problem**: `get_scenario_details` shows step criteria (mitre_tactic, threat_actor) but
+not the resolved attack list. The statistics API resolves criteria to concrete attacks
+during dry_run (visible in the `moves` field), but the attack list is not surfaced.
+The LLM reverse-engineers attack identity from constraint failures instead of reading
+the resolved list directly.
+
+**Solution**: In the dry_run response, include `resolved_attacks` per step — the list
+of attacks (move IDs + names) that matched the step's criteria, regardless of whether
+they produced simulations. Data already available:
+- `moves` field from statistics API: `{moveId: simulationCount}`
+- Attack name map from playbook cache (Phase 4.10)
+
+For each step in dry_run output:
+```
+Resolved attacks (5):
+  - #6479 (Simulate SocGholish dropper) — 0 simulations
+  - #6949 (Write MAZE ransomware) — 0 simulations
+  - #312 (Download Lockbit 3.0) — 45 simulations
+  - #1035 (Transfer malware via HTTPS) — 120 simulations
+  - #1054 (Hidden malware transfer) — 80 simulations
+```
+
+No new API call — uses existing statistics `moves` + playbook name map.
+
+**Git Commit**: `feat(studio): show resolved attacks per step in dry_run`
+
+### Phase 4.19: verbose_failures flag for per-attack detail on partial steps
+
+**Problem**: When a step produces ≥1 simulation, constraint failures are aggregated
+(Phase 4.9). The LLM can't identify WHICH specific attack failed and WHY — it sees
+counts like "5 attacks: OS mismatch" but not which 5 and whether fixing one would
+rescue 1 or 20 simulations.
+
+**Solution**: Add `verbose_failures: bool = False` parameter to `run_scenario`.
+When True + dry_run, show per-attack constraint detail even for partial-coverage steps
+(same format as zero-sim steps). Default False to manage output size.
+
+**Git Commit**: `feat(studio): verbose_failures flag for per-attack detail`
+
 ---
 
 ## Slice 5: Propagate Scenario Type
@@ -1230,3 +1312,4 @@ step structures. Details refined after Slice 4.
 | 2026-04-19 | Phases 4.13-4.14: Fixable/unfixable hints, simulator capabilities (assets, proxy, sim users). |
 | 2026-04-19 | Phases 4.12, 4.15 deferred. Data Server: stale status fix + polling hint for non-terminal tests. |
 | 2026-04-19 | Config Server: userId→username resolution for custom plans (list + detail views). |
+| 2026-04-19 | Phases 4.16-4.19 planned from Claude Desktop session 2 feedback. |
