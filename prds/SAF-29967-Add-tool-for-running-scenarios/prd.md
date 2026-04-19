@@ -119,7 +119,14 @@ data.steps[] — one per scenario step, in order:
   targetSimulators: {uuid: count}
   attackerSimulators: {uuid: count}
   simulators: {uuid: count}
+  simulatorConstraints:      — (only with getConstraints=true&getAllConstraints=true)
+    targetConstraints: {simulatorUuid: {moveId: [{reason, required?, actual?, reason_text?}]}}
+    attackerConstraints: {simulatorUuid: {moveId: [{reason, ...}]}}
 ```
+
+**Constraint query parameters** (used only for dry_run — adds latency):
+- `getConstraints=true` — include constraint failure reasons
+- `getAllConstraints=true` — include all constraints, not just the first per pair
 
 ### Component B: Scenario Fetch (`studio_functions.py`)
 
@@ -398,6 +405,9 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.3 | S4 | ✅ Complete | 2026-04-18 | aff9e19 | E2E: 9/9 pass incl custom plan augmentation |
 | 4.4 | S4 | ✅ Complete | 2026-04-18 | - | Documentation update |
 | 4.5 | S4 | ✅ Complete | 2026-04-18 | d3e4948 | dry_run parameter (3 unit + 3 E2E tests) |
+| 4.6 | S4 | ✅ Complete | 2026-04-19 | a7c6332 | Statistics breakdown + simulator roles + role cheat sheet |
+| 4.7 | S4 | ✅ Complete | 2026-04-19 | 6303226 | Smart per-step filter recommendations in diagnostic |
+| 4.8 | S4 | ⏳ Pending | - | - | Constraint diagnostics for zero-simulation steps |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -940,6 +950,87 @@ Custom plans from the plans API already have `actions`, `edges`, and step `uuid`
 
 **Git Commit**: `docs: update run_scenario docs with custom plan augmentation`
 
+### Phase 4.8: Constraint Diagnostics for Zero-Simulation Steps
+
+**Semantic Change**: When `dry_run=True` and a step produces 0 simulations, provide detailed
+per-attack, per-simulator constraint failure reasons so the LLM can diagnose and self-correct.
+
+**Design**:
+
+The statistics API accepts additional query parameters `getConstraints=true&getAllConstraints=true`
+that return a `simulatorConstraints` field with structured failure reasons per attack×simulator pair:
+
+```json
+{
+  "simulatorConstraints": {
+    "targetConstraints": {
+      "<simulator_uuid>": {
+        "<move_id>": [
+          {"reason": "incompatible_os", "required": "LINUX", "actual": "WINDOWS"},
+          {"reason": "incompatible_package", "reason_text": "requires isInfiltration role"}
+        ]
+      }
+    }
+  }
+}
+```
+
+**Constraint reason codes** (14 known):
+
+| Code | Human-readable meaning |
+|------|----------------------|
+| `incompatible_os` | Simulator OS doesn't match attack requirement |
+| `incompatible_package` | Simulator role mismatch (e.g., requires infiltration/exfiltration) |
+| `missing_required_advanced_actions` | Specific advanced action type not enabled on simulator |
+| `simulator_on_both_sides` | Network attack needs separate attacker and target simulators |
+| `simulator_variant_is_not_root_user` | Attack requires root/admin execution privilege |
+| `simulator_variant_is_root_user` | Attack requires non-root execution |
+| `simulator_failed_schema_validation` | Simulator missing required software/capability |
+| `simulator_is_not_aws_attacker` | Attack needs AWS attacker role |
+| `simulator_is_not_aws_simulator` | Attack needs AWS environment |
+| `simulator_is_not_mail_virtual_simulator` | Attack needs mailbox simulator |
+| `move_does_not_support_root_simulation_user` | Attack incompatible with root user |
+| `move_doesnt_requires_proxy_ignoring_proxy_variant` | Proxy configuration mismatch |
+| `port_in_use` | Required port occupied on simulator |
+| `simulator_didnt_pass_pre_execution_prerequisite_tests` | Pre-execution checks failed |
+
+Each constraint also includes a free-form `reason` field from the API with specific details
+(e.g., the exact role required, the exact advanced action name, the exact OS mismatch).
+
+**Implementation Details**:
+
+1. **`CONSTRAINT_REASON_DESCRIPTIONS` dict** in studio_functions.py — maps each code to a
+   human-readable explanation for the LLM.
+
+2. **`_get_scenario_statistics`** — when called for `dry_run`, add `getConstraints=true&
+   getAllConstraints=true` query params. Extract and summarize `simulatorConstraints` per step.
+
+3. **dry_run markdown rendering** — for steps with 0 simulations, show:
+   - Filter match counts: "Target sims (filter): 10 | Attacks (criteria): 3 | Pairings: 0"
+   - Per-attack constraint summary with our description + API's free-form reason
+   - Actionable suggestion (e.g., "broaden OS filter to include LINUX, MAC")
+
+4. **Only for dry_run** — constraint params add latency; don't use for actual queue submissions.
+
+**Expected dry_run output for a zero step**:
+```
+Step 2: 0 simulations — host-level (default)
+  Target sims (filter match): 10 | Attacks (criteria match): 3 | Viable pairings: 0
+
+  Attack 6949 (0 pairings):
+    - incompatible_os: Simulator OS doesn't match — requires LINUX, simulator has WINDOWS
+    - simulator_variant_is_not_root_user: Requires root/admin — "run as root not enabled"
+  Attack 6950 (0 pairings):
+    - incompatible_os: Simulator OS doesn't match — requires MAC, simulator has WINDOWS
+  Attack 6479 (0 pairings):
+    - simulator_on_both_sides: Needs separate attacker and target
+    - missing_required_advanced_actions: Advanced action not enabled — "allow advanced actions: ..."
+
+  Suggestion: broaden targetFilter to include LINUX and MAC
+```
+
+**Git Commit**: `feat(studio): constraint diagnostics for zero-simulation dry_run steps`
+
 ---
 
 ## Slice 5: Propagate Scenario Type
@@ -1024,3 +1115,5 @@ step structures. Details refined after Slice 4.
 | 2026-04-18 14:00 | Added statistics pre-flight validation (Phase 1.8) with allow_partial_steps parameter |
 | 2026-04-18 18:00 | Slices 1-3 complete. Slice 4 design: full payload for augmented custom plans (not planId) |
 | 2026-04-19 | Slice 4 complete including dry_run. Replace semantics for overrides. originalScenarioId fix. |
+| 2026-04-19 | Phase 4.6-4.7: Statistics breakdown, simulator roles, per-step recommendations. |
+| 2026-04-19 | Phase 4.8 planned: Constraint diagnostics for zero-simulation steps (14 reason codes). |
