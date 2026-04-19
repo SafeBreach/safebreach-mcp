@@ -1207,7 +1207,11 @@ Example (3-turn workflow for non-ready scenarios):
                             unmatched = stats.get('unmatched_attack_count', 0)
                             parts.append("")
                             parts.append(
-                                f"  **{unmatched} attacks produced 0 simulations:**"
+                                f"  **{unmatched} attacks produced 0 simulations.**"
+                            )
+                            parts.append(
+                                "  Constraints hit on at least one simulator pairing "
+                                "(an attack may still succeed via other pairings):"
                             )
                             unfixable_count = 0
                             for reason_group in stats['constraint_summary_aggregated']:

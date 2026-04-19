@@ -1994,16 +1994,16 @@ CONSTRAINT_REASON_DESCRIPTIONS = {
         "fixable": False,
     },
     "simulator_is_not_aws_attacker": {
-        "description": "Attack needs AWS attacker role",
-        "fixable": False,
+        "description": "Requires AWS attacker role — check get_console_simulators for candidates",
+        "fixable": True,
     },
     "simulator_is_not_aws_simulator": {
-        "description": "Attack needs AWS environment",
-        "fixable": False,
+        "description": "Requires AWS simulator — check get_console_simulators for candidates",
+        "fixable": True,
     },
     "simulator_is_not_mail_virtual_simulator": {
-        "description": "Attack needs mailbox simulator",
-        "fixable": False,
+        "description": "Requires mailbox simulator — check get_console_simulators for candidates",
+        "fixable": True,
     },
     "move_does_not_support_root_simulation_user": {
         "description": "Attack incompatible with root simulation user",
