@@ -1179,7 +1179,9 @@ Example (3-turn workflow for non-ready scenarios):
                             parts.append("  **Constraint failures:**")
                             for attack in stats['constraint_summary']:
                                 move_id = attack['move_id']
-                                parts.append(f"  - Attack {move_id}:")
+                                name = attack.get('attack_name', '')
+                                label = f"Attack {move_id} ({name})" if name else f"Attack {move_id}"
+                                parts.append(f"  - {label}:")
                                 for reason in attack['reasons']:
                                     desc = reason['description']
                                     detail = reason.get('detail')

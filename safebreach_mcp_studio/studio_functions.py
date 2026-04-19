@@ -1981,7 +1981,21 @@ CONSTRAINT_REASON_DESCRIPTIONS = {
 }
 
 
-def _summarize_constraints(simulator_constraints):
+def _build_attack_name_map(console):
+    """Build a move_id→name map from the playbook cache.
+
+    Returns empty dict on failure (non-fatal — names are a cosmetic enhancement).
+    """
+    try:
+        from safebreach_mcp_playbook.playbook_functions import _get_all_attacks_from_cache_or_api
+        attacks = _get_all_attacks_from_cache_or_api(console)
+        return {str(a['id']): a.get('name', '') for a in attacks if 'id' in a}
+    except Exception as e:
+        logger.warning(f"Failed to build attack name map: {e}")
+        return {}
+
+
+def _summarize_constraints(simulator_constraints, attack_names=None):
     """Summarize constraint failures into a per-attack breakdown.
 
     Returns a list of dicts: [{move_id, reasons: [{code, description, detail}]}]
@@ -2021,21 +2035,24 @@ def _summarize_constraints(simulator_constraints):
 
     result = []
     for move_id in sorted(move_reasons.keys()):
-        result.append({
+        entry = {
             'move_id': move_id,
             'reasons': list(move_reasons[move_id].values()),
-        })
+        }
+        if attack_names and move_id in attack_names:
+            entry['attack_name'] = attack_names[move_id]
+        result.append(entry)
     return result
 
 
-def _summarize_constraints_aggregated(simulator_constraints):
+def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
     """Aggregate constraint failures by reason code across all attacks.
 
     Used for partial-coverage steps where per-attack detail is too verbose.
     Returns a list of dicts: [{code, description, count, details: [{detail, attack_count}]}]
     """
     # First get per-attack breakdown
-    per_attack = _summarize_constraints(simulator_constraints)
+    per_attack = _summarize_constraints(simulator_constraints, attack_names=attack_names)
 
     # Aggregate by (code, detail) across attacks
     reason_groups = {}
@@ -2110,6 +2127,9 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
 
+    # Build attack name map once for constraint rendering
+    attack_names = _build_attack_name_map(console) if include_constraints else {}
+
     result = []
     for s in step_stats:
         sim_count = s.get('simulationCount', 0)
@@ -2134,11 +2154,15 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
             if constraints and unmatched > 0:
                 if sim_count == 0:
                     # Zero sims: per-attack detail (few attacks, individual diagnosis)
-                    step_result['constraint_summary'] = _summarize_constraints(constraints)
+                    step_result['constraint_summary'] = _summarize_constraints(
+                        constraints, attack_names=attack_names
+                    )
                 else:
                     # Partial coverage: aggregated summary (many attacks, pattern diagnosis)
                     step_result['constraint_summary_aggregated'] = (
-                        _summarize_constraints_aggregated(constraints)
+                        _summarize_constraints_aggregated(
+                            constraints, attack_names=attack_names
+                        )
                     )
                     step_result['unmatched_attack_count'] = unmatched
 
