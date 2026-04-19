@@ -446,6 +446,14 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 "drifted_count": drift_count
             })
 
+        # Add polling hint for non-terminal statuses
+        final_status = (return_details.get('status', '') or '').lower()
+        if final_status not in terminal_statuses:
+            return_details['hint_to_agent'] = (
+                f"Test is still {return_details.get('status', 'in progress')}. "
+                "Poll again in 30 seconds using get_test_details with the same test_id."
+            )
+
         return return_details
 
     except Exception as e:
