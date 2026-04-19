@@ -40,6 +40,13 @@ def get_minimal_simulator_mapping(simulator_entity):
     EXACT copy from original safebreach_types.py
     """
     minimal_os_version = map_reduced_entity(simulator_entity['nodeInfo']['MACHINE_INFO']['OS'], reduced_simulator_os_version_mapping)
+    # Role flags — what this simulator can act as
+    roles = {}
+    for role_key in ['isInfiltration', 'isExfiltration', 'isAWSAttacker',
+                     'isAzureAttacker', 'isGCPAttacker', 'isWebApplicationAttacker']:
+        if simulator_entity.get(role_key):
+            roles[role_key] = True
+
     minimal_simulator_entity = {'labels': simulator_entity['labels'],
                                     'isEnabled': simulator_entity['isEnabled'],
                                     'id': simulator_entity['id'],
@@ -50,6 +57,7 @@ def get_minimal_simulator_mapping(simulator_entity):
                                     'internalIp': simulator_entity['internalIp'],
                                     'version': simulator_entity['version'],
                                     'OS': minimal_os_version,
+                                    'roles': roles if roles else None,
                                     }
     
     return minimal_simulator_entity

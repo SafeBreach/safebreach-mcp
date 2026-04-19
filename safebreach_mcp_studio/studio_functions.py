@@ -1835,10 +1835,27 @@ def _get_scenario_statistics(steps, console):
 
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
-    counts = [s.get('simulationCount', 0) for s in step_stats]
 
+    result = []
+    for s in step_stats:
+        sim_count = s.get('simulationCount', 0)
+        target_sims = s.get('targetSimulators', {})
+        attacker_sims = s.get('attackerSimulators', {})
+        moves = s.get('moves', {})
+
+        result.append({
+            'simulationCount': sim_count,
+            'matchedTargetSimulators': sum(1 for v in target_sims.values() if v > 0),
+            'matchedAttackerSimulators': sum(1 for v in attacker_sims.values() if v > 0),
+            'matchedAttacks': sum(1 for v in moves.values() if v > 0),
+            'totalTargetSimulators': len(target_sims),
+            'totalAttackerSimulators': len(attacker_sims),
+            'totalAttacks': len(moves),
+        })
+
+    counts = [s['simulationCount'] for s in result]
     logger.info(f"Statistics: {counts} (total: {sum(counts)})")
-    return counts
+    return result
 
 
 def sb_run_scenario(
@@ -1925,7 +1942,8 @@ def sb_run_scenario(
         }
 
     # Statistics pre-flight: predict simulation counts per step
-    step_counts = _get_scenario_statistics(scenario['steps'], console)
+    step_stats = _get_scenario_statistics(scenario['steps'], console)
+    step_counts = [s['simulationCount'] for s in step_stats]
     total_predicted = sum(step_counts)
     empty_steps = [
         i + 1 for i, count in enumerate(step_counts) if count == 0
@@ -1944,6 +1962,7 @@ def sb_run_scenario(
             'source_type': 'custom' if is_custom_plan else 'oob',
             'predicted_simulations': total_predicted,
             'predicted_per_step': step_counts,
+            'step_stats': step_stats,
             'empty_steps': empty_steps,
             'step_count': len(scenario.get('steps', [])),
         }
@@ -2092,6 +2111,7 @@ def sb_run_scenario(
         'step_run_ids': [s.get('stepRunId', '') for s in steps],
         'predicted_simulations': total_predicted,
         'predicted_per_step': step_counts,
+        'step_stats': step_stats,
         'empty_steps': empty_steps,
         'status': 'queued',
     }

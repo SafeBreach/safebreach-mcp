@@ -1093,19 +1093,30 @@ Example (3-turn workflow for non-ready scenarios):
                         "### How to Augment",
                         "",
                         "Provide `step_overrides` as a JSON string mapping step numbers "
-                        "to filter overrides.",
+                        "to filter overrides (overrides REPLACE the entire filter).",
                         "Use `get_console_simulators` (Config Server) to discover "
-                        "available simulators.",
+                        "available simulators and their roles.",
                         "",
                         "**Filter options:**",
                         '- OS: `{"os": {"operator": "is", '
                         '"values": ["WINDOWS", "LINUX"], "name": "os"}}`',
                         '- Role: `{"role": {"operator": "is", '
-                        '"values": ["isInfiltration"], "name": "role"}}`',
+                        '"values": ["<role>"], "name": "role"}}`',
                         '- Simulator IDs: `{"simulators": {"operator": "is", '
                         '"values": ["uuid1"], "name": "simulators"}}`',
                         '- All connected: `{"connection": {"operator": "is", '
                         '"values": [true], "name": "connection"}}`',
+                        "",
+                        "**Valid role values** (use with attackerFilter):",
+                        "- `isInfiltration` — infiltration attacker (network-in)",
+                        "- `isExfiltration` — exfiltration attacker (data-out)",
+                        "- `isAWSAttacker` — AWS cloud attacker",
+                        "- `isAzureAttacker` — Azure cloud attacker",
+                        "- `isGCPAttacker` — GCP cloud attacker",
+                        "- `isWebApplicationAttacker` — web application attacker",
+                        "",
+                        "Use `get_console_simulators` to see which simulators have "
+                        "which roles (look for role fields in the output).",
                     ])
 
                     return "\n".join(parts)
@@ -1113,6 +1124,7 @@ Example (3-turn workflow for non-ready scenarios):
                 # Handle dry_run prediction response
                 if result.get('status') == 'dry_run':
                     predicted_per_step = result.get('predicted_per_step', [])
+                    step_stats = result.get('step_stats', [])
                     predicted_total = result.get('predicted_simulations', 0)
                     empty_steps = result.get('empty_steps', [])
 
@@ -1129,8 +1141,26 @@ Example (3-turn workflow for non-ready scenarios):
                     ]
 
                     for i, count in enumerate(predicted_per_step):
-                        marker = " (0 simulations)" if count == 0 else ""
-                        parts.append(f"- Step {i + 1}: {count:,}{marker}")
+                        stats = step_stats[i] if i < len(step_stats) else {}
+                        parts.append(f"**Step {i + 1}: {count:,} simulations**")
+                        if stats:
+                            matched_t = stats.get('matchedTargetSimulators', '?')
+                            total_t = stats.get('totalTargetSimulators', '?')
+                            matched_a = stats.get('matchedAttackerSimulators', '?')
+                            total_a = stats.get('totalAttackerSimulators', '?')
+                            matched_m = stats.get('matchedAttacks', '?')
+                            total_m = stats.get('totalAttacks', '?')
+                            parts.append(
+                                f"  - Target simulators: {matched_t}/{total_t} matched"
+                            )
+                            parts.append(
+                                f"  - Attacker simulators: {matched_a}/{total_a} matched"
+                            )
+                            parts.append(
+                                f"  - Attacks: {matched_m}/{total_m} produced simulations"
+                            )
+                        if count == 0:
+                            parts.append("  - **Root cause: check filter values above**")
 
                     if empty_steps:
                         parts.extend([

@@ -5371,7 +5371,7 @@ class TestRunScenario:
     separately in TestRunScenarioWithStatistics.
     """
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5431,7 +5431,7 @@ class TestRunScenario:
         assert call_kwargs['params']['enableFeedbackLoop'] == "true"
         assert call_kwargs['params']['retrySimulations'] == "true"
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5521,7 +5521,7 @@ class TestRunScenario:
         with pytest.raises(ValueError):
             sb_run_scenario(scenario_id=None, console="test-console")
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5553,7 +5553,7 @@ class TestRunScenario:
                 console="test-console"
             )
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5598,7 +5598,7 @@ class TestRunScenario:
         assert len(result['step_run_ids']) == 5
         assert result['step_run_ids'] == [f"step-{i}" for i in range(5)]
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[100, 100])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5739,7 +5739,12 @@ class TestGetScenarioStatistics:
 
         result = _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
 
-        assert result == [1676, 2198]
+        assert len(result) == 2
+        assert result[0]['simulationCount'] == 1676
+        assert result[1]['simulationCount'] == 2198
+        assert result[0]['matchedTargetSimulators'] >= 0
+        assert result[0]['matchedAttackerSimulators'] >= 0
+        assert result[0]['matchedAttacks'] >= 0
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -6085,7 +6090,7 @@ class TestRunScenarioCustomPlan:
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6134,7 +6139,7 @@ class TestRunScenarioCustomPlan:
         assert 'actions' not in payload['plan']
         assert 'edges' not in payload['plan']
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6192,7 +6197,7 @@ class TestRunScenarioCustomPlan:
         with pytest.raises(ValueError, match="not found"):
             sb_run_scenario(scenario_id="nonexistent-id", console="test-console")
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6506,7 +6511,7 @@ class TestRunScenarioWithOverrides:
         assert result['diagnostic'] is not None
         assert len(result['diagnostic']['missing_steps']) == 2
 
-    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[500, 300])
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6623,7 +6628,7 @@ class TestCustomPlanAugmentation:
         mock_get.side_effect = [oob_resp, plans_resp]
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
-           return_value=[500, 300])
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6688,7 +6693,7 @@ class TestCustomPlanAugmentation:
         assert payload['plan']['originalScenarioId'] == "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba"
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
-           return_value=[500, 300])
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6728,7 +6733,7 @@ class TestDryRun:
     """Test dry_run parameter — returns predictions without queuing."""
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
-           return_value=[1676, 2198])
+           return_value=[{'simulationCount': 1676, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 12, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 12}, {'simulationCount': 2198, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 22, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 22}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -6757,6 +6762,8 @@ class TestDryRun:
         assert result['status'] == 'dry_run'
         assert result['predicted_simulations'] == 3874
         assert result['predicted_per_step'] == [1676, 2198]
+        assert result['step_stats'] is not None
+        assert result['step_stats'][0]['matchedTargetSimulators'] == 11
         assert result['scenario_name'] == "Step 1 - Fortify your Network Perimeter"
         assert 'test_id' not in result
 
@@ -6764,7 +6771,7 @@ class TestDryRun:
         mock_post.assert_not_called()
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
-           return_value=[500, 0])
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 0, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0, 'matchedAttacks': 0, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
@@ -6792,7 +6799,7 @@ class TestDryRun:
         assert result['empty_steps'] == [2]
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
-           return_value=[500, 300])
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
