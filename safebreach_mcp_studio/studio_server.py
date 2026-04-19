@@ -1042,6 +1042,7 @@ Example (3-turn workflow for non-ready scenarios):
             allow_partial_steps: bool = False,
             step_overrides: str = None,
             dry_run: bool = False,
+            verbose_failures: bool = False,
         ) -> str:
             """Execute a scenario, return diagnostic, or preview with dry_run."""
             try:
@@ -1059,6 +1060,7 @@ Example (3-turn workflow for non-ready scenarios):
                     allow_partial_steps=allow_partial_steps,
                     step_overrides=step_overrides,
                     dry_run=dry_run,
+                    verbose_failures=verbose_failures,
                 )
 
                 # Handle not_ready diagnostic response
@@ -1176,7 +1178,19 @@ Example (3-turn workflow for non-ready scenarios):
                             parts.append(
                                 f"  - Attacks: {matched_m}/{total_m} produced simulations"
                             )
-                        if count == 0 and stats.get('constraint_summary'):
+                        # Resolved attacks list
+                        resolved = stats.get('resolved_attacks', [])
+                        if resolved:
+                            parts.append("  Resolved attacks:")
+                            for ra in resolved:
+                                name = ra.get('name', '')
+                                label = f"#{ra['move_id']} ({name})" if name else f"#{ra['move_id']}"
+                                sc = ra.get('simulationCount', 0)
+                                marker = f" — {sc:,} sims" if sc > 0 else " — **0 sims**"
+                                parts.append(f"    - {label}{marker}")
+
+                        # Per-attack constraint detail (zero-sim or verbose_failures)
+                        if stats.get('constraint_summary'):
                             parts.append("")
                             parts.append("  **Constraint failures:**")
                             unfixable_count = 0

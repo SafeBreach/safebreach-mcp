@@ -2139,7 +2139,8 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
     return sorted(code_groups.values(), key=lambda x: -x['total_attacks'])
 
 
-def _get_scenario_statistics(steps, console, include_constraints=False):
+def _get_scenario_statistics(steps, console, include_constraints=False,
+                             verbose_failures=False):
     """
     Predict per-step simulation counts using the plan statistics API.
 
@@ -2148,10 +2149,12 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
         console: SafeBreach console name
         include_constraints: If True, include per-attack constraint failure reasons
             (adds latency — use only for dry_run)
+        verbose_failures: If True, show per-attack constraints even for partial steps
+            (default: aggregated summary for partial, per-attack for zero)
 
     Returns:
-        List of per-step stat dicts with simulationCount, matched counts, and
-        optionally constraint_summary for zero-simulation steps.
+        List of per-step stat dicts with simulationCount, matched counts,
+        resolved_attacks, and optionally constraint details.
     """
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
@@ -2173,7 +2176,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
 
-    # Build attack name map once for constraint rendering
+    # Build attack name map for dry_run (resolved attacks + constraint rendering)
     attack_names = _build_attack_name_map(console) if include_constraints else {}
 
     result = []
@@ -2193,24 +2196,35 @@ def _get_scenario_statistics(steps, console, include_constraints=False):
             'totalAttacks': len(moves),
         }
 
+        # Resolved attacks: list of attacks with sim counts and names
+        if include_constraints and moves:
+            step_result['resolved_attacks'] = [
+                {
+                    'move_id': mid,
+                    'name': attack_names.get(mid, ''),
+                    'simulationCount': count,
+                }
+                for mid, count in sorted(moves.items(), key=lambda x: -x[1])
+            ]
+
         # Add constraint diagnostics when there are unmatched attacks
         if include_constraints:
             unmatched = sum(1 for v in moves.values() if v == 0)
             constraints = s.get('simulatorConstraints', {})
             if constraints and unmatched > 0:
-                if sim_count == 0:
-                    # Zero sims: per-attack detail (few attacks, individual diagnosis)
+                if sim_count == 0 or verbose_failures:
+                    # Per-attack detail: zero-sim steps OR verbose mode
                     step_result['constraint_summary'] = _summarize_constraints(
                         constraints, attack_names=attack_names
                     )
                 else:
-                    # Partial coverage: aggregated summary (many attacks, pattern diagnosis)
+                    # Partial coverage default: aggregated summary
                     step_result['constraint_summary_aggregated'] = (
                         _summarize_constraints_aggregated(
                             constraints, attack_names=attack_names
                         )
                     )
-                    step_result['unmatched_attack_count'] = unmatched
+                step_result['unmatched_attack_count'] = unmatched
 
         result.append(step_result)
 
@@ -2226,6 +2240,7 @@ def sb_run_scenario(
     allow_partial_steps: bool = False,
     step_overrides: str = None,
     dry_run: bool = False,
+    verbose_failures: bool = False,
 ) -> Dict[str, Any]:
     """
     Run a scenario (OOB or custom plan) via the orchestrator queue API.
@@ -2313,7 +2328,8 @@ def sb_run_scenario(
     # Statistics pre-flight: predict simulation counts per step
     # Include constraints for dry_run to diagnose zero-simulation steps
     step_stats = _get_scenario_statistics(scenario['steps'], console,
-                                          include_constraints=dry_run)
+                                          include_constraints=dry_run,
+                                          verbose_failures=verbose_failures)
     step_counts = [s['simulationCount'] for s in step_stats]
     total_predicted = sum(step_counts)
     empty_steps = [
