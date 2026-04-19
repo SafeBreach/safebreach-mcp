@@ -407,7 +407,14 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.5 | S4 | ✅ Complete | 2026-04-18 | d3e4948 | dry_run parameter (3 unit + 3 E2E tests) |
 | 4.6 | S4 | ✅ Complete | 2026-04-19 | a7c6332 | Statistics breakdown + simulator roles + role cheat sheet |
 | 4.7 | S4 | ✅ Complete | 2026-04-19 | 6303226 | Smart per-step filter recommendations in diagnostic |
-| 4.8 | S4 | ⏳ Pending | - | - | Constraint diagnostics for zero-simulation steps |
+| 4.8 | S4 | ✅ Complete | 2026-04-19 | cb6978d | Constraint diagnostics for zero-simulation steps |
+| 4.9 | S4 | ⏳ Pending | - | - | Partial-coverage constraint diagnostics (user's #1 ask) |
+| 4.10 | S4 | ⏳ Pending | - | - | Attack names in constraint diagnostics |
+| 4.11 | S4 | ⏳ Pending | - | - | Default key in step_overrides |
+| 4.12 | S4 | ⏳ Pending | - | - | Shorthand filter syntax |
+| 4.13 | S4 | ⏳ Pending | - | - | Unsolvable-from-overrides hints |
+| 4.14 | S4 | ⏳ Pending | - | - | Simulator capabilities in get_console_simulators |
+| 4.15 | S4 | ⏳ Pending | - | - | Matched simulators per attack in dry_run |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -1031,6 +1038,109 @@ Step 2: 0 simulations — host-level (default)
 
 **Git Commit**: `feat(studio): constraint diagnostics for zero-simulation dry_run steps`
 
+### Phase 4.9: Partial-coverage constraint diagnostics
+
+**Priority**: Highest — user's #1 pick from manual testing feedback.
+
+**Problem**: Constraints only appear when a step produces 0 simulations. When a step
+produces 31/81 attacks, there's zero insight into why the other 50 failed. The LLM
+optimizes blind — can't tell whether one more simulator would rescue 1 attack or 20.
+
+**Solution**: Show constraint failures for ALL unmatched attacks, not just when the step
+total is 0. Remove the `sim_count == 0` gate on `include_constraints`. Group and summarize
+repeated constraint reasons: "10 of 13 attacks blocked by incompatible_os" instead of
+13 repetitive per-attack blocks.
+
+**Git Commit**: `feat(studio): partial-coverage constraint diagnostics for dry_run`
+
+### Phase 4.10: Attack names in constraint diagnostics
+
+**Problem**: "Attack 6479 failed because..." is less actionable than
+"Attack 6479 (Phishing Link Via HTTPS) failed because...". The LLM infers attack
+purpose from step name + context instead of reading it directly.
+
+**Solution**: Resolve move IDs to attack names during dry_run constraint rendering.
+Use the playbook API or include attack names from the statistics response `moves` field.
+
+**Git Commit**: `feat(studio): resolve attack names in constraint diagnostics`
+
+### Phase 4.11: Default key in step_overrides
+
+**Problem**: Repeating the same filter JSON across 11 of 14 steps is error-prone and
+verbose (~2KB of JSON repeated 4 times in a single session).
+
+**Solution**: Add a `"default"` key to step_overrides that applies to ALL missing steps.
+Per-step overrides take precedence over the default. Backward-compatible — existing JSON
+without `"default"` works as before.
+
+```json
+{
+  "default": {"targetFilter": {...}, "attackerFilter": {...}},
+  "8": {"attackerFilter": {"role": ...}}
+}
+```
+
+**Git Commit**: `feat(studio): add default key to step_overrides`
+
+### Phase 4.12: Shorthand filter syntax
+
+**Problem**: `{"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}` has "os"
+repeated 3 times and `operator: "is"` is always the same. 80% of the JSON is boilerplate.
+
+**Solution**: Accept shorthand in step_overrides and expand internally:
+- `{"os": ["WINDOWS", "LINUX"]}` → full filter dict
+- `{"role": ["isInfiltration"]}` → role filter dict
+- `{"simulators": ["uuid1", "uuid2"]}` → simulator filter dict
+- `{"connection": true}` → all-connected filter
+
+Full filter dicts still accepted for backward compatibility.
+
+**Git Commit**: `feat(studio): shorthand filter syntax in step_overrides`
+
+### Phase 4.13: Unsolvable-from-overrides hints
+
+**Problem**: Some attacks need scenario-level configuration that `step_overrides` can't
+address (e.g., mailbox simulator, advanced action type, webapp attacker). The LLM iterates
+on a problem that's partially unsolvable from this interface, with no signal to stop.
+
+**Solution**: Classify constraint reason codes into "fixable via step_overrides" vs
+"requires console-level configuration". When dry_run detects unfixable constraints, add
+a hint: "N attacks require console-level configuration not addressable via step_overrides
+(e.g., enable advanced actions on simulator X, add mailbox simulator)."
+
+Fixable: `incompatible_os`, `incompatible_package` (role), `simulator_on_both_sides`
+Not fixable: `missing_required_advanced_actions`, `simulator_is_not_mail_virtual_simulator`,
+`simulator_failed_schema_validation`, `simulator_didnt_pass_pre_execution_prerequisite_tests`
+
+**Git Commit**: `feat(studio): hint when constraints are unfixable via step_overrides`
+
+### Phase 4.14: Simulator capabilities in get_console_simulators
+
+**Problem**: Hidden capabilities (action types enabled, associated assets, pre-execution
+check status, proxy configuration) are only discoverable through constraint failures.
+The LLM guesses instead of planning.
+
+**Solution**: Extend `get_minimal_simulator_mapping` in Config Server to include:
+- Action types enabled (advanced actions flags)
+- Associated assets count
+- Pre-execution check status
+- Proxy configuration
+
+**Note**: Config Server change — may be a separate ticket.
+
+**Git Commit**: `feat(config): extend simulator listing with capability fields`
+
+### Phase 4.15: Matched simulators per attack in dry_run
+
+**Problem**: "1/10 targets matched" without knowing WHICH one. The LLM keeps broad
+filters on steps where narrow would work if it knew the right simulator ID.
+
+**Solution**: Include `matched_simulators` list per attack in the dry_run constraint
+output for attacks that have at least one match. For zero-match attacks, already covered
+by constraint diagnostics.
+
+**Git Commit**: `feat(studio): show matched simulator IDs per attack in dry_run`
+
 ---
 
 ## Slice 5: Propagate Scenario Type
@@ -1116,4 +1226,5 @@ step structures. Details refined after Slice 4.
 | 2026-04-18 18:00 | Slices 1-3 complete. Slice 4 design: full payload for augmented custom plans (not planId) |
 | 2026-04-19 | Slice 4 complete including dry_run. Replace semantics for overrides. originalScenarioId fix. |
 | 2026-04-19 | Phase 4.6-4.7: Statistics breakdown, simulator roles, per-step recommendations. |
-| 2026-04-19 | Phase 4.8 planned: Constraint diagnostics for zero-simulation steps (14 reason codes). |
+| 2026-04-19 | Phase 4.8 implemented: Constraint diagnostics for zero-simulation steps. |
+| 2026-04-19 | Phases 4.9-4.15 planned: LLM UX improvements from Claude Desktop manual testing feedback. |
