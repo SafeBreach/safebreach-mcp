@@ -1179,6 +1179,7 @@ Example (3-turn workflow for non-ready scenarios):
                         if count == 0 and stats.get('constraint_summary'):
                             parts.append("")
                             parts.append("  **Constraint failures:**")
+                            unfixable_count = 0
                             for attack in stats['constraint_summary']:
                                 move_id = attack['move_id']
                                 name = attack.get('attack_name', '')
@@ -1187,10 +1188,20 @@ Example (3-turn workflow for non-ready scenarios):
                                 for reason in attack['reasons']:
                                     desc = reason['description']
                                     detail = reason.get('detail')
+                                    fixable = reason.get('fixable', True)
+                                    tag = "" if fixable else " *(not via step_overrides)*"
+                                    if not fixable:
+                                        unfixable_count += 1
                                     if detail:
-                                        parts.append(f"    - {desc} — {detail}")
+                                        parts.append(f"    - {desc} — {detail}{tag}")
                                     else:
-                                        parts.append(f"    - {desc}")
+                                        parts.append(f"    - {desc}{tag}")
+                            if unfixable_count > 0:
+                                parts.append("")
+                                parts.append(
+                                    f"  ⚠ Some constraints require configuration "
+                                    f"not addressable via step_overrides."
+                                )
                         # Aggregated constraint summary for partial-coverage steps
                         if count > 0 and stats.get('constraint_summary_aggregated'):
                             unmatched = stats.get('unmatched_attack_count', 0)
@@ -1198,12 +1209,17 @@ Example (3-turn workflow for non-ready scenarios):
                             parts.append(
                                 f"  **{unmatched} attacks produced 0 simulations:**"
                             )
+                            unfixable_count = 0
                             for reason_group in stats['constraint_summary_aggregated']:
                                 desc = reason_group['description']
                                 n = reason_group['total_attacks']
+                                fixable = reason_group.get('fixable', True)
                                 subs = reason_group.get('sub_reasons', [])
+                                tag = "" if fixable else " *(not fixable via step_overrides)*"
+                                if not fixable:
+                                    unfixable_count += n
                                 if subs:
-                                    parts.append(f"  - {n} attacks: {desc}")
+                                    parts.append(f"  - {n} attacks: {desc}{tag}")
                                     for sub in subs[:3]:
                                         parts.append(
                                             f"    - {sub['attack_count']} attacks: "
@@ -1214,7 +1230,13 @@ Example (3-turn workflow for non-ready scenarios):
                                             f"    - ... and {len(subs) - 3} more variants"
                                         )
                                 else:
-                                    parts.append(f"  - {n} attacks: {desc}")
+                                    parts.append(f"  - {n} attacks: {desc}{tag}")
+                            if unfixable_count > 0:
+                                parts.append("")
+                                parts.append(
+                                    f"  ⚠ {unfixable_count} attacks require configuration "
+                                    f"not addressable via step_overrides."
+                                )
                         elif count == 0 and not stats.get('constraint_summary'):
                             parts.append(
                                 "  - **0 viable pairings** — rerun with "

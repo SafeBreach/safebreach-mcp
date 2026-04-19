@@ -1963,21 +1963,64 @@ def _fetch_all_plans(console):
     return plans
 
 
+# Each constraint has: description (human-readable) and fixable_via_overrides (bool)
 CONSTRAINT_REASON_DESCRIPTIONS = {
-    "incompatible_os": "Simulator OS doesn't match attack requirement",
-    "incompatible_package": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
-    "missing_required_advanced_actions": "Specific advanced action type not enabled on simulator",
-    "simulator_on_both_sides": "Network attack needs separate attacker and target simulators",
-    "simulator_variant_is_not_root_user": "Attack requires root/admin execution privilege",
-    "simulator_variant_is_root_user": "Attack requires non-root execution",
-    "simulator_failed_schema_validation": "Simulator missing required software/capability",
-    "simulator_is_not_aws_attacker": "Attack needs AWS attacker role",
-    "simulator_is_not_aws_simulator": "Attack needs AWS environment",
-    "simulator_is_not_mail_virtual_simulator": "Attack needs mailbox simulator",
-    "move_does_not_support_root_simulation_user": "Attack incompatible with root simulation user",
-    "move_doesnt_requires_proxy_ignoring_proxy_variant": "Proxy configuration mismatch",
-    "port_in_use": "Required port occupied on simulator",
-    "simulator_didnt_pass_pre_execution_prerequisite_tests": "Pre-execution checks failed on simulator",
+    "incompatible_os": {
+        "description": "Simulator OS doesn't match attack requirement",
+        "fixable": True,
+    },
+    "incompatible_package": {
+        "description": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
+        "fixable": True,
+    },
+    "simulator_on_both_sides": {
+        "description": "Network attack needs separate attacker and target simulators",
+        "fixable": True,
+    },
+    "simulator_variant_is_not_root_user": {
+        "description": "Attack requires root/admin execution privilege",
+        "fixable": True,
+    },
+    "simulator_variant_is_root_user": {
+        "description": "Attack requires non-root execution",
+        "fixable": True,
+    },
+    "missing_required_advanced_actions": {
+        "description": "Specific advanced action type not enabled on simulator",
+        "fixable": False,
+    },
+    "simulator_failed_schema_validation": {
+        "description": "Simulator missing required software/capability",
+        "fixable": False,
+    },
+    "simulator_is_not_aws_attacker": {
+        "description": "Attack needs AWS attacker role",
+        "fixable": False,
+    },
+    "simulator_is_not_aws_simulator": {
+        "description": "Attack needs AWS environment",
+        "fixable": False,
+    },
+    "simulator_is_not_mail_virtual_simulator": {
+        "description": "Attack needs mailbox simulator",
+        "fixable": False,
+    },
+    "move_does_not_support_root_simulation_user": {
+        "description": "Attack incompatible with root simulation user",
+        "fixable": False,
+    },
+    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
+        "description": "Proxy configuration mismatch",
+        "fixable": False,
+    },
+    "port_in_use": {
+        "description": "Required port occupied on simulator",
+        "fixable": False,
+    },
+    "simulator_didnt_pass_pre_execution_prerequisite_tests": {
+        "description": "Pre-execution checks failed on simulator",
+        "fixable": False,
+    },
 }
 
 
@@ -2029,7 +2072,8 @@ def _summarize_constraints(simulator_constraints, attack_names=None):
 
                         move_reasons[move_id][code] = {
                             'code': code,
-                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, code),
+                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('description', code),
+                            'fixable': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('fixable', True),
                             'detail': '; '.join(detail_parts) if detail_parts else None,
                         }
 
@@ -2065,6 +2109,7 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
                 reason_groups[key] = {
                     'code': code,
                     'description': reason['description'],
+                    'fixable': reason.get('fixable', True),
                     'detail': detail,
                     'attack_count': 0,
                     'move_ids': [],
@@ -2079,6 +2124,7 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
             code_groups[code] = {
                 'code': code,
                 'description': info['description'],
+                'fixable': info.get('fixable', True),
                 'total_attacks': 0,
                 'sub_reasons': [],
             }
