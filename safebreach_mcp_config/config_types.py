@@ -34,12 +34,12 @@ def map_reduced_entity(entity, mapping):
     return {new_key: entity[old_key] for new_key, old_key in mapping.items() if old_key in entity}
 
 
-def get_minimal_simulator_mapping(simulator_entity):
+def get_minimal_simulator_mapping(simulator_entity, assets_map=None):
     """
     Returns a reduced simulator entity with only the relevant fields.
-    EXACT copy from original safebreach_types.py
     """
     minimal_os_version = map_reduced_entity(simulator_entity['nodeInfo']['MACHINE_INFO']['OS'], reduced_simulator_os_version_mapping)
+
     # Role flags — what this simulator can act as
     roles = {}
     for role_key in ['isInfiltration', 'isExfiltration', 'isAWSAttacker',
@@ -47,19 +47,41 @@ def get_minimal_simulator_mapping(simulator_entity):
         if simulator_entity.get(role_key):
             roles[role_key] = True
 
-    minimal_simulator_entity = {'labels': simulator_entity['labels'],
-                                    'isEnabled': simulator_entity['isEnabled'],
-                                    'id': simulator_entity['id'],
-                                    'name': simulator_entity['name'],
-                                    'isConnected': simulator_entity['isConnected'],
-                                    'isCritical': simulator_entity['isCritical'],
-                                    'externalIp': simulator_entity['externalIp'],
-                                    'internalIp': simulator_entity['internalIp'],
-                                    'version': simulator_entity['version'],
-                                    'OS': minimal_os_version,
-                                    'roles': roles if roles else None,
-                                    }
-    
+    # Resolve asset IDs to names
+    asset_ids = simulator_entity.get('assets', [])
+    resolved_assets = None
+    if asset_ids and assets_map:
+        resolved_assets = [
+            assets_map[aid] for aid in asset_ids
+            if aid in assets_map
+        ]
+    elif asset_ids:
+        resolved_assets = [{"id": aid} for aid in asset_ids]
+
+    # Simulation users (impersonated users)
+    sim_users_raw = simulator_entity.get('simulationUsers', [])
+    simulation_users = [
+        {"name": u.get("name", ""), "username": u.get("username", "")}
+        for u in sim_users_raw if isinstance(u, dict)
+    ] if sim_users_raw else None
+
+    minimal_simulator_entity = {
+        'labels': simulator_entity['labels'],
+        'isEnabled': simulator_entity['isEnabled'],
+        'id': simulator_entity['id'],
+        'name': simulator_entity['name'],
+        'isConnected': simulator_entity['isConnected'],
+        'isCritical': simulator_entity['isCritical'],
+        'externalIp': simulator_entity['externalIp'],
+        'internalIp': simulator_entity['internalIp'],
+        'version': simulator_entity['version'],
+        'OS': minimal_os_version,
+        'roles': roles if roles else None,
+        'isProxySupported': simulator_entity.get('isProxySupported', False),
+        'assets': resolved_assets,
+        'simulationUsers': simulation_users,
+    }
+
     return minimal_simulator_entity
 
 
