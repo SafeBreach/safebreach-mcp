@@ -6841,3 +6841,223 @@ class TestDryRun:
         assert result['status'] == 'dry_run'
         assert result['predicted_simulations'] == 800
         assert 'test_id' not in result  # No queue call made
+
+
+# =====================================================================
+# Phase 4.18: Resolved Attacks + Phase 4.19: verbose_failures Tests
+# =====================================================================
+
+
+class TestResolvedAttacks:
+    """Test that dry_run includes resolved attacks per step."""
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={'281': 'Transfer malware via HTTPS', '226': 'Hidden malware drop'})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_includes_resolved_attacks(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """dry_run response includes resolved_attacks per step with names."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 500, 'matchedTargetSimulators': 5,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'resolved_attacks': [
+                 {'move_id': '281', 'name': 'Transfer malware via HTTPS', 'simulationCount': 500},
+                 {'move_id': '226', 'name': 'Hidden malware drop', 'simulationCount': 0},
+             ]},
+            {'simulationCount': 200, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '226', 'name': 'Hidden malware drop', 'simulationCount': 200},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        step_stats = result.get('step_stats', [])
+        assert len(step_stats) == 2
+
+        # Step 1 should have resolved_attacks
+        resolved = step_stats[0].get('resolved_attacks', [])
+        assert len(resolved) == 2
+        assert resolved[0]['move_id'] == '281'
+        assert resolved[0]['name'] == 'Transfer malware via HTTPS'
+        assert resolved[0]['simulationCount'] == 500
+        assert resolved[1]['simulationCount'] == 0
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resolved_attacks_without_name_map(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """resolved_attacks still work when playbook name map is empty."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '281', 'name': '', 'simulationCount': 100},
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '226', 'name': '', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        resolved = result['step_stats'][0].get('resolved_attacks', [])
+        assert len(resolved) == 1
+        assert resolved[0]['move_id'] == '281'
+
+
+class TestVerboseFailures:
+    """Test verbose_failures flag for per-attack detail on partial steps."""
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={'281': 'Attack A', '226': 'Attack B'})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_verbose_failures_shows_per_attack_on_partial(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """verbose_failures=True shows constraint_summary (not aggregated) for partial steps."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'unmatched_attack_count': 1,
+             'resolved_attacks': [
+                 {'move_id': '281', 'name': 'Attack A', 'simulationCount': 100},
+                 {'move_id': '226', 'name': 'Attack B', 'simulationCount': 0},
+             ],
+             'constraint_summary': [
+                 {'move_id': '226', 'attack_name': 'Attack B', 'reasons': [
+                     {'code': 'incompatible_os', 'description': 'OS mismatch',
+                      'detail': 'requires LINUX', 'fixable': True}
+                 ]}
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1,
+             'resolved_attacks': [
+                 {'move_id': '226', 'name': 'Attack B', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True,
+            verbose_failures=True,
+        )
+
+        assert result['status'] == 'dry_run'
+        # Step 1 (partial) should have constraint_summary (per-attack), not aggregated
+        step1 = result['step_stats'][0]
+        assert 'constraint_summary' in step1
+        assert step1['constraint_summary'][0]['move_id'] == '226'
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_without_verbose_uses_aggregated(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """Without verbose_failures, partial steps use aggregated summary."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'unmatched_attack_count': 1,
+             'resolved_attacks': [
+                 {'move_id': '281', 'name': '', 'simulationCount': 100},
+                 {'move_id': '226', 'name': '', 'simulationCount': 0},
+             ],
+             'constraint_summary_aggregated': [
+                 {'code': 'incompatible_os', 'description': 'OS mismatch',
+                  'fixable': True, 'total_attacks': 1, 'sub_reasons': []}
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1,
+             'resolved_attacks': [
+                 {'move_id': '226', 'name': '', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True,
+            verbose_failures=False,
+        )
+
+        assert result['status'] == 'dry_run'
+        step1 = result['step_stats'][0]
+        # Should have aggregated, not per-attack
+        assert 'constraint_summary_aggregated' in step1
+        assert 'constraint_summary' not in step1
