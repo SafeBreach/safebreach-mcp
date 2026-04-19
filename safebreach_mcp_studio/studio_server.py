@@ -1174,8 +1174,24 @@ Example (3-turn workflow for non-ready scenarios):
                             parts.append(
                                 f"  - Attacks: {matched_m}/{total_m} produced simulations"
                             )
-                        if count == 0:
-                            parts.append("  - **Root cause: check filter values above**")
+                        if count == 0 and stats.get('constraint_summary'):
+                            parts.append("")
+                            parts.append("  **Constraint failures:**")
+                            for attack in stats['constraint_summary']:
+                                move_id = attack['move_id']
+                                parts.append(f"  - Attack {move_id}:")
+                                for reason in attack['reasons']:
+                                    desc = reason['description']
+                                    detail = reason.get('detail')
+                                    if detail:
+                                        parts.append(f"    - {desc} — {detail}")
+                                    else:
+                                        parts.append(f"    - {desc}")
+                        elif count == 0:
+                            parts.append(
+                                "  - **0 viable pairings** — rerun with "
+                                "`dry_run=True` for constraint details"
+                            )
 
                     if empty_steps:
                         parts.extend([

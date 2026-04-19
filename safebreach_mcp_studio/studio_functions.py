@@ -1963,29 +1963,99 @@ def _fetch_all_plans(console):
     return plans
 
 
-def _get_scenario_statistics(steps, console):
+CONSTRAINT_REASON_DESCRIPTIONS = {
+    "incompatible_os": "Simulator OS doesn't match attack requirement",
+    "incompatible_package": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
+    "missing_required_advanced_actions": "Specific advanced action type not enabled on simulator",
+    "simulator_on_both_sides": "Network attack needs separate attacker and target simulators",
+    "simulator_variant_is_not_root_user": "Attack requires root/admin execution privilege",
+    "simulator_variant_is_root_user": "Attack requires non-root execution",
+    "simulator_failed_schema_validation": "Simulator missing required software/capability",
+    "simulator_is_not_aws_attacker": "Attack needs AWS attacker role",
+    "simulator_is_not_aws_simulator": "Attack needs AWS environment",
+    "simulator_is_not_mail_virtual_simulator": "Attack needs mailbox simulator",
+    "move_does_not_support_root_simulation_user": "Attack incompatible with root simulation user",
+    "move_doesnt_requires_proxy_ignoring_proxy_variant": "Proxy configuration mismatch",
+    "port_in_use": "Required port occupied on simulator",
+    "simulator_didnt_pass_pre_execution_prerequisite_tests": "Pre-execution checks failed on simulator",
+}
+
+
+def _summarize_constraints(simulator_constraints):
+    """Summarize constraint failures into a per-attack breakdown.
+
+    Returns a list of dicts: [{move_id, reasons: [{code, description, detail}]}]
+    """
+    # Merge target + attacker constraints per move
+    move_reasons = {}
+    for side in ['targetConstraints', 'attackerConstraints']:
+        side_data = simulator_constraints.get(side, {})
+        for sim_id, moves in side_data.items():
+            for move_id, reasons in moves.items():
+                if move_id not in move_reasons:
+                    move_reasons[move_id] = {}
+                for r in reasons:
+                    code = r.get('reason', 'unknown')
+                    # Use code as key to deduplicate across simulators
+                    if code not in move_reasons[move_id]:
+                        detail_parts = []
+                        # Handle required/actual naming (e.g., incompatible_os)
+                        if r.get('required') is not None and r.get('actual') is not None:
+                            detail_parts.append(
+                                f"requires {r['required']}, simulator has {r['actual']}"
+                            )
+                        # Handle expected/got naming (e.g., incompatible_package)
+                        if r.get('expected') is not None:
+                            detail_parts.append(f"expected: {r['expected']}")
+                        if r.get('got') is not None and not r.get('expected'):
+                            detail_parts.append(f"simulator has: {r['got']}")
+                        # Include any free-form reason text
+                        if r.get('reason_text'):
+                            detail_parts.append(r['reason_text'])
+
+                        move_reasons[move_id][code] = {
+                            'code': code,
+                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, code),
+                            'detail': '; '.join(detail_parts) if detail_parts else None,
+                        }
+
+    result = []
+    for move_id in sorted(move_reasons.keys()):
+        result.append({
+            'move_id': move_id,
+            'reasons': list(move_reasons[move_id].values()),
+        })
+    return result
+
+
+def _get_scenario_statistics(steps, console, include_constraints=False):
     """
     Predict per-step simulation counts using the plan statistics API.
 
     Args:
         steps: List of scenario step dicts (with filter fields)
         console: SafeBreach console name
+        include_constraints: If True, include per-attack constraint failure reasons
+            (adds latency — use only for dry_run)
 
     Returns:
-        List of simulationCount integers, one per step
+        List of per-step stat dicts with simulationCount, matched counts, and
+        optionally constraint_summary for zero-simulation steps.
     """
     apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
     headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
 
+    constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
     api_url = (
         f"{base_url}/api/orch/v1/accounts/{account_id}"
-        f"/plan/statistics?limit=500000&includeDisabled=true"
+        f"/plan/statistics?limit=500000&includeDisabled=true{constraint_params}"
     )
     payload = {"name": "", "steps": steps}
 
-    logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'")
+    logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
+                f"{' (with constraints)' if include_constraints else ''}")
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
     response.raise_for_status()
 
@@ -1999,7 +2069,7 @@ def _get_scenario_statistics(steps, console):
         attacker_sims = s.get('attackerSimulators', {})
         moves = s.get('moves', {})
 
-        result.append({
+        step_result = {
             'simulationCount': sim_count,
             'matchedTargetSimulators': sum(1 for v in target_sims.values() if v > 0),
             'matchedAttackerSimulators': sum(1 for v in attacker_sims.values() if v > 0),
@@ -2007,7 +2077,15 @@ def _get_scenario_statistics(steps, console):
             'totalTargetSimulators': len(target_sims),
             'totalAttackerSimulators': len(attacker_sims),
             'totalAttacks': len(moves),
-        })
+        }
+
+        # Add constraint summary for zero-simulation steps
+        if include_constraints and sim_count == 0:
+            constraints = s.get('simulatorConstraints', {})
+            if constraints:
+                step_result['constraint_summary'] = _summarize_constraints(constraints)
+
+        result.append(step_result)
 
     counts = [s['simulationCount'] for s in result]
     logger.info(f"Statistics: {counts} (total: {sum(counts)})")
@@ -2098,7 +2176,9 @@ def sb_run_scenario(
         }
 
     # Statistics pre-flight: predict simulation counts per step
-    step_stats = _get_scenario_statistics(scenario['steps'], console)
+    # Include constraints for dry_run to diagnose zero-simulation steps
+    step_stats = _get_scenario_statistics(scenario['steps'], console,
+                                          include_constraints=dry_run)
     step_counts = [s['simulationCount'] for s in step_stats]
     total_predicted = sum(step_counts)
     empty_steps = [
