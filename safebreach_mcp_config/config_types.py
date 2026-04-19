@@ -146,18 +146,26 @@ def get_reduced_scenario_mapping(
     }
 
 
-def get_reduced_plan_mapping(plan: Dict[str, Any]) -> Dict[str, Any]:
+def get_reduced_plan_mapping(
+    plan: Dict[str, Any],
+    users_map: Optional[Dict[int, str]] = None,
+) -> Dict[str, Any]:
     """Transform a full custom plan object into a reduced representation for list view.
 
     Returns a dict with source_type='custom'. Plans come from the
     /api/config/v2/accounts/{id}/plans endpoint and have a different schema than OOB scenarios.
     """
+    user_id = plan.get("userId")
+    created_by = None
+    if user_id and users_map:
+        created_by = users_map.get(user_id)
+
     return {
         "id": str(plan.get("id")),
         "source_type": "custom",
         "name": plan.get("name"),
         "description": _truncate_description(plan.get('description')),
-        "createdBy": None,  # Custom plans don't have createdBy; see userId instead
+        "createdBy": created_by,
         "recommended": False,  # Custom plans don't have the recommended concept
         "category_names": [],  # Custom plans don't have categories
         "tags": plan.get("tags") or [],
