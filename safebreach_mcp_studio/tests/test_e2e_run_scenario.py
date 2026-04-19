@@ -244,6 +244,74 @@ class TestRunScenarioE2E:
             if test_id:
                 _cancel_test(test_id, E2E_CONSOLE)
 
+    # --- Slice 4: dry_run E2E Tests ---
+
+    def test_dry_run_oob_scenario(self):
+        """dry_run returns real predictions without queuing a test."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready_scenario = None
+        for s in scenarios:
+            if compute_scenario_readiness(s):
+                ready_scenario = s
+                break
+
+        assert ready_scenario is not None
+
+        result = sb_run_scenario(
+            scenario_id=str(ready_scenario['id']),
+            console=E2E_CONSOLE,
+            dry_run=True,
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] > 0
+        assert len(result['predicted_per_step']) > 0
+        assert result['scenario_name'] == ready_scenario['name']
+        assert 'test_id' not in result  # No test queued
+
+    def test_dry_run_custom_plan(self):
+        """dry_run works for custom plans too."""
+        plans = _fetch_all_plans(E2E_CONSOLE)
+        ready_plan = None
+        for p in plans:
+            if compute_scenario_readiness(p):
+                ready_plan = p
+                break
+
+        assert ready_plan is not None
+
+        result = sb_run_scenario(
+            scenario_id=str(ready_plan['id']),
+            console=E2E_CONSOLE,
+            dry_run=True,
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] > 0
+        assert result['source_type'] == 'custom'
+        assert 'test_id' not in result
+
+    def test_dry_run_with_overrides(self):
+        """dry_run with step_overrides shows augmented predictions."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)]
+        assert len(not_ready) > 0
+
+        scenario = not_ready[0]
+        overrides = self._build_broad_overrides(scenario)
+
+        result = sb_run_scenario(
+            scenario_id=str(scenario['id']),
+            console=E2E_CONSOLE,
+            step_overrides=overrides,
+            dry_run=True,
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] >= 0  # May be 0 for niche scenarios
+        assert len(result['predicted_per_step']) == len(scenario.get('steps', []))
+        assert 'test_id' not in result
+
     # --- Slice 3: Non-ready Scenario Augmentation E2E Tests ---
 
     def _build_broad_overrides(self, scenario):

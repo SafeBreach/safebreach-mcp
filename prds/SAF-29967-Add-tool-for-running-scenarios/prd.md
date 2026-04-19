@@ -154,7 +154,8 @@ uses `planId` reference (no steps/actions/edges).
 
 **Slice 1**: `scenario_id`, `console`, `test_name`, `allow_partial_steps`
 **Slice 2**: Same parameters (custom plans discovered automatically by ID type)
-**Slice 3-4**: Adds augmenting parameters for missing filters
+**Slice 3-4**: Adds `step_overrides` (JSON string) for augmenting missing filters,
+`dry_run` (bool) for previewing predictions without queuing
 **Slice 5**: Adds `scenario_type` parameter
 
 ### Component E: Tests
@@ -396,6 +397,7 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.2 | S4 | ✅ Complete | 2026-04-18 | a01dfd0 | GREEN: one-line change + replace semantics fix |
 | 4.3 | S4 | ✅ Complete | 2026-04-18 | aff9e19 | E2E: 9/9 pass incl custom plan augmentation |
 | 4.4 | S4 | ✅ Complete | 2026-04-18 | - | Documentation update |
+| 4.5 | S4 | ✅ Complete | 2026-04-18 | d3e4948 | dry_run parameter (3 unit + 3 E2E tests) |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -1021,3 +1023,4 @@ step structures. Details refined after Slice 4.
 | 2026-04-18 12:00 | Added zero-mocks rule for E2E tests |
 | 2026-04-18 14:00 | Added statistics pre-flight validation (Phase 1.8) with allow_partial_steps parameter |
 | 2026-04-18 18:00 | Slices 1-3 complete. Slice 4 design: full payload for augmented custom plans (not planId) |
+| 2026-04-19 | Slice 4 complete including dry_run. Replace semantics for overrides. originalScenarioId fix. |

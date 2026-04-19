@@ -1025,11 +1025,13 @@ info showing missing filters per step (when not ready).
 Example (ready scenario):
 run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
 
-Example (custom plan):
-run_scenario(scenario_id="130", console="demo")
+Example (dry_run preview — no test queued):
+run_scenario(scenario_id="3b8eade5-...", console="demo", dry_run=True)
 
-Example (non-ready with overrides):
-run_scenario(scenario_id="abc-123", console="demo", step_overrides='{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}, "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}}}}'"""
+Example (3-turn workflow for non-ready scenarios):
+  1. run_scenario(scenario_id="abc-123", console="demo")  # returns diagnostic
+  2. run_scenario(scenario_id="abc-123", step_overrides='...', dry_run=True)  # preview
+  3. run_scenario(scenario_id="abc-123", step_overrides='...')  # execute"""
         )
         def run_scenario(
             scenario_id: str,

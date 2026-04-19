@@ -338,11 +338,13 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   queue API. OOB scenarios relay full payload with DAG; custom plans use `planId` reference.
   **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
   `test_name`, `allow_partial_steps` (default False), `step_overrides` (JSON string for
-  augmenting non-ready scenarios with per-step filter overrides).
-  **Two-turn workflow**: Call without overrides → returns diagnostic showing which steps need
-  which filters. Call again with `step_overrides` providing the missing filters.
-  Returns markdown with test_id + predicted simulation counts (queued), or diagnostic info
-  showing missing filters per step with augmentation examples (not ready).
+  augmenting non-ready scenarios — replaces entire filter per step), `dry_run` (default False —
+  predict simulation counts without queuing).
+  **Three-turn workflow**: (1) Call without overrides → diagnostic showing missing filters.
+  (2) Call with `step_overrides` + `dry_run=True` → preview predicted simulations per step.
+  (3) Call with `step_overrides` → actually queue the test.
+  Returns markdown with test_id + predicted counts (queued), per-step prediction (dry_run),
+  or diagnostic with augmentation examples (not ready).
 
 
 ## Filtering and Search Capabilities
