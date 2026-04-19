@@ -1102,10 +1102,10 @@ Example (3-turn workflow for non-ready scenarios):
                     parts.extend([
                         "### How to Augment",
                         "",
-                        "**IMPORTANT: Do NOT use 'all connected' filters.** Match "
-                        "simulators to steps based on the recommended filter type above. "
-                        "Use role filters for infiltration/exfiltration steps and OS "
-                        "filters for host-level steps.",
+                        "**Best practice:** Match simulators to steps using the "
+                        "recommended filter type above (role for infiltration/exfiltration, "
+                        "OS for host-level). Use 'all connected' only as a last resort "
+                        "when targeted selection isn't possible.",
                         "",
                         "Provide `step_overrides` as a JSON string mapping step numbers "
                         "to filter overrides (overrides REPLACE the entire filter).",
