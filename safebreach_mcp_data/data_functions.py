@@ -412,6 +412,22 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
         return_details = _find_test_in_cached_list(test_id, console)
 
+        # If cached entry shows RUNNING, fetch fresh from single-test endpoint
+        # to get current status. The cached list can be up to 30 minutes stale.
+        if return_details is not None and return_details.get('status', '').upper() == 'RUNNING':
+            logger.info("Test '%s' shows RUNNING in cache — fetching fresh status", test_id)
+            try:
+                fresh = _fetch_single_test(test_id, console)
+                # Merge: use fresh status/end_time but keep cached extras
+                # (findingsCount, compromisedHosts) that single-test omits
+                return_details['status'] = fresh.get('status', return_details['status'])
+                return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
+                return_details['simulations_statistics'] = fresh.get(
+                    'simulations_statistics', return_details['simulations_statistics']
+                )
+            except Exception as e:
+                logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
+
         if return_details is None:
             # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
             logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
