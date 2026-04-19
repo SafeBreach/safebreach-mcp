@@ -1713,11 +1713,13 @@ def diagnose_scenario_readiness(scenario):
         if not _has_real_filter_criteria(attacker):
             missing_filters.append('attackerFilter')
         if missing_filters:
+            recommendation = _get_step_filter_recommendation(step)
             missing_steps.append({
                 'step_number': i + 1,
                 'step_name': step.get('name', f'Step {i + 1}'),
                 'missing_filters': missing_filters,
                 'attacksFilter': step.get('attacksFilter', {}),
+                'recommendation': recommendation,
             })
 
     return {
@@ -1752,6 +1754,160 @@ def _apply_step_overrides(scenario, overrides):
             step['targetFilter'] = override['targetFilter']
         if 'attackerFilter' in override:
             step['attackerFilter'] = override['attackerFilter']
+
+
+# Attack phase → recommended filter mapping
+ATTACK_PHASE_RECOMMENDATIONS = {
+    0: {
+        'phase_name': 'exfiltration',
+        'attackerFilter': 'role=isExfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Data exfiltration — attacker needs isExfiltration role',
+    },
+    1: {
+        'phase_name': 'infiltration (network)',
+        'attackerFilter': 'role=isInfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Network infiltration — attacker needs isInfiltration role',
+    },
+    2: {
+        'phase_name': 'infiltration (network)',
+        'attackerFilter': 'role=isInfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Network infiltration — attacker needs isInfiltration role',
+    },
+    5: {
+        'phase_name': 'host-level',
+        'attackerFilter': 'os (same as target)',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Host-level execution — attacker and target are the same machine',
+    },
+}
+
+
+# Attack types that indicate network/infiltration (need isInfiltration role)
+INFILTRATION_ATTACK_TYPES = {
+    'Malware Transfer', 'Hidden Malware Transfer', 'Web Shell Transfer',
+    'Exploit Transfer', 'Exploit Kit Infection', 'Remote Exploitation',
+    'Brute Force', 'Remote Control', 'Outbound C&C Communication',
+    'Malicious Domain Resolution', 'Real C2 Communication', 'URL Navigation',
+}
+
+# Attack types that indicate exfiltration (need isExfiltration role)
+EXFILTRATION_ATTACK_TYPES = {
+    'Covert Channel Exfiltration', 'Legitimate Channel Exfiltration',
+}
+
+# MITRE tactics that indicate host-level execution
+HOST_LEVEL_TACTICS = {
+    'Execution', 'Persistence', 'Privilege Escalation', 'Defense Evasion',
+    'Discovery', 'Collection', 'Impact', 'Credential Access',
+}
+
+# MITRE tactics that indicate network activity
+NETWORK_TACTICS = {
+    'Initial Access', 'Command And Control', 'Lateral Movement',
+}
+
+
+def _get_step_filter_recommendation(step):
+    """Generate filter recommendations based on a step's attack phase, type, and MITRE tactic.
+
+    Uses attack phase first, then falls back to attack type inference,
+    then MITRE tactic, then step name heuristics.
+    """
+    attacks_filter = step.get('attacksFilter', {})
+    phase_values = attacks_filter.get('attackPhase', {}).get('values', [])
+    attack_types = attacks_filter.get('attackType', {}).get('values', [])
+    tags = attacks_filter.get('tags', {})
+    mitre_tactics = tags.get('mitre_tactic', {}).get('values', []) if isinstance(tags, dict) else []
+    step_name = step.get('name', '').lower()
+
+    phase = phase_values[0] if phase_values else None
+
+    # Try attack phase first
+    if phase is not None and phase in ATTACK_PHASE_RECOMMENDATIONS:
+        rec = ATTACK_PHASE_RECOMMENDATIONS[phase]
+        return {
+            'phase': phase,
+            'phase_name': rec['phase_name'],
+            'recommended_attackerFilter': rec['attackerFilter'],
+            'recommended_targetFilter': rec['targetFilter'],
+            'description': rec['description'],
+            'attack_types': attack_types,
+        }
+
+    # Fallback: infer from attack types
+    attack_type_set = set(attack_types)
+    if attack_type_set & EXFILTRATION_ATTACK_TYPES:
+        return {
+            'phase': None,
+            'phase_name': 'exfiltration (inferred from attack types)',
+            'recommended_attackerFilter': 'role=isExfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Exfiltration attacks detected — attacker needs isExfiltration role',
+            'attack_types': attack_types,
+        }
+    if attack_type_set & INFILTRATION_ATTACK_TYPES:
+        return {
+            'phase': None,
+            'phase_name': 'infiltration (inferred from attack types)',
+            'recommended_attackerFilter': 'role=isInfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Network attacks detected — attacker needs isInfiltration role',
+            'attack_types': attack_types,
+        }
+
+    # Fallback: infer from MITRE tactics
+    tactic_set = set(mitre_tactics)
+    if tactic_set & {'Exfiltration'}:
+        return {
+            'phase': None,
+            'phase_name': 'exfiltration (MITRE tactic)',
+            'recommended_attackerFilter': 'role=isExfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Exfiltration tactic — attacker needs isExfiltration role',
+            'attack_types': attack_types,
+        }
+    if tactic_set & NETWORK_TACTICS:
+        return {
+            'phase': None,
+            'phase_name': f'network ({", ".join(tactic_set & NETWORK_TACTICS)})',
+            'recommended_attackerFilter': 'role=isInfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Network tactic — attacker needs isInfiltration role',
+            'attack_types': attack_types,
+        }
+    if tactic_set & HOST_LEVEL_TACTICS:
+        return {
+            'phase': None,
+            'phase_name': f'host-level ({", ".join(tactic_set & HOST_LEVEL_TACTICS)})',
+            'recommended_attackerFilter': 'os (same as target)',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Host-level tactic — attacker and target on same machine',
+            'attack_types': attack_types,
+        }
+
+    # Last resort: step name heuristics
+    if any(x in step_name for x in ['exfil', 'data collection']):
+        phase_name = 'exfiltration (from step name)'
+        atk_rec = 'role=isExfiltration'
+    elif any(x in step_name for x in ['network', 'infiltration', 'c&c', 'command and control',
+                                       'initial access', 'lateral']):
+        phase_name = 'infiltration (from step name)'
+        atk_rec = 'role=isInfiltration'
+    else:
+        phase_name = 'host-level (default)'
+        atk_rec = 'os (same as target)'
+
+    return {
+        'phase': None,
+        'phase_name': phase_name,
+        'recommended_attackerFilter': atk_rec,
+        'recommended_targetFilter': 'os (endpoint OS)',
+        'description': f'Inferred from step name — use targeted filter',
+        'attack_types': attack_types,
+    }
 
 
 def _fetch_all_scenarios(console):

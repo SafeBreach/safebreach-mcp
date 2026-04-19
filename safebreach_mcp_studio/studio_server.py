@@ -1075,22 +1075,37 @@ Example (3-turn workflow for non-ready scenarios):
                     ]
 
                     for step_info in missing:
+                        rec = step_info.get('recommendation', {})
+                        phase_name = rec.get('phase_name', 'unknown')
                         parts.append(
                             f"### Step {step_info['step_number']}: "
-                            f"{step_info['step_name']} "
-                            f"(NEEDS {', '.join(step_info['missing_filters'])})"
+                            f"{step_info['step_name']} — {phase_name}"
                         )
-                        attacks = step_info.get('attacksFilter', {})
-                        if attacks:
-                            for key, val in attacks.items():
-                                if isinstance(val, dict) and 'values' in val:
-                                    parts.append(
-                                        f"- {key}: {val['values']}"
-                                    )
+                        parts.append(
+                            f"Missing: {', '.join(step_info['missing_filters'])}"
+                        )
+                        # Show attack context
+                        attack_types = rec.get('attack_types', [])
+                        if attack_types:
+                            parts.append(f"Attack types: {', '.join(attack_types)}")
+                        # Show recommendation
+                        if 'targetFilter' in step_info['missing_filters']:
+                            parts.append(
+                                f"Recommended targetFilter: **{rec.get('recommended_targetFilter', 'os')}**"
+                            )
+                        if 'attackerFilter' in step_info['missing_filters']:
+                            parts.append(
+                                f"Recommended attackerFilter: **{rec.get('recommended_attackerFilter', 'os')}**"
+                            )
                         parts.append("")
 
                     parts.extend([
                         "### How to Augment",
+                        "",
+                        "**IMPORTANT: Do NOT use 'all connected' filters.** Match "
+                        "simulators to steps based on the recommended filter type above. "
+                        "Use role filters for infiltration/exfiltration steps and OS "
+                        "filters for host-level steps.",
                         "",
                         "Provide `step_overrides` as a JSON string mapping step numbers "
                         "to filter overrides (overrides REPLACE the entire filter).",
