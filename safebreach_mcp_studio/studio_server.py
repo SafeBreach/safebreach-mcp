@@ -1009,7 +1009,9 @@ Parameters:
   overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
   need to provide missing targetFilter/attackerFilter for specific steps.
   Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
-  Format: '{"1": {"targetFilter": {...}, "attackerFilter": {...}}, "2": {...}}'
+  Supports a "default" key that applies to all missing steps without explicit overrides.
+  Format: '{"default": {"targetFilter": {...}, "attackerFilter": {...}}, "8": {"attackerFilter": {...}}}'
+  Per-step entries override the default entirely for that step.
 - dry_run (optional, bool, default False): If True, predict simulation counts per step
   without actually queuing the test. Use this to preview what would happen before committing
   to a real execution.
@@ -1030,7 +1032,7 @@ run_scenario(scenario_id="3b8eade5-...", console="demo", dry_run=True)
 
 Example (3-turn workflow for non-ready scenarios):
   1. run_scenario(scenario_id="abc-123", console="demo")  # returns diagnostic
-  2. run_scenario(scenario_id="abc-123", step_overrides='...', dry_run=True)  # preview
+  2. run_scenario(scenario_id="abc-123", step_overrides='{"default": {"targetFilter": ...}, "8": {"attackerFilter": ...}}', dry_run=True)  # preview
   3. run_scenario(scenario_id="abc-123", step_overrides='...')  # execute"""
         )
         def run_scenario(

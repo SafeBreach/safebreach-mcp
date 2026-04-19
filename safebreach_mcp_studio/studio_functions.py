@@ -2243,6 +2243,14 @@ def sb_run_scenario(
     import copy
     scenario = copy.deepcopy(scenario)
     if parsed_overrides:
+        # Expand "default" key into all missing steps that lack explicit overrides
+        default_override = parsed_overrides.pop('default', None)
+        if default_override:
+            pre_diag = diagnose_scenario_readiness(scenario)
+            for step_info in pre_diag.get('missing_steps', []):
+                step_num_str = str(step_info['step_number'])
+                if step_num_str not in parsed_overrides:
+                    parsed_overrides[step_num_str] = default_override
         _apply_step_overrides(scenario, parsed_overrides)
 
     # Check readiness — return diagnostic if not ready (two-turn workflow)
