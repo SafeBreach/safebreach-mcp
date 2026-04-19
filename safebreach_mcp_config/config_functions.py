@@ -651,8 +651,10 @@ def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[
 
     # Fall back to custom plans (integer IDs, stringified for comparison)
     all_plans = _get_all_plans_from_cache_or_api(console)
+    users_map = _get_users_map_from_cache_or_api(console)
     for plan in all_plans:
         if str(plan.get("id")) == scenario_id:
-            return get_scenario_detail_view(plan, categories_map, source_type="custom")
+            return get_scenario_detail_view(plan, categories_map, source_type="custom",
+                                            users_map=users_map)
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")

@@ -408,6 +408,7 @@ def get_scenario_detail_view(
     scenario: Dict[str, Any],
     categories_map: Dict[int, str],
     source_type: str,
+    users_map: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Any]:
     """Transform a full scenario/plan into a simplified LLM-readable detail view.
 
@@ -448,7 +449,11 @@ def get_scenario_detail_view(
         "category_names": category_names,
         "tags": scenario.get("tags") or [],
         "recommended": scenario.get("recommended", False) if source_type == 'oob' else False,
-        "createdBy": scenario.get("createdBy") if source_type == 'oob' else None,
+        "createdBy": (
+            scenario.get("createdBy") if source_type == 'oob'
+            else (users_map or {}).get(scenario.get("userId")) if users_map
+            else None
+        ),
         "createdAt": scenario.get("createdAt"),
         "updatedAt": scenario.get("updatedAt"),
         "originalScenarioId": scenario.get("originalScenarioId"),
