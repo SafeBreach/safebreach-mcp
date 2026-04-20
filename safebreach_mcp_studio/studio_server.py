@@ -13,6 +13,7 @@ from typing import Optional
 # Add parent directory to path to import core components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from .studio_functions import (
     sb_validate_studio_code,
@@ -47,6 +48,7 @@ class SafeBreachStudioServer(SafeBreachMCPBase):
 
         @self.mcp.tool(
             name="validate_studio_code",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Validates custom Python attack code against SafeBreach Breach Studio requirements.
 
 This tool checks if the Python code contains the required main function signature
@@ -179,6 +181,7 @@ validate_studio_code(python_code=target_code, attacker_code=attacker_code, attac
 
         @self.mcp.tool(
             name="save_studio_attack_draft",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
             description="""Saves a custom Python attack as a draft in SafeBreach Breach Studio.
 
 This tool submits the provided Python code and metadata to create a new draft attack
@@ -273,6 +276,7 @@ the template code, then customize it. Always validate the code using validate_st
 
         @self.mcp.tool(
             name="get_all_studio_attacks",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Retrieves Studio attacks (both draft and published) from SafeBreach Breach Studio.
 
 Results are paginated with 10 items per page. Supports filtering by status, name, and creator.
@@ -358,6 +362,7 @@ get_all_studio_attacks(console="demo", page_number=0, status_filter="draft")"""
 
         @self.mcp.tool(
             name="update_studio_attack_draft",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
             description="""Updates an existing Studio draft attack in SafeBreach Breach Studio.
 
 This tool allows you to modify an existing draft attack's name, code, description, timeout, OS constraint, and parameters.
@@ -451,6 +456,7 @@ Note: Use get_all_studio_attacks to find the attack_id of attacks you want to up
 
         @self.mcp.tool(
             name="get_studio_attack_source",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Retrieves the source code for a Studio attack (target and optionally attacker scripts).
 
 This tool downloads the source code files for a specific attack, whether draft or published.
@@ -525,6 +531,7 @@ get_studio_attack_source(attack_id=10000298, console="demo")"""
 
         @self.mcp.tool(
             name="run_studio_attack",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Runs a Studio draft attack on SafeBreach simulators.
 
 IMPORTANT: Always prefer explicit simulator selection over all_connected. Running on all
@@ -618,6 +625,7 @@ run_studio_attack(attack_id=10000298, all_connected=True, console="demo")"""
 
         @self.mcp.tool(
             name="get_studio_attack_latest_result",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Retrieves the latest execution results for a Studio attack by its playbook ID.
 
 This tool queries the execution history to find the most recent runs of a specific Studio attack,
@@ -806,6 +814,7 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
 
         @self.mcp.tool(
             name="create_new_studio_attack",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns boilerplate template code and default parameters for creating a new custom attack.
 
 IMPORTANT: When creating a new attack from scratch, ALWAYS start by calling this tool first.
@@ -902,6 +911,7 @@ create_new_studio_attack(attack_type="exfil")"""
 
         @self.mcp.tool(
             name="set_studio_attack_status",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Publish or unpublish a Studio attack, transitioning between DRAFT and PUBLISHED states.
 
 Status semantics:
@@ -984,6 +994,7 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
 
         @self.mcp.tool(
             name="run_scenario",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Executes a ready-to-run SafeBreach scenario on the platform.
 
 IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
