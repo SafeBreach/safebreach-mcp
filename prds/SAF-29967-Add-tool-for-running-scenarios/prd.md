@@ -16,9 +16,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-04-19 |
+| **Last Updated** | 2026-04-20 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Slices 1-4 complete (19 phases). Slice 5 pending. |
 
 ## 2. Solution Description
 
@@ -415,10 +415,10 @@ and E2E sign-off. Each slice adds a new capability that works end-to-end.
 | 4.13 | S4 | ✅ Complete | 2026-04-19 | d3205f9 | Fixable/unfixable constraint classification |
 | 4.14 | S4 | ✅ Complete | 2026-04-19 | 4df01f0 | Simulator assets, proxy, simulation users |
 | 4.15 | S4 | ⏱ Deferred | - | - | Matched simulators per attack in dry_run |
-| 4.16 | S4 | ⏳ Pending | - | - | Fix: reclassify role-based constraints as fixable |
-| 4.17 | S4 | ⏳ Pending | - | - | Fix: clarify aggregated constraint header wording |
-| 4.18 | S4 | ⏳ Pending | - | - | Resolved attacks per step in dry_run |
-| 4.19 | S4 | ⏳ Pending | - | - | verbose_failures flag for per-attack detail on partial steps |
+| 4.16 | S4 | ✅ Complete | 2026-04-19 | 67900ea | Fix: reclassify role-based constraints as fixable |
+| 4.17 | S4 | ✅ Complete | 2026-04-19 | 67900ea | Fix: clarify aggregated constraint header wording |
+| 4.18 | S4 | ✅ Complete | 2026-04-19 | e4b160e | Resolved attacks per step in dry_run |
+| 4.19 | S4 | ✅ Complete | 2026-04-19 | e4b160e | verbose_failures flag for per-attack detail |
 | 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
 | 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
 | 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
@@ -1312,4 +1312,7 @@ step structures. Details refined after Slice 4.
 | 2026-04-19 | Phases 4.13-4.14: Fixable/unfixable hints, simulator capabilities (assets, proxy, sim users). |
 | 2026-04-19 | Phases 4.12, 4.15 deferred. Data Server: stale status fix + polling hint for non-terminal tests. |
 | 2026-04-19 | Config Server: userId→username resolution for custom plans (list + detail views). |
-| 2026-04-19 | Phases 4.16-4.19 planned from Claude Desktop session 2 feedback. |
+| 2026-04-19 | Phases 4.16-4.19 implemented: constraint fixes, resolved attacks, verbose_failures. |
+| 2026-04-20 | E2E suite optimized (12→7 tests), drift tests fixed (dynamic windows), test commenting added. |
+| 2026-04-20 | Cross-cutting: Data Server stale status fix, polling hint, Config Server userId resolution. |
+| 2026-04-20 | PRD finalized: Slices 1-4 complete (19 phases). Slice 5 + deferred items documented. |

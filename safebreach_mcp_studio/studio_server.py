@@ -1014,7 +1014,10 @@ Parameters:
   Per-step entries override the default entirely for that step.
 - dry_run (optional, bool, default False): If True, predict simulation counts per step
   without actually queuing the test. Use this to preview what would happen before committing
-  to a real execution.
+  to a real execution. Shows resolved attacks per step and constraint diagnostics.
+- verbose_failures (optional, bool, default False): When True with dry_run, show per-attack
+  constraint detail even for steps that produce some simulations (default: aggregated summary
+  for partial steps, per-attack for zero steps).
 
 **Two-turn workflow for non-ready scenarios:**
 1. Call without step_overrides → returns diagnostic showing which steps need augmentation
