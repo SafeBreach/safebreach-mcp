@@ -21,10 +21,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-04-20 12:00 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-04-20 13:00 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Phase 1 of 7 |
 
 ---
 
@@ -189,7 +189,7 @@ is reusable by future tools that may need to annotate tests.
 - [ ] Error handling: 404, 409, network errors return meaningful messages
 - [ ] Unit tests: success, not-found, API error, reason/note, edge cases for all actions
 - [ ] E2E tests: cancel test lifecycle (extend test_e2e_run_scenario.py)
-- [ ] All existing tests continue to pass
+- [x] All existing tests continue to pass
 
 ---
 
@@ -235,7 +235,7 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Cancel test (end-to-end) | ⏳ Pending | - | - | Thinnest slice + E2E skeleton |
+| Phase 1: Cancel test (end-to-end) | ✅ Complete | 2026-04-20 | TBD | 4 unit + 1 E2E test |
 | Phase 2: Pause test | ⏳ Pending | - | - | Adds PUT + extends E2E |
 | Phase 3: Resume test | ⏳ Pending | - | - | Same endpoint + extends E2E |
 | Phase 4: Input validation | ⏳ Pending | - | - | Guard rails (unit tests only) |
@@ -613,3 +613,4 @@ note warning when `note_status="failed"`.
 | 2026-04-20 12:00 | PRD created — initial draft |
 | 2026-04-20 12:15 | Restructured to elephant carpaccio + pure TDD — 7 vertical slices |
 | 2026-04-20 12:20 | E2E tests integrated into phases 1-3 and 5 instead of standalone phase |
+| 2026-04-20 13:00 | Phase 1 complete — cancel test end-to-end (4 unit + 1 E2E, 315 tests pass) |

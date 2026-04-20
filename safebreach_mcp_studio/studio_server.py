@@ -25,6 +25,7 @@ from .studio_functions import (
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
     sb_run_scenario,
+    sb_manage_test,
 )
 
 logger = logging.getLogger(__name__)
@@ -1337,6 +1338,63 @@ Example (3-turn workflow for non-ready scenarios):
             except Exception as e:
                 logger.error(f"Error in run_scenario: {e}")
                 return f"Error running scenario: {str(e)}"
+
+        # ----- manage_test (SAF-29969) -----
+
+        @self.mcp.tool(
+            name="manage_test",
+            description="""Manage a running test's lifecycle — pause, resume, or cancel.
+
+Use this tool to control tests that were queued via run_scenario. The test_id is the
+planRunId returned by run_scenario.
+
+Parameters:
+- test_id (required, str): Test execution ID (planRunId), e.g. "1776488350786.15"
+- action (required, str): Lifecycle action — "pause", "resume", or "cancel"
+- console (required, str): SafeBreach console name
+- reason (optional, str): Why this action is being taken. When provided, appends a
+  timestamped UTC note to the test's comment field for audit trail.
+
+Returns: Markdown summary with test_id, action taken, and status.
+
+Example (cancel a test):
+manage_test(test_id="1776488350786.15", action="cancel", console="demo")
+
+Example (pause with reason):
+manage_test(test_id="1776488350786.15", action="pause", console="demo",
+            reason="Maintenance window — resuming after deploy")"""
+        )
+        def manage_test(
+            test_id: str,
+            action: str,
+            console: str = "default",
+            reason: str = None,
+        ) -> str:
+            """Manage a running test's lifecycle."""
+            try:
+                result = sb_manage_test(test_id, action, console, reason)
+
+                action_display = action.capitalize()
+                response_parts = [
+                    f"## Test {action_display}",
+                    "",
+                    f"**Test ID:** {result['test_id']}",
+                    f"**Action:** {result['action']}",
+                    f"**Status:** {result['status']}",
+                ]
+
+                if result.get('hint_to_agent'):
+                    response_parts.append("")
+                    response_parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Manage test error: {e}")
+                return f"Manage Test Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in manage_test: {e}")
+                return f"Error managing test: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

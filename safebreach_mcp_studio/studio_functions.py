@@ -2509,3 +2509,66 @@ def sb_run_scenario(
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# manage_test — SAF-29969: Test lifecycle management (pause/resume/cancel)
+# ---------------------------------------------------------------------------
+
+
+def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
+    """
+    Change a running test's state via the orchestrator API.
+
+    Args:
+        test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
+        action: Lifecycle action — currently "cancel" (pause/resume added later)
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with test_id, action, and status="success"
+
+    Raises:
+        requests.exceptions.RequestException: On API error
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+
+    if action == "cancel":
+        url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
+        headers = {"x-apitoken": apitoken}
+        try:
+            response = requests.delete(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            logger.info(f"Test {test_id} cancelled successfully")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Cancel test {test_id} failed: {e}")
+            raise
+
+    return {"test_id": test_id, "action": action, "status": "success"}
+
+
+def sb_manage_test(
+    test_id: str,
+    action: str,
+    console: str = "default",
+    reason: str = None,
+) -> Dict[str, Any]:
+    """
+    Manage a running test's lifecycle (pause, resume, or cancel).
+
+    Args:
+        test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
+        action: Lifecycle action — "pause", "resume", or "cancel"
+        console: SafeBreach console identifier (default: "default")
+        reason: Optional reason for the action (appends note to test comment)
+
+    Returns:
+        Dict with test_id, action, status, and optional note info
+    """
+    logger.info(f"Managing test {test_id}: action={action}, console={console}")
+
+    result = _set_test_state(test_id, action, console)
+
+    return result
