@@ -185,8 +185,8 @@ is reusable by future tools that may need to annotate tests.
 - [ ] Note append handles null/empty existing comments
 - [ ] Note append failure does not block lifecycle operation
 - [ ] `hint_to_agent` included in response, contextual per action
-- [ ] Input validation: empty test_id, invalid action values
-- [ ] Error handling: 404, 409, network errors return meaningful messages
+- [x] Input validation: empty test_id, invalid action values
+- [x] Error handling: 404, 409, network errors return meaningful messages
 - [ ] Unit tests: success, not-found, API error, reason/note, edge cases for all actions
 - [ ] E2E tests: cancel test lifecycle (extend test_e2e_run_scenario.py)
 - [x] All existing tests continue to pass
@@ -238,7 +238,7 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 | Phase 1: Cancel test (end-to-end) | ✅ Complete | 2026-04-20 | TBD | 4 unit + 1 E2E test |
 | Phase 2: Pause test | ✅ Complete | 2026-04-20 | TBD | PUT /state with pause body |
 | Phase 3: Resume test | ✅ Complete | 2026-04-20 | TBD | Same PUT, resume body |
-| Phase 4: Input validation | ⏳ Pending | - | - | Guard rails (unit tests only) |
+| Phase 4: Input validation | ✅ Complete | 2026-04-20 | TBD | test_id + action validation |
 | Phase 5: Reason notes | ⏳ Pending | - | - | Read-then-append + extends E2E |
 | Phase 6: Note resilience | ⏳ Pending | - | - | Best-effort (unit tests only) |
 | Phase 7: hint_to_agent + Documentation | ⏳ Pending | - | - | LLM guidance + CLAUDE.md |

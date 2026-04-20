@@ -7231,3 +7231,41 @@ class TestManageTest:
         mock_put.assert_called_once()
         call_args = mock_put.call_args
         assert call_args[1]['json'] == {"status": "resume"}
+
+    # --- Phase 4: Input validation ---
+
+    def test_invalid_action(self):
+        """Invalid action raises ValueError listing valid actions."""
+        with pytest.raises(ValueError, match="pause.*resume.*cancel"):
+            sb_manage_test(test_id="1776488350786.15", action="stop")
+
+    def test_empty_test_id(self):
+        """Empty test_id raises ValueError."""
+        with pytest.raises(ValueError, match="test_id"):
+            sb_manage_test(test_id="", action="cancel")
+
+    def test_none_test_id(self):
+        """None test_id raises ValueError."""
+        with pytest.raises(ValueError, match="test_id"):
+            sb_manage_test(test_id=None, action="cancel")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_found_404(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """404 from API propagates as HTTPError."""
+        import requests as req
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = req.exceptions.HTTPError(
+            "404 Not Found"
+        )
+        mock_delete.return_value = mock_response
+
+        with pytest.raises(req.exceptions.HTTPError, match="404"):
+            sb_manage_test(test_id="nonexistent.123", action="cancel", console="test")

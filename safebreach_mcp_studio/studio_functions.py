@@ -2578,6 +2578,15 @@ def sb_manage_test(
     Returns:
         Dict with test_id, action, status, and optional note info
     """
+    if not test_id or not str(test_id).strip():
+        raise ValueError("test_id is required and cannot be empty")
+
+    valid_actions = ["pause", "resume", "cancel"]
+    if action not in valid_actions:
+        raise ValueError(
+            f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+        )
+
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 
     result = _set_test_state(test_id, action, console)
