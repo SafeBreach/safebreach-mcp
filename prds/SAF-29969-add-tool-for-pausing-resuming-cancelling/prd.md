@@ -22,7 +22,7 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Complete |
-| **Last Updated** | 2026-04-20 14:00 |
+| **Last Updated** | 2026-04-20 15:30 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | Complete |
 
@@ -595,14 +595,20 @@ note warning when `note_status="failed"`.
 - **Issue/Feature Description**: Add an MCP tool to manage running SafeBreach test lifecycles
   (pause, resume, cancel) with optional audit notes.
 - **What Was Built**: Single `manage_test` tool in Studio Server with three actions, optional
-  reason parameter that creates timestamped audit trail in test notes.
+  reason parameter that creates timestamped audit trail in test notes. Also fixed
+  `get_api_base_url` to properly support `content-manager` endpoint with hyphen-to-underscore
+  env var normalization.
 - **Key Technical Decisions**: Single tool over three separate tools (LLM usability);
   split architecture with lifecycle + notes helpers (testability);
   best-effort note append (resilience).
 - **Scope Changes**: Added `reason` parameter and notes API integration beyond original
-  ticket scope (which only mentioned pause/resume/cancel).
+  ticket scope (which only mentioned pause/resume/cancel). Fixed `get_api_base_url`
+  content-manager support discovered during E2E testing.
 - **Business Value Delivered**: Completes the test execution lifecycle in MCP — agents
   can now fully manage tests from queue to completion/cancellation with audit trail.
+- **Test Coverage**: 19 unit tests + 3 E2E tests (all with reason/note verification).
+  All E2E tests verified against real SafeBreach console (pentest01). 816 cross-server
+  tests passing with zero regressions.
 
 ---
 
@@ -614,3 +620,11 @@ note warning when `note_status="failed"`.
 | 2026-04-20 12:15 | Restructured to elephant carpaccio + pure TDD — 7 vertical slices |
 | 2026-04-20 12:20 | E2E tests integrated into phases 1-3 and 5 instead of standalone phase |
 | 2026-04-20 13:00 | Phase 1 complete — cancel test end-to-end (4 unit + 1 E2E, 315 tests pass) |
+| 2026-04-20 13:15 | Phases 2+3 complete — pause/resume support (6 unit + 3 E2E, 317 tests pass) |
+| 2026-04-20 13:25 | Phase 4 complete — input validation (10 unit tests) |
+| 2026-04-20 13:40 | Phases 5+6 complete — reason/notes + resilience (18 unit tests) |
+| 2026-04-20 13:55 | Phase 7 complete — hint_to_agent + CLAUDE.md docs (21 unit tests) |
+| 2026-04-20 14:30 | E2E tests verified against real console (pentest01), all 3 pass |
+| 2026-04-20 15:00 | E2E extended with reason/note read-back, shallow wrapper tests removed |
+| 2026-04-20 15:15 | Fixed get_api_base_url content-manager support (hyphen normalization) |
+| 2026-04-20 15:30 | PRD finalized — all phases complete, all DoD checked, E2E + manual verified |
