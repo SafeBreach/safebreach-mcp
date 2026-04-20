@@ -1,7 +1,7 @@
 # Ticket Context: SAF-29969
 
 ## Status
-Phase 5: Problem Analysis Complete
+Phase 6: PRD Created
 
 ## Mode
 Improving
@@ -80,6 +80,87 @@ All three SafeBreach orchestrator API endpoints are now confirmed.
 - Idempotency: calling cancel on already-completed test
 - Error handling: 404 (not found), 409 (conflict), already paused/resumed states
 - Pause/resume share same endpoint — need validation of `action` parameter
+
+## Design Decisions
+- **Single tool**: `manage_test(test_id, action, console, reason)` with `action` = pause|resume|cancel
+  - Chosen over 3 separate tools for better LLM usability (fewer tools to discover)
+- **Optional `reason`**: Appends timestamped UTC note to test's `comment` field
+  - Read-then-append pattern via data API (non-additive comment API)
+  - Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`
+  - Note failure does not block lifecycle operation
+
+## Notes API (Data Server)
+- Read: `GET /api/data/v1/accounts/{id}/testsummaries/{test_id}` → `comment` field
+- Write: `PUT /api/data/v1/accounts/{id}/testsummaries/{test_id}` with `{"comment": "..."}`
+
+## Deep Investigation Findings (Phase 4)
+
+### Function Signature Convention
+- Return type: `Dict[str, Any]`
+- Console: `console: str = "default"`
+- Optional params: `param: str = None` (studio uses bare None, not Optional wrapper)
+- Function prefix: `sb_` for business logic (e.g., `sb_run_scenario`)
+- Tool functions: no prefix (e.g., `validate_studio_code`)
+
+### Auth Pattern (exact code)
+```python
+apitoken = get_secret_for_console(console)
+base_url = get_api_base_url(console, 'orchestrator')  # or 'data'
+account_id = get_api_account_id(console)
+headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+```
+
+### HTTP Request Pattern
+- Timeout: 120s for POST/PUT, 30s for DELETE and best-effort operations
+- Error: `except requests.exceptions.RequestException as e:` → log + raise
+- Response: `response.raise_for_status()` then `response.json()`
+- API response wrapper: `{"data": {...}}`
+
+### Tool Registration Pattern
+- Return type: always `str` (Markdown formatted)
+- Description: multi-line with Parameters, Returns, Example sections
+- Error handling: try/except ValueError/Exception → return error string
+- Response: Markdown with `## Header`, `**Bold**`, code blocks
+
+### Comment Helper (already exists in E2E)
+`test_e2e_run_scenario.py:76-85` has `_comment_test(test_id, console, comment)`:
+- `PUT /api/data/v1/accounts/{account_id}/testsummaries/{test_id}`
+- Body: `{"comment": comment}`
+- Service type: `'data'`
+- Timeout: 30s
+- Best-effort: logs warning on failure, doesn't raise
+
+### Cancel Helper (already exists in E2E)
+`test_e2e_run_scenario.py:65-73` has `_cancel_test(test_id, console)`:
+- `DELETE /api/orch/v4/accounts/{account_id}/queue/{test_id}`
+- No Content-Type header needed for DELETE
+- Timeout: 30s
+
+### Test Structure
+- Mock decorators: `@patch('safebreach_mcp_studio.studio_functions.requests.METHOD')`
+- Mock order: `mock_secret`, `mock_base_url`, `mock_account_id`, `mock_http_method`
+- Assertions: return value dict keys, mock call counts, URL verification
+- Categories: success, not_found, api_error, empty_id, none_id
+
+## Brainstorming Results (Phase 5)
+
+### Additional Design: hint_to_agent in response
+- Include `hint_to_agent` in tool response, contextual per action:
+  - pause: "Test is paused. Use manage_test with action='resume' to continue,
+    or action='cancel' to abort. Use get_test_details to check current status."
+  - resume: "Test resumed. Use get_test_details to monitor progress."
+  - cancel: "Test cancelled. Partial results may be available via get_test_details."
+
+### Chosen Approach: B — Split lifecycle + notes helpers
+- `_set_test_state(test_id, action, console)` — orchestrator API (pause/resume/cancel)
+- `_append_test_note(test_id, action, reason, console)` — data API (read-then-append)
+- `sb_manage_test(test_id, action, console, reason)` — thin orchestrator calling both
+- Note separator: newline (`\n`) between existing comment and new note
+- Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`
+
+### Rejected Alternatives
+- A: Monolithic — mixes orchestrator + data API concerns, harder to test
+- C: Per-action functions — over-engineering for 2 URL patterns
 
 ## Proposed Improvements
 (Phase 6)
