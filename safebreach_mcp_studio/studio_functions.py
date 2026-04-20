@@ -2445,25 +2445,19 @@ def sb_run_scenario(
                 edges.append({"from": step_id, "to": wait_id})
                 edges.append({"from": wait_id, "to": next_step_id})
 
-        # For OOB: originalScenarioId = scenario UUID
-        # For augmented custom plans: use the plan's originalScenarioId field
-        # (the UUID of the OOB scenario it was cloned from)
-        original_id = (
-            scenario.get('originalScenarioId') or str(scenario['id'])
-            if is_custom_plan
-            else scenario['id']
-        )
-
-        payload = {
-            "plan": {
-                "name": effective_test_name,
-                "originalScenarioId": original_id,
-                "steps": steps,
-                "systemTags": scenario.get('systemTags') or [],
-                "actions": actions,
-                "edges": edges
-            }
+        plan_body = {
+            "name": effective_test_name,
+            "steps": steps,
+            "systemTags": scenario.get('systemTags') or [],
+            "actions": actions,
+            "edges": edges
         }
+
+        # originalScenarioId only applies to OOB scenarios (content-manager UUID)
+        if not is_custom_plan:
+            plan_body["originalScenarioId"] = scenario['id']
+
+        payload = {"plan": plan_body}
 
     # POST to queue API
     api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
