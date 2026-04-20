@@ -1383,6 +1383,14 @@ manage_test(test_id="1776488350786.15", action="pause", console="demo",
                     f"**Status:** {result['status']}",
                 ]
 
+                if result.get('note_status') == 'success':
+                    response_parts.append(f"**Note:** {result['note']}")
+                elif result.get('note_status') == 'failed':
+                    response_parts.append(
+                        f"**Note Warning:** Failed to append note — "
+                        f"{result.get('note_error', 'unknown error')}"
+                    )
+
                 if result.get('hint_to_agent'):
                     response_parts.append("")
                     response_parts.append(f"**Hint:** {result['hint_to_agent']}")

@@ -2560,6 +2560,61 @@ def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
     return {"test_id": test_id, "action": action, "status": "success"}
 
 
+def _append_test_note(
+    test_id: str, action: str, reason: str, console: str
+) -> Dict[str, Any]:
+    """
+    Append a timestamped note to a test's comment field (best-effort).
+
+    Reads existing comment via GET, concatenates new note, writes back via PUT.
+    The data API comment field is NOT additive — must read-then-append.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        action: Lifecycle action that was performed (pause/resume/cancel)
+        reason: User-provided reason for the action
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with note_status ("success" or "failed") and note text or error
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+
+        # Step 1: Read existing comment
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        existing_comment = response.json().get('comment') or ""
+
+        # Step 2: Format new note
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        new_note = f"[{timestamp} UTC] Test {action}: {reason}"
+
+        # Step 3: Concatenate
+        if existing_comment:
+            combined = f"{existing_comment}\n{new_note}"
+        else:
+            combined = new_note
+
+        # Step 4: Write back
+        response = requests.put(
+            url, headers=headers, json={"comment": combined}, timeout=30
+        )
+        response.raise_for_status()
+
+        logger.info(f"Note appended to test {test_id}: {new_note}")
+        return {"note_status": "success", "note": new_note}
+
+    except Exception as e:
+        logger.warning(f"Failed to append note to test {test_id}: {e}")
+        return {"note_status": "failed", "note_error": str(e)}
+
+
 def sb_manage_test(
     test_id: str,
     action: str,
@@ -2590,5 +2645,9 @@ def sb_manage_test(
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 
     result = _set_test_state(test_id, action, console)
+
+    if reason and reason.strip():
+        note_result = _append_test_note(test_id, action, reason, console)
+        result.update(note_result)
 
     return result

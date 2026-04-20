@@ -181,9 +181,9 @@ is reusable by future tools that may need to annotate tests.
   and `_append_test_note` helpers
 - [ ] `manage_test` MCP tool registered in `studio_server.py` with full description
 - [ ] All three actions work: pause, resume, cancel
-- [ ] Optional `reason` appends timestamped UTC note to test comment field
-- [ ] Note append handles null/empty existing comments
-- [ ] Note append failure does not block lifecycle operation
+- [x] Optional `reason` appends timestamped UTC note to test comment field
+- [x] Note append handles null/empty existing comments
+- [x] Note append failure does not block lifecycle operation
 - [ ] `hint_to_agent` included in response, contextual per action
 - [x] Input validation: empty test_id, invalid action values
 - [x] Error handling: 404, 409, network errors return meaningful messages
@@ -239,8 +239,8 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 | Phase 2: Pause test | ✅ Complete | 2026-04-20 | TBD | PUT /state with pause body |
 | Phase 3: Resume test | ✅ Complete | 2026-04-20 | TBD | Same PUT, resume body |
 | Phase 4: Input validation | ✅ Complete | 2026-04-20 | TBD | test_id + action validation |
-| Phase 5: Reason notes | ⏳ Pending | - | - | Read-then-append + extends E2E |
-| Phase 6: Note resilience | ⏳ Pending | - | - | Best-effort (unit tests only) |
+| Phase 5: Reason notes | ✅ Complete | 2026-04-20 | TBD | _append_test_note + integration |
+| Phase 6: Note resilience | ✅ Complete | 2026-04-20 | TBD | Best-effort error handling |
 | Phase 7: hint_to_agent + Documentation | ⏳ Pending | - | - | LLM guidance + CLAUDE.md |
 
 ---
