@@ -412,6 +412,25 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
         return_details = _find_test_in_cached_list(test_id, console)
 
+        # If cached entry shows a non-terminal status, fetch fresh from single-test
+        # endpoint. The cached list can be up to 30 minutes stale, and transient
+        # statuses (RUNNING, QUEUED, etc.) may have changed since caching.
+        terminal_statuses = {'completed', 'canceled', 'failed'}
+        cached_status = (return_details.get('status', '') or '').lower() if return_details else ''
+        if return_details is not None and cached_status not in terminal_statuses:
+            logger.info("Test '%s' shows non-terminal status '%s' in cache — fetching fresh", test_id, cached_status)
+            try:
+                fresh = _fetch_single_test(test_id, console)
+                # Merge: use fresh status/end_time but keep cached extras
+                # (findingsCount, compromisedHosts) that single-test omits
+                return_details['status'] = fresh.get('status', return_details['status'])
+                return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
+                return_details['simulations_statistics'] = fresh.get(
+                    'simulations_statistics', return_details['simulations_statistics']
+                )
+            except Exception as e:
+                logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
+
         if return_details is None:
             # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
             logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
@@ -426,6 +445,14 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 ),
                 "drifted_count": drift_count
             })
+
+        # Add polling hint for non-terminal statuses
+        final_status = (return_details.get('status', '') or '').lower()
+        if final_status not in terminal_statuses:
+            return_details['hint_to_agent'] = (
+                f"Test is still {return_details.get('status', 'in progress')}. "
+                "Poll again in 30 seconds using get_test_details with the same test_id."
+            )
 
         return return_details
 

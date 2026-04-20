@@ -24,6 +24,7 @@ from .studio_functions import (
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
+    sb_run_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -978,6 +979,364 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
             except Exception as e:
                 logger.error(f"Error in set_studio_attack_status: {e}")
                 return f"Error changing attack status: {str(e)}"
+
+        # --- Scenario Execution (SAF-29967) ---
+
+        @self.mcp.tool(
+            name="run_scenario",
+            description="""Executes a ready-to-run SafeBreach scenario on the platform.
+
+IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
+scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
+and verify is_ready_to_run=True.
+
+Supports both OOB (SafeBreach-published) scenarios and custom plans. The scenario's built-in
+filters (target, attacker, attack selection) are used as-is — no simulator selection needed.
+Before submitting, calls the statistics API to predict simulation counts per step.
+
+Parameters:
+- scenario_id (required, str): UUID of an OOB scenario OR integer string ID of a custom plan.
+  Get these from get_scenarios on the Config Server. Only scenarios/plans with
+  is_ready_to_run=True can be executed.
+- console (required, str): SafeBreach console name. Use get_scenarios from Config Server to
+  discover available consoles.
+- test_name (optional, str): Custom name for the test execution. Defaults to the scenario name.
+- allow_partial_steps (optional, bool, default False): Controls behavior when some steps would
+  produce 0 simulations. If False (default), refuses to run unless ALL steps produce simulations.
+  If True, allows running as long as at least one step produces simulations. Always refuses if
+  ALL steps produce 0.
+- step_overrides (optional, str): JSON string mapping step numbers (1-indexed) to filter
+  overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
+  need to provide missing targetFilter/attackerFilter for specific steps.
+  Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
+  Supports a "default" key that applies to all missing steps without explicit overrides.
+  Format: '{"default": {"targetFilter": {...}, "attackerFilter": {...}}, "8": {"attackerFilter": {...}}}'
+  Per-step entries override the default entirely for that step.
+- dry_run (optional, bool, default False): If True, predict simulation counts per step
+  without actually queuing the test. Use this to preview what would happen before committing
+  to a real execution. Shows resolved attacks per step and constraint diagnostics.
+- verbose_failures (optional, bool, default False): When True with dry_run, show per-attack
+  constraint detail even for steps that produce some simulations (default: aggregated summary
+  for partial steps, per-attack for zero steps).
+
+**Two-turn workflow for non-ready scenarios:**
+1. Call without step_overrides → returns diagnostic showing which steps need augmentation
+2. Use get_console_simulators (Config Server) to discover available simulators
+3. Call again with step_overrides providing the missing filters
+
+Returns: Markdown summary with test_id and predicted counts (when queued), or diagnostic
+info showing missing filters per step (when not ready).
+
+Example (ready scenario):
+run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
+
+Example (dry_run preview — no test queued):
+run_scenario(scenario_id="3b8eade5-...", console="demo", dry_run=True)
+
+Example (3-turn workflow for non-ready scenarios):
+  1. run_scenario(scenario_id="abc-123", console="demo")  # returns diagnostic
+  2. run_scenario(scenario_id="abc-123", step_overrides='{"default": {"targetFilter": ...}, "8": {"attackerFilter": ...}}', dry_run=True)  # preview
+  3. run_scenario(scenario_id="abc-123", step_overrides='...')  # execute"""
+        )
+        def run_scenario(
+            scenario_id: str,
+            console: str = "default",
+            test_name: str = None,
+            allow_partial_steps: bool = False,
+            step_overrides: str = None,
+            dry_run: bool = False,
+            verbose_failures: bool = False,
+        ) -> str:
+            """Execute a scenario, return diagnostic, or preview with dry_run."""
+            try:
+                # Single-tenant console auto-resolve
+                from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+                if not safebreach_envs:
+                    console_name = get_console_name()
+                    if console_name != 'default' and console not in safebreach_envs:
+                        console = console_name
+
+                result = sb_run_scenario(
+                    scenario_id=scenario_id,
+                    console=console,
+                    test_name=test_name,
+                    allow_partial_steps=allow_partial_steps,
+                    step_overrides=step_overrides,
+                    dry_run=dry_run,
+                    verbose_failures=verbose_failures,
+                )
+
+                # Handle not_ready diagnostic response
+                if result.get('status') == 'not_ready':
+                    diag = result.get('diagnostic', {})
+                    missing = diag.get('missing_steps', [])
+
+                    parts = [
+                        "## Scenario Not Ready to Run",
+                        "",
+                        f"**Scenario:** {result.get('scenario_name')} "
+                        f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
+                        f"**Steps:** {diag.get('total_steps', 0)} total, "
+                        f"{len(missing)} need augmentation",
+                        "",
+                    ]
+
+                    for step_info in missing:
+                        rec = step_info.get('recommendation', {})
+                        phase_name = rec.get('phase_name', 'unknown')
+                        parts.append(
+                            f"### Step {step_info['step_number']}: "
+                            f"{step_info['step_name']} — {phase_name}"
+                        )
+                        parts.append(
+                            f"Missing: {', '.join(step_info['missing_filters'])}"
+                        )
+                        # Show attack context
+                        attack_types = rec.get('attack_types', [])
+                        if attack_types:
+                            parts.append(f"Attack types: {', '.join(attack_types)}")
+                        # Show recommendation
+                        if 'targetFilter' in step_info['missing_filters']:
+                            parts.append(
+                                f"Recommended targetFilter: **{rec.get('recommended_targetFilter', 'os')}**"
+                            )
+                        if 'attackerFilter' in step_info['missing_filters']:
+                            parts.append(
+                                f"Recommended attackerFilter: **{rec.get('recommended_attackerFilter', 'os')}**"
+                            )
+                        parts.append("")
+
+                    parts.extend([
+                        "### How to Augment",
+                        "",
+                        "**Best practice:** Match simulators to steps using the "
+                        "recommended filter type above (role for infiltration/exfiltration, "
+                        "OS for host-level). Use 'all connected' only as a last resort "
+                        "when targeted selection isn't possible.",
+                        "",
+                        "Provide `step_overrides` as a JSON string mapping step numbers "
+                        "to filter overrides (overrides REPLACE the entire filter).",
+                        "Use `get_console_simulators` (Config Server) to discover "
+                        "available simulators and their roles.",
+                        "",
+                        "**Filter options:**",
+                        '- OS: `{"os": {"operator": "is", '
+                        '"values": ["WINDOWS", "LINUX"], "name": "os"}}`',
+                        '- Role: `{"role": {"operator": "is", '
+                        '"values": ["<role>"], "name": "role"}}`',
+                        '- Simulator IDs: `{"simulators": {"operator": "is", '
+                        '"values": ["uuid1"], "name": "simulators"}}`',
+                        '- All connected: `{"connection": {"operator": "is", '
+                        '"values": [true], "name": "connection"}}`',
+                        "",
+                        "**Valid role values** (use with attackerFilter):",
+                        "- `isInfiltration` — infiltration attacker (network-in)",
+                        "- `isExfiltration` — exfiltration attacker (data-out)",
+                        "- `isAWSAttacker` — AWS cloud attacker",
+                        "- `isAzureAttacker` — Azure cloud attacker",
+                        "- `isGCPAttacker` — GCP cloud attacker",
+                        "- `isWebApplicationAttacker` — web application attacker",
+                        "",
+                        "Use `get_console_simulators` to see which simulators have "
+                        "which roles (look for role fields in the output).",
+                    ])
+
+                    return "\n".join(parts)
+
+                # Handle dry_run prediction response
+                if result.get('status') == 'dry_run':
+                    predicted_per_step = result.get('predicted_per_step', [])
+                    step_stats = result.get('step_stats', [])
+                    predicted_total = result.get('predicted_simulations', 0)
+                    empty_steps = result.get('empty_steps', [])
+
+                    parts = [
+                        "## Dry Run — Simulation Prediction",
+                        "",
+                        f"**Scenario:** {result.get('scenario_name')} "
+                        f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
+                        f"**Predicted Simulations:** {predicted_total:,} total",
+                        f"**Steps:** {result.get('step_count', 0)}",
+                        "",
+                        "### Per-Step Breakdown",
+                        "",
+                    ]
+
+                    for i, count in enumerate(predicted_per_step):
+                        stats = step_stats[i] if i < len(step_stats) else {}
+                        parts.append(f"**Step {i + 1}: {count:,} simulations**")
+                        if stats:
+                            matched_t = stats.get('matchedTargetSimulators', '?')
+                            total_t = stats.get('totalTargetSimulators', '?')
+                            matched_a = stats.get('matchedAttackerSimulators', '?')
+                            total_a = stats.get('totalAttackerSimulators', '?')
+                            matched_m = stats.get('matchedAttacks', '?')
+                            total_m = stats.get('totalAttacks', '?')
+                            parts.append(
+                                f"  - Target simulators: {matched_t}/{total_t} matched"
+                            )
+                            parts.append(
+                                f"  - Attacker simulators: {matched_a}/{total_a} matched"
+                            )
+                            parts.append(
+                                f"  - Attacks: {matched_m}/{total_m} produced simulations"
+                            )
+                        # Resolved attacks list
+                        resolved = stats.get('resolved_attacks', [])
+                        if resolved:
+                            parts.append("  Resolved attacks:")
+                            for ra in resolved:
+                                name = ra.get('name', '')
+                                label = f"#{ra['move_id']} ({name})" if name else f"#{ra['move_id']}"
+                                sc = ra.get('simulationCount', 0)
+                                marker = f" — {sc:,} sims" if sc > 0 else " — **0 sims**"
+                                parts.append(f"    - {label}{marker}")
+
+                        # Per-attack constraint detail (zero-sim or verbose_failures)
+                        if stats.get('constraint_summary'):
+                            parts.append("")
+                            parts.append("  **Constraint failures:**")
+                            unfixable_count = 0
+                            for attack in stats['constraint_summary']:
+                                move_id = attack['move_id']
+                                name = attack.get('attack_name', '')
+                                label = f"Attack {move_id} ({name})" if name else f"Attack {move_id}"
+                                parts.append(f"  - {label}:")
+                                for reason in attack['reasons']:
+                                    desc = reason['description']
+                                    detail = reason.get('detail')
+                                    fixable = reason.get('fixable', True)
+                                    tag = "" if fixable else " *(not via step_overrides)*"
+                                    if not fixable:
+                                        unfixable_count += 1
+                                    if detail:
+                                        parts.append(f"    - {desc} — {detail}{tag}")
+                                    else:
+                                        parts.append(f"    - {desc}{tag}")
+                            if unfixable_count > 0:
+                                parts.append("")
+                                parts.append(
+                                    f"  ⚠ Some constraints require configuration "
+                                    f"not addressable via step_overrides."
+                                )
+                        # Aggregated constraint summary for partial-coverage steps
+                        if count > 0 and stats.get('constraint_summary_aggregated'):
+                            unmatched = stats.get('unmatched_attack_count', 0)
+                            parts.append("")
+                            parts.append(
+                                f"  **{unmatched} attacks produced 0 simulations.**"
+                            )
+                            parts.append(
+                                "  Constraints hit on at least one simulator pairing "
+                                "(an attack may still succeed via other pairings):"
+                            )
+                            unfixable_count = 0
+                            for reason_group in stats['constraint_summary_aggregated']:
+                                desc = reason_group['description']
+                                n = reason_group['total_attacks']
+                                fixable = reason_group.get('fixable', True)
+                                subs = reason_group.get('sub_reasons', [])
+                                tag = "" if fixable else " *(not fixable via step_overrides)*"
+                                if not fixable:
+                                    unfixable_count += n
+                                if subs:
+                                    parts.append(f"  - {n} attacks: {desc}{tag}")
+                                    for sub in subs[:3]:
+                                        parts.append(
+                                            f"    - {sub['attack_count']} attacks: "
+                                            f"{sub['detail']}"
+                                        )
+                                    if len(subs) > 3:
+                                        parts.append(
+                                            f"    - ... and {len(subs) - 3} more variants"
+                                        )
+                                else:
+                                    parts.append(f"  - {n} attacks: {desc}{tag}")
+                            if unfixable_count > 0:
+                                parts.append("")
+                                parts.append(
+                                    f"  ⚠ {unfixable_count} attacks require configuration "
+                                    f"not addressable via step_overrides."
+                                )
+                        elif count == 0 and not stats.get('constraint_summary'):
+                            parts.append(
+                                "  - **0 viable pairings** — rerun with "
+                                "`dry_run=True` for constraint details"
+                            )
+
+                    if empty_steps:
+                        parts.extend([
+                            "",
+                            f"**Warning:** Steps {empty_steps} will produce "
+                            f"0 simulations.",
+                        ])
+
+                    parts.extend([
+                        "",
+                        "**No test was queued.** To execute, call again "
+                        "without `dry_run=True`.",
+                    ])
+
+                    return "\n".join(parts)
+
+                # Format step_run_ids for display
+                step_ids = result.get('step_run_ids', [])
+                if len(step_ids) <= 3:
+                    step_ids_display = ", ".join(step_ids)
+                else:
+                    step_ids_display = f"{step_ids[0]}, ... , {step_ids[-1]}"
+
+                # Format predicted simulations per step
+                predicted_per_step = result.get('predicted_per_step', [])
+                predicted_total = result.get('predicted_simulations', 0)
+                empty_steps = result.get('empty_steps', [])
+
+                response_parts = [
+                    "## Scenario Execution Queued",
+                    "",
+                    f"**Test ID:** `{result.get('test_id')}`",
+                    f"**Test Name:** {result.get('test_name')}",
+                    f"**Scenario:** {result.get('scenario_name')} (`{result.get('scenario_id')}`, {result.get('source_type', 'oob')})",
+                    f"**Steps Queued:** {result.get('step_count')}",
+                    f"**Step Run IDs:** {step_ids_display}",
+                    f"**Predicted Simulations:** {predicted_total:,} total",
+                    f"**Status:** {result.get('status')}",
+                ]
+
+                # Add per-step breakdown
+                if predicted_per_step:
+                    response_parts.append("")
+                    response_parts.append("### Predicted Simulations Per Step")
+                    response_parts.append("")
+                    for i, count in enumerate(predicted_per_step):
+                        marker = " (0 simulations)" if count == 0 else ""
+                        response_parts.append(f"- Step {i + 1}: {count:,}{marker}")
+
+                if empty_steps:
+                    response_parts.append("")
+                    response_parts.append(
+                        f"**Note:** Steps {empty_steps} will produce 0 simulations "
+                        f"(running with partial coverage)."
+                    )
+
+                response_parts.extend([
+                    "",
+                    "### Next Steps",
+                    "",
+                    f"Use `get_test_details` on the Data Server with test_id "
+                    f"`{result.get('test_id')}` to track execution progress and view results.",
+                    "",
+                    "**Scenario successfully queued for execution!**"
+                ])
+
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Run scenario error: {e}")
+                return f"Run Scenario Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in run_scenario: {e}")
+                return f"Error running scenario: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

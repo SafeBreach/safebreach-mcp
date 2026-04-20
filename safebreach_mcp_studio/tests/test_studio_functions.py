@@ -17,6 +17,14 @@ from safebreach_mcp_studio.studio_functions import (
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
+    _has_real_filter_criteria,
+    compute_scenario_readiness,
+    diagnose_scenario_readiness,
+    _apply_step_overrides,
+    _fetch_all_scenarios,
+    _fetch_all_plans,
+    _get_scenario_statistics,
+    sb_run_scenario,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -4974,3 +4982,2082 @@ class TestSetStudioAttackStatus:
 
         # Cache entry should be removed
         assert cache_key not in studio_draft_cache
+
+
+# =====================================================================
+# Scenario Execution Tests (SAF-29967 — Slice 1: OOB Ready-to-Run)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_oob_scenario():
+    """Full OOB scenario matching pentest01 'Fortify Network Perimeter' structure."""
+    return {
+        "id": "3b8eade5-9285-43b8-b3e7-6350420983a5",
+        "name": "Step 1 - Fortify your Network Perimeter",
+        "description": "Test network perimeter controls",
+        "createdBy": "SafeBreach",
+        "recommended": True,
+        "categories": [1, 3],
+        "tags": ["Network", "Perimeter"],
+        "createdAt": "2023-01-15T10:00:00Z",
+        "updatedAt": "2024-06-01T12:00:00Z",
+        "steps": [
+            {
+                "name": "Exploitation",
+                "uuid": "18dc5291-5f6e-4594-8c93-db4930dd8799",
+                "attacksFilter": {
+                    "tags": {
+                        "Security Controls": {
+                            "operator": "is",
+                            "values": ["Network Inspection", "Network Access"],
+                            "name": "security controls"
+                        }
+                    },
+                    "origin": {
+                        "operator": "is",
+                        "values": ["PLAYBOOK"],
+                        "name": "origin"
+                    },
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Exploit Transfer", "Exploit Kit Infection"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {
+                        "operator": "is",
+                        "values": [2],
+                        "name": "attackphase"
+                    }
+                },
+                "attackerFilter": {
+                    "role": {
+                        "operator": "is",
+                        "values": ["isInfiltration"],
+                        "name": "role"
+                    }
+                },
+                "targetFilter": {
+                    "os": {
+                        "operator": "is",
+                        "values": ["WINDOWS", "MAC", "LINUX"],
+                        "name": "os"
+                    }
+                },
+                "systemFilter": {
+                    "bypassProxy": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "bypassproxy"
+                    },
+                    "runAsRoot": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "runasroot"
+                    }
+                }
+            },
+            {
+                "name": "Brute Force and Remote Control",
+                "uuid": "fbed861a-867c-4fc7-828c-ef5a845b1fc5",
+                "attacksFilter": {
+                    "tags": {
+                        "Security Controls": {
+                            "operator": "is",
+                            "values": ["Network Inspection"],
+                            "name": "security controls"
+                        }
+                    },
+                    "origin": {
+                        "operator": "is",
+                        "values": ["PLAYBOOK"],
+                        "name": "origin"
+                    },
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Brute Force", "Remote Control"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {
+                        "operator": "is",
+                        "values": [2],
+                        "name": "attackphase"
+                    }
+                },
+                "attackerFilter": {
+                    "role": {
+                        "operator": "is",
+                        "values": ["isInfiltration"],
+                        "name": "role"
+                    }
+                },
+                "targetFilter": {
+                    "os": {
+                        "operator": "is",
+                        "values": ["WINDOWS", "LINUX"],
+                        "name": "os"
+                    }
+                },
+                "systemFilter": {
+                    "bypassProxy": {
+                        "operator": "is",
+                        "values": [True],
+                        "name": "bypassproxy"
+                    }
+                }
+            }
+        ],
+        "actions": [
+            {"id": 1, "type": "multiAttack", "data": {"uuid": "18dc5291-5f6e-4594-8c93-db4930dd8799"}},
+            {"id": 2, "type": "multiAttack", "data": {"uuid": "fbed861a-867c-4fc7-828c-ef5a845b1fc5"}},
+            {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        ],
+        "edges": [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2}
+        ],
+        "systemTags": []
+    }
+
+
+@pytest.fixture
+def mock_oob_scenario_not_ready():
+    """OOB scenario that is NOT ready to run — missing attackerFilter."""
+    return {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "name": "Incomplete Scenario",
+        "steps": [
+            {
+                "name": "Step with missing attacker",
+                "uuid": "11111111-2222-3333-4444-555555555555",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "systemFilter": {}
+            }
+        ],
+        "actions": [],
+        "edges": [],
+        "systemTags": []
+    }
+
+
+@pytest.fixture
+def mock_queue_response_scenario():
+    """Mock queue API response for a scenario run (multi-step)."""
+    return {
+        "data": {
+            "name": "Step 1 - Fortify your Network Perimeter",
+            "steps": [
+                {"stepRunId": "1776488350786.1"},
+                {"stepRunId": "1776488350786.2"}
+            ],
+            "planRunId": "1776488350786.15",
+            "priority": "low",
+            "draft": False,
+            "ranBy": 347116670300007,
+            "retrySimulations": True
+        }
+    }
+
+
+class TestHasRealFilterCriteria:
+    """Test the _has_real_filter_criteria helper function."""
+
+    def test_empty_dict_returns_false(self):
+        assert _has_real_filter_criteria({}) is False
+
+    def test_none_returns_false(self):
+        assert _has_real_filter_criteria(None) is False
+
+    def test_dict_with_empty_values_returns_false(self):
+        """Filter with values: [] should not count as real criteria."""
+        filter_dict = {
+            "simulators": {
+                "operator": "is",
+                "values": [],
+                "name": "simulators"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is False
+
+    def test_dict_with_non_empty_values_returns_true(self):
+        """Filter with actual values should count as real criteria."""
+        filter_dict = {
+            "os": {
+                "operator": "is",
+                "values": ["WINDOWS", "LINUX"],
+                "name": "os"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_dict_with_role_filter_returns_true(self):
+        """Role-based filter with values should count."""
+        filter_dict = {
+            "role": {
+                "operator": "is",
+                "values": ["isInfiltration"],
+                "name": "role"
+            }
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_non_dict_truthy_value_returns_true(self):
+        """Non-dict truthy value should count as real criteria."""
+        filter_dict = {"someKey": True}
+        assert _has_real_filter_criteria(filter_dict) is True
+
+    def test_multiple_keys_one_empty_one_real(self):
+        """If at least one key has real values, return True."""
+        filter_dict = {
+            "simulators": {"operator": "is", "values": [], "name": "simulators"},
+            "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+        }
+        assert _has_real_filter_criteria(filter_dict) is True
+
+
+class TestComputeScenarioReadiness:
+    """Test the compute_scenario_readiness function."""
+
+    def test_all_steps_ready(self, mock_oob_scenario):
+        """Scenario with all steps having real target + attacker criteria."""
+        assert compute_scenario_readiness(mock_oob_scenario) is True
+
+    def test_empty_steps_returns_false(self):
+        """Scenario with no steps is not ready."""
+        scenario = {"steps": []}
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_no_steps_key_returns_false(self):
+        """Scenario without steps key is not ready."""
+        scenario = {"name": "No steps"}
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_missing_target_filter_returns_false(self):
+        """Step with missing targetFilter makes scenario not ready."""
+        scenario = {
+            "steps": [{
+                "name": "Missing target",
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {},
+                "systemFilter": {}
+            }]
+        }
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_missing_attacker_filter_returns_false(self, mock_oob_scenario_not_ready):
+        """Step with empty attackerFilter makes scenario not ready."""
+        assert compute_scenario_readiness(mock_oob_scenario_not_ready) is False
+
+    def test_empty_target_values_returns_false(self):
+        """Step with targetFilter having empty values is not ready."""
+        scenario = {
+            "steps": [{
+                "name": "Empty target values",
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": [], "name": "os"}
+                },
+                "systemFilter": {}
+            }]
+        }
+        assert compute_scenario_readiness(scenario) is False
+
+    def test_mixed_steps_returns_false(self, mock_oob_scenario):
+        """If one step is ready but another is not, scenario is not ready."""
+        scenario = dict(mock_oob_scenario)
+        # Add a bad step
+        scenario["steps"] = list(scenario["steps"]) + [{
+            "name": "Bad step",
+            "uuid": "bad-step-uuid",
+            "attacksFilter": {},
+            "attackerFilter": {},
+            "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+            "systemFilter": {}
+        }]
+        assert compute_scenario_readiness(scenario) is False
+
+
+class TestFetchAllScenarios:
+    """Test the _fetch_all_scenarios function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url, mock_oob_scenario):
+        """Successful fetch returns list of scenarios."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = [mock_oob_scenario]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_scenarios("test-console")
+
+        assert len(result) == 1
+        assert result[0]["id"] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url):
+        """Verify the correct URL and headers are used."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        _fetch_all_scenarios("test-console")
+
+        mock_get.assert_called_once()
+        call_args = mock_get.call_args
+        assert call_args[0][0] == "https://test.safebreach.com/api/content-manager/vLatest/scenarios"
+        assert call_args[1]['headers']['x-apitoken'] == "test-token"
+        assert call_args[1]['headers']['Content-Type'] == "application/json"
+        mock_base_url.assert_called_once_with("test-console", "content-manager")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url):
+        """HTTP errors from the API should propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("HTTP 500")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(Exception, match="HTTP 500"):
+            _fetch_all_scenarios("test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_empty_response(self, mock_get, mock_secret, mock_base_url):
+        """Empty scenario list is returned as-is."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_scenarios("test-console")
+        assert result == []
+
+
+class TestRunScenario:
+    """Test the sb_run_scenario orchestration function.
+
+    These tests patch _get_scenario_statistics to bypass the statistics pre-flight,
+    focusing on the core orchestration logic. Statistics integration is tested
+    separately in TestRunScenarioWithStatistics.
+    """
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_success(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Successfully queue an OOB scenario for execution."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # Mock GET (scenario fetch)
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock POST (queue)
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        # Verify result structure
+        assert result['test_id'] == "1776488350786.15"
+        assert result['scenario_id'] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+        assert result['scenario_name'] == "Step 1 - Fortify your Network Perimeter"
+        assert result['step_count'] == 2
+        assert len(result['step_run_ids']) == 2
+        assert result['step_run_ids'][0] == "1776488350786.1"
+        assert result['status'] == 'queued'
+
+        # Verify POST payload structure
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        payload = call_kwargs['json']
+        assert payload['plan']['name'] == "Step 1 - Fortify your Network Perimeter"
+        assert payload['plan']['originalScenarioId'] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
+        assert len(payload['plan']['steps']) == 2
+        assert payload['plan']['systemTags'] == []
+
+        # Verify actions and edges were used from the scenario fixture (not generated)
+        assert len(payload['plan']['actions']) == 3  # 2 multiAttack + 1 wait
+        assert len(payload['plan']['edges']) == 3    # entry + step1→wait + wait→step2
+
+        # Verify query params
+        assert call_kwargs['params']['enableFeedbackLoop'] == "true"
+        assert call_kwargs['params']['retrySimulations'] == "true"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_custom_test_name(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Custom test_name overrides scenario name in payload."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            test_name="My Custom Test"
+        )
+
+        # Verify custom name in payload
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['name'] == "My Custom Test"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_not_found(
+        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario
+    ):
+        """Scenario ID not in the fetched list raises ValueError."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        with pytest.raises(ValueError, match="not found"):
+            sb_run_scenario(
+                scenario_id="nonexistent-uuid-1234",
+                console="test-console"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_not_ready(
+        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario_not_ready
+    ):
+        """Non-ready scenario returns diagnostic (not error)."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario_not_ready]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            console="test-console"
+        )
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
+
+    def test_run_scenario_empty_id(self):
+        """Empty scenario_id raises ValueError."""
+        with pytest.raises(ValueError):
+            sb_run_scenario(scenario_id="", console="test-console")
+
+    def test_run_scenario_none_id(self):
+        """None scenario_id raises ValueError."""
+        with pytest.raises(ValueError):
+            sb_run_scenario(scenario_id=None, console="test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_api_error(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_oob_scenario
+    ):
+        """Queue API error propagates."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 500
+        mock_post_response.text = "Internal Server Error"
+        mock_post_response.raise_for_status.side_effect = Exception("Queue API 500")
+        mock_post.return_value = mock_post_response
+
+        with pytest.raises(Exception, match="Queue API 500"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_multi_step_response(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_oob_scenario
+    ):
+        """Multi-step scenario response returns all stepRunIds."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # 5-step response
+        five_step_response = {
+            "data": {
+                "planRunId": "test-plan-run-id",
+                "name": "Test Scenario",
+                "steps": [
+                    {"stepRunId": f"step-{i}"} for i in range(5)
+                ]
+            }
+        }
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json.return_value = five_step_response
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        assert result['step_count'] == 5
+        assert len(result['step_run_ids']) == 5
+        assert result['step_run_ids'] == [f"step-{i}" for i in range(5)]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_run_scenario_none_fields_builds_dag(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_oob_scenario, mock_queue_response_scenario
+    ):
+        """Scenarios with None actions/edges/systemTags/uuids get DAG built for them."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # Simulate content-manager returning None (real API behavior)
+        import copy
+        scenario_with_nones = copy.deepcopy(mock_oob_scenario)
+        scenario_with_nones['actions'] = None
+        scenario_with_nones['edges'] = None
+        scenario_with_nones['systemTags'] = None
+        for step in scenario_with_nones['steps']:
+            step['uuid'] = None
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [scenario_with_nones]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = MagicMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json.return_value = mock_queue_response_scenario
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        payload = mock_post.call_args[1]['json']
+        plan = payload['plan']
+
+        # systemTags should be empty array
+        assert plan['systemTags'] == []
+
+        # Steps should have generated UUIDs
+        for step in plan['steps']:
+            assert step['uuid'] is not None
+            assert len(step['uuid']) == 36  # UUID format
+
+        # Actions: 2 multiAttack + 1 wait (for 2 steps)
+        assert len(plan['actions']) == 3
+        multi_attacks = [a for a in plan['actions'] if a['type'] == 'multiAttack']
+        waits = [a for a in plan['actions'] if a['type'] == 'wait']
+        assert len(multi_attacks) == 2
+        assert len(waits) == 1
+
+        # Each multiAttack action references the correct step UUID
+        assert multi_attacks[0]['data']['uuid'] == plan['steps'][0]['uuid']
+        assert multi_attacks[1]['data']['uuid'] == plan['steps'][1]['uuid']
+
+        # Edges: entry + step1→wait + wait→step2 = 3
+        assert len(plan['edges']) == 3
+        assert plan['edges'][0] == {"to": 1}  # Entry point
+
+
+# =====================================================================
+# Statistics Pre-flight Validation Tests (SAF-29967 — Slice 1 addition)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_statistics_response_all_good():
+    """Statistics response where all 2 steps produce simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 1676, "moves": {"281": 216}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 2198, "moves": {"226": 144}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def mock_statistics_response_one_empty():
+    """Statistics response where step 2 produces 0 simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 1676, "moves": {"281": 216}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def mock_statistics_response_all_zero():
+    """Statistics response where ALL steps produce 0 simulations."""
+    return {
+        "data": {
+            "steps": [
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+                {"simulationCount": 0, "moves": {}, "targetSimulators": {},
+                 "attackerSimulators": {}, "simulators": {}},
+            ]
+        }
+    }
+
+
+class TestGetScenarioStatistics:
+    """Test the _get_scenario_statistics function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_returns_per_step_counts(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Returns list of simulationCount per step."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_statistics_response_all_good
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        assert len(result) == 2
+        assert result[0]['simulationCount'] == 1676
+        assert result[1]['simulationCount'] == 2198
+        assert result[0]['matchedTargetSimulators'] >= 0
+        assert result[0]['matchedAttackerSimulators'] >= 0
+        assert result[0]['matchedAttacks'] >= 0
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_correct_url_and_payload(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Verify correct URL, query params, and payload structure."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_statistics_response_all_good
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        call_args = mock_post.call_args
+        url = call_args[0][0]
+        assert "/api/orch/v1/accounts/1234567890/plan/statistics" in url
+        assert "limit=500000" in url
+        assert "includeDisabled=true" in url
+
+        payload = call_args[1]['json']
+        assert payload['name'] == ''
+        assert len(payload['steps']) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    def test_api_error_propagates(
+        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        mock_oob_scenario
+    ):
+        """API errors propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = Exception("Statistics API 500")
+        mock_post.return_value = mock_response
+
+        with pytest.raises(Exception, match="Statistics API 500"):
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+
+class TestRunScenarioWithStatistics:
+    """Test sb_run_scenario statistics pre-flight and allow_partial_steps."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    def _mock_get(self, mock_get, scenarios):
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = scenarios
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+    def _mock_post_sequence(self, mock_post, stats_response, queue_response):
+        """Mock POST to return stats on first call, queue on second call."""
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = stats_response
+        stats_resp.raise_for_status.return_value = None
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = queue_response
+        queue_resp.raise_for_status.return_value = None
+
+        mock_post.side_effect = [stats_resp, queue_resp]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_steps_good_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_all_good,
+        mock_queue_response_scenario
+    ):
+        """All steps produce simulations — proceeds to queue."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+        self._mock_post_sequence(mock_post, mock_statistics_response_all_good,
+                                 mock_queue_response_scenario)
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['status'] == 'queued'
+        assert mock_post.call_count == 2  # statistics + queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_one_empty_step_default_refuses(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_one_empty
+    ):
+        """One step with 0 simulations + allow_partial_steps=False (default) → refuse."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = mock_statistics_response_one_empty
+        stats_resp.raise_for_status.return_value = None
+        mock_post.return_value = stats_resp
+
+        with pytest.raises(ValueError, match="0 simulations"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console"
+            )
+
+        assert mock_post.call_count == 1  # only statistics, no queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_one_empty_step_partial_allowed_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_one_empty,
+        mock_queue_response_scenario
+    ):
+        """One step with 0 + allow_partial_steps=True → proceeds to queue."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+        self._mock_post_sequence(mock_post, mock_statistics_response_one_empty,
+                                 mock_queue_response_scenario)
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            allow_partial_steps=True
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert mock_post.call_count == 2  # statistics + queue
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_all_zero_always_refuses(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post,
+        mock_oob_scenario, mock_statistics_response_all_zero
+    ):
+        """All steps 0 simulations → always refuse, even with allow_partial_steps=True."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get(mock_get, [mock_oob_scenario])
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = mock_statistics_response_all_zero
+        stats_resp.raise_for_status.return_value = None
+        mock_post.return_value = stats_resp
+
+        with pytest.raises(ValueError, match="0 simulations"):
+            sb_run_scenario(
+                scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+                console="test-console",
+                allow_partial_steps=True
+            )
+
+
+# =====================================================================
+# Slice 2: Custom Plan Tests (SAF-29967)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_custom_plan():
+    """Custom plan matching pentest01 structure (integer ID, with actions/edges)."""
+    return {
+        "id": 130,
+        "name": "CISA Alert AA24-190A (APT40)",
+        "userId": 347116670300054,
+        "originalScenarioId": "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba",
+        "steps": [
+            {
+                "id": 1,
+                "uuid": "0e6018f0-7b3e-4e07-af3d-2badaed68669",
+                "name": "host infection",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Brute Force", "Credential Abuse"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "systemFilter": {
+                    "bypassProxy": {"operator": "is", "values": [True], "name": "bypassproxy"},
+                    "runAsRoot": {"operator": "is", "values": [True], "name": "runasroot"}
+                }
+            },
+            {
+                "id": 2,
+                "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "name": "exploitation",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {
+                        "operator": "is",
+                        "values": ["Exploit Transfer"],
+                        "name": "attacktype"
+                    },
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                },
+                "systemFilter": {
+                    "bypassProxy": {"operator": "is", "values": [True], "name": "bypassproxy"}
+                }
+            }
+        ],
+        "actions": [
+            {"id": 1, "type": "multiAttack", "data": {"uuid": "0e6018f0-7b3e-4e07-af3d-2badaed68669"}},
+            {"id": 2, "type": "multiAttack", "data": {"uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"}},
+            {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        ],
+        "edges": [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2}
+        ],
+        "systemTags": None,
+        "tags": ["APT40", "CISA"],
+        "createdAt": "2024-07-01T10:00:00Z",
+        "updatedAt": "2024-07-15T12:00:00Z"
+    }
+
+
+class TestFetchAllPlans:
+    """Test the _fetch_all_plans function."""
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url,
+                              mock_account_id, mock_custom_plan):
+        """Successful fetch returns list of plans from data wrapper."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": [mock_custom_plan]}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_all_plans("test-console")
+
+        assert len(result) == 1
+        assert result[0]["id"] == 130
+        assert result[0]["name"] == "CISA Alert AA24-190A (APT40)"
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url,
+                                      mock_account_id):
+        """Verify correct URL with account_id and details=true."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": []}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        _fetch_all_plans("test-console")
+
+        call_args = mock_get.call_args
+        url = call_args[0][0]
+        assert "/api/config/v2/accounts/1234567890/plans" in url
+        assert "details=true" in url
+        mock_base_url.assert_called_with("test-console", "config")
+
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url,
+                                   mock_account_id):
+        """API errors propagate."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("HTTP 500")
+        mock_get.return_value = mock_response
+
+        with pytest.raises(Exception, match="HTTP 500"):
+            _fetch_all_plans("test-console")
+
+
+class TestRunScenarioCustomPlan:
+    """Test sb_run_scenario with custom plans (Slice 2)."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_success(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_custom_plan, mock_queue_response_scenario
+    ):
+        """Custom plan found by integer ID, queued with planId payload."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        # GET: first call returns empty OOB list, second returns plans
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [mock_custom_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        # POST: queue response
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        result = sb_run_scenario(scenario_id="130", console="test-console")
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['scenario_id'] == "130"
+        assert result['scenario_name'] == "CISA Alert AA24-190A (APT40)"
+        assert result['status'] == 'queued'
+
+        # Verify queue payload uses planId (not full steps)
+        queue_call = mock_post.call_args
+        payload = queue_call[1]['json']
+        assert payload['plan']['planId'] == 130
+        assert payload['plan']['name'] == "CISA Alert AA24-190A (APT40)"
+        assert payload['plan']['systemTags'] == []
+        assert 'steps' not in payload['plan']
+        assert 'actions' not in payload['plan']
+        assert 'edges' not in payload['plan']
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_not_ready(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats
+    ):
+        """Custom plan that is not ready-to-run returns diagnostic."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        not_ready_plan = {
+            "id": 999,
+            "name": "Incomplete Plan",
+            "steps": [{"attacksFilter": {}, "attackerFilter": {}, "targetFilter": {},
+                        "systemFilter": {}}],
+            "actions": [], "edges": [], "systemTags": None
+        }
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [not_ready_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        result = sb_run_scenario(scenario_id="999", console="test-console")
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_found_in_either_source(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get
+    ):
+        """ID not found in OOB or custom plans raises ValueError."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": []}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        with pytest.raises(ValueError, match="not found"):
+            sb_run_scenario(scenario_id="nonexistent-id", console="test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_custom_plan_with_custom_name(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_custom_plan, mock_queue_response_scenario
+    ):
+        """Custom test_name overrides plan name in queue payload."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        oob_response = MagicMock()
+        oob_response.json.return_value = []
+        oob_response.raise_for_status.return_value = None
+
+        plans_response = MagicMock()
+        plans_response.json.return_value = {"data": [mock_custom_plan]}
+        plans_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_response, plans_response]
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        sb_run_scenario(scenario_id="130", console="test-console",
+                        test_name="My Custom Plan Test")
+
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['name'] == "My Custom Plan Test"
+
+
+# =====================================================================
+# Slice 3: Diagnostic Readiness + Augmentation Tests (SAF-29967)
+# =====================================================================
+
+
+@pytest.fixture
+def mock_scenario_all_missing():
+    """OOB scenario with ALL steps missing both filters (common pattern)."""
+    return {
+        "id": "aaaa-bbbb-cccc-dddd",
+        "name": "Test Scenario All Missing",
+        "steps": [
+            {
+                "name": "Network Infection",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {"operator": "is", "values": ["Malware Transfer"],
+                                   "name": "attacktype"},
+                    "attackPhase": {"operator": "is", "values": [2], "name": "attackphase"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {},
+                "systemFilter": {}
+            },
+            {
+                "name": "Host Actions",
+                "attacksFilter": {
+                    "origin": {"operator": "is", "values": ["PLAYBOOK"], "name": "origin"},
+                    "attackType": {"operator": "is", "values": ["Script Execution"],
+                                   "name": "attacktype"},
+                    "attackPhase": {"operator": "is", "values": [1], "name": "attackphase"}
+                },
+                "attackerFilter": {},
+                "targetFilter": {},
+                "systemFilter": {}
+            }
+        ],
+        "actions": None,
+        "edges": None,
+        "systemTags": None
+    }
+
+
+@pytest.fixture
+def mock_scenario_partial_missing():
+    """Scenario where step 1 is ready but step 2 is missing targetFilter only."""
+    return {
+        "id": "partial-missing-id",
+        "name": "Partial Missing Scenario",
+        "steps": [
+            {
+                "name": "Ready Step",
+                "attacksFilter": {"origin": {"operator": "is", "values": ["PLAYBOOK"]}},
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "systemFilter": {}
+            },
+            {
+                "name": "Missing Target Step",
+                "attacksFilter": {"origin": {"operator": "is", "values": ["PLAYBOOK"]}},
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                },
+                "targetFilter": {},
+                "systemFilter": {}
+            }
+        ],
+        "actions": None,
+        "edges": None,
+        "systemTags": None
+    }
+
+
+class TestDiagnoseScenarioReadiness:
+    """Test the diagnose_scenario_readiness function (Slice 3)."""
+
+    def test_ready_scenario(self, mock_oob_scenario):
+        """Ready scenario returns ready=True with no missing info."""
+        result = diagnose_scenario_readiness(mock_oob_scenario)
+        assert result['ready'] is True
+        assert result['missing_steps'] == []
+
+    def test_all_steps_missing(self, mock_scenario_all_missing):
+        """All steps missing both filters — returns detailed diagnostic."""
+        result = diagnose_scenario_readiness(mock_scenario_all_missing)
+        assert result['ready'] is False
+        assert len(result['missing_steps']) == 2
+
+        step1 = result['missing_steps'][0]
+        assert step1['step_number'] == 1
+        assert step1['step_name'] == "Network Infection"
+        assert 'targetFilter' in step1['missing_filters']
+        assert 'attackerFilter' in step1['missing_filters']
+        assert 'attacksFilter' in step1  # existing filters preserved for context
+
+    def test_partial_missing(self, mock_scenario_partial_missing):
+        """One step ready, one step missing targetFilter only."""
+        result = diagnose_scenario_readiness(mock_scenario_partial_missing)
+        assert result['ready'] is False
+        assert len(result['missing_steps']) == 1
+
+        step2 = result['missing_steps'][0]
+        assert step2['step_number'] == 2
+        assert step2['step_name'] == "Missing Target Step"
+        assert step2['missing_filters'] == ['targetFilter']
+
+    def test_empty_steps(self):
+        """No steps → not ready."""
+        result = diagnose_scenario_readiness({"steps": []})
+        assert result['ready'] is False
+
+    def test_includes_total_steps(self, mock_scenario_all_missing):
+        """Result includes total step count."""
+        result = diagnose_scenario_readiness(mock_scenario_all_missing)
+        assert result['total_steps'] == 2
+
+
+class TestApplyStepOverrides:
+    """Test the _apply_step_overrides function (Slice 3)."""
+
+    def test_apply_target_filter(self, mock_scenario_all_missing):
+        """Apply targetFilter override to a step."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS", "LINUX"], "name": "os"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['os']['values'] == ["WINDOWS", "LINUX"]
+        # Step 2 unchanged
+        assert scenario['steps'][1]['targetFilter'] == {}
+
+    def test_apply_both_filters(self, mock_scenario_all_missing):
+        """Apply both targetFilter and attackerFilter to a step."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                },
+                "attackerFilter": {
+                    "role": {"operator": "is", "values": ["isInfiltration"], "name": "role"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert 'os' in scenario['steps'][0]['targetFilter']
+        assert 'role' in scenario['steps'][0]['attackerFilter']
+
+    def test_apply_to_multiple_steps(self, mock_scenario_all_missing):
+        """Apply overrides to multiple steps."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"], "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"], "name": "os"}}
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['os']['values'] == ["WINDOWS"]
+        assert scenario['steps'][1]['targetFilter']['os']['values'] == ["LINUX"]
+
+    def test_replace_existing_filter(self, mock_scenario_partial_missing):
+        """Override replaces the entire filter (not merge)."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_partial_missing)
+        # Step 2 already has attackerFilter.role, replace targetFilter
+        overrides = {
+            "2": {
+                "targetFilter": {
+                    "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        # New filter replaces old
+        assert scenario['steps'][1]['targetFilter'] == {
+            "os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}
+        }
+        # Existing attackerFilter untouched (no override for it)
+        assert 'role' in scenario['steps'][1]['attackerFilter']
+
+    def test_invalid_step_number_raises(self, mock_scenario_all_missing):
+        """Override for non-existent step raises ValueError."""
+        overrides = {"99": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}
+        with pytest.raises(ValueError, match="step 99"):
+            _apply_step_overrides(mock_scenario_all_missing, overrides)
+
+    def test_simulator_ids_filter(self, mock_scenario_all_missing):
+        """Override with specific simulator UUIDs."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "simulators": {"operator": "is",
+                                   "values": ["uuid-1", "uuid-2"],
+                                   "name": "simulators"}
+                },
+                "attackerFilter": {
+                    "simulators": {"operator": "is",
+                                   "values": ["uuid-3"],
+                                   "name": "simulators"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['simulators']['values'] == ["uuid-1", "uuid-2"]
+        assert scenario['steps'][0]['attackerFilter']['simulators']['values'] == ["uuid-3"]
+
+    def test_connection_filter(self, mock_scenario_all_missing):
+        """Override with all-connected filter."""
+        import copy
+        scenario = copy.deepcopy(mock_scenario_all_missing)
+        overrides = {
+            "1": {
+                "targetFilter": {
+                    "connection": {"operator": "is", "values": [True], "name": "connection"}
+                },
+                "attackerFilter": {
+                    "connection": {"operator": "is", "values": [True], "name": "connection"}
+                }
+            }
+        }
+        _apply_step_overrides(scenario, overrides)
+
+        assert scenario['steps'][0]['targetFilter']['connection']['values'] == [True]
+
+
+class TestRunScenarioWithOverrides:
+    """Test sb_run_scenario two-turn workflow with step_overrides (Slice 3)."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_ready_no_overrides_returns_diagnostic(
+        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+    ):
+        """Not ready + no overrides → return diagnostic (not error)."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console"
+        )
+
+        # Should return diagnostic dict, not raise ValueError
+        assert result['status'] == 'not_ready'
+        assert result['diagnostic'] is not None
+        assert len(result['diagnostic']['missing_steps']) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_ready_with_overrides_proceeds(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats,
+        mock_scenario_all_missing, mock_queue_response_scenario
+    ):
+        """Not ready + valid overrides → augment and queue."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        overrides_json = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides_json
+        )
+
+        assert result['status'] == 'queued'
+        assert result['test_id'] == "1776488350786.15"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_overrides_still_not_ready_returns_diagnostic(
+        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+    ):
+        """Overrides provided but still not ready (incomplete) → diagnostic."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Only override step 1, step 2 still missing
+        overrides_json = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}},
+                "attackerFilter": {"role": {"operator": "is", "values": ["isInfiltration"],
+                                            "name": "role"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides_json
+        )
+
+        # Still not ready — step 2 missing
+        assert result['status'] == 'not_ready'
+
+    def test_invalid_json_overrides_raises(self):
+        """Invalid JSON string raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid step_overrides JSON"):
+            sb_run_scenario(
+                scenario_id="aaaa-bbbb-cccc-dddd",
+                console="test-console",
+                step_overrides="not valid json{{"
+            )
+
+
+# =====================================================================
+# Slice 4: Custom Plan Augmentation Tests (SAF-29967)
+# =====================================================================
+
+
+class TestCustomPlanAugmentation:
+    """Test that augmented custom plans use full payload, not planId."""
+
+    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+    def _mock_get_oob_empty_plans_found(self, mock_get, plan):
+        """Mock GET: OOB returns empty, plans returns the plan."""
+        oob_resp = MagicMock()
+        oob_resp.json.return_value = []
+        oob_resp.raise_for_status.return_value = None
+
+        plans_resp = MagicMock()
+        plans_resp.json.return_value = {"data": [plan]}
+        plans_resp.raise_for_status.return_value = None
+
+        mock_get.side_effect = [oob_resp, plans_resp]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_augmented_custom_plan_uses_full_payload(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_custom_plan,
+        mock_queue_response_scenario
+    ):
+        """Custom plan with step_overrides sends full payload (not planId)."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+
+        # Make plan not ready by clearing filters
+        import copy
+        not_ready_plan = copy.deepcopy(mock_custom_plan)
+        for step in not_ready_plan['steps']:
+            step['targetFilter'] = {}
+            step['attackerFilter'] = {}
+
+        self._mock_get_oob_empty_plans_found(mock_get, not_ready_plan)
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        overrides = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                          "name": "os"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                          "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="130", console="test-console",
+            step_overrides=overrides
+        )
+
+        assert result['status'] == 'queued'
+
+        # Verify FULL payload (not planId)
+        payload = mock_post.call_args[1]['json']
+        assert 'steps' in payload['plan']
+        assert 'actions' in payload['plan']
+        assert 'edges' in payload['plan']
+        assert 'planId' not in payload['plan']
+        assert len(payload['plan']['steps']) == 2
+
+        # originalScenarioId should be the plan's UUID (or string ID if no UUID)
+        assert isinstance(payload['plan']['originalScenarioId'], str)
+        # mock_custom_plan has originalScenarioId="da4a7098-..."
+        assert payload['plan']['originalScenarioId'] == "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_ready_custom_plan_no_overrides_still_uses_planid(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_custom_plan,
+        mock_queue_response_scenario
+    ):
+        """Ready custom plan without overrides keeps using planId reference."""
+        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._mock_get_oob_empty_plans_found(mock_get, mock_custom_plan)
+
+        queue_resp = MagicMock()
+        queue_resp.status_code = 200
+        queue_resp.json.return_value = mock_queue_response_scenario
+        queue_resp.raise_for_status.return_value = None
+        mock_post.return_value = queue_resp
+
+        result = sb_run_scenario(scenario_id="130", console="test-console")
+
+        assert result['status'] == 'queued'
+
+        # Verify planId payload (not full)
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['planId'] == 130
+        assert 'steps' not in payload['plan']
+
+
+# =====================================================================
+# dry_run Tests (SAF-29967 — Slice 4 extension)
+# =====================================================================
+
+
+class TestDryRun:
+    """Test dry_run parameter — returns predictions without queuing."""
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[{'simulationCount': 1676, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 12, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 12}, {'simulationCount': 2198, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 22, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 22}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_returns_prediction_without_queuing(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_post, mock_stats, mock_oob_scenario
+    ):
+        """dry_run=True returns statistics but does NOT call queue API."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 3874
+        assert result['predicted_per_step'] == [1676, 2198]
+        assert result['step_stats'] is not None
+        assert result['step_stats'][0]['matchedTargetSimulators'] == 11
+        assert result['scenario_name'] == "Step 1 - Fortify your Network Perimeter"
+        assert 'test_id' not in result
+
+        # Queue POST should NOT have been called
+        mock_post.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 0, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0, 'matchedAttacks': 0, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_with_empty_steps_reports_them(
+        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        mock_oob_scenario
+    ):
+        """dry_run with some steps producing 0 still returns (no error)."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 500
+        assert result['empty_steps'] == [2]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+           return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_with_overrides(
+        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        mock_scenario_all_missing
+    ):
+        """dry_run with step_overrides — augments then predicts."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_scenario_all_missing]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        overrides = json.dumps({
+            "1": {
+                "targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["WINDOWS"],
+                                          "name": "os"}}
+            },
+            "2": {
+                "targetFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                        "name": "os"}},
+                "attackerFilter": {"os": {"operator": "is", "values": ["LINUX"],
+                                          "name": "os"}}
+            }
+        })
+
+        result = sb_run_scenario(
+            scenario_id="aaaa-bbbb-cccc-dddd",
+            console="test-console",
+            step_overrides=overrides,
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        assert result['predicted_simulations'] == 800
+        assert 'test_id' not in result  # No queue call made
+
+
+# =====================================================================
+# Phase 4.18: Resolved Attacks + Phase 4.19: verbose_failures Tests
+# =====================================================================
+
+
+class TestResolvedAttacks:
+    """Test that dry_run includes resolved attacks per step."""
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={'281': 'Transfer malware via HTTPS', '226': 'Hidden malware drop'})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_dry_run_includes_resolved_attacks(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """dry_run response includes resolved_attacks per step with names."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 500, 'matchedTargetSimulators': 5,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'resolved_attacks': [
+                 {'move_id': '281', 'name': 'Transfer malware via HTTPS', 'simulationCount': 500},
+                 {'move_id': '226', 'name': 'Hidden malware drop', 'simulationCount': 0},
+             ]},
+            {'simulationCount': 200, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '226', 'name': 'Hidden malware drop', 'simulationCount': 200},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        assert result['status'] == 'dry_run'
+        step_stats = result.get('step_stats', [])
+        assert len(step_stats) == 2
+
+        # Step 1 should have resolved_attacks
+        resolved = step_stats[0].get('resolved_attacks', [])
+        assert len(resolved) == 2
+        assert resolved[0]['move_id'] == '281'
+        assert resolved[0]['name'] == 'Transfer malware via HTTPS'
+        assert resolved[0]['simulationCount'] == 500
+        assert resolved[1]['simulationCount'] == 0
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resolved_attacks_without_name_map(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """resolved_attacks still work when playbook name map is empty."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '281', 'name': '', 'simulationCount': 100},
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1, 'resolved_attacks': [
+                 {'move_id': '226', 'name': '', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True
+        )
+
+        resolved = result['step_stats'][0].get('resolved_attacks', [])
+        assert len(resolved) == 1
+        assert resolved[0]['move_id'] == '281'
+
+
+class TestVerboseFailures:
+    """Test verbose_failures flag for per-attack detail on partial steps."""
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={'281': 'Attack A', '226': 'Attack B'})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_verbose_failures_shows_per_attack_on_partial(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """verbose_failures=True shows constraint_summary (not aggregated) for partial steps."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'unmatched_attack_count': 1,
+             'resolved_attacks': [
+                 {'move_id': '281', 'name': 'Attack A', 'simulationCount': 100},
+                 {'move_id': '226', 'name': 'Attack B', 'simulationCount': 0},
+             ],
+             'constraint_summary': [
+                 {'move_id': '226', 'attack_name': 'Attack B', 'reasons': [
+                     {'code': 'incompatible_os', 'description': 'OS mismatch',
+                      'detail': 'requires LINUX', 'fixable': True}
+                 ]}
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1,
+             'resolved_attacks': [
+                 {'move_id': '226', 'name': 'Attack B', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True,
+            verbose_failures=True,
+        )
+
+        assert result['status'] == 'dry_run'
+        # Step 1 (partial) should have constraint_summary (per-attack), not aggregated
+        step1 = result['step_stats'][0]
+        assert 'constraint_summary' in step1
+        assert step1['constraint_summary'][0]['move_id'] == '226'
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_without_verbose_uses_aggregated(
+        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        mock_oob_scenario
+    ):
+        """Without verbose_failures, partial steps use aggregated summary."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = [mock_oob_scenario]
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_stats.return_value = [
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 2, 'unmatched_attack_count': 1,
+             'resolved_attacks': [
+                 {'move_id': '281', 'name': '', 'simulationCount': 100},
+                 {'move_id': '226', 'name': '', 'simulationCount': 0},
+             ],
+             'constraint_summary_aggregated': [
+                 {'code': 'incompatible_os', 'description': 'OS mismatch',
+                  'fixable': True, 'total_attacks': 1, 'sub_reasons': []}
+             ]},
+            {'simulationCount': 100, 'matchedTargetSimulators': 3,
+             'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
+             'totalTargetSimulators': 10, 'totalAttackerSimulators': 5,
+             'totalAttacks': 1,
+             'resolved_attacks': [
+                 {'move_id': '226', 'name': '', 'simulationCount': 100},
+             ]},
+        ]
+
+        result = sb_run_scenario(
+            scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
+            console="test-console",
+            dry_run=True,
+            verbose_failures=False,
+        )
+
+        assert result['status'] == 'dry_run'
+        step1 = result['step_stats'][0]
+        # Should have aggregated, not per-attack
+        assert 'constraint_summary_aggregated' in step1
+        assert 'constraint_summary' not in step1

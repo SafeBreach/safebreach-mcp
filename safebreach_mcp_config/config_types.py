@@ -34,24 +34,54 @@ def map_reduced_entity(entity, mapping):
     return {new_key: entity[old_key] for new_key, old_key in mapping.items() if old_key in entity}
 
 
-def get_minimal_simulator_mapping(simulator_entity):
+def get_minimal_simulator_mapping(simulator_entity, assets_map=None):
     """
     Returns a reduced simulator entity with only the relevant fields.
-    EXACT copy from original safebreach_types.py
     """
     minimal_os_version = map_reduced_entity(simulator_entity['nodeInfo']['MACHINE_INFO']['OS'], reduced_simulator_os_version_mapping)
-    minimal_simulator_entity = {'labels': simulator_entity['labels'],
-                                    'isEnabled': simulator_entity['isEnabled'],
-                                    'id': simulator_entity['id'],
-                                    'name': simulator_entity['name'],
-                                    'isConnected': simulator_entity['isConnected'],
-                                    'isCritical': simulator_entity['isCritical'],
-                                    'externalIp': simulator_entity['externalIp'],
-                                    'internalIp': simulator_entity['internalIp'],
-                                    'version': simulator_entity['version'],
-                                    'OS': minimal_os_version,
-                                    }
-    
+
+    # Role flags — what this simulator can act as
+    roles = {}
+    for role_key in ['isInfiltration', 'isExfiltration', 'isAWSAttacker',
+                     'isAzureAttacker', 'isGCPAttacker', 'isWebApplicationAttacker']:
+        if simulator_entity.get(role_key):
+            roles[role_key] = True
+
+    # Resolve asset IDs to names
+    asset_ids = simulator_entity.get('assets', [])
+    resolved_assets = None
+    if asset_ids and assets_map:
+        resolved_assets = [
+            assets_map[aid] for aid in asset_ids
+            if aid in assets_map
+        ]
+    elif asset_ids:
+        resolved_assets = [{"id": aid} for aid in asset_ids]
+
+    # Simulation users (impersonated users)
+    sim_users_raw = simulator_entity.get('simulationUsers', [])
+    simulation_users = [
+        {"name": u.get("name", ""), "username": u.get("username", "")}
+        for u in sim_users_raw if isinstance(u, dict)
+    ] if sim_users_raw else None
+
+    minimal_simulator_entity = {
+        'labels': simulator_entity['labels'],
+        'isEnabled': simulator_entity['isEnabled'],
+        'id': simulator_entity['id'],
+        'name': simulator_entity['name'],
+        'isConnected': simulator_entity['isConnected'],
+        'isCritical': simulator_entity['isCritical'],
+        'externalIp': simulator_entity['externalIp'],
+        'internalIp': simulator_entity['internalIp'],
+        'version': simulator_entity['version'],
+        'OS': minimal_os_version,
+        'roles': roles if roles else None,
+        'isProxySupported': simulator_entity.get('isProxySupported', False),
+        'assets': resolved_assets,
+        'simulationUsers': simulation_users,
+    }
+
     return minimal_simulator_entity
 
 
@@ -146,18 +176,26 @@ def get_reduced_scenario_mapping(
     }
 
 
-def get_reduced_plan_mapping(plan: Dict[str, Any]) -> Dict[str, Any]:
+def get_reduced_plan_mapping(
+    plan: Dict[str, Any],
+    users_map: Optional[Dict[int, str]] = None,
+) -> Dict[str, Any]:
     """Transform a full custom plan object into a reduced representation for list view.
 
     Returns a dict with source_type='custom'. Plans come from the
     /api/config/v2/accounts/{id}/plans endpoint and have a different schema than OOB scenarios.
     """
+    user_id = plan.get("userId")
+    created_by = None
+    if user_id and users_map:
+        created_by = users_map.get(user_id)
+
     return {
         "id": str(plan.get("id")),
         "source_type": "custom",
         "name": plan.get("name"),
         "description": _truncate_description(plan.get('description')),
-        "createdBy": None,  # Custom plans don't have createdBy; see userId instead
+        "createdBy": created_by,
         "recommended": False,  # Custom plans don't have the recommended concept
         "category_names": [],  # Custom plans don't have categories
         "tags": plan.get("tags") or [],
@@ -400,6 +438,7 @@ def get_scenario_detail_view(
     scenario: Dict[str, Any],
     categories_map: Dict[int, str],
     source_type: str,
+    users_map: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Any]:
     """Transform a full scenario/plan into a simplified LLM-readable detail view.
 
@@ -440,7 +479,11 @@ def get_scenario_detail_view(
         "category_names": category_names,
         "tags": scenario.get("tags") or [],
         "recommended": scenario.get("recommended", False) if source_type == 'oob' else False,
-        "createdBy": scenario.get("createdBy") if source_type == 'oob' else None,
+        "createdBy": (
+            scenario.get("createdBy") if source_type == 'oob'
+            else (users_map or {}).get(scenario.get("userId")) if users_map
+            else None
+        ),
         "createdAt": scenario.get("createdAt"),
         "updatedAt": scenario.get("updatedAt"),
         "originalScenarioId": scenario.get("originalScenarioId"),

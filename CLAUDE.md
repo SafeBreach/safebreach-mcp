@@ -330,6 +330,30 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 18. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
 19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
+**Studio Server (Port 8004):**
+20. `run_scenario` ✨ **NEW** - Execute a SafeBreach scenario (OOB or custom plan).
+  Supports both ready-to-run and non-ready scenarios via three-turn augmentation workflow.
+  Fetches scenarios from content-manager API and custom plans from config API. Validates readiness,
+  runs statistics pre-flight with per-step simulation predictions and constraint diagnostics,
+  then submits to orchestrator queue API. OOB scenarios relay full payload with DAG; custom plans
+  use `planId` reference (or full payload when augmented with overrides).
+  **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
+  `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0),
+  `step_overrides` (JSON string — replaces entire filter per step, supports `"default"` key
+  for applying to all missing steps), `dry_run` (default False — preview without queuing),
+  `verbose_failures` (default False — per-attack constraint detail for partial steps).
+  **Three-turn workflow**: (1) Call without overrides → diagnostic showing missing filters with
+  per-step recommendations (role for network steps, OS for host-level). (2) Call with
+  `step_overrides` + `dry_run=True` → preview with resolved attacks per step, per-step
+  simulation breakdown (matched target/attacker simulators, matched attacks), and constraint
+  failure details for unmatched attacks. (3) Call with `step_overrides` → queue the test.
+  **Constraint diagnostics**: 14 constraint reason codes mapped to human-readable descriptions.
+  Each tagged as fixable via step_overrides or requiring console-level configuration.
+  Partial-coverage steps show aggregated constraint summary; zero-sim steps show per-attack detail.
+  **Simulator capabilities**: `get_console_simulators` includes roles (isInfiltration, isExfiltration,
+  isAWSAttacker, etc.), assets (resolved names), simulationUsers (impersonated users),
+  and isProxySupported for informed filter planning.
+
 
 ## Filtering and Search Capabilities
 

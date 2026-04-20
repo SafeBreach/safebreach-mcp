@@ -1642,3 +1642,870 @@ def sb_set_studio_attack_status(
         "new_status": new_status,
         "implications": implications,
     }
+
+
+# =====================================================================
+# Scenario Execution (SAF-29967)
+# =====================================================================
+
+
+def _has_real_filter_criteria(filter_dict):
+    """
+    Check if a filter dict has at least one key with non-empty values.
+
+    A filter like {"os": {"operator": "is", "values": ["WINDOWS"]}} qualifies.
+    A filter like {"simulators": {"operator": "is", "values": []}} does NOT.
+    An empty dict or None does NOT qualify.
+    """
+    if not filter_dict:
+        return False
+    for value in filter_dict.values():
+        if isinstance(value, dict):
+            vals = value.get('values', [])
+            if vals:
+                return True
+        elif value:
+            return True
+    return False
+
+
+def compute_scenario_readiness(scenario):
+    """
+    Determine if a scenario is ready to run.
+
+    A scenario is ready when ALL steps have BOTH targetFilter AND attackerFilter
+    with at least one key containing non-empty values arrays.
+
+    Returns bool. Named differently from config_types' compute_is_ready_to_run
+    because this will evolve in future slices to return diagnostic info.
+    """
+    steps = scenario.get('steps', [])
+    if not steps:
+        return False
+    for step in steps:
+        target = step.get('targetFilter', {})
+        attacker = step.get('attackerFilter', {})
+        if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):
+            return False
+    return True
+
+
+def diagnose_scenario_readiness(scenario):
+    """
+    Diagnose scenario readiness with detailed per-step analysis.
+
+    Returns a dict with:
+    - ready: bool
+    - total_steps: int
+    - missing_steps: list of dicts with step_number, step_name, missing_filters, attacksFilter
+    """
+    steps = scenario.get('steps', [])
+    if not steps:
+        return {'ready': False, 'total_steps': 0, 'missing_steps': []}
+
+    missing_steps = []
+    for i, step in enumerate(steps):
+        target = step.get('targetFilter', {})
+        attacker = step.get('attackerFilter', {})
+        missing_filters = []
+        if not _has_real_filter_criteria(target):
+            missing_filters.append('targetFilter')
+        if not _has_real_filter_criteria(attacker):
+            missing_filters.append('attackerFilter')
+        if missing_filters:
+            recommendation = _get_step_filter_recommendation(step)
+            missing_steps.append({
+                'step_number': i + 1,
+                'step_name': step.get('name', f'Step {i + 1}'),
+                'missing_filters': missing_filters,
+                'attacksFilter': step.get('attacksFilter', {}),
+                'recommendation': recommendation,
+            })
+
+    return {
+        'ready': len(missing_steps) == 0,
+        'total_steps': len(steps),
+        'missing_steps': missing_steps,
+    }
+
+
+def _apply_step_overrides(scenario, overrides):
+    """
+    Apply per-step filter overrides to a scenario's steps.
+
+    Args:
+        scenario: Scenario dict (modified in-place)
+        overrides: Dict mapping step number strings (1-indexed) to filter overrides.
+            Each value is a dict with optional 'targetFilter' and/or 'attackerFilter'.
+
+    Raises:
+        ValueError: If a step number is out of range
+    """
+    steps = scenario.get('steps', [])
+    for step_num_str, override in overrides.items():
+        step_num = int(step_num_str)
+        if step_num < 1 or step_num > len(steps):
+            raise ValueError(
+                f"Invalid step {step_num} in step_overrides — "
+                f"scenario has {len(steps)} steps (1-indexed)"
+            )
+        step = steps[step_num - 1]
+        if 'targetFilter' in override:
+            step['targetFilter'] = override['targetFilter']
+        if 'attackerFilter' in override:
+            step['attackerFilter'] = override['attackerFilter']
+
+
+# Attack phase → recommended filter mapping
+ATTACK_PHASE_RECOMMENDATIONS = {
+    0: {
+        'phase_name': 'exfiltration',
+        'attackerFilter': 'role=isExfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Data exfiltration — attacker needs isExfiltration role',
+    },
+    1: {
+        'phase_name': 'infiltration (network)',
+        'attackerFilter': 'role=isInfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Network infiltration — attacker needs isInfiltration role',
+    },
+    2: {
+        'phase_name': 'infiltration (network)',
+        'attackerFilter': 'role=isInfiltration',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Network infiltration — attacker needs isInfiltration role',
+    },
+    5: {
+        'phase_name': 'host-level',
+        'attackerFilter': 'os (same as target)',
+        'targetFilter': 'os (endpoint OS)',
+        'description': 'Host-level execution — attacker and target are the same machine',
+    },
+}
+
+
+# Attack types that indicate network/infiltration (need isInfiltration role)
+INFILTRATION_ATTACK_TYPES = {
+    'Malware Transfer', 'Hidden Malware Transfer', 'Web Shell Transfer',
+    'Exploit Transfer', 'Exploit Kit Infection', 'Remote Exploitation',
+    'Brute Force', 'Remote Control', 'Outbound C&C Communication',
+    'Malicious Domain Resolution', 'Real C2 Communication', 'URL Navigation',
+}
+
+# Attack types that indicate exfiltration (need isExfiltration role)
+EXFILTRATION_ATTACK_TYPES = {
+    'Covert Channel Exfiltration', 'Legitimate Channel Exfiltration',
+}
+
+# MITRE tactics that indicate host-level execution
+HOST_LEVEL_TACTICS = {
+    'Execution', 'Persistence', 'Privilege Escalation', 'Defense Evasion',
+    'Discovery', 'Collection', 'Impact', 'Credential Access',
+}
+
+# MITRE tactics that indicate network activity
+NETWORK_TACTICS = {
+    'Initial Access', 'Command And Control', 'Lateral Movement',
+}
+
+
+def _get_step_filter_recommendation(step):
+    """Generate filter recommendations based on a step's attack phase, type, and MITRE tactic.
+
+    Uses attack phase first, then falls back to attack type inference,
+    then MITRE tactic, then step name heuristics.
+    """
+    attacks_filter = step.get('attacksFilter', {})
+    phase_values = attacks_filter.get('attackPhase', {}).get('values', [])
+    attack_types = attacks_filter.get('attackType', {}).get('values', [])
+    tags = attacks_filter.get('tags', {})
+    mitre_tactics = tags.get('mitre_tactic', {}).get('values', []) if isinstance(tags, dict) else []
+    step_name = step.get('name', '').lower()
+
+    phase = phase_values[0] if phase_values else None
+
+    # Try attack phase first
+    if phase is not None and phase in ATTACK_PHASE_RECOMMENDATIONS:
+        rec = ATTACK_PHASE_RECOMMENDATIONS[phase]
+        return {
+            'phase': phase,
+            'phase_name': rec['phase_name'],
+            'recommended_attackerFilter': rec['attackerFilter'],
+            'recommended_targetFilter': rec['targetFilter'],
+            'description': rec['description'],
+            'attack_types': attack_types,
+        }
+
+    # Fallback: infer from attack types
+    attack_type_set = set(attack_types)
+    if attack_type_set & EXFILTRATION_ATTACK_TYPES:
+        return {
+            'phase': None,
+            'phase_name': 'exfiltration (inferred from attack types)',
+            'recommended_attackerFilter': 'role=isExfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Exfiltration attacks detected — attacker needs isExfiltration role',
+            'attack_types': attack_types,
+        }
+    if attack_type_set & INFILTRATION_ATTACK_TYPES:
+        return {
+            'phase': None,
+            'phase_name': 'infiltration (inferred from attack types)',
+            'recommended_attackerFilter': 'role=isInfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Network attacks detected — attacker needs isInfiltration role',
+            'attack_types': attack_types,
+        }
+
+    # Fallback: infer from MITRE tactics
+    tactic_set = set(mitre_tactics)
+    if tactic_set & {'Exfiltration'}:
+        return {
+            'phase': None,
+            'phase_name': 'exfiltration (MITRE tactic)',
+            'recommended_attackerFilter': 'role=isExfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Exfiltration tactic — attacker needs isExfiltration role',
+            'attack_types': attack_types,
+        }
+    if tactic_set & NETWORK_TACTICS:
+        return {
+            'phase': None,
+            'phase_name': f'network ({", ".join(tactic_set & NETWORK_TACTICS)})',
+            'recommended_attackerFilter': 'role=isInfiltration',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Network tactic — attacker needs isInfiltration role',
+            'attack_types': attack_types,
+        }
+    if tactic_set & HOST_LEVEL_TACTICS:
+        return {
+            'phase': None,
+            'phase_name': f'host-level ({", ".join(tactic_set & HOST_LEVEL_TACTICS)})',
+            'recommended_attackerFilter': 'os (same as target)',
+            'recommended_targetFilter': 'os (endpoint OS)',
+            'description': 'Host-level tactic — attacker and target on same machine',
+            'attack_types': attack_types,
+        }
+
+    # Last resort: step name heuristics
+    if any(x in step_name for x in ['exfil', 'data collection']):
+        phase_name = 'exfiltration (from step name)'
+        atk_rec = 'role=isExfiltration'
+    elif any(x in step_name for x in ['network', 'infiltration', 'c&c', 'command and control',
+                                       'initial access', 'lateral']):
+        phase_name = 'infiltration (from step name)'
+        atk_rec = 'role=isInfiltration'
+    else:
+        phase_name = 'host-level (default)'
+        atk_rec = 'os (same as target)'
+
+    return {
+        'phase': None,
+        'phase_name': phase_name,
+        'recommended_attackerFilter': atk_rec,
+        'recommended_targetFilter': 'os (endpoint OS)',
+        'description': f'Inferred from step name — use targeted filter',
+        'attack_types': attack_types,
+    }
+
+
+def _fetch_all_scenarios(console):
+    """
+    Fetch all OOB scenarios from the content-manager API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        List of full scenario dictionaries
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'content-manager')
+
+    api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    scenarios = response.json()
+    logger.info(f"Retrieved {len(scenarios)} scenarios for console '{console}'")
+    return scenarios
+
+
+def _fetch_all_plans(console):
+    """
+    Fetch all custom plans from the config API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        List of full plan dictionaries
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/config/v2/accounts/{account_id}/plans?details=true"
+    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+    logger.info(f"Fetching custom plans from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    response.raise_for_status()
+
+    response_data = response.json()
+    plans = response_data.get("data", []) if isinstance(response_data, dict) else response_data
+
+    logger.info(f"Retrieved {len(plans)} custom plans for console '{console}'")
+    return plans
+
+
+# Each constraint has: description (human-readable) and fixable_via_overrides (bool)
+CONSTRAINT_REASON_DESCRIPTIONS = {
+    "incompatible_os": {
+        "description": "Simulator OS doesn't match attack requirement",
+        "fixable": True,
+    },
+    "incompatible_package": {
+        "description": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
+        "fixable": True,
+    },
+    "simulator_on_both_sides": {
+        "description": "Network attack needs separate attacker and target simulators",
+        "fixable": True,
+    },
+    "simulator_variant_is_not_root_user": {
+        "description": "Attack requires root/admin execution privilege",
+        "fixable": True,
+    },
+    "simulator_variant_is_root_user": {
+        "description": "Attack requires non-root execution",
+        "fixable": True,
+    },
+    "missing_required_advanced_actions": {
+        "description": "Specific advanced action type not enabled on simulator",
+        "fixable": False,
+    },
+    "simulator_failed_schema_validation": {
+        "description": "Simulator missing required software/capability",
+        "fixable": False,
+    },
+    "simulator_is_not_aws_attacker": {
+        "description": "Requires AWS attacker role — check get_console_simulators for candidates",
+        "fixable": True,
+    },
+    "simulator_is_not_aws_simulator": {
+        "description": "Requires AWS simulator — check get_console_simulators for candidates",
+        "fixable": True,
+    },
+    "simulator_is_not_mail_virtual_simulator": {
+        "description": "Requires mailbox simulator — check get_console_simulators for candidates",
+        "fixable": True,
+    },
+    "move_does_not_support_root_simulation_user": {
+        "description": "Attack incompatible with root simulation user",
+        "fixable": False,
+    },
+    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
+        "description": "Proxy configuration mismatch",
+        "fixable": False,
+    },
+    "port_in_use": {
+        "description": "Required port occupied on simulator",
+        "fixable": False,
+    },
+    "simulator_didnt_pass_pre_execution_prerequisite_tests": {
+        "description": "Pre-execution checks failed on simulator",
+        "fixable": False,
+    },
+}
+
+
+def _build_attack_name_map(console):
+    """Build a move_id→name map from the playbook cache.
+
+    Returns empty dict on failure (non-fatal — names are a cosmetic enhancement).
+    """
+    try:
+        from safebreach_mcp_playbook.playbook_functions import _get_all_attacks_from_cache_or_api
+        attacks = _get_all_attacks_from_cache_or_api(console)
+        return {str(a['id']): a.get('name', '') for a in attacks if 'id' in a}
+    except Exception as e:
+        logger.warning(f"Failed to build attack name map: {e}")
+        return {}
+
+
+def _summarize_constraints(simulator_constraints, attack_names=None):
+    """Summarize constraint failures into a per-attack breakdown.
+
+    Returns a list of dicts: [{move_id, reasons: [{code, description, detail}]}]
+    """
+    # Merge target + attacker constraints per move
+    move_reasons = {}
+    for side in ['targetConstraints', 'attackerConstraints']:
+        side_data = simulator_constraints.get(side, {})
+        for sim_id, moves in side_data.items():
+            for move_id, reasons in moves.items():
+                if move_id not in move_reasons:
+                    move_reasons[move_id] = {}
+                for r in reasons:
+                    code = r.get('reason', 'unknown')
+                    # Use code as key to deduplicate across simulators
+                    if code not in move_reasons[move_id]:
+                        detail_parts = []
+                        # Handle required/actual naming (e.g., incompatible_os)
+                        if r.get('required') is not None and r.get('actual') is not None:
+                            detail_parts.append(
+                                f"requires {r['required']}, simulator has {r['actual']}"
+                            )
+                        # Handle expected/got naming (e.g., incompatible_package)
+                        if r.get('expected') is not None:
+                            detail_parts.append(f"expected: {r['expected']}")
+                        if r.get('got') is not None and not r.get('expected'):
+                            detail_parts.append(f"simulator has: {r['got']}")
+                        # Include any free-form reason text
+                        if r.get('reason_text'):
+                            detail_parts.append(r['reason_text'])
+
+                        move_reasons[move_id][code] = {
+                            'code': code,
+                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('description', code),
+                            'fixable': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('fixable', True),
+                            'detail': '; '.join(detail_parts) if detail_parts else None,
+                        }
+
+    result = []
+    for move_id in sorted(move_reasons.keys()):
+        entry = {
+            'move_id': move_id,
+            'reasons': list(move_reasons[move_id].values()),
+        }
+        if attack_names and move_id in attack_names:
+            entry['attack_name'] = attack_names[move_id]
+        result.append(entry)
+    return result
+
+
+def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
+    """Aggregate constraint failures by reason code across all attacks.
+
+    Used for partial-coverage steps where per-attack detail is too verbose.
+    Returns a list of dicts: [{code, description, count, details: [{detail, attack_count}]}]
+    """
+    # First get per-attack breakdown
+    per_attack = _summarize_constraints(simulator_constraints, attack_names=attack_names)
+
+    # Aggregate by (code, detail) across attacks
+    reason_groups = {}
+    for attack in per_attack:
+        for reason in attack['reasons']:
+            code = reason['code']
+            detail = reason.get('detail') or ''
+            key = (code, detail)
+            if key not in reason_groups:
+                reason_groups[key] = {
+                    'code': code,
+                    'description': reason['description'],
+                    'fixable': reason.get('fixable', True),
+                    'detail': detail,
+                    'attack_count': 0,
+                    'move_ids': [],
+                }
+            reason_groups[key]['attack_count'] += 1
+            reason_groups[key]['move_ids'].append(attack['move_id'])
+
+    # Group by code, then sub-group by detail
+    code_groups = {}
+    for (code, detail), info in reason_groups.items():
+        if code not in code_groups:
+            code_groups[code] = {
+                'code': code,
+                'description': info['description'],
+                'fixable': info.get('fixable', True),
+                'total_attacks': 0,
+                'sub_reasons': [],
+            }
+        code_groups[code]['total_attacks'] += info['attack_count']
+        if detail:
+            code_groups[code]['sub_reasons'].append({
+                'detail': detail,
+                'attack_count': info['attack_count'],
+            })
+
+    # Sort by total attacks descending
+    return sorted(code_groups.values(), key=lambda x: -x['total_attacks'])
+
+
+def _get_scenario_statistics(steps, console, include_constraints=False,
+                             verbose_failures=False):
+    """
+    Predict per-step simulation counts using the plan statistics API.
+
+    Args:
+        steps: List of scenario step dicts (with filter fields)
+        console: SafeBreach console name
+        include_constraints: If True, include per-attack constraint failure reasons
+            (adds latency — use only for dry_run)
+        verbose_failures: If True, show per-attack constraints even for partial steps
+            (default: aggregated summary for partial, per-attack for zero)
+
+    Returns:
+        List of per-step stat dicts with simulationCount, matched counts,
+        resolved_attacks, and optionally constraint details.
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+
+    constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
+    api_url = (
+        f"{base_url}/api/orch/v1/accounts/{account_id}"
+        f"/plan/statistics?limit=500000&includeDisabled=true{constraint_params}"
+    )
+    payload = {"name": "", "steps": steps}
+
+    logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
+                f"{' (with constraints)' if include_constraints else ''}")
+    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    response.raise_for_status()
+
+    data = response.json().get('data', {})
+    step_stats = data.get('steps', [])
+
+    # Build attack name map for dry_run (resolved attacks + constraint rendering)
+    attack_names = _build_attack_name_map(console) if include_constraints else {}
+
+    result = []
+    for s in step_stats:
+        sim_count = s.get('simulationCount', 0)
+        target_sims = s.get('targetSimulators', {})
+        attacker_sims = s.get('attackerSimulators', {})
+        moves = s.get('moves', {})
+
+        step_result = {
+            'simulationCount': sim_count,
+            'matchedTargetSimulators': sum(1 for v in target_sims.values() if v > 0),
+            'matchedAttackerSimulators': sum(1 for v in attacker_sims.values() if v > 0),
+            'matchedAttacks': sum(1 for v in moves.values() if v > 0),
+            'totalTargetSimulators': len(target_sims),
+            'totalAttackerSimulators': len(attacker_sims),
+            'totalAttacks': len(moves),
+        }
+
+        # Resolved attacks: list of attacks with sim counts and names
+        if include_constraints and moves:
+            step_result['resolved_attacks'] = [
+                {
+                    'move_id': mid,
+                    'name': attack_names.get(mid, ''),
+                    'simulationCount': count,
+                }
+                for mid, count in sorted(moves.items(), key=lambda x: -x[1])
+            ]
+
+        # Add constraint diagnostics when there are unmatched attacks
+        if include_constraints:
+            unmatched = sum(1 for v in moves.values() if v == 0)
+            constraints = s.get('simulatorConstraints', {})
+            if constraints and unmatched > 0:
+                if sim_count == 0 or verbose_failures:
+                    # Per-attack detail: zero-sim steps OR verbose mode
+                    step_result['constraint_summary'] = _summarize_constraints(
+                        constraints, attack_names=attack_names
+                    )
+                else:
+                    # Partial coverage default: aggregated summary
+                    step_result['constraint_summary_aggregated'] = (
+                        _summarize_constraints_aggregated(
+                            constraints, attack_names=attack_names
+                        )
+                    )
+                step_result['unmatched_attack_count'] = unmatched
+
+        result.append(step_result)
+
+    counts = [s['simulationCount'] for s in result]
+    logger.info(f"Statistics: {counts} (total: {sum(counts)})")
+    return result
+
+
+def sb_run_scenario(
+    scenario_id: str,
+    console: str = "default",
+    test_name: str = None,
+    allow_partial_steps: bool = False,
+    step_overrides: str = None,
+    dry_run: bool = False,
+    verbose_failures: bool = False,
+) -> Dict[str, Any]:
+    """
+    Run a scenario (OOB or custom plan) via the orchestrator queue API.
+
+    Two-turn workflow for non-ready scenarios:
+    1. Call without step_overrides → returns diagnostic if not ready
+    2. Call with step_overrides (JSON string) → augments and runs
+
+    Args:
+        scenario_id: UUID (OOB) or integer string (custom plan)
+        console: SafeBreach console identifier (default: "default")
+        test_name: Custom name for the test (optional, defaults to scenario name)
+        allow_partial_steps: If False (default), refuse if any step produces 0 simulations.
+        step_overrides: JSON string mapping step numbers (1-indexed) to filter overrides.
+            Example: '{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}'
+        dry_run: If True, predict simulation counts without actually queuing the test.
+
+    Returns:
+        If ready (or made ready via overrides): dict with test_id, status='queued', etc.
+        If not ready and no overrides: dict with status='not_ready', diagnostic info.
+
+    Raises:
+        ValueError: If scenario_id is invalid, not found, or step_overrides JSON is invalid
+        Exception: For API errors
+    """
+    if not scenario_id or (isinstance(scenario_id, str) and not scenario_id.strip()):
+        raise ValueError("scenario_id is required and cannot be empty")
+
+    # Parse step_overrides JSON if provided
+    parsed_overrides = None
+    if step_overrides is not None:
+        try:
+            parsed_overrides = json.loads(step_overrides)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise ValueError(f"Invalid step_overrides JSON: {e}")
+
+    scenario_id = str(scenario_id).strip()
+
+    # Lookup: try OOB scenarios first, then custom plans
+    scenario = None
+    is_custom_plan = False
+
+    all_scenarios = _fetch_all_scenarios(console)
+    for s in all_scenarios:
+        if str(s.get('id')) == scenario_id:
+            scenario = s
+            break
+
+    if scenario is None:
+        all_plans = _fetch_all_plans(console)
+        for p in all_plans:
+            if str(p.get('id')) == scenario_id:
+                scenario = p
+                is_custom_plan = True
+                break
+
+    if scenario is None:
+        raise ValueError(f"Scenario '{scenario_id}' not found")
+
+    # Apply step overrides if provided (deep copy to avoid mutating cached data)
+    import copy
+    scenario = copy.deepcopy(scenario)
+    if parsed_overrides:
+        # Expand "default" key into all missing steps that lack explicit overrides
+        default_override = parsed_overrides.pop('default', None)
+        if default_override:
+            pre_diag = diagnose_scenario_readiness(scenario)
+            for step_info in pre_diag.get('missing_steps', []):
+                step_num_str = str(step_info['step_number'])
+                if step_num_str not in parsed_overrides:
+                    parsed_overrides[step_num_str] = default_override
+        _apply_step_overrides(scenario, parsed_overrides)
+
+    # Check readiness — return diagnostic if not ready (two-turn workflow)
+    diagnostic = diagnose_scenario_readiness(scenario)
+    if not diagnostic['ready']:
+        return {
+            'status': 'not_ready',
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name', ''),
+            'source_type': 'custom' if is_custom_plan else 'oob',
+            'diagnostic': diagnostic,
+        }
+
+    # Statistics pre-flight: predict simulation counts per step
+    # Include constraints for dry_run to diagnose zero-simulation steps
+    step_stats = _get_scenario_statistics(scenario['steps'], console,
+                                          include_constraints=dry_run,
+                                          verbose_failures=verbose_failures)
+    step_counts = [s['simulationCount'] for s in step_stats]
+    total_predicted = sum(step_counts)
+    empty_steps = [
+        i + 1 for i, count in enumerate(step_counts) if count == 0
+    ]
+
+    # dry_run: return prediction without queuing (before validation — the point is to preview)
+    if dry_run:
+        logger.info(
+            f"Dry run for scenario '{scenario.get('name')}' ({scenario_id}): "
+            f"predicted {total_predicted} simulations, empty steps: {empty_steps}"
+        )
+        return {
+            'status': 'dry_run',
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name', ''),
+            'source_type': 'custom' if is_custom_plan else 'oob',
+            'predicted_simulations': total_predicted,
+            'predicted_per_step': step_counts,
+            'step_stats': step_stats,
+            'empty_steps': empty_steps,
+            'step_count': len(scenario.get('steps', [])),
+        }
+
+    # Validate simulation counts (only for actual runs, not dry_run)
+    if total_predicted == 0:
+        step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
+        raise ValueError(
+            f"Scenario '{scenario.get('name', scenario_id)}' would produce 0 simulations "
+            f"across all {len(step_counts)} steps. No matching simulators or attacks found. "
+            f"Steps: {step_names}"
+        )
+
+    if empty_steps and not allow_partial_steps:
+        step_details = []
+        for idx in empty_steps:
+            step_name = scenario['steps'][idx - 1].get('name', f'Step {idx}')
+            step_details.append(f"Step {idx} ({step_name})")
+        raise ValueError(
+            f"Scenario '{scenario.get('name', scenario_id)}' has steps with 0 simulations: "
+            f"{', '.join(step_details)}. "
+            f"Set allow_partial_steps=True to run anyway with partial coverage, "
+            f"or check simulator availability."
+        )
+
+    effective_test_name = test_name or scenario['name']
+
+    logger.info(
+        f"Running scenario '{scenario['name']}' ({scenario_id}) on console: {console} "
+        f"(predicted: {total_predicted} simulations, empty steps: {empty_steps})"
+    )
+
+    # Get authentication and base URL for orchestrator
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {
+        "x-apitoken": apitoken,
+        "Content-Type": "application/json"
+    }
+
+    # Build payload for queue API — different structure for OOB vs custom plans
+    if is_custom_plan and not parsed_overrides:
+        # Ready custom plans without overrides: just send planId
+        payload = {
+            "plan": {
+                "name": effective_test_name,
+                "planId": scenario['id'],
+                "systemTags": scenario.get('systemTags') or []
+            }
+        }
+    else:
+        # OOB scenarios: relay full payload with steps + DAG
+        # Content-manager API returns None for actions, edges, systemTags, and step
+        # UUIDs. Queue API requires all of these — generate when missing.
+        import uuid as uuid_module
+
+        steps = scenario['steps']
+        for step in steps:
+            if not step.get('uuid'):
+                step['uuid'] = str(uuid_module.uuid4())
+
+        actions = scenario.get('actions')
+        edges = scenario.get('edges')
+
+        if not actions or not edges:
+            actions = []
+            edges = []
+
+            for i, step in enumerate(steps):
+                action_id = i + 1
+                actions.append({
+                    "id": action_id,
+                    "type": "multiAttack",
+                    "data": {"uuid": step['uuid']}
+                })
+
+            for i in range(len(steps) - 1):
+                wait_id = 1001 + i
+                actions.append({
+                    "id": wait_id,
+                    "type": "wait",
+                    "data": {"seconds": 0}
+                })
+
+            if steps:
+                edges.append({"to": 1})
+
+            for i in range(len(steps) - 1):
+                step_id = i + 1
+                wait_id = 1001 + i
+                next_step_id = i + 2
+                edges.append({"from": step_id, "to": wait_id})
+                edges.append({"from": wait_id, "to": next_step_id})
+
+        # For OOB: originalScenarioId = scenario UUID
+        # For augmented custom plans: use the plan's originalScenarioId field
+        # (the UUID of the OOB scenario it was cloned from)
+        original_id = (
+            scenario.get('originalScenarioId') or str(scenario['id'])
+            if is_custom_plan
+            else scenario['id']
+        )
+
+        payload = {
+            "plan": {
+                "name": effective_test_name,
+                "originalScenarioId": original_id,
+                "steps": steps,
+                "systemTags": scenario.get('systemTags') or [],
+                "actions": actions,
+                "edges": edges
+            }
+        }
+
+    # POST to queue API
+    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
+    params = {
+        "enableFeedbackLoop": "true",
+        "retrySimulations": "true"
+    }
+    logger.info(f"Calling queue API: {api_url}")
+
+    try:
+        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
+        if response.status_code >= 400:
+            logger.error(f"Queue API error {response.status_code}: {response.text}")
+        response.raise_for_status()
+        api_response = response.json()
+        logger.info("Queue API call successful")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Queue API call failed: {e}")
+        raise
+
+    # Extract data from response
+    data = api_response.get('data', {})
+    steps = data.get('steps', [])
+
+    result = {
+        'test_id': data.get('planRunId', ''),
+        'test_name': data.get('name', effective_test_name),
+        'scenario_id': scenario_id,
+        'scenario_name': scenario['name'],
+        'source_type': 'custom' if is_custom_plan else 'oob',
+        'step_count': len(steps),
+        'step_run_ids': [s.get('stepRunId', '') for s in steps],
+        'predicted_simulations': total_predicted,
+        'predicted_per_step': step_counts,
+        'step_stats': step_stats,
+        'empty_steps': empty_steps,
+        'status': 'queued',
+    }
+
+    logger.info(
+        f"Successfully queued scenario '{scenario['name']}' "
+        f"(test_id: {result['test_id']}, steps: {result['step_count']})"
+    )
+
+    return result

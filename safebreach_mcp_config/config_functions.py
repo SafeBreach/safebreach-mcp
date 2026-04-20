@@ -32,6 +32,8 @@ simulators_cache = SafeBreachCache(name="simulators", maxsize=5, ttl=3600)
 scenarios_cache = SafeBreachCache(name="scenarios", maxsize=5, ttl=1800)
 categories_cache = SafeBreachCache(name="scenario_categories", maxsize=5, ttl=3600)
 plans_cache = SafeBreachCache(name="plans", maxsize=5, ttl=1800)
+users_cache = SafeBreachCache(name="users", maxsize=5, ttl=3600)
+assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -156,7 +158,7 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
-        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes?details=true&deleted=false&assets=false&impersonatedUsers=false&includeProxies=false&deployments=false"
+        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes?details=true&deleted=false&assets=true&impersonatedUsers=true&includeProxies=false&deployments=false"
 
         headers = {"Content-Type": "application/json",
                     "x-apitoken": apitoken}
@@ -172,11 +174,14 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
             logger.error("Failed to parse simulators response for console %s: %s", console, str(e))
             api_data = []
         
-        # Map the raw API data to our standardized format - same pattern as original
+        # Fetch assets map for resolving asset IDs to names
+        assets_map = _get_assets_map_from_cache_or_api(console)
+
+        # Map the raw API data to our standardized format
         simulators = []
         for simulator in api_data:
             logger.info("Adding simulator %s to the return list", simulator['name'])
-            simulators.append(get_minimal_simulator_mapping(simulator))
+            simulators.append(get_minimal_simulator_mapping(simulator, assets_map=assets_map))
 
         # Cache the result (only if caching is enabled)
         if is_caching_enabled("config"):
@@ -395,6 +400,99 @@ def _get_all_plans_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         raise
 
 
+def _get_users_map_from_cache_or_api(console: str) -> Dict[int, str]:
+    """
+    Get user ID to name mapping from cache or API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        Dict mapping user ID (int) to user name (str)
+    """
+    cache_key = f"users_{console}"
+
+    if is_caching_enabled("config"):
+        cached = users_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved users from cache for console '{console}'")
+            return cached
+
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'config')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/users?details=false&deleted=true"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+        logger.info(f"Fetching users from API for console '{console}'")
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+
+        response_data = response.json()
+        users_list = response_data.get("data", []) if isinstance(response_data, dict) else response_data
+        users_map = {u["id"]: u.get("name", u.get("email", "Unknown")) for u in users_list}
+
+        if is_caching_enabled("config"):
+            users_cache.set(cache_key, users_map)
+
+        logger.info(f"Retrieved {len(users_map)} users from API for console '{console}'")
+        return users_map
+
+    except Exception as e:
+        logger.error(f"Error fetching users from API for console '{console}': {str(e)}")
+        return {}  # Non-fatal — return empty map, plans will show userId instead
+
+
+def _get_assets_map_from_cache_or_api(console: str) -> Dict[int, Dict[str, str]]:
+    """
+    Get asset ID to {name, type} mapping from cache or API.
+
+    Args:
+        console: SafeBreach console name
+
+    Returns:
+        Dict mapping asset ID (int) to {name, type} dict
+    """
+    cache_key = f"assets_{console}"
+
+    if is_caching_enabled("config"):
+        cached = assets_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved assets from cache for console '{console}'")
+            return cached
+
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'config')
+        account_id = get_api_account_id(console)
+
+        api_url = f"{base_url}/api/config/v1/accounts/{account_id}/assets"
+        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+
+        logger.info(f"Fetching assets from API for console '{console}'")
+        response = requests.get(api_url, headers=headers, timeout=120)
+        response.raise_for_status()
+
+        response_data = response.json()
+        assets_list = response_data.get("data", []) if isinstance(response_data, dict) else response_data
+        assets_map = {
+            a["id"]: {"name": a.get("name", ""), "type": a.get("type", "")}
+            for a in assets_list if isinstance(a, dict) and "id" in a
+        }
+
+        if is_caching_enabled("config"):
+            assets_cache.set(cache_key, assets_map)
+
+        logger.info(f"Retrieved {len(assets_map)} assets from API for console '{console}'")
+        return assets_map
+
+    except Exception as e:
+        logger.error(f"Error fetching assets from API for console '{console}': {str(e)}")
+        return {}
+
+
 def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     """
     Get all scenarios from cache or API.
@@ -536,7 +634,8 @@ def sb_get_scenarios(
 
         if fetch_custom:
             all_plans = _get_all_plans_from_cache_or_api(console)
-            reduced.extend(get_reduced_plan_mapping(p) for p in all_plans)
+            users_map = _get_users_map_from_cache_or_api(console)
+            reduced.extend(get_reduced_plan_mapping(p, users_map) for p in all_plans)
 
         filtered = filter_scenarios_by_criteria(
             reduced,
@@ -604,8 +703,10 @@ def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[
 
     # Fall back to custom plans (integer IDs, stringified for comparison)
     all_plans = _get_all_plans_from_cache_or_api(console)
+    users_map = _get_users_map_from_cache_or_api(console)
     for plan in all_plans:
         if str(plan.get("id")) == scenario_id:
-            return get_scenario_detail_view(plan, categories_map, source_type="custom")
+            return get_scenario_detail_view(plan, categories_map, source_type="custom",
+                                            users_map=users_map)
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")

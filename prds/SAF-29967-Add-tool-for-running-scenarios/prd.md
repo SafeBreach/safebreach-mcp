@@ -1,0 +1,1318 @@
+# Run Scenario MCP Tool for Studio Server — SAF-29967
+
+## 1. Overview
+
+| Field | Value |
+|-------|-------|
+| **Task Type** | Feature |
+| **Purpose** | Enable AI agents to execute SafeBreach scenarios via MCP tool |
+| **Target Consumer** | AI agents (Claude, etc.) interacting with SafeBreach via MCP protocol |
+| **Key Benefits** | 1) Scenario execution completes the discover→inspect→run workflow 2) Pass-through relay keeps implementation simple and future-proof 3) Elephant carpaccio slices enable safe incremental delivery with E2E sign-off |
+| **Business Alignment** | Extends SafeBreach MCP coverage from read-only scenario inspection to full execution, completing the AI-driven Validate and Propagate workflows |
+| **Originating Request** | [SAF-29967](https://safebreach.atlassian.net/browse/SAF-29967) |
+
+## 1.5. Document Status
+
+| Field | Value |
+|-------|-------|
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-04-20 |
+| **Owner** | Yossi Attas |
+| **Current Phase** | Slices 1-4 complete (19 phases). Slice 5 pending. |
+
+## 2. Solution Description
+
+### Chosen Solution
+**Approach D — Pass-Through Relay with Elephant Carpaccio Delivery.**
+
+Fetch the scenario payload as-is from the SafeBreach API, validate readiness, and relay the
+entire payload unchanged to the orchestrator queue API. No field extraction, no transformation,
+no DAG resolution — just validation and relay.
+
+The tool lives in the **Studio Server** (port 8004) alongside `sb_run_studio_attack()`,
+maintaining consistency with the existing execution pattern. Scenario data is fetched
+directly from the SafeBreach API (no cross-server calls to Config Server).
+
+### Delivery Strategy: Elephant Carpaccio
+
+Five thin vertical slices, each delivering a complete end-to-end capability. Every slice
+is signed off with real E2E tests against the pentest01 console before proceeding to the
+next. Development is fully autonomous within each slice since pentest01 has scenarios of
+every type needed.
+
+| Slice | Capability | E2E Gate |
+|-------|-----------|----------|
+| **Slice 1** | Ready-to-run OOB scenario | Run OOB scenario on pentest01, verify test_id |
+| **Slice 2** | Ready-to-run custom plan | Run custom plan on pentest01, verify test_id |
+| **Slice 3** | Non-ready OOB scenario + augmentation | Augment missing filters, run on pentest01 |
+| **Slice 4** | Non-ready custom plan + augmentation | Augment missing filters, run on pentest01 |
+| **Slice 5** | Propagate scenario type support | Run Propagate scenario on pentest01 |
+
+### Alternatives Considered
+
+**Approach A: Thin Proxy — Forward Raw Steps + All Metadata**
+- Forward the entire scenario object including unknown fields
+- Pros: Simplest code
+- Cons: Risk of sending fields the queue API rejects; no validation layer
+
+**Approach B: Step Extraction — Forward Only Queue-Compatible Fields**
+- Extract only `attacksFilter`, `attackerFilter`, `targetFilter`, `systemFilter` from each step
+- Pros: Clean, mirrors Studio's payload exactly
+- Cons: Discards DAG metadata (actions/edges) that the queue API needs; over-transforms
+
+**Approach C: Hybrid — DAG Resolution + Field Extraction**
+- Resolve step execution order from DAG, then extract queue-compatible fields
+- Pros: Correct ordering + clean payload
+- Cons: Duplicates DAG resolution logic; unnecessary complexity
+
+### Decision Rationale
+Approach D wins because the queue API already accepts the full OOB scenario object as-is
+(confirmed via user-provided curl samples from pentest01). No transformation is needed —
+just wrap the scenario in `{"plan": scenario}` and POST. This also provides the cleanest
+path for Slices 3-4 (augmenting non-ready scenarios), since the payload is already in its
+native format and fields can be modified in-place.
+
+The key design decision to **duplicate `compute_is_ready_to_run` in Studio** (rather than
+importing from config_types) is deliberate: Studio's version will evolve in Slices 3-4 to
+return diagnostic output (what's missing and how to fill it) to guide the LLM, while
+Config's version stays as a simple boolean filter.
+
+## 3. Core Feature Components
+
+### Component A: Scenario Readiness Validation (`studio_functions.py`)
+
+**Purpose**: Scenario readiness checking with phased evolution.
+
+**Slice 1-2 (boolean)**:
+- `_has_real_filter_criteria(filter_dict)` — Check if a filter dict has at least one key
+  with non-empty values. Duplicated from config_types.py.
+- `compute_scenario_readiness(scenario)` — Returns `bool`. Checks that ALL steps have BOTH
+  `targetFilter` AND `attackerFilter` with at least one key containing non-empty values.
+
+**Slice 3-4 (diagnostic — future)**:
+- `compute_scenario_readiness(scenario)` evolves to return a structured result: `bool` +
+  per-step diagnostic info (which steps are missing which filters, what values are needed).
+  This guides the LLM to call the tool with the right augmenting parameters.
+
+### Component A.5: Statistics Pre-flight Validation (`studio_functions.py`)
+
+**Purpose**: Predict simulation counts per step before submitting to queue. Prevents
+wasted queue slots and gives the agent confidence about what will happen.
+
+**All slices**:
+- `_get_scenario_statistics(steps, console)` — Calls
+  `POST /api/orch/v1/accounts/{account_id}/plan/statistics?limit=500000&includeDisabled=true`
+  with the scenario steps. Returns per-step `simulationCount` from the response.
+- Called in `sb_run_scenario` after readiness check, before queue submission.
+- `allow_partial_steps` parameter (bool, default `False`):
+  - `False`: ALL steps must produce >0 simulations. If any step has 0, refuse with error
+    listing which steps are empty.
+  - `True`: Allow running if at least one step produces >0. Report empty steps in response.
+  - ALL steps 0: Always refuse regardless of flag.
+- Predicted simulation counts included in the markdown response (total + per-step).
+
+**Statistics API Response Structure**:
+```
+data.steps[] — one per scenario step, in order:
+  simulationCount: int      — total simulations this step will produce
+  moves: {moveId: count}    — per-attack breakdown
+  targetSimulators: {uuid: count}
+  attackerSimulators: {uuid: count}
+  simulators: {uuid: count}
+  simulatorConstraints:      — (only with getConstraints=true&getAllConstraints=true)
+    targetConstraints: {simulatorUuid: {moveId: [{reason, required?, actual?, reason_text?}]}}
+    attackerConstraints: {simulatorUuid: {moveId: [{reason, ...}]}}
+```
+
+**Constraint query parameters** (used only for dry_run — adds latency):
+- `getConstraints=true` — include constraint failure reasons
+- `getAllConstraints=true` — include all constraints, not just the first per pair
+
+### Component B: Scenario Fetch (`studio_functions.py`)
+
+**Purpose**: Fetch scenario data from SafeBreach APIs.
+
+**Slice 1**: `_fetch_all_scenarios(console)` — Fetches OOB scenarios from
+`GET /api/content-manager/vLatest/scenarios`. No caching (execution is infrequent).
+
+**Slice 2**: `_fetch_all_plans(console)` — Fetches custom plans from
+`GET /api/config/v2/accounts/{account_id}/plans?details=true`.
+
+### Component C: Scenario Run Orchestration (`studio_functions.py`)
+
+**Purpose**: Main orchestration: find scenario → validate → build payload → queue.
+
+**Slice 1**: `sb_run_scenario(scenario_id, console, test_name, allow_partial_steps)` — OOB-only.
+Finds by UUID, validates readiness, calls statistics pre-flight, builds full relay payload,
+POSTs to queue. `allow_partial_steps` (default False) controls whether steps with 0
+predicted simulations block execution.
+
+**Slice 2**: Extends to search custom plans when OOB lookup misses. Custom plan payload
+uses `planId` reference (no steps/actions/edges).
+
+**Slice 3-4**: Accepts augmenting parameters (e.g., `target_filter_overrides`,
+`attacker_filter_overrides`) and modifies the scenario payload in-place before relay.
+
+**Slice 5**: Accepts `scenario_type` parameter (Validate/Propagate).
+
+### Component D: MCP Tool Registration (`studio_server.py`)
+
+**Purpose**: Register `run_scenario` as an MCP tool, evolving its parameters per slice.
+
+**Slice 1**: `scenario_id`, `console`, `test_name`, `allow_partial_steps`
+**Slice 2**: Same parameters (custom plans discovered automatically by ID type)
+**Slice 3-4**: Adds `step_overrides` (JSON string) for augmenting missing filters,
+`dry_run` (bool) for previewing predictions without queuing
+**Slice 5**: Adds `scenario_type` parameter
+
+### Component E: Tests
+
+**Per-slice**: Each slice has its own RED/GREEN unit test cycle + E2E sign-off.
+E2E tests run against pentest01 and gate progression to the next slice.
+
+## 4. API Endpoints and Integration
+
+### Existing APIs to Consume
+
+**Scenarios List API** (content-manager) — Slice 1, 3:
+- **URL**: `GET /api/content-manager/vLatest/scenarios`
+- **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
+- **Base URL Resolution**: `get_api_base_url(console, 'content-manager')`
+- **Response**: JSON array of scenario objects. Each contains: `id` (UUID string), `name`,
+  `description`, `createdBy`, `recommended`, `categories`, `tags`, `steps[]` (with all
+  filters), `actions[]` (DAG nodes), `edges[]` (DAG edges), `phases[]`, `systemTags[]`,
+  `createdAt`, `updatedAt`
+
+**Plans List API** (config) — Slice 2, 4:
+- **URL**: `GET /api/config/v2/accounts/{account_id}/plans?details=true`
+- **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
+- **Base URL Resolution**: `get_api_base_url(console, 'config')`
+- **Response**: `{"data": [...]}` wrapping plan objects. Each contains: `id` (integer),
+  `name`, `steps[]`, `tags`, `userId`, `originalScenarioId`, `createdAt`, `updatedAt`
+
+**Orchestrator Queue API — Submit** (all slices):
+- **URL**: `POST /api/orch/v4/accounts/{account_id}/queue`
+- **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
+- **Query Parameters**: `enableFeedbackLoop=true`, `retrySimulations=true`
+- **Base URL Resolution**: `get_api_base_url(console, 'orchestrator')`
+
+**Orchestrator Queue API — Cancel** (E2E testing):
+- **URL**: `DELETE /api/orch/v4/accounts/{account_id}/queue/{planRunId}`
+- **Headers**: `x-apitoken: {token}`
+- **Purpose**: Cancel a running/queued test. Used by E2E tests to clean up after
+  verifying the queue response — avoids waiting for long-running tests to complete.
+- **Pattern**: queue → verify response has valid test_id → cancel immediately
+
+**OOB Scenario Run Payload** (Slice 1, confirmed via pentest01):
+```
+{
+  "plan": {
+    "name": "<scenario name or custom test_name>",
+    "originalScenarioId": "<UUID>",
+    "steps": [
+      {
+        "name": "<step name>",
+        "uuid": "<step UUID>",
+        "attacksFilter": { "tags": {...}, "origin": {...}, "attackType": {...}, ... },
+        "attackerFilter": { "role": {...} },
+        "targetFilter": { "os": {...} },
+        "systemFilter": { "bypassProxy": {...}, "runAsRoot": {...}, ... }
+      }
+    ],
+    "systemTags": [],
+    "actions": [
+      {"id": 1, "type": "multiAttack", "data": {"uuid": "<step UUID>"}},
+      {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+    ],
+    "edges": [
+      {"to": 1},
+      {"from": 1, "to": 1001},
+      {"from": 1001, "to": 2}
+    ]
+  }
+}
+```
+
+**Custom Plan Run Payload** (Slice 2, confirmed via pentest01):
+```
+{
+  "plan": {
+    "name": "<plan name>",
+    "planId": <integer>,
+    "systemTags": []
+  }
+}
+```
+
+**Queue API Response** (all slices):
+```
+{
+  "data": {
+    "planRunId": "<test_id>",
+    "name": "<test name>",
+    "steps": [
+      {"stepRunId": "<step_run_id_1>"},
+      {"stepRunId": "<step_run_id_2>"}
+    ],
+    "priority": "low",
+    "draft": false,
+    "ranBy": <user_id>,
+    "retrySimulations": true
+  }
+}
+```
+
+**Plan Statistics API** (pre-flight validation, all slices):
+- **URL**: `POST /api/orch/v1/accounts/{account_id}/plan/statistics?limit=500000&includeDisabled=true`
+- **Headers**: `x-apitoken: {token}`, `Content-Type: application/json`
+- **Base URL Resolution**: `get_api_base_url(console, 'orchestrator')`
+- **Payload**: `{"name": "", "steps": [...]}` — same step filter structure, no DAG needed
+- **Response**: `{"data": {"steps": [{"simulationCount": N, "moves": {...}, ...}]}}`
+- **Purpose**: Predict per-step simulation counts before queue submission
+
+**Queue Status API** (optional, future enhancement):
+- **URL**: `GET /api/orch/v4/accounts/{account_id}/queue`
+- **Purpose**: Check if free slots are available before submitting
+
+## 6. Non-Functional Requirements
+
+### Technical Constraints
+- **Integration**: Studio Server (port 8004) — extends existing `SafeBreachStudioServer`
+- **Technology Stack**: Python 3.12+, `requests` library
+- **Backward Compatibility**: No breaking changes — additive only
+- **No Caching**: Scenarios fetched fresh per execution (infrequent action)
+
+### Performance Requirements
+- **Response Times**: Under 10s for fetch + queue submission (API round-trip)
+- **Timeout**: 120 seconds per API call (consistent with existing pattern)
+- **Memory**: Transient only — scenario list fetched per call, not persisted
+
+## 7. Definition of Done
+
+### Slice 1: Ready-to-run OOB Scenario
+- [ ] `run_scenario` MCP tool registered in Studio Server
+- [ ] Tool fetches OOB scenarios from content-manager API
+- [ ] Tool validates scenario exists by UUID and is ready to run
+- [ ] Rejects non-ready scenarios with clear error message
+- [ ] OOB scenario payload relayed as-is to queue API (pass-through)
+- [ ] Response includes test_id, test_name, step count, step_run_ids as markdown
+- [ ] Unit tests pass (readiness, fetch, orchestration, payload, errors)
+- [ ] E2E: Successfully runs a ready-to-run OOB scenario on pentest01
+- [ ] CLAUDE.md updated
+
+### Slice 2: Ready-to-run Custom Plan
+- [ ] Custom plans fetched from plans API
+- [ ] Plan run uses `planId` reference payload (no steps/actions/edges)
+- [ ] Scenario lookup falls through OOB → custom automatically
+- [ ] Unit tests pass for custom plan path
+- [ ] E2E: Successfully runs a ready-to-run custom plan on pentest01
+
+### Slice 3: Non-ready OOB Scenario + Augmentation
+- [ ] `compute_scenario_readiness` returns diagnostic info (what's missing)
+- [ ] Tool accepts augmenting parameters for missing filters
+- [ ] Augmented payload relayed to queue API
+- [ ] Unit tests pass for diagnostic readiness + augmentation
+- [ ] E2E: Augments and runs a non-ready OOB scenario on pentest01
+
+### Slice 4: Non-ready Custom Plan + Augmentation
+- [ ] Custom plan augmentation supported
+- [ ] Unit tests pass for custom plan augmentation
+- [ ] E2E: Augments and runs a non-ready custom plan on pentest01
+
+### Slice 5: Propagate Scenario Type
+- [ ] `scenario_type` parameter added (Validate/Propagate)
+- [ ] Propagate scenarios can be executed
+- [ ] Unit tests pass for Propagate type
+- [ ] E2E: Successfully runs a Propagate scenario on pentest01
+
+## 8. Testing Strategy
+
+### Unit Testing (per-slice TDD)
+- **Framework**: pytest with `unittest.mock`
+- **Pattern**: RED phase (write failing tests) → GREEN phase (implement to pass)
+- **Mocking**: `@patch()` for `requests.get`, `requests.post`, `get_secret_for_console`,
+  `get_api_base_url`, `get_api_account_id`
+- **Fixtures**: Per-slice mock data matching real API structures from pentest01
+
+### E2E Testing (per-slice sign-off gate)
+- **Environment**: pentest01 console (`E2E_CONSOLE` env var, `source .vscode/set_env.sh`)
+- **Markers**: `@pytest.mark.e2e` and `@skip_e2e`
+- **Gate rule**: All E2E tests for a slice must pass before starting the next slice
+- **Autonomy**: pentest01 has scenarios of all types — development is fully autonomous.
+  If blocked on a specific scenario ID, user provides qualified payloads.
+
+**E2E Pattern: Queue → Wait for Start → Wait for Simulations → Cancel**
+
+Getting a `test_id` back only proves the queue API accepted the payload. To confirm the
+scenario **actually executed**, E2E tests must verify simulations completed:
+
+1. Call `sb_run_scenario(...)` — verify response has valid `test_id`
+2. **Poll test status** until the test transitions from queued to running
+   (use Data Server's test details API or direct API call)
+3. **Poll simulation count** until >5 simulations have completed — this proves the
+   orchestrator parsed the payload, resolved attacks, dispatched to simulators, and
+   got results back
+4. **Cancel the running test** via `DELETE /queue/{planRunId}` — no need to wait for
+   full completion
+5. Assert all verification steps passed
+
+E2E helpers leverage existing Data Server functions (no new polling code needed):
+- `_wait_for_test_start(test_id, console, timeout=120)` — polls
+  `sb_get_test_details(test_id, console)` from `safebreach_mcp_data.data_functions`
+  until test status indicates running (not queued). Retries with short sleep.
+- `_wait_for_simulations(test_id, console, min_count=5, timeout=300)` — polls
+  `sb_get_test_simulations(test_id, console)` from `safebreach_mcp_data.data_functions`
+  until `total_simulations >= min_count`. The `simulations_statistics` field in test
+  details also provides status counts without pagination.
+- `_cancel_test(test_id, console)` — `DELETE /queue/{planRunId}`, best-effort cleanup
+
+| Slice | E2E Gate Test |
+|-------|--------------|
+| 1 | Run OOB scenario → wait for start → >5 simulations complete → cancel |
+| 2 | Run custom plan → wait for start → >5 simulations complete → cancel |
+| 3 | Augment non-ready OOB → run → >5 simulations complete → cancel |
+| 4 | Augment non-ready custom → run → >5 simulations complete → cancel |
+| 5 | Run Propagate scenario → >5 simulations complete → cancel |
+
+## 9. Implementation Phases
+
+### Phase Overview
+
+Five **elephant carpaccio slices**, each a complete vertical slice with its own TDD cycle
+and E2E sign-off. Each slice adds a new capability that works end-to-end.
+
+| Phase | Slice | Status | Completed | Commit SHA | Notes |
+|-------|-------|--------|-----------|------------|-------|
+| 1.1 | S1 | ✅ Complete | 2026-04-18 | 47663d1 | RED: readiness + fetch tests (18 cases) |
+| 1.2 | S1 | ✅ Complete | 2026-04-18 | 4c552c8 | GREEN: readiness + fetch impl |
+| 1.3 | S1 | ✅ Complete | 2026-04-18 | cd846c7 | RED: run OOB scenario tests (8 cases) |
+| 1.4 | S1 | ✅ Complete | 2026-04-18 | 7553bed | GREEN: run OOB scenario impl |
+| 1.5 | S1 | ✅ Complete | 2026-04-18 | b5825a2 | MCP tool registration |
+| 1.6 | S1 | ✅ Complete | 2026-04-18 | f157e2e | E2E sign-off (4/4 pass pentest01) |
+| 1.7 | S1 | ✅ Complete | 2026-04-18 | 449065c | Documentation |
+| 1.8 | S1 | ✅ Complete | 2026-04-18 | 455cc11 | Statistics pre-flight + allow_partial_steps |
+| 2.1 | S2 | ✅ Complete | 2026-04-18 | 058c915 | RED: custom plan fetch + run tests (7 cases) |
+| 2.2 | S2 | ✅ Complete | 2026-04-18 | f9f9c81 | GREEN: custom plan fetch + run impl |
+| 2.3 | S2 | ✅ Complete | 2026-04-18 | de9d30c | E2E sign-off (5/5 pass pentest01) |
+| 2.4 | S2 | ✅ Complete | 2026-04-18 | c888e23 | Documentation update |
+| 3.1 | S3 | ✅ Complete | 2026-04-18 | 2d22783 | RED: diagnostic readiness + augmentation tests (16 cases) |
+| 3.2 | S3 | ✅ Complete | 2026-04-18 | 1ad25f8 | GREEN: diagnostic readiness + augmentation impl |
+| 3.3 | S3 | ✅ Complete | 2026-04-18 | 9362212 | MCP tool step_overrides + diagnostic markdown |
+| 3.4 | S3 | ✅ Complete | 2026-04-18 | 2a361a1 | E2E: 8 pass + 1 skip (custom plan → Slice 4) |
+| 3.5 | S3 | ✅ Complete | 2026-04-18 | - | Documentation update |
+| 4.1 | S4 | ✅ Complete | 2026-04-18 | c02db5c | RED: augmented plan uses full payload (2 cases) |
+| 4.2 | S4 | ✅ Complete | 2026-04-18 | a01dfd0 | GREEN: one-line change + replace semantics fix |
+| 4.3 | S4 | ✅ Complete | 2026-04-18 | aff9e19 | E2E: 9/9 pass incl custom plan augmentation |
+| 4.4 | S4 | ✅ Complete | 2026-04-18 | - | Documentation update |
+| 4.5 | S4 | ✅ Complete | 2026-04-18 | d3e4948 | dry_run parameter (3 unit + 3 E2E tests) |
+| 4.6 | S4 | ✅ Complete | 2026-04-19 | a7c6332 | Statistics breakdown + simulator roles + role cheat sheet |
+| 4.7 | S4 | ✅ Complete | 2026-04-19 | 6303226 | Smart per-step filter recommendations in diagnostic |
+| 4.8 | S4 | ✅ Complete | 2026-04-19 | cb6978d | Constraint diagnostics for zero-simulation steps |
+| 4.9 | S4 | ✅ Complete | 2026-04-19 | 390848b | Partial-coverage constraint diagnostics |
+| 4.10 | S4 | ✅ Complete | 2026-04-19 | b03f2cb | Attack names in constraint diagnostics |
+| 4.11 | S4 | ✅ Complete | 2026-04-19 | 9e68052 | Default key in step_overrides |
+| 4.12 | S4 | ⏱ Deferred | - | - | Shorthand filter syntax (marginal after 4.11) |
+| 4.13 | S4 | ✅ Complete | 2026-04-19 | d3205f9 | Fixable/unfixable constraint classification |
+| 4.14 | S4 | ✅ Complete | 2026-04-19 | 4df01f0 | Simulator assets, proxy, simulation users |
+| 4.15 | S4 | ⏱ Deferred | - | - | Matched simulators per attack in dry_run |
+| 4.16 | S4 | ✅ Complete | 2026-04-19 | 67900ea | Fix: reclassify role-based constraints as fixable |
+| 4.17 | S4 | ✅ Complete | 2026-04-19 | 67900ea | Fix: clarify aggregated constraint header wording |
+| 4.18 | S4 | ✅ Complete | 2026-04-19 | e4b160e | Resolved attacks per step in dry_run |
+| 4.19 | S4 | ✅ Complete | 2026-04-19 | e4b160e | verbose_failures flag for per-attack detail |
+| 5.1 | S5 | ⏳ Pending | - | - | RED: Propagate type tests |
+| 5.2 | S5 | ⏳ Pending | - | - | GREEN: Propagate type impl |
+| 5.3 | S5 | ⏳ Pending | - | - | E2E sign-off (pentest01) |
+| 5.4 | S5 | ⏳ Pending | - | - | Documentation update |
+
+---
+
+## Slice 1: Ready-to-run OOB Scenario
+
+**Goal**: A working `run_scenario` MCP tool that can execute ready-to-run OOB scenarios.
+This is the foundational slice — establishes the fetch→validate→relay pattern.
+
+### Phase 1.1: RED — Readiness + Fetch Tests
+
+**Semantic Change**: Write all unit tests for scenario readiness validation and API fetch.
+All tests will fail (RED) because the functions don't exist yet.
+
+**Deliverables**: Test suite for `compute_scenario_readiness`, `_has_real_filter_criteria`,
+and `_fetch_all_scenarios`.
+
+**Implementation Details**:
+
+1. **Test `_has_real_filter_criteria`** — `TestHasRealFilterCriteria` class
+   - Empty dict returns False
+   - Dict with key having `values: []` returns False
+   - Dict with key having `values: ["WINDOWS"]` returns True
+   - Dict with nested dict having non-empty values returns True
+   - Non-dict truthy value returns True
+
+2. **Test `compute_scenario_readiness`** — `TestComputeScenarioReadiness` class
+   - Scenario with all steps having real target + attacker criteria returns True
+   - Scenario with empty steps list returns False
+   - Scenario with step missing targetFilter returns False
+   - Scenario with step missing attackerFilter returns False
+   - Scenario with step having empty targetFilter values returns False
+   - Scenario with mixed steps (some ready, some not) returns False
+   - Use realistic step structures matching the content-manager API format (with `name`,
+     `uuid`, `attacksFilter`, `attackerFilter`, `targetFilter`, `systemFilter`)
+
+3. **Test `_fetch_all_scenarios`** — `TestFetchAllScenarios` class
+   - Successful API call: mock `requests.get` returning scenario list, verify return value
+   - HTTP error: mock response raising HTTPError, verify exception propagates
+   - Empty response: mock returning empty list, verify empty list returned
+   - Verify correct URL construction: `{base_url}/api/content-manager/vLatest/scenarios`
+   - Verify correct headers: `x-apitoken` and `Content-Type`
+
+**Fixtures**: Mock scenario data matching real content-manager API response structure
+(full OOB scenario with 5 steps, actions with multiAttack + wait nodes, edges defining
+DAG). Use the pentest01 "Step 1 - Fortify your Network Perimeter" payload as reference.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Modify | Add readiness + fetch test classes (all RED) |
+
+**Git Commit**: `test(studio): add RED unit tests for scenario readiness and fetch`
+
+---
+
+### Phase 1.2: GREEN — Readiness + Fetch Implementation
+
+**Semantic Change**: Implement scenario readiness validation and API fetch functions
+to make all Phase 1.1 tests pass.
+
+**Deliverables**: `_has_real_filter_criteria`, `compute_scenario_readiness`,
+`_fetch_all_scenarios` functions.
+
+**Implementation Details**:
+
+1. **`_has_real_filter_criteria(filter_dict)`**
+   - Duplicate from config_types.py logic
+   - Accept a dict, return False if empty
+   - For each value: if it's a dict, check for non-empty `values` list; if truthy
+     non-dict, return True
+   - Return True if any key qualifies, False otherwise
+
+2. **`compute_scenario_readiness(scenario)`**
+   - Accept a full scenario dict
+   - Return False if no steps (empty list)
+   - For each step: check that `targetFilter` and `attackerFilter` both have real criteria
+     via `_has_real_filter_criteria`
+   - Return True only if ALL steps pass both checks
+
+3. **`_fetch_all_scenarios(console)`**
+   - Get auth token via `get_secret_for_console(console)`
+   - Get base URL via `get_api_base_url(console, 'content-manager')`
+   - Build URL: `{base_url}/api/content-manager/vLatest/scenarios`
+   - Headers: `{"Content-Type": "application/json", "x-apitoken": apitoken}`
+   - `requests.get(url, headers=headers, timeout=120)`
+   - Call `response.raise_for_status()`
+   - Return `response.json()` (the response IS the list, no `data` wrapper)
+
+**Verification**: Run unit tests — all Phase 1.1 tests must pass (RED → GREEN).
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/studio_functions.py` | Modify | Add 3 new functions |
+
+**Git Commit**: `feat(studio): implement scenario readiness and fetch (GREEN)`
+
+---
+
+### Phase 1.3: RED — Run OOB Scenario Tests
+
+**Semantic Change**: Write all unit tests for the `sb_run_scenario` orchestration function.
+All tests will fail (RED) because the function doesn't exist yet.
+
+**Deliverables**: Test suite for `sb_run_scenario`.
+
+**Implementation Details**:
+
+1. **Test `sb_run_scenario`** — `TestRunScenario` class
+   - **Mock decorators** on each test: `@patch` for `requests.post`, `requests.get`,
+     `get_api_account_id`, `get_api_base_url`, `get_secret_for_console`
+
+   - **`test_run_scenario_success`**: Mock GET returning scenario list with one ready
+     scenario, mock POST returning queue response with `planRunId` and multiple
+     `stepRunId`s. Verify: return dict has `test_id`, `scenario_id`, `scenario_name`,
+     `step_count`, `step_run_ids`, `status='queued'`. Verify: POST payload has
+     `plan.name`, `plan.originalScenarioId`, `plan.steps`, `plan.actions`, `plan.edges`,
+     `plan.systemTags`.
+
+   - **`test_run_scenario_custom_test_name`**: Provide `test_name="My Custom Test"`.
+     Verify: `plan.name` in POST payload equals custom name, not scenario name.
+
+   - **`test_run_scenario_not_found`**: Mock GET returning scenarios without the target
+     ID. Verify: `ValueError` raised with "not found" message.
+
+   - **`test_run_scenario_not_ready`**: Mock GET returning scenario with empty
+     attackerFilter. Verify: `ValueError` raised with "not ready to run" message.
+
+   - **`test_run_scenario_empty_id`**: Call with `scenario_id=""`.
+     Verify: `ValueError` raised.
+
+   - **`test_run_scenario_api_error`**: Mock POST raising `RequestException`.
+     Verify: exception propagates.
+
+   - **`test_run_scenario_multi_step_response`**: Mock POST response with 5 stepRunIds.
+     Verify: `step_run_ids` list has 5 entries, `step_count` is 5.
+
+**Fixtures**:
+- `mock_oob_scenario`: Full OOB scenario matching pentest01 structure (5 steps with DAG
+  actions/edges, attacksFilter with tags/origin/attackType, attackerFilter with role,
+  targetFilter with os, systemFilter with bypassProxy/runAsRoot/simulationUsers/proxies)
+- `mock_queue_response`: `{"data": {"planRunId": "...", "steps": [{"stepRunId": "..."}],
+  "name": "..."}}`
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Modify | Add run scenario test class (all RED) |
+
+**Git Commit**: `test(studio): add RED unit tests for sb_run_scenario`
+
+---
+
+### Phase 1.4: GREEN — Run OOB Scenario Implementation
+
+**Semantic Change**: Implement `sb_run_scenario` to make all Phase 1.3 tests pass.
+
+**Deliverables**: Main orchestration function for scenario execution.
+
+**Implementation Details**:
+
+1. **`sb_run_scenario(scenario_id, console, test_name)`**
+   - **Parameters**:
+     - `scenario_id: str` — UUID string of the OOB scenario (required)
+     - `console: str = "default"` — SafeBreach console identifier
+     - `test_name: str = None` — Optional custom test name
+   - **Returns**: Dict with `test_id`, `test_name`, `scenario_id`, `scenario_name`,
+     `step_count`, `step_run_ids`, `status`
+   - **Raises**: `ValueError` for invalid inputs, `Exception` for API errors
+
+   **Step-by-step logic**:
+   1. Validate `scenario_id` is not empty/None
+   2. Call `_fetch_all_scenarios(console)` to get all OOB scenarios
+   3. Find scenario where `str(scenario['id']) == scenario_id`
+   4. If not found, raise `ValueError(f"Scenario '{scenario_id}' not found")`
+   5. Call `compute_scenario_readiness(scenario)` — if False, raise
+      `ValueError(f"Scenario '{scenario['name']}' is not ready to run...")`
+   6. Set `effective_test_name = test_name or scenario['name']`
+   7. Get auth: `apitoken`, `base_url` (orchestrator), `account_id`
+   8. Build payload — relay scenario fields as-is inside `{"plan": ...}`:
+      `name` (effective_test_name), `originalScenarioId` (scenario id),
+      `steps`, `actions`, `edges`, `systemTags`
+   9. POST to queue with `enableFeedbackLoop=true`, `retrySimulations=true`,
+      timeout=120
+   10. Parse response: `data.planRunId`, list of `data.steps[].stepRunId`,
+       `data.name`
+   11. Return result dict with `test_id`, `test_name`, `scenario_id`,
+       `scenario_name`, `step_count`, `step_run_ids`, `status='queued'`
+
+**Verification**: Run unit tests — all Phase 1.3 tests must pass (RED → GREEN).
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/studio_functions.py` | Modify | Add `sb_run_scenario` function |
+
+**Git Commit**: `feat(studio): implement sb_run_scenario orchestration (GREEN)`
+
+---
+
+### Phase 1.5: MCP Tool Registration
+
+**Semantic Change**: Register `run_scenario` as an MCP tool in the Studio Server.
+
+**Deliverables**: New MCP tool accessible to AI agents.
+
+**Implementation Details**:
+
+1. **Update imports** in `studio_server.py` to include `sb_run_scenario`
+
+2. **`run_scenario` tool registration**
+   - Decorator: `@self.mcp.tool(name="run_scenario", description="...")`
+   - Description documents all parameters for Claude:
+     - `scenario_id` (required, str): UUID of the OOB scenario to execute
+     - `console` (optional, str, default "default"): SafeBreach console name
+     - `test_name` (optional, str): Custom name for the test execution
+     - Include IMPORTANT note about triggering real attack simulations
+   - Returns **markdown string** (Studio pattern):
+     `## Scenario Execution Queued`, test_id, scenario name, step count, step_run_ids,
+     next steps guidance (use `get_test_details` to track)
+   - Error handling: catch ValueError then Exception
+   - Single-tenant console auto-resolve pattern
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/studio_server.py` | Modify | Add `run_scenario` tool + import |
+
+**Git Commit**: `feat(studio): register run_scenario MCP tool`
+
+---
+
+### Phase 1.6: E2E Sign-off
+
+**Semantic Change**: E2E tests against pentest01 confirming real OOB scenario execution.
+
+**Deliverables**: E2E test suite. **Gate**: all tests pass before Slice 2 begins.
+
+**Implementation Details**:
+
+1. **E2E helper functions** (in test file, not production code)
+   - `_cancel_test(test_id, console)` — `DELETE /api/orch/v4/accounts/{account_id}/queue/{test_id}`.
+     Best-effort: log errors but don't fail the test. Called in `finally` block.
+   - `_wait_for_test_start(test_id, console, timeout=120)` — Polls
+     `sb_get_test_details(test_id, console)` from `safebreach_mcp_data.data_functions`.
+     Waits until test status indicates running (not queued). Retries with short sleep
+     intervals. Raises `TimeoutError` if not started within timeout.
+   - `_wait_for_simulations(test_id, console, min_count=5, timeout=300)` — Polls
+     `sb_get_test_details(test_id, console)` and checks `simulations_statistics` for
+     total completed count (sum of all status counts). Waits until >= `min_count`
+     simulations have completed. This proves the orchestrator parsed the payload,
+     resolved attacks, dispatched to simulators, and got real results back.
+
+2. **`TestRunScenarioE2E`** class
+   - **`test_run_ready_oob_scenario`**: Fetch all scenarios from pentest01, find one
+     where `compute_scenario_readiness` returns True, call `sb_run_scenario` with its
+     ID. Verify: non-empty `test_id`, `step_count > 0`, `status='queued'`,
+     `step_run_ids` is a non-empty list. Then:
+     1. Wait for test to start (status = running)
+     2. Wait for >5 completed simulations
+     3. Cancel the running test
+   - **`test_run_scenario_not_found`**: Call with fake UUID, verify ValueError.
+     (No cancel needed — nothing was queued.)
+   - **`test_run_scenario_not_ready`**: Find a non-ready scenario (if any), verify
+     ValueError. Skip if all happen to be ready. (No cancel needed.)
+   - **`test_run_scenario_custom_name`**: Run with custom `test_name`, verify response
+     `test_name` matches. Wait for start + simulations, then cancel.
+
+3. **Infrastructure**: `@pytest.mark.e2e`, `@skip_e2e`, `E2E_CONSOLE` env var
+4. **Zero mocks** — E2E tests call real APIs only. No `@patch`, no `Mock`, no fakes.
+   The entire point is to validate the real pipeline end-to-end.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/tests/test_e2e_run_scenario.py` | Create | E2E tests for OOB scenario run |
+
+**Git Commit**: `test(studio): add E2E tests for OOB scenario run against pentest01`
+
+---
+
+### Phase 1.7: Documentation
+
+**Semantic Change**: Update CLAUDE.md with new tool documentation.
+
+**Implementation Details**:
+- Add `run_scenario` tool to Studio Server section (or create section)
+- Document parameters, behavior, limitations
+- Note: "Only ready-to-run OOB scenarios in this version"
+- Update MCP Tools Available count
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `CLAUDE.md` | Modify | Add run_scenario tool documentation |
+
+**Git Commit**: `docs: add run_scenario tool to CLAUDE.md`
+
+---
+
+## Slice 2: Ready-to-run Custom Plan
+
+**Goal**: Extend `run_scenario` to also run custom plans by their integer ID.
+Custom plans use a minimal `planId` reference payload — no steps/actions/edges.
+
+**Pre-requisite**: Slice 1 E2E sign-off passed.
+
+### Phase 2.1: RED — Custom Plan Fetch + Run Tests
+
+**Semantic Change**: Write tests for custom plan fetching and the custom plan run path.
+
+**Implementation Details**:
+
+1. **Test `_fetch_all_plans`** — `TestFetchAllPlans` class
+   - Successful fetch from plans API, verify return value
+   - HTTP error handling
+   - Verify URL: `{base_url}/api/config/v2/accounts/{account_id}/plans?details=true`
+   - Verify response unwrapping: plans API wraps in `{"data": [...]}`
+
+2. **Test `sb_run_scenario` custom plan path** — extend `TestRunScenario`
+   - **`test_run_custom_plan_success`**: Mock OOB fetch returning empty (no match),
+     mock plans fetch returning plan with matching integer ID. Mock POST returning
+     queue response. Verify: payload has `plan.name`, `plan.planId`, `plan.systemTags`
+     — NO `steps`, NO `actions`, NO `edges`.
+   - **`test_run_custom_plan_by_integer_id`**: Call with integer-string ID (e.g., "130").
+     Verify: custom plan path taken, correct `planId` in payload.
+   - **`test_run_custom_plan_not_ready`**: Plan fails readiness check, verify ValueError.
+
+**Fixtures**: Mock custom plan matching pentest01 "CISA Alert AA24-190A (APT40)" structure.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Modify | Add custom plan tests |
+
+**Git Commit**: `test(studio): add RED tests for custom plan run path`
+
+---
+
+### Phase 2.2: GREEN — Custom Plan Fetch + Run Implementation
+
+**Semantic Change**: Implement custom plan fetching and extend `sb_run_scenario` to handle
+custom plans.
+
+**Implementation Details**:
+
+1. **`_fetch_all_plans(console)`**
+   - Same auth pattern as `_fetch_all_scenarios`
+   - Base URL: `get_api_base_url(console, 'config')`
+   - URL: `{base_url}/api/config/v2/accounts/{account_id}/plans?details=true`
+   - Unwrap response: `response.json().get("data", [])`
+
+2. **Extend `sb_run_scenario`** lookup logic:
+   - After OOB lookup misses, fall through to `_fetch_all_plans(console)`
+   - Match by `str(plan['id']) == scenario_id`
+   - If found as custom plan: build minimal payload
+     `{"plan": {"name": ..., "planId": plan['id'], "systemTags": []}}`
+   - Same POST to queue API
+
+**Verification**: All Slice 1 + Slice 2 unit tests pass.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/studio_functions.py` | Modify | Add `_fetch_all_plans`, extend `sb_run_scenario` |
+
+**Git Commit**: `feat(studio): add custom plan support to run_scenario (GREEN)`
+
+---
+
+### Phase 2.3: E2E Sign-off
+
+**Semantic Change**: E2E tests confirming custom plan execution on pentest01.
+
+**Implementation Details**:
+- **`test_run_ready_custom_plan`**: Fetch plans from pentest01, find a ready-to-run one,
+  execute, verify test_id returned.
+- Extends existing E2E test file.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `safebreach_mcp_studio/tests/test_e2e_run_scenario.py` | Modify | Add custom plan E2E tests |
+
+**Git Commit**: `test(studio): add E2E tests for custom plan run against pentest01`
+
+---
+
+### Phase 2.4: Documentation Update
+
+**Semantic Change**: Update CLAUDE.md to document custom plan support.
+
+**Changes**:
+
+| File | Action | Description |
+|------|--------|-------------|
+| `CLAUDE.md` | Modify | Document custom plan support in run_scenario |
+
+**Git Commit**: `docs: update run_scenario docs with custom plan support`
+
+---
+
+## Slice 3: Non-ready OOB Scenario + Augmentation
+
+**Goal**: Allow running OOB scenarios that are NOT ready-to-run by accepting augmenting
+parameters that fill in missing filters. `compute_scenario_readiness` evolves to return
+diagnostic info guiding the LLM on what's missing.
+
+**Pre-requisite**: Slice 2 E2E sign-off passed.
+
+**Note**: Exact parameter design and augmentation API will be refined when this slice
+begins. User will provide sample payloads of non-ready scenarios with augmented fields.
+The phases below describe intent; implementation details will be filled in after Slice 2.
+
+### Phase 3.1: RED — Diagnostic Readiness + Augmentation Tests
+
+**Semantic Change**: Tests for diagnostic readiness output and payload augmentation.
+
+**Implementation Details**:
+- Evolve `compute_scenario_readiness` tests to expect structured diagnostic output:
+  per-step analysis of what's missing (which filter, what field)
+- Test augmentation function that modifies scenario payload in-place with user-provided
+  filter values (e.g., target simulator IDs, attacker role overrides)
+- Test that augmented payload passes readiness check
+
+**Git Commit**: `test(studio): add RED tests for diagnostic readiness and augmentation`
+
+---
+
+### Phase 3.2: GREEN — Diagnostic Readiness + Augmentation Implementation
+
+**Semantic Change**: Implement diagnostic readiness and payload augmentation.
+
+**Implementation Details**:
+- `compute_scenario_readiness` returns structured result (not just bool):
+  `{"ready": bool, "steps": [{"step_name": ..., "missing": ["targetFilter", ...]}]}`
+- Augmentation function accepts override parameters and injects them into the scenario
+  payload's step filters before relay
+- `sb_run_scenario` gains optional augmentation parameters
+
+**Git Commit**: `feat(studio): implement diagnostic readiness and augmentation (GREEN)`
+
+---
+
+### Phase 3.3: MCP Tool Parameter Extension
+
+**Semantic Change**: Add augmenting parameters to the `run_scenario` MCP tool.
+
+**Implementation Details**:
+- Add parameters for filter overrides (exact shape TBD after Slice 2)
+- Update tool description to document augmentation capabilities
+- When augmenting params provided, skip readiness gate (user is filling the gaps)
+
+**Git Commit**: `feat(studio): extend run_scenario tool with augmentation params`
+
+---
+
+### Phase 3.4: E2E Sign-off
+
+**Semantic Change**: E2E test augmenting and running a non-ready OOB scenario on pentest01.
+
+**Git Commit**: `test(studio): add E2E tests for non-ready OOB scenario augmentation`
+
+---
+
+### Phase 3.5: Documentation Update
+
+**Git Commit**: `docs: update run_scenario docs with OOB augmentation support`
+
+---
+
+## Slice 4: Non-ready Custom Plan + Augmentation
+
+**Goal**: Augment non-ready custom plans and run them using full payload (not `planId`).
+
+**Pre-requisite**: Slice 3 E2E sign-off passed.
+
+**Design**: Apply the same flow as OOB augmentation:
+1. Pull full plan from plans API (already fetched — has steps, actions, edges, UUIDs)
+2. Apply `step_overrides` to augment missing filters (same `_apply_step_overrides`)
+3. Call statistics with augmented steps (same `_get_scenario_statistics`)
+4. **Send full payload** to queue API (like OOB) instead of `planId` reference
+
+The key change: when `step_overrides` is provided for a custom plan, switch from `planId`
+payload to full payload with augmented steps, actions, and edges. Ready custom plans
+without overrides continue to use `planId`.
+
+```
+Custom plan, no overrides    → planId reference (existing Slice 2 behavior)
+Custom plan, with overrides  → full payload with augmented steps (like OOB)
+```
+
+Custom plans from the plans API already have `actions`, `edges`, and step `uuid`s populated
+(unlike OOB from content-manager). No DAG generation needed — relay as-is after augmentation.
+
+### Phase 4.1: RED — Custom Plan Augmentation Tests
+
+**Semantic Change**: Tests for augmented custom plan using full payload instead of planId.
+
+**Implementation Details**:
+- **`test_custom_plan_with_overrides_uses_full_payload`**: Mock custom plan with overrides.
+  Verify: queue payload has `steps`, `actions`, `edges` (NOT `planId`).
+- **`test_custom_plan_no_overrides_still_uses_planid`**: Verify: ready custom plan
+  without overrides continues to use `planId` reference payload.
+
+**Git Commit**: `test(studio): add RED tests for custom plan augmentation`
+
+### Phase 4.2: GREEN — Custom Plan Augmentation Implementation
+
+**Semantic Change**: When `step_overrides` applied to a custom plan, build full payload.
+
+**Implementation Details**:
+- In the payload construction branch: if `is_custom_plan` AND `parsed_overrides`,
+  use full OOB-style payload with `steps`, `actions`, `edges` from the plan.
+- The plan already has these fields populated (not None like OOB).
+
+**Git Commit**: `feat(studio): implement custom plan augmentation (GREEN)`
+
+### Phase 4.3: E2E Sign-off
+
+**Semantic Change**: E2E test augmenting and running non-ready custom plans on pentest01.
+
+**Git Commit**: `test(studio): add E2E tests for non-ready custom plan augmentation`
+
+### Phase 4.4: Documentation Update
+
+**Git Commit**: `docs: update run_scenario docs with custom plan augmentation`
+
+### Phase 4.8: Constraint Diagnostics for Zero-Simulation Steps
+
+**Semantic Change**: When `dry_run=True` and a step produces 0 simulations, provide detailed
+per-attack, per-simulator constraint failure reasons so the LLM can diagnose and self-correct.
+
+**Design**:
+
+The statistics API accepts additional query parameters `getConstraints=true&getAllConstraints=true`
+that return a `simulatorConstraints` field with structured failure reasons per attack×simulator pair:
+
+```json
+{
+  "simulatorConstraints": {
+    "targetConstraints": {
+      "<simulator_uuid>": {
+        "<move_id>": [
+          {"reason": "incompatible_os", "required": "LINUX", "actual": "WINDOWS"},
+          {"reason": "incompatible_package", "reason_text": "requires isInfiltration role"}
+        ]
+      }
+    }
+  }
+}
+```
+
+**Constraint reason codes** (14 known):
+
+| Code | Human-readable meaning |
+|------|----------------------|
+| `incompatible_os` | Simulator OS doesn't match attack requirement |
+| `incompatible_package` | Simulator role mismatch (e.g., requires infiltration/exfiltration) |
+| `missing_required_advanced_actions` | Specific advanced action type not enabled on simulator |
+| `simulator_on_both_sides` | Network attack needs separate attacker and target simulators |
+| `simulator_variant_is_not_root_user` | Attack requires root/admin execution privilege |
+| `simulator_variant_is_root_user` | Attack requires non-root execution |
+| `simulator_failed_schema_validation` | Simulator missing required software/capability |
+| `simulator_is_not_aws_attacker` | Attack needs AWS attacker role |
+| `simulator_is_not_aws_simulator` | Attack needs AWS environment |
+| `simulator_is_not_mail_virtual_simulator` | Attack needs mailbox simulator |
+| `move_does_not_support_root_simulation_user` | Attack incompatible with root user |
+| `move_doesnt_requires_proxy_ignoring_proxy_variant` | Proxy configuration mismatch |
+| `port_in_use` | Required port occupied on simulator |
+| `simulator_didnt_pass_pre_execution_prerequisite_tests` | Pre-execution checks failed |
+
+Each constraint also includes a free-form `reason` field from the API with specific details
+(e.g., the exact role required, the exact advanced action name, the exact OS mismatch).
+
+**Implementation Details**:
+
+1. **`CONSTRAINT_REASON_DESCRIPTIONS` dict** in studio_functions.py — maps each code to a
+   human-readable explanation for the LLM.
+
+2. **`_get_scenario_statistics`** — when called for `dry_run`, add `getConstraints=true&
+   getAllConstraints=true` query params. Extract and summarize `simulatorConstraints` per step.
+
+3. **dry_run markdown rendering** — for steps with 0 simulations, show:
+   - Filter match counts: "Target sims (filter): 10 | Attacks (criteria): 3 | Pairings: 0"
+   - Per-attack constraint summary with our description + API's free-form reason
+   - Actionable suggestion (e.g., "broaden OS filter to include LINUX, MAC")
+
+4. **Only for dry_run** — constraint params add latency; don't use for actual queue submissions.
+
+**Expected dry_run output for a zero step**:
+```
+Step 2: 0 simulations — host-level (default)
+  Target sims (filter match): 10 | Attacks (criteria match): 3 | Viable pairings: 0
+
+  Attack 6949 (0 pairings):
+    - incompatible_os: Simulator OS doesn't match — requires LINUX, simulator has WINDOWS
+    - simulator_variant_is_not_root_user: Requires root/admin — "run as root not enabled"
+  Attack 6950 (0 pairings):
+    - incompatible_os: Simulator OS doesn't match — requires MAC, simulator has WINDOWS
+  Attack 6479 (0 pairings):
+    - simulator_on_both_sides: Needs separate attacker and target
+    - missing_required_advanced_actions: Advanced action not enabled — "allow advanced actions: ..."
+
+  Suggestion: broaden targetFilter to include LINUX and MAC
+```
+
+**Git Commit**: `feat(studio): constraint diagnostics for zero-simulation dry_run steps`
+
+### Phase 4.9: Partial-coverage constraint diagnostics
+
+**Priority**: Highest — user's #1 pick from manual testing feedback.
+
+**Problem**: Constraints only appear when a step produces 0 simulations. When a step
+produces 31/81 attacks, there's zero insight into why the other 50 failed. The LLM
+optimizes blind — can't tell whether one more simulator would rescue 1 attack or 20.
+
+**Solution**: Show constraint failures for ALL unmatched attacks, not just when the step
+total is 0. Remove the `sim_count == 0` gate on `include_constraints`. Group and summarize
+repeated constraint reasons: "10 of 13 attacks blocked by incompatible_os" instead of
+13 repetitive per-attack blocks.
+
+**Git Commit**: `feat(studio): partial-coverage constraint diagnostics for dry_run`
+
+### Phase 4.10: Attack names in constraint diagnostics
+
+**Problem**: "Attack 6479 failed because..." is less actionable than
+"Attack 6479 (Phishing Link Via HTTPS) failed because...". The LLM infers attack
+purpose from step name + context instead of reading it directly.
+
+**Solution**: Resolve move IDs to attack names during dry_run constraint rendering.
+Use the playbook API or include attack names from the statistics response `moves` field.
+
+**Git Commit**: `feat(studio): resolve attack names in constraint diagnostics`
+
+### Phase 4.11: Default key in step_overrides
+
+**Problem**: Repeating the same filter JSON across 11 of 14 steps is error-prone and
+verbose (~2KB of JSON repeated 4 times in a single session).
+
+**Solution**: Add a `"default"` key to step_overrides that applies to ALL missing steps.
+Per-step overrides take precedence over the default. Backward-compatible — existing JSON
+without `"default"` works as before.
+
+```json
+{
+  "default": {"targetFilter": {...}, "attackerFilter": {...}},
+  "8": {"attackerFilter": {"role": ...}}
+}
+```
+
+**Git Commit**: `feat(studio): add default key to step_overrides`
+
+### Phase 4.12: Shorthand filter syntax
+
+**Problem**: `{"os": {"operator": "is", "values": ["WINDOWS"], "name": "os"}}` has "os"
+repeated 3 times and `operator: "is"` is always the same. 80% of the JSON is boilerplate.
+
+**Solution**: Accept shorthand in step_overrides and expand internally:
+- `{"os": ["WINDOWS", "LINUX"]}` → full filter dict
+- `{"role": ["isInfiltration"]}` → role filter dict
+- `{"simulators": ["uuid1", "uuid2"]}` → simulator filter dict
+- `{"connection": true}` → all-connected filter
+
+Full filter dicts still accepted for backward compatibility.
+
+**Git Commit**: `feat(studio): shorthand filter syntax in step_overrides`
+
+### Phase 4.13: Unsolvable-from-overrides hints
+
+**Problem**: Some attacks need scenario-level configuration that `step_overrides` can't
+address (e.g., mailbox simulator, advanced action type, webapp attacker). The LLM iterates
+on a problem that's partially unsolvable from this interface, with no signal to stop.
+
+**Solution**: Classify constraint reason codes into "fixable via step_overrides" vs
+"requires console-level configuration". When dry_run detects unfixable constraints, add
+a hint: "N attacks require console-level configuration not addressable via step_overrides
+(e.g., enable advanced actions on simulator X, add mailbox simulator)."
+
+Fixable: `incompatible_os`, `incompatible_package` (role), `simulator_on_both_sides`
+Not fixable: `missing_required_advanced_actions`, `simulator_is_not_mail_virtual_simulator`,
+`simulator_failed_schema_validation`, `simulator_didnt_pass_pre_execution_prerequisite_tests`
+
+**Git Commit**: `feat(studio): hint when constraints are unfixable via step_overrides`
+
+### Phase 4.14: Simulator capabilities in get_console_simulators
+
+**Problem**: Hidden capabilities (associated assets, proxy config, impersonated users)
+are only discoverable through constraint failures. The LLM guesses instead of planning.
+
+**Solution**: Extended `get_minimal_simulator_mapping` in Config Server:
+- `assets`: Resolved from integer IDs to `{name, type}` via `/assets` API (cached 1hr)
+- `isProxySupported`: Boolean proxy capability flag
+- `simulationUsers`: Impersonated users with `name` + `username`
+
+Nodes API query changed to `assets=true&impersonatedUsers=true`.
+
+**Git Commit**: `feat(config): add assets, proxy, simulation users to simulator listing`
+
+### Phase 4.15: Matched simulators per attack in dry_run
+
+**Problem**: "1/10 targets matched" without knowing WHICH one. The LLM keeps broad
+filters on steps where narrow would work if it knew the right simulator ID.
+
+**Solution**: Include `matched_simulators` list per attack in the dry_run constraint
+output for attacks that have at least one match. For zero-match attacks, already covered
+by constraint diagnostics.
+
+**Git Commit**: `feat(studio): show matched simulator IDs per attack in dry_run`
+
+### Phase 4.16: Fix — Reclassify role-based constraints as fixable
+
+**Problem**: `simulator_is_not_aws_attacker`, `simulator_is_not_aws_simulator`, and
+`simulator_is_not_mail_virtual_simulator` are classified as `fixable: False`, but they
+ARE fixable by selecting a simulator that has the required role (e.g., pz-mde has
+`isAWSAttacker: true`). The LLM incorrectly accepts a lower coverage ceiling.
+
+**Solution**: Reclassify these three constraints as `fixable: True` in
+`CONSTRAINT_REASON_DESCRIPTIONS`. Update their descriptions to guide the LLM:
+"Requires AWS attacker role — check `get_console_simulators` for candidates."
+
+Truly unfixable constraints remain: `missing_required_advanced_actions`,
+`simulator_failed_schema_validation`, `simulator_didnt_pass_pre_execution_prerequisite_tests`,
+`port_in_use`, `move_does_not_support_root_simulation_user`,
+`move_doesnt_requires_proxy_ignoring_proxy_variant`.
+
+**Git Commit**: `fix(studio): reclassify role-based constraints as fixable`
+
+### Phase 4.17: Fix — Clarify aggregated constraint header wording
+
+**Problem**: "5 attacks: Proxy configuration mismatch" reads as "all 5 attacks are fully
+blocked by proxy" but actually means "proxy mismatch tripped on at least one simulator
+pairing for 5 attacks." Some of those attacks may still succeed on other pairings. The
+LLM reasons incorrectly about coverage ceilings.
+
+**Solution**: Change the aggregated constraint header to clarify:
+- "Constraints hit on at least one simulator pairing (not necessarily blocking):"
+- Or split into: constraints blocking the attack entirely vs constraints hit on some pairs.
+
+Simpler approach: prefix the section with a clarifying note:
+"The following constraints were hit on at least one simulator×attack pairing.
+An attack may still produce simulations via other pairings."
+
+**Git Commit**: `fix(studio): clarify aggregated constraint header wording`
+
+### Phase 4.18: Resolved attacks per step in dry_run
+
+**Priority**: Highest leverage — eliminates the "force-zero trick" workaround.
+
+**Problem**: `get_scenario_details` shows step criteria (mitre_tactic, threat_actor) but
+not the resolved attack list. The statistics API resolves criteria to concrete attacks
+during dry_run (visible in the `moves` field), but the attack list is not surfaced.
+The LLM reverse-engineers attack identity from constraint failures instead of reading
+the resolved list directly.
+
+**Solution**: In the dry_run response, include `resolved_attacks` per step — the list
+of attacks (move IDs + names) that matched the step's criteria, regardless of whether
+they produced simulations. Data already available:
+- `moves` field from statistics API: `{moveId: simulationCount}`
+- Attack name map from playbook cache (Phase 4.10)
+
+For each step in dry_run output:
+```
+Resolved attacks (5):
+  - #6479 (Simulate SocGholish dropper) — 0 simulations
+  - #6949 (Write MAZE ransomware) — 0 simulations
+  - #312 (Download Lockbit 3.0) — 45 simulations
+  - #1035 (Transfer malware via HTTPS) — 120 simulations
+  - #1054 (Hidden malware transfer) — 80 simulations
+```
+
+No new API call — uses existing statistics `moves` + playbook name map.
+
+**Git Commit**: `feat(studio): show resolved attacks per step in dry_run`
+
+### Phase 4.19: verbose_failures flag for per-attack detail on partial steps
+
+**Problem**: When a step produces ≥1 simulation, constraint failures are aggregated
+(Phase 4.9). The LLM can't identify WHICH specific attack failed and WHY — it sees
+counts like "5 attacks: OS mismatch" but not which 5 and whether fixing one would
+rescue 1 or 20 simulations.
+
+**Solution**: Add `verbose_failures: bool = False` parameter to `run_scenario`.
+When True + dry_run, show per-attack constraint detail even for partial-coverage steps
+(same format as zero-sim steps). Default False to manage output size.
+
+**Git Commit**: `feat(studio): verbose_failures flag for per-attack detail`
+
+---
+
+## Slice 5: Propagate Scenario Type
+
+**Goal**: Support Propagate (ALM) scenarios in addition to Validate (BAS).
+
+**Pre-requisite**: Slice 4 E2E sign-off passed.
+
+**Note**: Propagate scenarios may use different queue API parameters or have different
+step structures. Details refined after Slice 4.
+
+### Phase 5.1: RED — Propagate Type Tests
+
+**Git Commit**: `test(studio): add RED tests for Propagate scenario type`
+
+### Phase 5.2: GREEN — Propagate Type Implementation
+
+**Git Commit**: `feat(studio): implement Propagate scenario type support (GREEN)`
+
+### Phase 5.3: E2E Sign-off
+
+**Git Commit**: `test(studio): add E2E tests for Propagate scenario on pentest01`
+
+### Phase 5.4: Documentation Update
+
+**Git Commit**: `docs: update run_scenario docs with Propagate type support`
+
+---
+
+## 10. Risks and Assumptions
+
+### Technical Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Queue API rejects relayed payload fields | Medium | Confirmed via pentest01 curl — full relay works |
+| Custom plan augmentation differs from OOB | Low | Resolved: use full payload (like OOB) when overrides applied |
+| Propagate scenarios need different queue params | Low | Deferred to Slice 5; E2E will validate |
+| Scenario fetch returns stale data (no cache) | Low | Fresh fetch ensures latest definitions |
+| Rate limiting on queue API | Low | Execution is infrequent |
+
+### Assumptions
+- The `x-apitoken` header is accepted by the orchestrator queue API.
+  Studio's `sb_run_studio_attack()` already uses `x-apitoken` successfully.
+- The content-manager API returns all scenarios in a single response (no server-side
+  pagination). Confirmed on pentest01 (443 scenarios).
+- OOB scenarios include all fields needed for the queue payload.
+- The `originalScenarioId` field should be set to the scenario's `id` (UUID).
+- Custom plans use `planId` reference — server already has the full plan stored.
+- pentest01 has scenarios of every type needed for autonomous E2E testing.
+
+## 11. Future Enhancements
+
+- **Queue pre-flight check**: Call `GET /queue` before submitting to check slot
+  availability and report estimated wait time.
+- **Scenario caching in Studio**: Add `SafeBreachCache` if execution frequency increases.
+- **Batch scenario execution**: Run multiple scenarios in sequence with rollup reporting.
+- **Execution progress tracking**: Poll `get_test_details` and report progress inline.
+
+## 12. Executive Summary
+
+- **Issue**: AI agents can discover and inspect scenarios but cannot execute them
+- **What Will Be Built**: `run_scenario` MCP tool in the Studio Server, delivered in 5
+  elephant carpaccio slices: (1) ready-to-run OOB, (2) ready-to-run custom plans,
+  (3) non-ready OOB with augmentation, (4) non-ready custom plans with augmentation,
+  (5) Propagate scenario type. Each slice is E2E-gated against pentest01.
+- **Key Technical Decisions**: Studio Server placement; pass-through relay design;
+  `compute_scenario_readiness` duplicated for diagnostic evolution; elephant carpaccio
+  delivery with per-slice E2E sign-off enabling fully autonomous development
+- **Business Value**: Completes the discover→inspect→execute workflow for AI agents,
+  progressing from simple ready-to-run execution to intelligent augmentation of
+  incomplete scenarios
+
+## 14. Change Log
+
+| Date | Change Description |
+|------|-------------------|
+| 2026-04-18 10:00 | PRD created — initial draft with 7 monolithic phases |
+| 2026-04-18 11:00 | Restructured to elephant carpaccio: 5 vertical slices with per-slice TDD + E2E gates |
+| 2026-04-18 11:30 | Added queue→start→simulations→cancel E2E pattern with cancel API |
+| 2026-04-18 12:00 | Added zero-mocks rule for E2E tests |
+| 2026-04-18 14:00 | Added statistics pre-flight validation (Phase 1.8) with allow_partial_steps parameter |
+| 2026-04-18 18:00 | Slices 1-3 complete. Slice 4 design: full payload for augmented custom plans (not planId) |
+| 2026-04-19 | Slice 4 complete including dry_run. Replace semantics for overrides. originalScenarioId fix. |
+| 2026-04-19 | Phase 4.6-4.7: Statistics breakdown, simulator roles, per-step recommendations. |
+| 2026-04-19 | Phase 4.8 implemented: Constraint diagnostics for zero-simulation steps. |
+| 2026-04-19 | Phases 4.6-4.8: Statistics breakdown, simulator roles, per-step recommendations, constraint diagnostics. |
+| 2026-04-19 | Phases 4.9-4.11: Partial-coverage constraints, attack names, default key in step_overrides. |
+| 2026-04-19 | Phases 4.13-4.14: Fixable/unfixable hints, simulator capabilities (assets, proxy, sim users). |
+| 2026-04-19 | Phases 4.12, 4.15 deferred. Data Server: stale status fix + polling hint for non-terminal tests. |
+| 2026-04-19 | Config Server: userId→username resolution for custom plans (list + detail views). |
+| 2026-04-19 | Phases 4.16-4.19 implemented: constraint fixes, resolved attacks, verbose_failures. |
+| 2026-04-20 | E2E suite optimized (12→7 tests), drift tests fixed (dynamic windows), test commenting added. |
+| 2026-04-20 | Cross-cutting: Data Server stale status fix, polling hint, Config Server userId resolution. |
+| 2026-04-20 | PRD finalized: Slices 1-4 complete (19 phases). Slice 5 + deferred items documented. |

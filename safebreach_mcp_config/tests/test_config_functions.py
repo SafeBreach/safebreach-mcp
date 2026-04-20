@@ -92,11 +92,12 @@ class TestConfigFunctions:
         """Mock API response for simulators."""
         return {"data": mock_simulator_data}
     
+    @patch('safebreach_mcp_config.config_functions._get_assets_map_from_cache_or_api', return_value={})
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_api_response):
+    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_assets, mock_api_response):
         """Test successful retrieval of simulators from API."""
         # Setup mocks
         mock_secret.return_value = "test-token"
@@ -105,15 +106,15 @@ class TestConfigFunctions:
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
-        
+
         # Test
         result = _get_all_simulators_from_cache_or_api("test-console")
-        
+
         # Assertions
         assert len(result) == 2
         assert result[0]["id"] == "sim1"
         assert result[1]["id"] == "sim2"
-        
+
         # Verify API was called
         mock_get.assert_called_once()
         mock_secret.assert_called_once_with("test-console")
@@ -138,12 +139,13 @@ class TestConfigFunctions:
         mock_get.assert_not_called()
         mock_secret.assert_not_called()
     
+    @patch('safebreach_mcp_config.config_functions._get_assets_map_from_cache_or_api', return_value={})
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_cache_miss_fetches_api(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_api_response):
+    def test_get_all_simulators_cache_miss_fetches_api(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_assets, mock_api_response):
         """Test that cache miss (expired or empty) falls through to API fetch."""
         # Cache is empty (simulates expired/missing entry - TTLCache handles expiry internally)
 
