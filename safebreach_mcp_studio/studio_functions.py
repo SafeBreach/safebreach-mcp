@@ -1921,7 +1921,7 @@ def _fetch_all_scenarios(console):
         List of full scenario dictionaries
     """
     apitoken = get_secret_for_console(console)
-    base_url = get_api_base_url(console, 'content-manager')
+    base_url = get_api_base_url(console, 'playbook')
 
     api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
     headers = {"Content-Type": "application/json", "x-apitoken": apitoken}

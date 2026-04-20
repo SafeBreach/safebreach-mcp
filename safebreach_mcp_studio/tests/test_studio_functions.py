@@ -5330,7 +5330,7 @@ class TestFetchAllScenarios:
         assert call_args[0][0] == "https://test.safebreach.com/api/content-manager/vLatest/scenarios"
         assert call_args[1]['headers']['x-apitoken'] == "test-token"
         assert call_args[1]['headers']['Content-Type'] == "application/json"
-        mock_base_url.assert_called_once_with("test-console", "content-manager")
+        mock_base_url.assert_called_once_with("test-console", "playbook")
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
