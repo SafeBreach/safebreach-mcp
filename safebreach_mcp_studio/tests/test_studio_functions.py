@@ -7126,44 +7126,6 @@ class TestManageTest:
                 test_id="1776488350786.15", action="cancel", console="test"
             )
 
-    @patch('safebreach_mcp_studio.studio_functions.sb_manage_test')
-    def test_cancel_tool_markdown_success(self, mock_manage):
-        """Tool wrapper formats result as Markdown string."""
-        mock_manage.return_value = {
-            "test_id": "1776488350786.15",
-            "action": "cancel",
-            "status": "success",
-        }
-
-        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
-        server = SafeBreachStudioServer()
-
-        # Find the manage_test tool function
-        tool_fn = None
-        for tool in server.mcp._tool_manager.list_tools():
-            if tool.name == "manage_test":
-                tool_fn = server.mcp._tool_manager.list_tools()
-                break
-
-        # Call sb_manage_test directly and verify it was called correctly
-        result = mock_manage.return_value
-        assert isinstance(result, dict)
-        assert result['test_id'] == "1776488350786.15"
-        assert result['action'] == "cancel"
-        assert result['status'] == "success"
-
-    @patch('safebreach_mcp_studio.studio_functions.sb_manage_test')
-    def test_cancel_tool_error_returns_string(self, mock_manage):
-        """Tool wrapper returns error string, never raises."""
-        mock_manage.side_effect = Exception("something failed")
-
-        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
-        server = SafeBreachStudioServer()
-
-        # The tool wrapper should catch exceptions and return error strings
-        # Verify the server instantiates without error
-        assert server is not None
-
     # --- Phase 2: Pause ---
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')

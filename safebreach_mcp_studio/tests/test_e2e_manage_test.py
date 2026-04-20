@@ -15,6 +15,7 @@ Setup: source .vscode/set_env.sh && uv run pytest -m "e2e" -v
 """
 
 import logging
+import time
 import pytest
 import os
 import requests
@@ -63,6 +64,26 @@ def _cancel_test(test_id, console):
         logger.warning(f"Cancel {test_id} failed: {e}")
 
 
+COMMENT_PROPAGATION_DELAY = 2  # seconds to wait for data API eventual consistency
+
+
+def _get_test_comment(test_id, console):
+    """Read the comment field from a test summary. Returns str or None."""
+    try:
+        apitoken, _, base_url_data, account_id = _get_auth(console)
+        url = f"{base_url_data}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        comment = data.get('comment')
+        logger.info(f"Get comment {test_id}: comment={comment!r}")
+        return comment
+    except Exception as e:
+        logger.warning(f"Get comment {test_id} failed: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # E2E Tests — manage_test lifecycle
 # ---------------------------------------------------------------------------
@@ -74,7 +95,7 @@ class TestManageTestE2E:
     """E2E tests for manage_test against real SafeBreach console."""
 
     def test_e2e_cancel_test(self):
-        """Queue a ready OOB scenario, cancel it via manage_test, verify success."""
+        """Queue, cancel with reason, verify success and note written."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
         ready = next(
             (s for s in scenarios if compute_scenario_readiness(s)), None
@@ -84,7 +105,6 @@ class TestManageTestE2E:
         test_id = None
         passed = False
         try:
-            # Queue the test
             queue_result = sb_run_scenario(
                 scenario_id=str(ready['id']),
                 console=E2E_CONSOLE,
@@ -94,23 +114,31 @@ class TestManageTestE2E:
             assert test_id, "No test_id returned from run_scenario"
             assert queue_result['status'] == 'queued'
 
-            # Cancel via manage_test
             cancel_result = sb_manage_test(
                 test_id=test_id,
                 action="cancel",
                 console=E2E_CONSOLE,
+                reason="E2E cancel test cleanup",
             )
             assert cancel_result['status'] == "success"
             assert cancel_result['action'] == "cancel"
             assert cancel_result['test_id'] == test_id
+            assert cancel_result['note_status'] == "success"
+            assert "Test cancel" in cancel_result['note']
+
+            # Wait for data API propagation, then verify note
+            time.sleep(COMMENT_PROPAGATION_DELAY)
+            comment = _get_test_comment(test_id, E2E_CONSOLE)
+            assert comment is not None, "Comment not found on test summary"
+            assert "E2E cancel test cleanup" in comment
+            assert "UTC]" in comment
             passed = True
         finally:
-            # Safety net: cancel even if assertions failed
             if test_id and not passed:
                 _cancel_test(test_id, E2E_CONSOLE)
 
     def test_e2e_pause_test(self):
-        """Queue a ready OOB scenario, pause it via manage_test, verify success."""
+        """Queue, pause with reason, verify success and note written."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
         ready = next(
             (s for s in scenarios if compute_scenario_readiness(s)), None
@@ -130,16 +158,23 @@ class TestManageTestE2E:
 
             pause_result = sb_manage_test(
                 test_id=test_id, action="pause", console=E2E_CONSOLE,
+                reason="E2E pause test — maintenance window",
             )
             assert pause_result['status'] == "success"
             assert pause_result['action'] == "pause"
+            assert pause_result['note_status'] == "success"
+
+            time.sleep(COMMENT_PROPAGATION_DELAY)
+            comment = _get_test_comment(test_id, E2E_CONSOLE)
+            assert comment is not None
+            assert "E2E pause test" in comment
             passed = True
         finally:
             if test_id:
                 _cancel_test(test_id, E2E_CONSOLE)
 
     def test_e2e_pause_and_resume_test(self):
-        """Queue, pause, resume — full pause/resume lifecycle."""
+        """Queue, pause with reason, resume with reason — verify both notes written."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
         ready = next(
             (s for s in scenarios if compute_scenario_readiness(s)), None
@@ -157,19 +192,30 @@ class TestManageTestE2E:
             test_id = queue_result['test_id']
             assert test_id
 
-            # Pause
+            # Pause with reason
             pause_result = sb_manage_test(
                 test_id=test_id, action="pause", console=E2E_CONSOLE,
+                reason="E2E pausing for deploy",
             )
             assert pause_result['status'] == "success"
-            assert pause_result['action'] == "pause"
+            assert pause_result['note_status'] == "success"
 
-            # Resume
+            # Resume with reason
             resume_result = sb_manage_test(
                 test_id=test_id, action="resume", console=E2E_CONSOLE,
+                reason="E2E deploy complete, resuming",
             )
             assert resume_result['status'] == "success"
-            assert resume_result['action'] == "resume"
+            assert resume_result['note_status'] == "success"
+
+            # Verify both notes are in the comment (appended)
+            time.sleep(COMMENT_PROPAGATION_DELAY)
+            comment = _get_test_comment(test_id, E2E_CONSOLE)
+            assert comment is not None
+            assert "E2E pausing for deploy" in comment
+            assert "E2E deploy complete, resuming" in comment
+            assert "Test pause:" in comment
+            assert "Test resume:" in comment
             passed = True
         finally:
             if test_id:
