@@ -2650,4 +2650,16 @@ def sb_manage_test(
         note_result = _append_test_note(test_id, action, reason, console)
         result.update(note_result)
 
+    hints = {
+        "pause": (
+            "Test is paused. Use manage_test with action='resume' to continue, "
+            "or action='cancel' to abort. Use get_test_details to check current status."
+        ),
+        "resume": "Test resumed. Use get_test_details to monitor progress.",
+        "cancel": (
+            "Test cancelled. Partial results may be available via get_test_details."
+        ),
+    }
+    result['hint_to_agent'] = hints.get(action, "")
+
     return result

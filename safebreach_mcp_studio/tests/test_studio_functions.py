@@ -7507,3 +7507,65 @@ class TestManageTest:
 
         assert result['status'] == "success"
         assert result['note_status'] == "failed"
+
+    # --- Phase 7: hint_to_agent ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_pause_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Pause result includes hint_to_agent mentioning resume and cancel."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="pause", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "resume" in result['hint_to_agent']
+        assert "cancel" in result['hint_to_agent']
+        assert "get_test_details" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resume_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Resume result includes hint_to_agent mentioning monitoring."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="resume", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "get_test_details" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_cancel_hint(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """Cancel result includes hint_to_agent mentioning partial results."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="cancel", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "get_test_details" in result['hint_to_agent']
+        assert "partial" in result['hint_to_agent'].lower()

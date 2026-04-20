@@ -353,6 +353,14 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   **Simulator capabilities**: `get_console_simulators` includes roles (isInfiltration, isExfiltration,
   isAWSAttacker, etc.), assets (resolved names), simulationUsers (impersonated users),
   and isProxySupported for informed filter planning.
+21. `manage_test` ✨ **NEW** - Manage a running test's lifecycle (pause, resume, cancel).
+  Single tool with `action` parameter for all three operations. Accepts `test_id` (planRunId
+  from `run_scenario`), `action` (required: "pause", "resume", or "cancel"), `console`,
+  and optional `reason`. When `reason` is provided, appends a timestamped UTC note to the
+  test's comment field via read-then-append pattern (data API testsummaries endpoint).
+  Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
+  best-effort — failure does not block the lifecycle operation. Response includes
+  `hint_to_agent` with contextual next-step guidance per action.
 
 
 ## Filtering and Search Capabilities

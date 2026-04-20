@@ -21,10 +21,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
-| **Last Updated** | 2026-04-20 13:00 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-04-20 14:00 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 3 of 7 |
+| **Current Phase** | Complete |
 
 ---
 
@@ -177,18 +177,18 @@ is reusable by future tools that may need to annotate tests.
 
 ## 7. Definition of Done
 
-- [ ] `sb_manage_test` function implemented in `studio_functions.py` with `_set_test_state`
+- [x] `sb_manage_test` function implemented in `studio_functions.py` with `_set_test_state`
   and `_append_test_note` helpers
-- [ ] `manage_test` MCP tool registered in `studio_server.py` with full description
-- [ ] All three actions work: pause, resume, cancel
+- [x] `manage_test` MCP tool registered in `studio_server.py` with full description
+- [x] All three actions work: pause, resume, cancel
 - [x] Optional `reason` appends timestamped UTC note to test comment field
 - [x] Note append handles null/empty existing comments
 - [x] Note append failure does not block lifecycle operation
-- [ ] `hint_to_agent` included in response, contextual per action
+- [x] `hint_to_agent` included in response, contextual per action
 - [x] Input validation: empty test_id, invalid action values
 - [x] Error handling: 404, 409, network errors return meaningful messages
-- [ ] Unit tests: success, not-found, API error, reason/note, edge cases for all actions
-- [ ] E2E tests: cancel test lifecycle (extend test_e2e_run_scenario.py)
+- [x] Unit tests: success, not-found, API error, reason/note, edge cases for all actions
+- [x] E2E tests: cancel test lifecycle (test_e2e_manage_test.py)
 - [x] All existing tests continue to pass
 
 ---
@@ -241,7 +241,7 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 | Phase 4: Input validation | ✅ Complete | 2026-04-20 | TBD | test_id + action validation |
 | Phase 5: Reason notes | ✅ Complete | 2026-04-20 | TBD | _append_test_note + integration |
 | Phase 6: Note resilience | ✅ Complete | 2026-04-20 | TBD | Best-effort error handling |
-| Phase 7: hint_to_agent + Documentation | ⏳ Pending | - | - | LLM guidance + CLAUDE.md |
+| Phase 7: hint_to_agent + Documentation | ✅ Complete | 2026-04-20 | TBD | hint_to_agent + CLAUDE.md |
 
 ---
 
