@@ -108,3 +108,69 @@ class TestManageTestE2E:
             # Safety net: cancel even if assertions failed
             if test_id and not passed:
                 _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_e2e_pause_test(self):
+        """Queue a ready OOB scenario, pause it via manage_test, verify success."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready = next(
+            (s for s in scenarios if compute_scenario_readiness(s)), None
+        )
+        assert ready is not None, f"No ready OOB scenario on {E2E_CONSOLE}"
+
+        test_id = None
+        passed = False
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(ready['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_e2e_pause_test",
+            )
+            test_id = queue_result['test_id']
+            assert test_id
+
+            pause_result = sb_manage_test(
+                test_id=test_id, action="pause", console=E2E_CONSOLE,
+            )
+            assert pause_result['status'] == "success"
+            assert pause_result['action'] == "pause"
+            passed = True
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_e2e_pause_and_resume_test(self):
+        """Queue, pause, resume — full pause/resume lifecycle."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready = next(
+            (s for s in scenarios if compute_scenario_readiness(s)), None
+        )
+        assert ready is not None, f"No ready OOB scenario on {E2E_CONSOLE}"
+
+        test_id = None
+        passed = False
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(ready['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_e2e_pause_and_resume_test",
+            )
+            test_id = queue_result['test_id']
+            assert test_id
+
+            # Pause
+            pause_result = sb_manage_test(
+                test_id=test_id, action="pause", console=E2E_CONSOLE,
+            )
+            assert pause_result['status'] == "success"
+            assert pause_result['action'] == "pause"
+
+            # Resume
+            resume_result = sb_manage_test(
+                test_id=test_id, action="resume", console=E2E_CONSOLE,
+            )
+            assert resume_result['status'] == "success"
+            assert resume_result['action'] == "resume"
+            passed = True
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)

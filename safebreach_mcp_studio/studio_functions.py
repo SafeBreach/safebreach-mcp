@@ -2535,16 +2535,27 @@ def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
 
-    if action == "cancel":
-        url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
-        headers = {"x-apitoken": apitoken}
-        try:
+    try:
+        if action == "cancel":
+            url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
+            headers = {"x-apitoken": apitoken}
             response = requests.delete(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            logger.info(f"Test {test_id} cancelled successfully")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Cancel test {test_id} failed: {e}")
-            raise
+        elif action in ("pause", "resume"):
+            url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}/state"
+            headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+            response = requests.put(
+                url, headers=headers, json={"status": action}, timeout=120
+            )
+        else:
+            raise ValueError(
+                f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+            )
+
+        response.raise_for_status()
+        logger.info(f"Test {test_id} {action} successful")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"{action.capitalize()} test {test_id} failed: {e}")
+        raise
 
     return {"test_id": test_id, "action": action, "status": "success"}
 

@@ -7163,3 +7163,71 @@ class TestManageTest:
         # The tool wrapper should catch exceptions and return error strings
         # Verify the server instantiates without error
         assert server is not None
+
+    # --- Phase 2: Pause ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_pause_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Pause a running test via PUT /state — happy path."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(
+            test_id="1776488350786.15", action="pause", console="test"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['action'] == "pause"
+        assert result['status'] == "success"
+
+        mock_put.assert_called_once()
+        call_args = mock_put.call_args
+        expected_url = (
+            "https://test.safebreach.com/api/orch/v4/accounts/"
+            "1234567890/queue/1776488350786.15/state"
+        )
+        assert call_args[0][0] == expected_url
+        assert call_args[1]['json'] == {"status": "pause"}
+        assert call_args[1]['headers']['x-apitoken'] == "test-token"
+        assert call_args[1]['headers']['Content-Type'] == "application/json"
+        assert call_args[1]['timeout'] == 120
+
+    # --- Phase 3: Resume ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resume_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Resume a paused test via PUT /state — happy path."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(
+            test_id="1776488350786.15", action="resume", console="test"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['action'] == "resume"
+        assert result['status'] == "success"
+
+        mock_put.assert_called_once()
+        call_args = mock_put.call_args
+        assert call_args[1]['json'] == {"status": "resume"}

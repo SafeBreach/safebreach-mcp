@@ -24,7 +24,7 @@
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-04-20 13:00 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 1 of 7 |
+| **Current Phase** | Phase 3 of 7 |
 
 ---
 
@@ -236,8 +236,8 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase 1: Cancel test (end-to-end) | ✅ Complete | 2026-04-20 | TBD | 4 unit + 1 E2E test |
-| Phase 2: Pause test | ⏳ Pending | - | - | Adds PUT + extends E2E |
-| Phase 3: Resume test | ⏳ Pending | - | - | Same endpoint + extends E2E |
+| Phase 2: Pause test | ✅ Complete | 2026-04-20 | TBD | PUT /state with pause body |
+| Phase 3: Resume test | ✅ Complete | 2026-04-20 | TBD | Same PUT, resume body |
 | Phase 4: Input validation | ⏳ Pending | - | - | Guard rails (unit tests only) |
 | Phase 5: Reason notes | ⏳ Pending | - | - | Read-then-append + extends E2E |
 | Phase 6: Note resilience | ⏳ Pending | - | - | Best-effort (unit tests only) |
