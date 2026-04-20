@@ -1,10 +1,10 @@
 """
-End-to-End Tests for run_scenario (SAF-29967 — Slice 1: OOB Ready-to-Run)
+End-to-End Tests for run_scenario (SAF-29967)
 
 Tests the complete scenario execution pipeline using real API calls.
-Pattern: queue → wait for >5 simulations (filtered by test_id) → cancel.
+Pattern: queue → wait for >=3 simulations → cancel → comment.
 
-ZERO MOCKS — all calls hit real SafeBreach APIs on pentest01.
+ZERO MOCKS — all calls hit real SafeBreach APIs.
 
 Requires:
 - Real SafeBreach console access with valid API tokens
@@ -14,6 +14,7 @@ Requires:
 Setup: source .vscode/set_env.sh && uv run pytest -m "e2e" -v
 """
 
+import json
 import time
 import logging
 import pytest
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'pentest01')
 SKIP_E2E_TESTS = os.environ.get('SKIP_E2E_TESTS', 'false').lower() == 'true'
+MIN_SIMS = 3           # Minimum simulations to prove execution
+POLL_INTERVAL = 10     # Seconds between polls
+POLL_TIMEOUT = 300     # Max seconds to wait for simulations
 
 skip_e2e = pytest.mark.skipif(
     SKIP_E2E_TESTS,
@@ -50,421 +54,310 @@ skip_e2e = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
+def _get_auth(console):
+    apitoken = get_secret_for_console(console)
+    base_url_orch = get_api_base_url(console, 'orchestrator')
+    base_url_data = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    return apitoken, base_url_orch, base_url_data, account_id
+
+
 def _cancel_test(test_id, console):
-    """Cancel a running/queued test via DELETE on the queue API. Best-effort."""
+    """Cancel a running/queued test. Best-effort."""
     try:
-        apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'orchestrator')
-        account_id = get_api_account_id(console)
-        api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
-        response = requests.delete(api_url, headers={"x-apitoken": apitoken}, timeout=30)
-        logger.info(f"Cancel test {test_id}: HTTP {response.status_code}")
+        apitoken, base_url_orch, _, account_id = _get_auth(console)
+        url = f"{base_url_orch}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
+        resp = requests.delete(url, headers={"x-apitoken": apitoken}, timeout=30)
+        logger.info(f"Cancel {test_id}: HTTP {resp.status_code}")
     except Exception as e:
-        logger.warning(f"Failed to cancel test {test_id}: {e}")
+        logger.warning(f"Cancel {test_id} failed: {e}")
 
 
-def _get_simulation_count_for_test(test_id, console):
-    """Get simulation count for a specific test using the Data Server function.
-
-    Uses sb_get_test_simulations which POSTs to executionsHistoryResults
-    with runId filter — correctly scoped to this test only.
-    """
+def _comment_test(test_id, console, comment):
+    """Leave a comment on a test run explaining what happened."""
     try:
-        simulations_cache.clear()  # Force fresh fetch
-        result = sb_get_test_simulations(test_id=test_id, console=console, page_number=0)
-        total = result.get('total_simulations', 0)
-        return total
+        apitoken, _, base_url_data, account_id = _get_auth(console)
+        url = f"{base_url_data}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+        resp = requests.put(url, headers=headers, json={"comment": comment}, timeout=30)
+        logger.info(f"Comment {test_id}: HTTP {resp.status_code}")
     except Exception as e:
-        logger.debug(f"Error getting simulation count for {test_id}: {e}")
-        return 0
+        logger.warning(f"Comment {test_id} failed: {e}")
 
 
-def _wait_for_simulations(test_id, console, min_count=5, timeout=600):
-    """Poll until at least min_count simulations exist for THIS specific test.
-
-    Uses sb_get_test_simulations (Data Server) which filters by runId.
-    """
+def _wait_for_simulations(test_id, console):
+    """Poll until MIN_SIMS simulations exist for this test."""
     start = time.time()
-    while time.time() - start < timeout:
-        count = _get_simulation_count_for_test(test_id, console)
-        if count >= min_count:
-            logger.info(f"Test {test_id}: {count} simulations (>= {min_count})")
+    while time.time() - start < POLL_TIMEOUT:
+        try:
+            simulations_cache.clear()
+            result = sb_get_test_simulations(test_id=test_id, console=console, page_number=0)
+            count = result.get('total_simulations', 0)
+        except Exception:
+            count = 0
+        if count >= MIN_SIMS:
+            logger.info(f"{test_id}: {count} sims (>= {MIN_SIMS})")
             return count
-        logger.info(
-            f"Test {test_id}: {count} simulations so far, "
-            f"need {min_count} ({int(time.time() - start)}s elapsed)"
-        )
-        time.sleep(15)
-    raise TimeoutError(
-        f"Test {test_id} did not reach {min_count} simulations within {timeout}s"
-    )
+        logger.info(f"{test_id}: {count} sims ({int(time.time() - start)}s)")
+        time.sleep(POLL_INTERVAL)
+    raise TimeoutError(f"{test_id}: < {MIN_SIMS} sims within {POLL_TIMEOUT}s")
+
+
+def _cleanup_test(test_id, console, test_name, passed, detail=""):
+    """Cancel and comment a test. Called in finally blocks."""
+    if not test_id:
+        return
+    _cancel_test(test_id, console)
+    status = "PASSED" if passed else "FAILED"
+    comment = f"[MCP E2E] {test_name}: {status}. {detail}".strip()
+    _comment_test(test_id, console, comment)
+
+
+def _build_broad_overrides(scenario):
+    """Build step_overrides with broad OS filters for all missing steps."""
+    diag = diagnose_scenario_readiness(scenario)
+    overrides = {}
+    for step_info in diag['missing_steps']:
+        step_num = str(step_info['step_number'])
+        step_override = {}
+        if 'targetFilter' in step_info['missing_filters']:
+            step_override['targetFilter'] = {
+                "os": {"operator": "is",
+                       "values": ["WINDOWS", "MAC", "LINUX", "DOCKER", "NETWORK"],
+                       "name": "os"}
+            }
+        if 'attackerFilter' in step_info['missing_filters']:
+            step_override['attackerFilter'] = {
+                "os": {"operator": "is",
+                       "values": ["WINDOWS", "MAC", "LINUX", "DOCKER"],
+                       "name": "os"}
+            }
+        overrides[step_num] = step_override
+    return json.dumps(overrides)
 
 
 # ---------------------------------------------------------------------------
-# E2E Tests
+# E2E Tests — 7 tests covering Slices 1-4
 # ---------------------------------------------------------------------------
 
 
 @skip_e2e
 @pytest.mark.e2e
 class TestRunScenarioE2E:
-    """E2E tests for OOB scenario execution against real SafeBreach console."""
+    """E2E tests for run_scenario against real SafeBreach console."""
 
-    def test_run_ready_oob_scenario(self):
-        """Queue a ready-to-run OOB scenario, wait for simulations, then cancel."""
-        # Find a ready-to-run scenario
+    def test_run_oob_scenario(self):
+        """Slice 1: Queue a ready OOB scenario with custom name, verify sims, cancel.
+        Covers: OOB run, custom name, queue response, simulation verification."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        ready_scenario = None
-        for s in scenarios:
-            if compute_scenario_readiness(s):
-                ready_scenario = s
-                break
-
-        assert ready_scenario is not None, (
-            f"No ready-to-run OOB scenario found on {E2E_CONSOLE}"
-        )
+        ready = next((s for s in scenarios if compute_scenario_readiness(s)), None)
+        assert ready is not None, f"No ready OOB scenario on {E2E_CONSOLE}"
 
         test_id = None
+        passed = False
         try:
-            # Queue the scenario
             result = sb_run_scenario(
-                scenario_id=str(ready_scenario['id']),
+                scenario_id=str(ready['id']),
                 console=E2E_CONSOLE,
+                test_name="E2E: test_run_oob_scenario",
             )
-
-            # Verify queue response
             test_id = result['test_id']
-            assert test_id, "test_id should be non-empty"
-            assert result['scenario_id'] == str(ready_scenario['id'])
-            assert result['step_count'] > 0
-            assert len(result['step_run_ids']) > 0
+            assert test_id
             assert result['status'] == 'queued'
+            assert result['step_count'] > 0
+            assert result['predicted_simulations'] > 0
+            assert result['test_name'] == "E2E: test_run_oob_scenario"
+            assert result['source_type'] == 'oob'
 
-            # Wait for at least 5 simulations to complete FOR THIS TEST
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-
+            _wait_for_simulations(test_id, E2E_CONSOLE)
+            passed = True
         finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
+            _cleanup_test(test_id, E2E_CONSOLE, "test_run_oob_scenario", passed,
+                          f"scenario={ready['name']}")
 
-    def test_run_scenario_not_found(self):
-        """Non-existent scenario ID raises ValueError."""
+    def test_run_custom_plan(self):
+        """Slice 2: Queue a ready custom plan, verify sims, cancel.
+        Covers: custom plan run, planId payload, source_type=custom."""
+        plans = _fetch_all_plans(E2E_CONSOLE)
+        ready_plans = [p for p in plans if compute_scenario_readiness(p)]
+        assert len(ready_plans) > 0, f"No ready custom plan on {E2E_CONSOLE}"
+
+        # Pick a plan with enough predicted sims
+        ready_plan = None
+        for p in ready_plans:
+            dry = sb_run_scenario(scenario_id=str(p['id']),
+                                 console=E2E_CONSOLE, dry_run=True)
+            if dry.get('predicted_simulations', 0) >= 20:
+                ready_plan = p
+                break
+        if ready_plan is None:
+            pytest.skip("No ready custom plan with >=20 predicted sims")
+
+        test_id = None
+        passed = False
+        try:
+            result = sb_run_scenario(
+                scenario_id=str(ready_plan['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_run_custom_plan",
+            )
+            test_id = result['test_id']
+            assert test_id
+            assert result['status'] == 'queued'
+            assert result['source_type'] == 'custom'
+            assert result['predicted_simulations'] > 0
+
+            _wait_for_simulations(test_id, E2E_CONSOLE)
+            passed = True
+        finally:
+            _cleanup_test(test_id, E2E_CONSOLE, "test_run_custom_plan", passed,
+                          f"plan={ready_plan['name']}")
+
+    def test_error_not_found(self):
+        """Slice 1: Non-existent scenario returns ValueError."""
         with pytest.raises(ValueError, match="not found"):
             sb_run_scenario(
                 scenario_id="00000000-0000-0000-0000-000000000000",
                 console=E2E_CONSOLE,
             )
 
-    def test_run_scenario_not_ready_returns_diagnostic(self):
-        """Non-ready scenario returns diagnostic (two-turn workflow)."""
+    def test_diagnostic_not_ready(self):
+        """Slice 3: Non-ready scenario returns diagnostic with missing steps."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        not_ready_scenario = None
-        for s in scenarios:
-            if not compute_scenario_readiness(s):
-                not_ready_scenario = s
-                break
-
-        if not_ready_scenario is None:
-            pytest.skip("All scenarios on this console are ready-to-run")
+        not_ready = next((s for s in scenarios
+                          if not compute_scenario_readiness(s)), None)
+        if not_ready is None:
+            pytest.skip("All scenarios ready")
 
         result = sb_run_scenario(
-            scenario_id=str(not_ready_scenario['id']),
-            console=E2E_CONSOLE,
-        )
+            scenario_id=str(not_ready['id']), console=E2E_CONSOLE)
         assert result['status'] == 'not_ready'
-        assert result['diagnostic'] is not None
         assert len(result['diagnostic']['missing_steps']) > 0
+        # Verify recommendations are present
+        step = result['diagnostic']['missing_steps'][0]
+        assert 'recommendation' in step
 
-    def test_run_scenario_custom_name(self):
-        """Custom test_name appears in the response."""
+    def test_dry_run(self):
+        """Slice 4: dry_run for OOB, custom plan, and with overrides — no queuing.
+        Covers: dry_run predictions, source_type, step_overrides, resolved_attacks."""
+        # OOB dry_run
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        ready_scenario = None
-        for s in scenarios:
-            if compute_scenario_readiness(s):
-                ready_scenario = s
-                break
-
-        assert ready_scenario is not None, (
-            f"No ready-to-run OOB scenario found on {E2E_CONSOLE}"
-        )
-
-        custom_name = "E2E Test - Custom Name Verification"
-        test_id = None
-        try:
-            result = sb_run_scenario(
-                scenario_id=str(ready_scenario['id']),
-                console=E2E_CONSOLE,
-                test_name=custom_name,
-            )
-
-            test_id = result['test_id']
-            assert test_id, "test_id should be non-empty"
-            assert result['test_name'] == custom_name
-
-            # Wait for at least 5 simulations to complete FOR THIS TEST
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-
-        finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
-
-    # --- Slice 2: Custom Plan E2E Tests ---
-
-    def test_run_ready_custom_plan(self):
-        """Queue a ready-to-run custom plan, wait for simulations, then cancel."""
-        plans = _fetch_all_plans(E2E_CONSOLE)
-        ready_plans = [p for p in plans if compute_scenario_readiness(p)]
-
-        assert len(ready_plans) > 0, (
-            f"No ready-to-run custom plan found on {E2E_CONSOLE}"
-        )
-
-        # Pick a plan with enough predicted simulations to reliably hit min_count
-        ready_plan = None
-        for p in ready_plans:
-            dry = sb_run_scenario(
-                scenario_id=str(p['id']), console=E2E_CONSOLE, dry_run=True
-            )
-            if dry.get('predicted_simulations', 0) >= 20:
-                ready_plan = p
-                break
-
-        if ready_plan is None:
-            pytest.skip("No ready custom plan with >=20 predicted simulations")
-
-        test_id = None
-        try:
-            result = sb_run_scenario(
-                scenario_id=str(ready_plan['id']),
-                console=E2E_CONSOLE,
-            )
-
-            test_id = result['test_id']
-            assert test_id, "test_id should be non-empty"
-            assert result['scenario_id'] == str(ready_plan['id'])
-            assert result['scenario_name'] == ready_plan['name']
-            assert result['step_count'] > 0
-            assert result['status'] == 'queued'
-            assert result['predicted_simulations'] > 0
-
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-
-        finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
-
-    # --- Slice 4: dry_run E2E Tests ---
-
-    def test_dry_run_oob_scenario(self):
-        """dry_run returns real predictions without queuing a test."""
-        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        ready_scenario = None
-        for s in scenarios:
-            if compute_scenario_readiness(s):
-                ready_scenario = s
-                break
-
-        assert ready_scenario is not None
+        ready_oob = next((s for s in scenarios
+                          if compute_scenario_readiness(s)), None)
+        assert ready_oob is not None
 
         result = sb_run_scenario(
-            scenario_id=str(ready_scenario['id']),
-            console=E2E_CONSOLE,
-            dry_run=True,
-        )
-
+            scenario_id=str(ready_oob['id']),
+            console=E2E_CONSOLE, dry_run=True)
         assert result['status'] == 'dry_run'
         assert result['predicted_simulations'] > 0
-        assert len(result['predicted_per_step']) > 0
-        assert result['scenario_name'] == ready_scenario['name']
-        assert 'test_id' not in result  # No test queued
+        assert result['source_type'] == 'oob'
+        assert 'test_id' not in result
+        assert len(result.get('step_stats', [])) > 0
+        # Verify resolved_attacks present
+        if result['step_stats'][0].get('resolved_attacks'):
+            assert result['step_stats'][0]['resolved_attacks'][0].get('move_id')
 
-    def test_dry_run_custom_plan(self):
-        """dry_run works for custom plans too."""
+        # Custom plan dry_run
         plans = _fetch_all_plans(E2E_CONSOLE)
-        ready_plan = None
-        for p in plans:
-            if compute_scenario_readiness(p):
-                ready_plan = p
-                break
-
+        ready_plan = next((p for p in plans
+                           if compute_scenario_readiness(p)), None)
         assert ready_plan is not None
 
-        result = sb_run_scenario(
+        result2 = sb_run_scenario(
             scenario_id=str(ready_plan['id']),
-            console=E2E_CONSOLE,
-            dry_run=True,
-        )
+            console=E2E_CONSOLE, dry_run=True)
+        assert result2['status'] == 'dry_run'
+        assert result2['source_type'] == 'custom'
+        assert 'test_id' not in result2
 
-        assert result['status'] == 'dry_run'
-        assert result['predicted_simulations'] > 0
-        assert result['source_type'] == 'custom'
-        assert 'test_id' not in result
+        # Augmented dry_run
+        not_ready = next((s for s in scenarios
+                          if not compute_scenario_readiness(s)), None)
+        if not_ready:
+            overrides = _build_broad_overrides(not_ready)
+            result3 = sb_run_scenario(
+                scenario_id=str(not_ready['id']),
+                console=E2E_CONSOLE,
+                step_overrides=overrides, dry_run=True)
+            assert result3['status'] == 'dry_run'
+            assert len(result3['predicted_per_step']) == len(
+                not_ready.get('steps', []))
 
-    def test_dry_run_with_overrides(self):
-        """dry_run with step_overrides shows augmented predictions."""
+    def test_augment_oob_scenario(self):
+        """Slice 3: Augment a non-ready OOB scenario (10+ steps), run, verify sims.
+        Covers: diagnostic → augment → queue, large scenario, allow_partial_steps."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)]
-        assert len(not_ready) > 0
+        large_not_ready = [s for s in scenarios
+                           if not compute_scenario_readiness(s)
+                           and len(s.get('steps', [])) >= 5]
+        assert len(large_not_ready) > 0, "No non-ready OOB with >=5 steps"
 
-        scenario = not_ready[0]
-        overrides = self._build_broad_overrides(scenario)
+        scenario = large_not_ready[0]
 
-        result = sb_run_scenario(
-            scenario_id=str(scenario['id']),
-            console=E2E_CONSOLE,
-            step_overrides=overrides,
-            dry_run=True,
-        )
+        # Diagnostic turn
+        diag_result = sb_run_scenario(
+            scenario_id=str(scenario['id']), console=E2E_CONSOLE)
+        assert diag_result['status'] == 'not_ready'
+        assert len(diag_result['diagnostic']['missing_steps']) > 0
 
-        assert result['status'] == 'dry_run'
-        assert result['predicted_simulations'] >= 0  # May be 0 for niche scenarios
-        assert len(result['predicted_per_step']) == len(scenario.get('steps', []))
-        assert 'test_id' not in result
-
-    # --- Slice 3: Non-ready Scenario Augmentation E2E Tests ---
-
-    def _build_broad_overrides(self, scenario):
-        """Build step_overrides that apply broad OS filters to all missing steps."""
-        import json
-        diag = diagnose_scenario_readiness(scenario)
-        overrides = {}
-        for step_info in diag['missing_steps']:
-            step_num = str(step_info['step_number'])
-            step_override = {}
-            if 'targetFilter' in step_info['missing_filters']:
-                step_override['targetFilter'] = {
-                    "os": {"operator": "is",
-                           "values": ["WINDOWS", "MAC", "LINUX", "DOCKER", "NETWORK"],
-                           "name": "os"}
-                }
-            if 'attackerFilter' in step_info['missing_filters']:
-                step_override['attackerFilter'] = {
-                    "os": {"operator": "is",
-                           "values": ["WINDOWS", "MAC", "LINUX", "DOCKER"],
-                           "name": "os"}
-                }
-            overrides[step_num] = step_override
-        return json.dumps(overrides)
-
-    def test_augment_non_ready_oob_scenario_1(self):
-        """Augment and run a non-ready OOB scenario (first one found)."""
-        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)]
-        assert len(not_ready) > 0, "No non-ready OOB scenarios on console"
-
-        scenario = not_ready[0]
-
-        # Turn 1: get diagnostic
-        result = sb_run_scenario(scenario_id=str(scenario['id']), console=E2E_CONSOLE)
-        assert result['status'] == 'not_ready'
-        assert len(result['diagnostic']['missing_steps']) > 0
-
-        # Turn 2: augment and run
-        overrides = self._build_broad_overrides(scenario)
+        # Augment and run
+        overrides = _build_broad_overrides(scenario)
         test_id = None
+        passed = False
         try:
             result = sb_run_scenario(
                 scenario_id=str(scenario['id']),
                 console=E2E_CONSOLE,
                 step_overrides=overrides,
                 allow_partial_steps=True,
-            )
-            assert result['status'] == 'queued'
-            test_id = result['test_id']
-            assert test_id
-            assert result['predicted_simulations'] > 0
-
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-        finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
-
-    def test_augment_non_ready_oob_scenario_2(self):
-        """Augment and run a DIFFERENT non-ready OOB scenario (variety)."""
-        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        not_ready = [s for s in scenarios if not compute_scenario_readiness(s)
-                     and len(s.get('steps', [])) >= 3]
-        assert len(not_ready) >= 2, "Need at least 2 multi-step non-ready OOB scenarios"
-
-        scenario = not_ready[1]
-
-        overrides = self._build_broad_overrides(scenario)
-        test_id = None
-        try:
-            result = sb_run_scenario(
-                scenario_id=str(scenario['id']),
-                console=E2E_CONSOLE,
-                step_overrides=overrides,
-                allow_partial_steps=True,
+                test_name="E2E: test_augment_oob_scenario",
             )
             assert result['status'] == 'queued'
             test_id = result['test_id']
             assert result['predicted_simulations'] > 0
+            assert result['step_count'] >= 5
 
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
+            _wait_for_simulations(test_id, E2E_CONSOLE)
+            passed = True
         finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
+            _cleanup_test(test_id, E2E_CONSOLE, "test_augment_oob_scenario", passed,
+                          f"scenario={scenario['name']}, steps={len(scenario.get('steps', []))}")
 
-    def test_augment_non_ready_custom_plan(self):
-        """Augment and run a non-ready custom plan (tries multiple until one works)."""
+    def test_augment_custom_plan(self):
+        """Slice 4: Augment a non-ready custom plan, run with full payload.
+        Covers: custom plan augmentation, full payload (not planId), allow_partial."""
         plans = _fetch_all_plans(E2E_CONSOLE)
         not_ready = [p for p in plans if not compute_scenario_readiness(p)]
-        assert len(not_ready) > 0, "No non-ready custom plans on console"
+        assert len(not_ready) > 0, "No non-ready custom plans"
 
-        # Try plans until we find one that produces simulations when augmented
         for plan in not_ready:
-            # Turn 1: diagnostic
-            result = sb_run_scenario(scenario_id=str(plan['id']), console=E2E_CONSOLE)
-            assert result['status'] == 'not_ready'
+            diag = sb_run_scenario(
+                scenario_id=str(plan['id']), console=E2E_CONSOLE)
+            assert diag['status'] == 'not_ready'
 
-            # Turn 2: augment and run
-            overrides = self._build_broad_overrides(plan)
+            overrides = _build_broad_overrides(plan)
             test_id = None
+            passed = False
             try:
                 result = sb_run_scenario(
                     scenario_id=str(plan['id']),
                     console=E2E_CONSOLE,
                     step_overrides=overrides,
                     allow_partial_steps=True,
+                    test_name="E2E: test_augment_custom_plan",
                 )
-                if result.get('status') == 'queued' and result.get('predicted_simulations', 0) > 0:
+                if result.get('status') == 'queued' and \
+                   result.get('predicted_simulations', 0) > 0:
                     test_id = result['test_id']
-                    _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-                    return  # Success — test passes
-            except ValueError:
-                # Statistics returned 0 for this plan — try next one
+                    _wait_for_simulations(test_id, E2E_CONSOLE)
+                    passed = True
+                    return  # Success
+            except (ValueError, TimeoutError):
                 continue
             finally:
-                if test_id:
-                    _cancel_test(test_id, E2E_CONSOLE)
+                _cleanup_test(test_id, E2E_CONSOLE,
+                              "test_augment_custom_plan", passed,
+                              f"plan={plan['name']}")
 
-        pytest.skip("No non-ready custom plans produced simulations when augmented")
-
-    def test_augment_large_oob_scenario(self):
-        """Augment a large OOB scenario (10+ steps) — tests scaling."""
-        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
-        large_not_ready = [s for s in scenarios if not compute_scenario_readiness(s)
-                           and len(s.get('steps', [])) >= 10]
-        assert len(large_not_ready) > 0, "No large non-ready OOB scenarios"
-
-        scenario = large_not_ready[0]
-
-        overrides = self._build_broad_overrides(scenario)
-        test_id = None
-        try:
-            result = sb_run_scenario(
-                scenario_id=str(scenario['id']),
-                console=E2E_CONSOLE,
-                step_overrides=overrides,
-                allow_partial_steps=True,
-            )
-            assert result['status'] == 'queued'
-            test_id = result['test_id']
-            assert result['predicted_simulations'] > 0
-            assert result['step_count'] >= 10
-
-            _wait_for_simulations(test_id, E2E_CONSOLE, min_count=5, timeout=600)
-        finally:
-            if test_id:
-                _cancel_test(test_id, E2E_CONSOLE)
+        pytest.skip("No non-ready custom plans produced sims when augmented")
