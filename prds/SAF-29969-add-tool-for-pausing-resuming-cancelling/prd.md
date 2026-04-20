@@ -216,9 +216,12 @@ Every slice follows the same cycle:
 
 ### E2E Testing
 
-- **Scope**: Cancel a test that was queued via `run_scenario`
+- **Approach**: E2E test is created in Phase 1 and extended with each subsequent phase
 - **Markers**: `@pytest.mark.e2e`, `@skip_e2e`
 - **Environment**: Requires real SafeBreach console (E2E_CONSOLE env var)
+- **File**: `test_e2e_manage_test.py` (new, dedicated file)
+- **Growth**: Phase 1 creates the E2E skeleton (cancel), later phases extend it
+  (pause, resume, reason/notes)
 
 ---
 
@@ -232,14 +235,13 @@ the minimum code to pass. Each phase produces a working, tested, committable inc
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Cancel test (end-to-end) | ⏳ Pending | - | - | Thinnest slice: simplest action |
-| Phase 2: Pause test | ⏳ Pending | - | - | Adds PUT with body |
-| Phase 3: Resume test | ⏳ Pending | - | - | Same endpoint, different body |
-| Phase 4: Input validation | ⏳ Pending | - | - | Guard rails |
-| Phase 5: Reason notes | ⏳ Pending | - | - | Read-then-append feature |
-| Phase 6: Note resilience | ⏳ Pending | - | - | Best-effort, failure isolation |
-| Phase 7: hint_to_agent | ⏳ Pending | - | - | LLM guidance per action |
-| Phase 8: E2E + Documentation | ⏳ Pending | - | - | Real environment verification |
+| Phase 1: Cancel test (end-to-end) | ⏳ Pending | - | - | Thinnest slice + E2E skeleton |
+| Phase 2: Pause test | ⏳ Pending | - | - | Adds PUT + extends E2E |
+| Phase 3: Resume test | ⏳ Pending | - | - | Same endpoint + extends E2E |
+| Phase 4: Input validation | ⏳ Pending | - | - | Guard rails (unit tests only) |
+| Phase 5: Reason notes | ⏳ Pending | - | - | Read-then-append + extends E2E |
+| Phase 6: Note resilience | ⏳ Pending | - | - | Best-effort (unit tests only) |
+| Phase 7: hint_to_agent + Documentation | ⏳ Pending | - | - | LLM guidance + CLAUDE.md |
 
 ---
 
@@ -253,6 +255,8 @@ HTTP pattern. After this phase, an agent can cancel a test end-to-end.
 **TDD Cycle**:
 
 **Red — Write failing tests:**
+
+*Unit tests (`test_studio_functions.py`):*
 1. In `test_studio_functions.py`, create `TestManageTest` class
 2. `test_cancel_success`: mock auth + mock DELETE returning 200 →
    call `sb_manage_test(test_id="1776488350786.15", action="cancel", console="test")` →
@@ -265,6 +269,13 @@ HTTP pattern. After this phase, an agent can cancel a test end-to-end.
 4. `test_cancel_tool_success`: call the tool function `manage_test(...)` directly →
    assert returns Markdown string containing `## Test Cancel` and test_id
 5. `test_cancel_tool_error`: mock to raise → assert returns error string (no exception)
+
+*E2E test (`test_e2e_manage_test.py` — new file):*
+6. Create `test_e2e_manage_test.py` with `@pytest.mark.e2e`, `@skip_e2e` decorators
+7. `test_e2e_cancel_test`: queue a small test via `sb_run_scenario`, extract `test_id`,
+   call `sb_manage_test(test_id, action="cancel", console=E2E_CONSOLE)`,
+   assert result has `status="success"` and `action="cancel"`,
+   use try/finally to ensure test is cancelled even on assertion failure
 
 **Green — Implement minimum code:**
 1. In `studio_functions.py`:
@@ -289,6 +300,7 @@ HTTP pattern. After this phase, an agent can cancel a test end-to-end.
 | File | Change |
 |------|--------|
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add `TestManageTest` with cancel tests |
+| `safebreach_mcp_studio/tests/test_e2e_manage_test.py` | Create E2E skeleton with cancel test |
 | `safebreach_mcp_studio/studio_functions.py` | Add `_set_test_state` (cancel), `sb_manage_test` |
 | `safebreach_mcp_studio/studio_server.py` | Register `manage_test` tool |
 
@@ -305,11 +317,17 @@ Adds PUT with JSON body — slightly more complex than DELETE.
 **TDD Cycle**:
 
 **Red — Write failing tests:**
+
+*Unit tests:*
 1. `test_pause_success`: mock auth + mock PUT returning 200 →
    call `sb_manage_test(test_id="...", action="pause")` →
    assert returns dict with `action="pause"`, `status="success"` →
    assert PUT called with URL `.../queue/{test_id}/state`,
    JSON body `{"status": "pause"}`, Content-Type header, timeout 120s
+
+*E2E test (extend `test_e2e_manage_test.py`):*
+2. `test_e2e_pause_test`: queue a test, call `sb_manage_test(test_id, action="pause")`,
+   assert result has `status="success"`, cancel test in cleanup
 
 **Green — Extend `_set_test_state`:**
 1. Add pause branch: if action is "pause":
@@ -323,6 +341,7 @@ Adds PUT with JSON body — slightly more complex than DELETE.
 | File | Change |
 |------|--------|
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add `test_pause_success` |
+| `safebreach_mcp_studio/tests/test_e2e_manage_test.py` | Add `test_e2e_pause_test` |
 | `safebreach_mcp_studio/studio_functions.py` | Extend `_set_test_state` for pause |
 
 **Git Commit**: `feat(studio): add pause support to manage_test [TDD]`
@@ -338,10 +357,17 @@ Same endpoint as pause, different body — trivial extension.
 **TDD Cycle**:
 
 **Red — Write failing tests:**
+
+*Unit tests:*
 1. `test_resume_success`: mock auth + mock PUT returning 200 →
    call `sb_manage_test(test_id="...", action="resume")` →
    assert returns dict with `action="resume"`, `status="success"` →
    assert PUT called with JSON body `{"status": "resume"}`
+
+*E2E test (extend `test_e2e_manage_test.py`):*
+2. `test_e2e_pause_and_resume_test`: queue a test, pause it, then resume it,
+   assert both operations return `status="success"`, cancel test in cleanup.
+   This is the full pause→resume lifecycle in a single E2E test.
 
 **Green — Extend `_set_test_state`:**
 1. Resume uses the same code path as pause — the action value is already passed as
@@ -355,6 +381,7 @@ Same endpoint as pause, different body — trivial extension.
 | File | Change |
 |------|--------|
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add `test_resume_success` |
+| `safebreach_mcp_studio/tests/test_e2e_manage_test.py` | Add `test_e2e_pause_and_resume_test` |
 | `safebreach_mcp_studio/studio_functions.py` | May need no change if pause used generic `action` |
 
 **Git Commit**: `feat(studio): add resume support to manage_test [TDD]`
@@ -419,6 +446,11 @@ test's comment field.
    call `sb_manage_test(test_id, "cancel")` →
    assert `_append_test_note` is NOT called, result has no `note_status`
 
+*E2E test (extend `test_e2e_manage_test.py`):*
+6. `test_e2e_cancel_with_reason`: queue a test, cancel with
+   `reason="E2E automated cleanup"`, assert `note_status="success"`,
+   optionally GET the test summary and verify `comment` field contains the note text
+
 **Green — Implement `_append_test_note` + wire into `sb_manage_test`:**
 1. Add `_append_test_note(test_id, action, reason, console)`:
    - Auth via `get_api_base_url(console, 'data')`
@@ -438,6 +470,7 @@ test's comment field.
 | File | Change |
 |------|--------|
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add note tests |
+| `safebreach_mcp_studio/tests/test_e2e_manage_test.py` | Add `test_e2e_cancel_with_reason` |
 | `safebreach_mcp_studio/studio_functions.py` | Add `_append_test_note`, wire into `sb_manage_test` |
 
 **Git Commit**: `feat(studio): add reason/notes support to manage_test [TDD]`
@@ -483,9 +516,9 @@ note warning when `note_status="failed"`.
 
 ---
 
-### Phase 7: hint_to_agent
+### Phase 7: hint_to_agent + Documentation
 
-**Semantic Change**: Add contextual LLM guidance per action in the response.
+**Semantic Change**: Add contextual LLM guidance per action and update project documentation.
 
 **TDD Cycle**:
 
@@ -507,6 +540,13 @@ note warning when `note_status="failed"`.
 
 **Refactor**: Update tool Markdown output to include hint. All tests green.
 
+**Documentation:**
+1. Add `manage_test` entry to the Studio Server tools section in CLAUDE.md
+2. Include: tool name, parameters, description, supported actions, reason/note behavior,
+   hint_to_agent behavior
+3. Follow existing `run_scenario` documentation format
+4. Update MCP Tools Available count
+
 **Changes**:
 
 | File | Change |
@@ -514,42 +554,9 @@ note warning when `note_status="failed"`.
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add hint tests |
 | `safebreach_mcp_studio/studio_functions.py` | Add `hint_to_agent` to result |
 | `safebreach_mcp_studio/studio_server.py` | Include hint in Markdown output |
-
-**Git Commit**: `feat(studio): add hint_to_agent to manage_test responses [TDD]`
-
----
-
-### Phase 8: E2E Tests + Documentation
-
-**Semantic Change**: Verify in real environment and make the tool discoverable.
-
-**Deliverables**:
-- E2E test for cancel lifecycle with reason
-- CLAUDE.md updated with manage_test documentation
-
-**Implementation Details**:
-
-1. **E2E test** in `test_e2e_run_scenario.py` (or new `test_e2e_manage_test.py`):
-   - Decorators: `@pytest.mark.e2e`, `@skip_e2e`
-   - Queue a small test via `sb_run_scenario`, extract `test_id`
-   - Call `sb_manage_test(test_id, action="cancel", console=E2E_CONSOLE,
-     reason="E2E test cleanup")`
-   - Assert result has `status="success"`, `action="cancel"`, `note_status="success"`
-   - Cleanup: try/finally to ensure test is cancelled even on assertion failure
-2. **CLAUDE.md**: Add `manage_test` entry to Studio Server tools section
-   - Tool name, parameters, description, supported actions, reason/note behavior,
-     hint_to_agent behavior
-   - Follow existing `run_scenario` documentation format
-   - Update MCP Tools Available count
-
-**Changes**:
-
-| File | Change |
-|------|--------|
-| `safebreach_mcp_studio/tests/test_e2e_run_scenario.py` | Add E2E cancel test with reason |
 | `CLAUDE.md` | Add `manage_test` tool to Studio Server section |
 
-**Git Commit**: `test(studio): add E2E test and docs for manage_test`
+**Git Commit**: `feat(studio): add hint_to_agent and docs for manage_test [TDD]`
 
 ---
 
@@ -604,4 +611,5 @@ note warning when `note_status="failed"`.
 | Date | Change Description |
 |------|-------------------|
 | 2026-04-20 12:00 | PRD created — initial draft |
-| 2026-04-20 12:15 | Restructured to elephant carpaccio + pure TDD — 8 vertical slices |
+| 2026-04-20 12:15 | Restructured to elephant carpaccio + pure TDD — 7 vertical slices |
+| 2026-04-20 12:20 | E2E tests integrated into phases 1-3 and 5 instead of standalone phase |
