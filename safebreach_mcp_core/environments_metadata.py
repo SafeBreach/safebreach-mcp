@@ -97,13 +97,14 @@ def get_api_base_url(console:str, endpoint:str) -> str:
     
     Args:
         console: Console name (e.g., 'demo-console', 'example-console')
-        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook', 'orchestrator'
+        endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook', 'orchestrator', 'content-manager'
 
     Returns:
         Base URL as a string
     """
     # Priority 1: Single-tenant mode (environment variables)
-    env_var_name = f'{endpoint.upper()}_URL'
+    # Normalize hyphenated endpoint names for env var lookup (e.g., content-manager -> CONTENT_MANAGER_URL)
+    env_var_name = f'{endpoint.upper().replace("-", "_")}_URL'
     env_url = os.getenv(env_var_name)
 
     if env_url:
