@@ -213,15 +213,24 @@ class TestRunScenarioE2E:
     def test_run_ready_custom_plan(self):
         """Queue a ready-to-run custom plan, wait for simulations, then cancel."""
         plans = _fetch_all_plans(E2E_CONSOLE)
+        ready_plans = [p for p in plans if compute_scenario_readiness(p)]
+
+        assert len(ready_plans) > 0, (
+            f"No ready-to-run custom plan found on {E2E_CONSOLE}"
+        )
+
+        # Pick a plan with enough predicted simulations to reliably hit min_count
         ready_plan = None
-        for p in plans:
-            if compute_scenario_readiness(p):
+        for p in ready_plans:
+            dry = sb_run_scenario(
+                scenario_id=str(p['id']), console=E2E_CONSOLE, dry_run=True
+            )
+            if dry.get('predicted_simulations', 0) >= 20:
                 ready_plan = p
                 break
 
-        assert ready_plan is not None, (
-            f"No ready-to-run custom plan found on {E2E_CONSOLE}"
-        )
+        if ready_plan is None:
+            pytest.skip("No ready custom plan with >=20 predicted simulations")
 
         test_id = None
         try:
