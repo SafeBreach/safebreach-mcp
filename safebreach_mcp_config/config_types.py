@@ -130,6 +130,8 @@ def compute_is_ready_to_run(scenario: Dict[str, Any]) -> bool:
     if not steps:
         return False
     for step in steps:
+        if not isinstance(step, dict):
+            return False
         target = step.get('targetFilter', {})
         attacker = step.get('attackerFilter', {})
         if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):

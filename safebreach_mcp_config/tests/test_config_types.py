@@ -572,3 +572,37 @@ class TestPaginateScenarios:
         assert result["total_scenarios"] == 5
         assert len(result["scenarios_in_page"]) == 5
         assert result["hint_to_agent"] is None
+
+
+class TestMalformedScenarioSteps:
+    """Regression tests for malformed scenario data from content-manager API.
+
+    Staging (scenario index 218) has a scenario with id=None where steps[0]
+    is a list instead of a dict, causing 'list' object has no attribute 'get'.
+    """
+
+    def test_compute_is_ready_to_run_with_list_step(self):
+        """Steps containing a list instead of dict should not crash."""
+        scenario = {
+            "id": None,
+            "name": "Malformed scenario",
+            "steps": [
+                [{"name": "inner step", "targetFilter": {}, "attackerFilter": {}}]
+            ],
+        }
+        result = compute_is_ready_to_run(scenario)
+        assert result is False
+
+    def test_get_reduced_scenario_mapping_with_list_step(self):
+        """get_reduced_scenario_mapping should handle scenario with list-type step."""
+        scenario = {
+            "id": "abc-123",
+            "name": "Malformed scenario",
+            "steps": [
+                [{"name": "inner step"}]
+            ],
+            "categories": [],
+        }
+        result = get_reduced_scenario_mapping(scenario, {})
+        assert result["is_ready_to_run"] is False
+        assert result["step_count"] == 1
