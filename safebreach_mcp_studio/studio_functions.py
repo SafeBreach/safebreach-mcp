@@ -1683,6 +1683,8 @@ def compute_scenario_readiness(scenario):
     if not steps:
         return False
     for step in steps:
+        if not isinstance(step, dict):
+            return False
         target = step.get('targetFilter', {})
         attacker = step.get('attackerFilter', {})
         if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):
