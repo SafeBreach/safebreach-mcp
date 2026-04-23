@@ -180,7 +180,7 @@ Tests run against real SafeBreach environments using the existing E2E infrastruc
 |-------|--------|-----------|------------|-------|
 | Phase 1: step_overrides documentation | ✅ Complete | 2026-04-23 | - | |
 | Phase 2: Statistics API error propagation (TDD) | ✅ Complete | 2026-04-23 | - | |
-| Phase 3: Attack count in scenario listing (TDD) | ⏳ Pending | - | - | |
+| Phase 3: Attack count in scenario listing (TDD) | ✅ Complete | 2026-04-23 | - | |
 | Phase 4: CLAUDE.md update | ⏳ Pending | - | - | |
 
 ### Phase 1: step_overrides Documentation Enhancement
