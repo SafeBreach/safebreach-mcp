@@ -282,6 +282,8 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   returns plans only. Other filters: name, category (OOB only), recommended (OOB only), tag, ready-to-run.
   Ready-to-run = all steps have both targetFilter AND attackerFilter with non-empty criteria values.
   Supports ordering by name, step_count, createdAt, updatedAt (asc/desc). PAGE_SIZE=10 with hint_to_agent.
+  Each scenario includes `total_attack_count` (int or None for criteria-based).
+  Conditional `hint_to_agent` when indeterminate counts exist: use `run_scenario` with `dry_run=True`.
 4. `get_scenario_details` ✨ **NEW** - Full scenario/plan payload by ID. Accepts UUID string (OOB) or
   integer-as-string (custom plan). Returns complete payload including all steps with attack filters,
   system/target/attacker filters, phases, actions, edges, plus `source_type` and resolved category names
@@ -339,8 +341,11 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   use `planId` reference (or full payload when augmented with overrides).
   **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
   `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0),
-  `step_overrides` (JSON string — replaces entire filter per step, supports `"default"` key
-  for applying to all missing steps), `dry_run` (default False — preview without queuing),
+  `step_overrides` (JSON string — replaces entire filter per step. **Filter schema**: each filter
+  key must be `{"<type>": {"operator": "is", "values": [...], "name": "<type>"}}`. Valid types:
+  os, role, simulators, connection. Supports `"default"` key for applying to all missing steps —
+  note: "default" only applies to fully-missing steps, not partially-ready ones),
+  `dry_run` (default False — preview without queuing),
   `verbose_failures` (default False — per-attack constraint detail for partial steps).
   **Three-turn workflow**: (1) Call without overrides → diagnostic showing missing filters with
   per-step recommendations (role for network steps, OS for host-level). (2) Call with
@@ -353,6 +358,8 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   **Simulator capabilities**: `get_console_simulators` includes roles (isInfiltration, isExfiltration,
   isAWSAttacker, etc.), assets (resolved names), simulationUsers (impersonated users),
   and isProxySupported for informed filter planning.
+  **Error handling**: Statistics API, scenario fetch, and plan fetch errors now propagate the
+  full API response body in error messages (not just generic HTTP status codes).
 21. `manage_test` ✨ **NEW** - Manage a running test's lifecycle (pause, resume, cancel).
   Single tool with `action` parameter for all three operations. Accepts `test_id` (planRunId
   from `run_scenario`), `action` (required: "pause", "resume", or "cancel"), `console`,
