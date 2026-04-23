@@ -1930,7 +1930,14 @@ def _fetch_all_scenarios(console):
 
     logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Scenario fetch error {response.status_code}: {body}")
+        raise ValueError(
+            f"Scenario fetch error ({response.status_code}): {body}"
+        )
 
     scenarios = response.json()
     logger.info(f"Retrieved {len(scenarios)} scenarios for console '{console}'")
@@ -1956,7 +1963,14 @@ def _fetch_all_plans(console):
 
     logger.info(f"Fetching custom plans from API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Plan fetch error {response.status_code}: {body}")
+        raise ValueError(
+            f"Plan fetch error ({response.status_code}): {body}"
+        )
 
     response_data = response.json()
     plans = response_data.get("data", []) if isinstance(response_data, dict) else response_data
@@ -2173,7 +2187,14 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
                 f"{' (with constraints)' if include_constraints else ''}")
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Statistics API error {response.status_code}: {body}")
+        raise ValueError(
+            f"Statistics API error ({response.status_code}): {body}"
+        )
 
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])

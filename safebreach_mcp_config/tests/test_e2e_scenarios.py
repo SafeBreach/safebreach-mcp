@@ -192,3 +192,65 @@ class TestScenarioE2E:
         for step in detail['steps']:
             assert 'name' in step
             assert 'attack_selection' in step
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestTotalAttackCountE2E:
+    """E2E tests for SAF-30319: total_attack_count in scenario listing."""
+
+    def setup_method(self):
+        clear_scenarios_cache()
+        clear_categories_cache()
+
+    def test_scenarios_have_total_attack_count_field(self):
+        """Every scenario in the listing should have a total_attack_count field."""
+        result = sb_get_scenarios(console=E2E_CONSOLE, page_number=0)
+
+        assert result['total_scenarios'] > 0
+        for scenario in result['scenarios_in_page']:
+            assert 'total_attack_count' in scenario, \
+                f"Scenario '{scenario['name']}' missing total_attack_count field"
+            # Value should be int (known count) or None (indeterminate)
+            count = scenario['total_attack_count']
+            assert count is None or isinstance(count, int), \
+                f"Expected int or None, got {type(count)} for '{scenario['name']}'"
+
+    def test_total_attack_count_consistent_with_details(self):
+        """total_attack_count in listing should match sum of playbook_ids in details."""
+        result = sb_get_scenarios(
+            console=E2E_CONSOLE, creator_filter="safebreach", page_number=0
+        )
+
+        # Find a scenario with a known attack count (not None)
+        known_count_scenario = None
+        for s in result['scenarios_in_page']:
+            if s['total_attack_count'] is not None and s['total_attack_count'] > 0:
+                known_count_scenario = s
+                break
+
+        if known_count_scenario is None:
+            pytest.skip("No OOB scenario with known attack count found")
+
+        # Get full details and count playbook_ids across steps
+        detail = sb_get_scenario_details(
+            str(known_count_scenario['id']), console=E2E_CONSOLE
+        )
+        detail_attack_count = 0
+        for step in detail.get('steps', []):
+            selection = step.get('attack_selection', {})
+            if selection.get('mode') == 'playbook_ids':
+                detail_attack_count += len(selection.get('playbook_ids', []))
+
+        assert known_count_scenario['total_attack_count'] == detail_attack_count, \
+            f"Listing count {known_count_scenario['total_attack_count']} != " \
+            f"detail count {detail_attack_count} for '{known_count_scenario['name']}'"
+
+    def test_custom_plans_have_total_attack_count(self):
+        """Custom plans should also include total_attack_count."""
+        result = sb_get_scenarios(console=E2E_CONSOLE, creator_filter="custom")
+
+        assert result['total_scenarios'] > 0
+        for scenario in result['scenarios_in_page']:
+            assert 'total_attack_count' in scenario, \
+                f"Custom plan '{scenario['name']}' missing total_attack_count"
