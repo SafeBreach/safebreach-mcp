@@ -1010,9 +1010,22 @@ Parameters:
   overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
   need to provide missing targetFilter/attackerFilter for specific steps.
   Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
-  Supports a "default" key that applies to all missing steps without explicit overrides.
+
+  **Filter schema** — each filter key must contain an object with THREE required fields:
+  `{"<filter_type>": {"operator": "is", "values": [...], "name": "<filter_type>"}}`
+  The `name` field MUST match the outer key name. Available filter types and valid values:
+  - os: values=["WINDOWS","MAC","LINUX","DOCKER","NETWORK"] (NETWORK is target-only)
+  - role: values=["isInfiltration","isExfiltration","isAWSAttacker","isAzureAttacker",
+    "isGCPAttacker","isWebApplicationAttacker"]
+  - simulators: values=["<uuid>", ...] (use get_console_simulators to discover UUIDs)
+  - connection: values=[true] (all connected simulators)
+
+  **"default" key**: Use `"default"` to apply the same override to ALL steps that are
+  missing filters. Steps with explicit per-number overrides take precedence over "default".
+  Limitation: "default" only applies to steps that are fully missing the relevant filter —
+  it does NOT merge with partially-ready steps that already have one filter side set.
+
   Format: '{"default": {"targetFilter": {...}, "attackerFilter": {...}}, "8": {"attackerFilter": {...}}}'
-  Per-step entries override the default entirely for that step.
 - dry_run (optional, bool, default False): If True, predict simulation counts per step
   without actually queuing the test. Use this to preview what would happen before committing
   to a real execution. Shows resolved attacks per step and constraint diagnostics.
@@ -1120,6 +1133,9 @@ Example (3-turn workflow for non-ready scenarios):
                         "Use `get_console_simulators` (Config Server) to discover "
                         "available simulators and their roles.",
                         "",
+                        "**Filter schema** — each filter key MUST have 3 fields: "
+                        "`operator`, `values`, and `name` (must match the key):",
+                        "",
                         "**Filter options:**",
                         '- OS: `{"os": {"operator": "is", '
                         '"values": ["WINDOWS", "LINUX"], "name": "os"}}`',
@@ -1130,6 +1146,10 @@ Example (3-turn workflow for non-ready scenarios):
                         '- All connected: `{"connection": {"operator": "is", '
                         '"values": [true], "name": "connection"}}`',
                         "",
+                        "**Valid OS values:**",
+                        "- targetFilter: WINDOWS, MAC, LINUX, DOCKER, NETWORK",
+                        "- attackerFilter: WINDOWS, MAC, LINUX, DOCKER",
+                        "",
                         "**Valid role values** (use with attackerFilter):",
                         "- `isInfiltration` — infiltration attacker (network-in)",
                         "- `isExfiltration` — exfiltration attacker (data-out)",
@@ -1137,6 +1157,14 @@ Example (3-turn workflow for non-ready scenarios):
                         "- `isAzureAttacker` — Azure cloud attacker",
                         "- `isGCPAttacker` — GCP cloud attacker",
                         "- `isWebApplicationAttacker` — web application attacker",
+                        "",
+                        "**\"default\" key shortcut:** Use `\"default\"` in "
+                        "step_overrides to apply the same filter to ALL missing "
+                        "steps at once. Example: "
+                        '`\'{"default": {"targetFilter": {"os": {"operator": "is", '
+                        '"values": ["LINUX"], "name": "os"}}}}\'`',
+                        "Note: \"default\" only applies to steps fully missing "
+                        "the relevant filter, not to partially-ready steps.",
                         "",
                         "Use `get_console_simulators` to see which simulators have "
                         "which roles (look for role fields in the output).",
