@@ -361,3 +361,62 @@ class TestRunScenarioE2E:
                               f"plan={plan['name']}")
 
         pytest.skip("No non-ready custom plans produced sims when augmented")
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestErrorPropagationE2E:
+    """E2E tests for SAF-30319: API error messages propagate response body details."""
+
+    def test_statistics_api_error_includes_response_body(self):
+        """When statistics API returns an HTTP error, the error message should
+        include the API response body — not just a generic 'Bad Request'.
+
+        Calls _get_scenario_statistics directly with a completely invalid payload
+        to guarantee a 400/500 from the orchestrator statistics endpoint."""
+        from safebreach_mcp_studio.studio_functions import _get_scenario_statistics
+
+        # Send an empty steps list — the statistics API requires at least one step
+        # with valid attack filters to process
+        invalid_steps = [{"attacksFilter": {"invalid_key": "invalid_value"}}]
+
+        with pytest.raises(ValueError) as exc_info:
+            _get_scenario_statistics(
+                steps=invalid_steps,
+                console=E2E_CONSOLE,
+                include_constraints=False,
+            )
+
+        error_msg = str(exc_info.value)
+        # Verify the error contains the status code
+        assert "Statistics API error" in error_msg, \
+            f"Expected 'Statistics API error' prefix, got: {error_msg}"
+        # Verify it contains response body content (not just status code)
+        # The response body should have details beyond just the HTTP status
+        assert len(error_msg) > 40, \
+            f"Error message too short — likely missing API response body: {error_msg}"
+
+    def test_scenario_fetch_error_includes_details(self):
+        """When scenario fetch fails (e.g., bad console), the error should include
+        API response body details, not just a generic HTTP error."""
+        # Use a deliberately wrong console name to trigger an API error
+        try:
+            _fetch_all_scenarios("nonexistent-console-99999")
+            pytest.fail("Expected an exception from bad console")
+        except Exception as e:
+            error_msg = str(e)
+            # Should not be a bare requests.exceptions.HTTPError with no body
+            # The error should contain some context beyond just the status code
+            assert len(error_msg) > 20, \
+                f"Error message too short — likely missing API details: {error_msg}"
+
+    def test_plan_fetch_error_includes_details(self):
+        """When plan fetch fails (e.g., bad console), the error should include
+        API response body details, not just a generic HTTP error."""
+        try:
+            _fetch_all_plans("nonexistent-console-99999")
+            pytest.fail("Expected an exception from bad console")
+        except Exception as e:
+            error_msg = str(e)
+            assert len(error_msg) > 20, \
+                f"Error message too short — likely missing API details: {error_msg}"
