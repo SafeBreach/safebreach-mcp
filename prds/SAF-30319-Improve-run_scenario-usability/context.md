@@ -1,7 +1,7 @@
 # Ticket Context: SAF-30319
 
 ## Status
-Phase 4: Investigation Complete
+Phase 6: PRD Created
 
 ## Mode
 Improving
@@ -81,6 +81,87 @@ and actionable error messages are critical.
    Generic "400 Client Error" with no actionable context.
 
 Status: Phase 5 Complete - Approved by user
+
+## Deep Investigation Findings (PRD Phase 4)
+
+### Architecture: No Inter-Server Communication
+- Studio and Config servers both call SafeBreach backend APIs independently
+- Studio fetches scenarios from content-manager API (`studio_functions.py:1915-1937`)
+- Studio fetches plans from config API (`studio_functions.py:1940-1965`)
+- Studio calls orchestrator statistics API (`studio_functions.py:2144-2235`)
+- No studio→config server dependency; enrichment must call backend APIs directly
+
+### Issue 1: step_overrides - Complete Filter Schema
+- **Valid filter structure**: `{filter_type: {operator: "is", values: [...], name: filter_type}}`
+- **Valid filter types**: os, role, simulators, connection
+- **Valid OS values**: WINDOWS, MAC, LINUX, DOCKER, NETWORK (target); WINDOWS, MAC, LINUX, DOCKER (attacker)
+- **Valid role values**: isInfiltration, isExfiltration, isAWSAttacker, isAzureAttacker, isGCPAttacker,
+  isWebApplicationAttacker
+- **No filter validation**: `_apply_step_overrides()` at lines 1734-1758 just assigns filters directly
+- **_has_real_filter_criteria()** at lines 1652-1669 checks structure but doesn't validate
+
+### Issue 2: default key - No Test Coverage
+- NO tests for "default" key expansion logic (confirmed)
+- Tests exist for `_apply_step_overrides()` at lines 6360-6485 but not for default expansion
+- The default applies to `diagnose_scenario_readiness()` missing_steps BEFORE explicit overrides
+- Partially-ready steps (one filter present, one missing) don't get default applied
+
+### Issue 3: Stale Simulator UUIDs - Cross-Server Enrichment Challenge
+- Simulator API: `GET /api/config/v1/accounts/{id}/nodes?details=true&deleted=false`
+- Each simulator has `isConnected` boolean
+- Simulator cache: 1-hour TTL, scenario cache: 30-min TTL (can drift)
+- `_simplify_step()` at config_types.py:327-384 extracts UUIDs verbatim
+- No cross-reference function exists; would need separate API call
+
+### Issue 4: Attack Count - Data Available at Listing Time (Lower Priority)
+- Raw API response has `steps[].attacksFilter.playbook.values` (list of attack IDs)
+- Could sum `len(step.attacksFilter.playbook.values)` across steps
+- For criteria-based steps, count is indeterminate at listing time
+- Backend API limitation: no guaranteed attack count without statistics call
+
+### Issue 5: Statistics API Error Handling
+- Statistics API: `raise_for_status()` at line 2176 with NO error body extraction
+- Queue API: Better pattern at lines 2472-2481 (logs `response.text` before raising)
+- Fix: Simply extract and propagate the extended error info from the API response body
+  (same pattern as queue API). Constraint descriptions (lines 1969-2011) are separate -
+  those are for dry-run diagnostics, NOT for HTTP 400 error translation.
+- Other API calls (lines 1932, 1958) also use raw `raise_for_status()`
+- Validation precedent: early ValueError with descriptive messages used elsewhere
+
+### Existing Patterns to Follow
+- **Error handling**: Tool wrappers catch ValueError (user input) + Exception (system)
+- **Diagnostic responses**: Two-turn workflow returns `{'status': 'not_ready', 'diagnostic': {...}}`
+  instead of raising (lines 2320-2328)
+- **Recommendation system**: Phase/type/MITRE inference chain for filter suggestions (lines 1815-1912)
+- **Constraint rendering**: Zero-sim steps get per-attack detail; partial steps get aggregated summary
+
+Status: Phase 4 Complete (PRD Investigation)
+
+## Brainstorming Results (Phase 5)
+
+### Chosen Approaches
+
+**Issue #1+#2: step_overrides docs + default key** → Approach C: Both
+- Concise schema reference in tool description (valid types, structure template, default key)
+- Detailed examples with all valid values in diagnostic `hint_to_agent` response
+- Document "default" key behavior and limitations in both places
+
+**Issue #3: Stale simulator UUIDs** → Deferred
+- Will not be addressed in this ticket
+
+**Issue #4: Attack count in listing** → Approach A + hint
+- Add `total_attack_count` field to `get_reduced_scenario_mapping()`
+- Sum `len(step.attacksFilter.playbook.values)` across steps
+- Mark criteria-based steps as indeterminate
+- Add conditional `hint_to_agent` explaining that accurate count can be determined via
+  `run_scenario` with `dry_run=True`
+
+**Issue #5: Statistics API errors** → Approach A: Mirror queue API
+- Log `response.text` before `raise_for_status()` (same pattern as queue API lines 2472-2481)
+- Wrap in try/except, include response body in error message propagated to user
+- Apply same pattern to other API calls that use raw `raise_for_status()` (lines 1932, 1958)
+
+Status: Phase 5 Complete - Approaches approved by user
 
 ## Proposed Improvements
 See summary.md for full proposed ticket content with acceptance criteria.
