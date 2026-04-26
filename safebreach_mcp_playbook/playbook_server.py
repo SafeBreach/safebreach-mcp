@@ -12,6 +12,7 @@ from typing import Optional
 # Add parent directory to path to import core components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from .playbook_functions import (
     sb_get_playbook_attacks,
@@ -37,6 +38,7 @@ class SafeBreachPlaybookServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="get_playbook_attacks",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paginated list of SafeBreach playbook attacks.
 Supports filtering by name, description, ID range, date ranges, MITRE ATT&CK techniques/tactics, and platform.
 Results are paginated with 10 items per page. Each attack includes attacker_platform and target_platform fields.
@@ -158,6 +160,7 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
         
         @self.mcp.tool(
             name="get_playbook_attack_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns detailed information for a specific SafeBreach playbook attack by ID.
 Supports verbosity options to include additional details like fix suggestions, tags, parameters, and MITRE ATT&CK data.
 Parameters: console (required), attack_id (required), include_fix_suggestions (default False),

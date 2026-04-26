@@ -13,6 +13,7 @@ from typing import Optional
 # Add parent directory to path to import core components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from .config_functions import (
     sb_get_console_simulators,
@@ -40,6 +41,7 @@ class SafeBreachConfigServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="get_console_simulators",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered list of Safebreach simulators linked to a given Safebreach management console.
 Supports filtering by status, name, labels, OS type, and critical status. Results are ordered by name (ascending) by default.
 Parameters: console (required), status_filter ('connected'/'disconnected'/'enabled'/'disabled'/None), name_filter (partial name match), 
@@ -74,6 +76,7 @@ label_filter (partial label match), os_type_filter (OS type match), critical_onl
         
         @self.mcp.tool(
             name="get_simulator_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="Gets the full details of a specific Safebreach simulator and the host on which it is running"
         )
         async def get_simulator_details_tool(simulator_id: str, console: str = "default") -> dict:
@@ -87,6 +90,7 @@ label_filter (partial label match), os_type_filter (OS type match), critical_onl
 
         @self.mcp.tool(
             name="get_scenarios",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paginated list of SafeBreach scenarios for a given console.
 Scenarios are multi-step attack workflows. Each scenario includes metadata about its type (OOB/custom),
 category, readiness status, and step count. Results are paginated (10 per page) and ordered by name ascending by default.
@@ -128,6 +132,7 @@ order_direction ('asc'/'desc')"""
 
         @self.mcp.tool(
             name="get_scenario_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Gets the full details of a specific SafeBreach scenario by its UUID.
 Returns the complete scenario payload including all steps with attack filters, system filters,
 target/attacker filters, phases, actions, and edges. Also includes resolved category names.
