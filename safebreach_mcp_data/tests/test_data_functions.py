@@ -1720,13 +1720,9 @@ class TestDataFunctions:
     
     def test_unknown_console_validation(self):
         """Test that unknown console names return proper error messages."""
-        # Test sb_get_tests_history with unknown console - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_tests_history(console="unknown_console", test_type="validate", page_number=0)
-        
-        # In single-tenant mode, the error message is about missing environment variable
-        # In multi-tenant mode, it would be about console not found
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
         
     def test_unknown_console_validation_other_functions(self):
         """Test unknown console validation in other main functions."""
