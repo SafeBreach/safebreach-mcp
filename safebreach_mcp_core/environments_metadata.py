@@ -106,15 +106,23 @@ def get_api_base_url(console:str, endpoint:str) -> str:
     """
     # Priority 1: SAFEBREACH_LOCAL_ENV service-specific URL (SAF-29974)
     # When running inside SIMP, mcp_manager sets these to the RBAC gateway URL.
-    try:
-        console_config = get_environment_by_name(console)
-        if 'urls' in console_config and endpoint in console_config['urls']:
-            service_url = console_config['urls'][endpoint]
-            full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
-            logger.info("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV urls)", console, endpoint, full_url)
-            return full_url
-    except (ValueError, KeyError):
-        pass
+    # If the exact console name isn't found, fall back to the 'default' entry —
+    # this prevents callers from bypassing OPA by specifying an unknown console name.
+    for lookup_name in (console, 'default'):
+        try:
+            console_config = get_environment_by_name(lookup_name)
+            if 'urls' in console_config and endpoint in console_config['urls']:
+                service_url = console_config['urls'][endpoint]
+                full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
+                if lookup_name != console:
+                    logger.info("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV 'default' fallback)",
+                                console, endpoint, full_url)
+                else:
+                    logger.info("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV urls)",
+                                console, endpoint, full_url)
+                return full_url
+        except (ValueError, KeyError):
+            continue
 
     # Priority 2: Per-service environment variables (standalone MCP server mode)
     env_var_name = f'{endpoint.upper()}_URL'
