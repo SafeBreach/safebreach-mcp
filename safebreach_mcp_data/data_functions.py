@@ -14,6 +14,7 @@ import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.suggestions import get_suggestions_for_collection
 from safebreach_mcp_core.datetime_utils import convert_epoch_to_datetime
@@ -199,7 +200,7 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
     Returns:
         List of test dictionaries
     """
-    cache_key = f"tests_{console}"
+    cache_key = f"tests_{console}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if use_cache and is_caching_enabled("data"):
