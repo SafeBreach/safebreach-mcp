@@ -42,6 +42,12 @@ _session_semaphores: Dict[str, tuple[asyncio.Semaphore, float]] = {}
 _concurrency_limit = int(os.environ.get('SAFEBREACH_MCP_CONCURRENCY_LIMIT', '2'))
 _SEMAPHORE_MAX_AGE = 3600  # 1 hour — stale semaphores are cleaned up after this
 
+# Auth artifact propagation (SAF-29974)
+from .token_context import (  # noqa: E402
+    _user_auth_artifacts, _session_auth_artifacts,
+    extract_auth_bundle, cleanup_stale_artifacts, mask_artifacts
+)
+
 
 async def _cleanup_stale_semaphores() -> None:
     """Periodically remove SSE session semaphores older than _SEMAPHORE_MAX_AGE."""
@@ -56,6 +62,8 @@ async def _cleanup_stale_semaphores() -> None:
             _session_semaphores.pop(sid, None)
         if stale:
             logger.info(f"🧹 Cleaned up {len(stale)} stale SSE semaphore(s), {len(_session_semaphores)} remaining")
+        # Also clean up stale auth artifacts (SAF-29974)
+        cleanup_stale_artifacts(_SEMAPHORE_MAX_AGE)
 
 
 class SafeBreachMCPBase:
@@ -510,6 +518,11 @@ class SafeBreachMCPBase:
 
             path = scope.get("path", "/")
 
+            # Headers-first auth bundle extraction (SAF-29974)
+            bundle = extract_auth_bundle(scope)
+            if bundle:
+                _user_auth_artifacts.set(bundle)
+
             # SSE connection establishment — assign a new session ID
             if path.endswith("/sse"):
                 middleware_session_id = str(uuid.uuid4())
@@ -520,6 +533,11 @@ class SafeBreachMCPBase:
                     f"🆔 New SSE session: {middleware_session_id[:8]}... "
                     f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
                 )
+                # Stash auth bundle for SSE session resilience (SAF-29974)
+                if bundle:
+                    _session_auth_artifacts[middleware_session_id] = (bundle, time.time())
+                    logger.info(f"🔑 Auth artifacts for session {middleware_session_id[:8]}...: "
+                                f"{list(bundle.keys())}")
 
                 real_session_id = None
 
@@ -537,6 +555,10 @@ class SafeBreachMCPBase:
                             real_session_id = match.group(1)
                             _session_semaphores.pop(middleware_session_id, None)
                             _session_semaphores[real_session_id] = (sem, time.time())
+                            # Migrate auth artifacts alongside semaphore (SAF-29974)
+                            auth_entry = _session_auth_artifacts.pop(middleware_session_id, None)
+                            if auth_entry is not None:
+                                _session_auth_artifacts[real_session_id] = auth_entry
                             logger.info(
                                 f"🔄 Session migrated: {middleware_session_id[:8]}... "
                                 f"→ {real_session_id[:8]}..."
@@ -547,10 +569,11 @@ class SafeBreachMCPBase:
                                 f"— no session_id found (len={len(body)})"
                             )
 
-                    # Clean up semaphore when SSE connection ends
+                    # Clean up semaphore and auth artifacts when SSE connection ends
                     if message.get("type") == "http.response.body" and not message.get("more_body", False):
                         cleanup_id = real_session_id or middleware_session_id
                         _session_semaphores.pop(cleanup_id, None)
+                        _session_auth_artifacts.pop(cleanup_id, None)
                         logger.info(
                             f"🧹 Cleaned up session: {cleanup_id[:8]}... "
                             f"(migrated={'yes' if real_session_id else 'no'}, "
@@ -577,6 +600,16 @@ class SafeBreachMCPBase:
                             break
 
                 if session_id:
+                    # Session store fallback for auth (SAF-29974): if headers-first
+                    # extraction found nothing, try the session store
+                    if not bundle:
+                        art_entry = _session_auth_artifacts.get(session_id)
+                        if art_entry:
+                            _user_auth_artifacts.set(art_entry[0])
+                            logger.debug(
+                                f"🔑 Auth from session store for {session_id[:8]}..."
+                            )
+
                     # Lazy semaphore creation for sessions first seen via query string
                     if session_id not in _session_semaphores:
                         _session_semaphores[session_id] = (

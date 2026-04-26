@@ -11,6 +11,7 @@ import os
 from .cache_config import is_caching_enabled
 from .secret_providers import SecretProviderFactory, SecretProvider
 from .environments_metadata import safebreach_envs, get_environment_by_name
+from .token_context import _user_auth_artifacts, mask_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,33 @@ def get_secret_for_console(console: str) -> str:
     # Retrieve the secret
     logger.info(f"Getting secret for console '{console}' using provider '{provider_type}'")
     return provider.get_secret(secret_identifier)
+
+
+class AuthenticationRequired(Exception):
+    """Raised when a tool call lacks user credentials and RBAC enforcement is active."""
+    pass
+
+
+def get_auth_headers_for_console(console: str) -> Dict[str, str]:
+    """Return auth headers for outbound backend API calls.
+
+    Priority:
+    1. Per-request user auth bundle (from ContextVar) — RBAC-enforced path
+    2. Raises AuthenticationRequired if ContextVar is empty in tool context
+
+    Non-tool callers (startup, health checks) should use get_secret_for_console() directly.
+    """
+    bundle = _user_auth_artifacts.get()
+    if bundle:
+        logger.debug(f"Using per-request user auth for '{console}' "
+                     f"(artifacts: {list(bundle.keys())})")
+        return dict(bundle)  # copy — callers may mutate
+
+    # No user auth artifacts — this is an RBAC violation in tool context
+    logger.warning(f"No user auth in context for '{console}' — rejecting (RBAC enforcement)")
+    raise AuthenticationRequired(
+        f"Authentication required for console '{console}': no user credentials in request context"
+    )
 
 
 def _get_or_create_provider(provider_type: str, secret_config: Dict[str, Any]) -> SecretProvider:

@@ -179,29 +179,34 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_test_data):
+    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_base_url, mock_account_id, mock_test_data):
         """Test successful retrieval of tests from API."""
-        # Setup mocks
-        mock_secret.return_value = "test-token"
-        mock_response = Mock()
-        mock_response.json.return_value = mock_test_data
-        mock_response.status_code = 200
-        mock_response.raise_for_status.return_value = None
-        mock_get.return_value = mock_response
-        
-        # Test
-        result = _get_all_tests_from_cache_or_api("test-console")
-        
-        # Assertions
-        assert len(result) == 2
-        assert result[0]["test_id"] == "test1"
-        assert result[1]["test_id"] == "test2"
-        
-        # Verify API was called
-        mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
+        # Setup auth context (SAF-29974: tool calls require user credentials)
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+
+        try:
+            mock_response = Mock()
+            mock_response.json.return_value = mock_test_data
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            mock_get.return_value = mock_response
+
+            # Test
+            result = _get_all_tests_from_cache_or_api("test-console")
+
+            # Assertions
+            assert len(result) == 2
+            assert result[0]["test_id"] == "test1"
+            assert result[1]["test_id"] == "test2"
+
+            # Verify API was called with user's auth header
+            mock_get.assert_called_once()
+            call_headers = mock_get.call_args.kwargs.get('headers', mock_get.call_args[1].get('headers', {}))
+            assert call_headers.get('x-apitoken') == 'test-token'
+        finally:
+            _user_auth_artifacts.reset(token)
     
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
@@ -1750,20 +1755,19 @@ class TestDataFunctions:
     def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id):
         """Test that secret provider failures return proper error messages."""
         from botocore.exceptions import ClientError
-        
-        # Mock ClientError for parameter not found
+        from safebreach_mcp_core.secret_utils import AuthenticationRequired
+
+        # sb_get_tests_history now uses get_auth_headers_for_console (SAF-29974)
+        # which raises AuthenticationRequired when no ContextVar is set
+        with pytest.raises(AuthenticationRequired):
+            sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
+
+        # Test sb_get_test_details — still uses get_secret_for_console (not yet migrated)
         with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret:
             mock_secret.side_effect = ClientError(
                 error_response={'Error': {'Code': 'ParameterNotFound', 'Message': 'Parameter not found'}},
                 operation_name='GetParameter'
             )
-            
-            # Test sb_get_tests_history - should now raise ClientError
-            with pytest.raises(ClientError) as exc_info:
-                sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
-            assert "ParameterNotFound" in str(exc_info.value)
-            
-            # Test sb_get_test_details - should now raise ClientError
             with pytest.raises(ClientError) as exc_info:
                 sb_get_test_details(console="test-console", test_id="test123")
             assert "ParameterNotFound" in str(exc_info.value)
