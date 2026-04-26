@@ -711,8 +711,10 @@ def peer_benchmark_e2e_console():
 
     Defaults to `staging` (where the backend /score endpoint lives).
     Override via PEER_BENCHMARK_E2E_CONSOLE. Skips (does not fail) when
-    the resolved console isn't configured locally — neither environments
-    metadata nor a credential is set.
+    the resolved console isn't configured locally.
+
+    SAF-29974: Sets the ContextVar to the console-specific token so that
+    get_auth_headers_for_console() returns the right credentials.
     """
     console = os.environ.get('PEER_BENCHMARK_E2E_CONSOLE', 'staging')
     skip_msg = (
@@ -722,21 +724,21 @@ def peer_benchmark_e2e_console():
         "credentials for the 'staging' console."
     )
 
-    # Defer imports so collection-time failures here don't affect other tests.
     from safebreach_mcp_core.environments_metadata import get_environment_by_name
-    from safebreach_mcp_core.secret_utils import get_secret_for_console
+    from safebreach_mcp_core.token_context import _user_auth_artifacts
 
     try:
         get_environment_by_name(console)
     except Exception:
         pytest.skip(skip_msg)
 
-    try:
-        token = get_secret_for_console(console)
-        if not token:
-            pytest.skip(skip_msg)
-    except Exception:
+    token_key = f"{console.replace('-', '_')}_apitoken"
+    api_token = os.environ.get(token_key) or os.environ.get('SB_API_KEY')
+    if not api_token:
         pytest.skip(skip_msg)
+
+    # Swap ContextVar to this console's token
+    _user_auth_artifacts.set({"x-apitoken": api_token})
 
     return console
 
