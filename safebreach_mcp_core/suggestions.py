@@ -12,7 +12,8 @@ from typing import List, Dict, Any
 
 from .safebreach_cache import SafeBreachCache
 from .cache_config import is_caching_enabled
-from .secret_utils import get_secret_for_console
+from .secret_utils import get_auth_headers_for_console
+from .token_context import get_cache_user_suffix
 from .environments_metadata import get_api_base_url, get_api_account_id
 
 logger = logging.getLogger(__name__)
@@ -29,21 +30,20 @@ def _fetch_suggestions_entries(
     Returns cached entries if available.  Each entry is
     ``{"key": "...", "doc_count": N}``.
     """
-    cache_key = f"{console}_{collection_name}"
+    cache_key = f"{console}_{collection_name}{get_cache_user_suffix()}"
     if is_caching_enabled("data"):
         cached = suggestions_cache.get(cache_key)
         if cached is not None:
             logger.info("Suggestions cache hit: %s", cache_key)
             return cached
 
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
 
     api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistorySuggestions"
     headers = {
         "Content-Type": "application/json",
-        "x-apitoken": apitoken,
+        **get_auth_headers_for_console(console),
     }
 
     logger.info("Fetching suggestions from API for console '%s'", console)

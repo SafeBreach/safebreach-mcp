@@ -10,7 +10,8 @@ import logging
 from typing import Dict, List, Optional, Any
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console
+from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .config_types import (
     get_minimal_simulator_mapping,
@@ -143,7 +144,7 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     Returns:
         List of simulator dictionaries
     """
-    cache_key = f"simulators_{console}"
+    cache_key = f"simulators_{console}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if is_caching_enabled("config"):
@@ -154,14 +155,13 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes?details=true&deleted=false&assets=true&impersonatedUsers=true&includeProxies=false&deployments=false"
 
         headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
+                    **get_auth_headers_for_console(console)}
         
         logger.info(f"Fetching simulators from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
@@ -302,7 +302,6 @@ def sb_get_simulator_details(simulator_id: str, console: str = "default") -> Dic
     
     try:
         logger.info("Getting api key for console %s", console)
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
@@ -310,7 +309,7 @@ def sb_get_simulator_details(simulator_id: str, console: str = "default") -> Dic
         api_url = f"{base_url}/api/config/v1/accounts/{account_id}/nodes/{simulator_id}"
 
         headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
+                    **get_auth_headers_for_console(console)}
 
         response = requests.get(api_url, headers=headers, timeout=120)
         response.raise_for_status()
@@ -365,7 +364,7 @@ def _get_all_plans_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     Returns:
         List of full plan dictionaries
     """
-    cache_key = f"plans_{console}"
+    cache_key = f"plans_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("config"):
         cached = plans_cache.get(cache_key)
@@ -374,12 +373,11 @@ def _get_all_plans_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
             return cached
 
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/config/v2/accounts/{account_id}/plans?details=true"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         logger.info(f"Fetching custom plans from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
@@ -410,7 +408,7 @@ def _get_users_map_from_cache_or_api(console: str) -> Dict[int, str]:
     Returns:
         Dict mapping user ID (int) to user name (str)
     """
-    cache_key = f"users_{console}"
+    cache_key = f"users_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("config"):
         cached = users_cache.get(cache_key)
@@ -419,12 +417,11 @@ def _get_users_map_from_cache_or_api(console: str) -> Dict[int, str]:
             return cached
 
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/config/v1/accounts/{account_id}/users?details=false&deleted=true"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         logger.info(f"Fetching users from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
@@ -455,7 +452,7 @@ def _get_assets_map_from_cache_or_api(console: str) -> Dict[int, Dict[str, str]]
     Returns:
         Dict mapping asset ID (int) to {name, type} dict
     """
-    cache_key = f"assets_{console}"
+    cache_key = f"assets_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("config"):
         cached = assets_cache.get(cache_key)
@@ -464,12 +461,11 @@ def _get_assets_map_from_cache_or_api(console: str) -> Dict[int, Dict[str, str]]
             return cached
 
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'config')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/config/v1/accounts/{account_id}/assets"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         logger.info(f"Fetching assets from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
@@ -503,7 +499,7 @@ def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     Returns:
         List of full scenario dictionaries
     """
-    cache_key = f"scenarios_{console}"
+    cache_key = f"scenarios_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("config"):
         cached = scenarios_cache.get(cache_key)
@@ -512,11 +508,10 @@ def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
             return cached
 
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'playbook')
 
         api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         logger.info(f"Fetching scenarios from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
@@ -545,7 +540,7 @@ def _get_categories_map_from_cache_or_api(console: str) -> Dict[int, str]:
     Returns:
         Dict mapping category ID (int) to category name (str)
     """
-    cache_key = f"categories_{console}"
+    cache_key = f"categories_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("config"):
         cached = categories_cache.get(cache_key)
@@ -554,11 +549,10 @@ def _get_categories_map_from_cache_or_api(console: str) -> Dict[int, str]:
             return cached
 
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'playbook')
 
         api_url = f"{base_url}/api/content-manager/vLatest/scenarioCategories"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         logger.info(f"Fetching scenario categories from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)

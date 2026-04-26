@@ -14,7 +14,8 @@ from typing import Dict, Any
 
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console
+from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .studio_types import (
     get_validation_response_mapping,
@@ -515,10 +516,9 @@ def sb_validate_studio_code(
 
     # --- Tier 2: API validation ---
 
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
     api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/validate"
 
     logger.info(f"Calling validation API: {api_url}")
@@ -637,10 +637,9 @@ def sb_save_studio_attack_draft(
     logger.info(f"Saving draft attack '{name}' (type={attack_type}) for console: {console}")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
 
     # Prepare multipart form data
     files = {
@@ -697,7 +696,7 @@ def sb_save_studio_attack_draft(
 
     # Cache the result (only if caching is enabled)
     if is_caching_enabled("studio"):
-        cache_key = f"studio_draft_{console}_{result['draft_id']}"
+        cache_key = f"studio_draft_{console}_{result['draft_id']}{get_cache_user_suffix()}"
         studio_draft_cache.set(cache_key, result)
         logger.debug(f"Cached draft with key: {cache_key}")
 
@@ -750,10 +749,9 @@ def sb_get_all_studio_attacks(
                 f"name_filter={name_filter}, user_id_filter={user_id_filter}, page={page_number})")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
 
     # Call get all attacks API
     api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all"
@@ -891,10 +889,9 @@ def sb_update_studio_attack_draft(
     logger.info(f"Updating draft attack {attack_id} '{name}' (type={attack_type}) for console: {console}")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
 
     # Prepare multipart form data
     files = {
@@ -952,7 +949,7 @@ def sb_update_studio_attack_draft(
 
     # Update cache with new values (only if caching is enabled)
     if is_caching_enabled("studio"):
-        cache_key = f"studio_draft_{console}_{result['draft_id']}"
+        cache_key = f"studio_draft_{console}_{result['draft_id']}{get_cache_user_suffix()}"
         studio_draft_cache.set(cache_key, result)
         logger.debug(f"Updated cache with key: {cache_key}")
 
@@ -989,10 +986,9 @@ def sb_get_studio_attack_source(
     logger.info(f"Getting source code for attack {attack_id} on console: {console}")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
 
     # Fetch target source code (always required)
     target_api_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}/files/target"
@@ -1102,12 +1098,11 @@ def sb_run_studio_attack(
                 f"attackers={len(attacker_simulator_ids) if attacker_simulator_ids else 'N/A'})")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
     headers = {
-        "x-apitoken": apitoken,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
     }
 
     # Build attacker and target filters
@@ -1257,13 +1252,12 @@ def sb_get_studio_attack_latest_result(
     logger.info(f"Retrieving latest execution results for Studio attack {attack_id} from console '{console}'")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')  # Use data URL for execution history API
     account_id = get_api_account_id(console)
 
     headers = {
-        "x-apitoken": apitoken,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
     }
 
     # Build query string for specific playbook ID, optionally filtered by test_id
@@ -1474,10 +1468,9 @@ def sb_set_studio_attack_status(
     logger.info(f"Setting attack {attack_id} status to '{new_status}' on console: {console}")
 
     # Get authentication and base URL
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken}
+    headers = {**get_auth_headers_for_console(console)}
 
     # Pre-check: get current status via list API
     list_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all"
@@ -1619,7 +1612,7 @@ def sb_set_studio_attack_status(
         raise
 
     # Invalidate cache if present
-    cache_key = f"studio_draft_{console}_{attack_id}"
+    cache_key = f"studio_draft_{console}_{attack_id}{get_cache_user_suffix()}"
     if studio_draft_cache.delete(cache_key):
         logger.debug(f"Invalidated cache for key: {cache_key}")
 
@@ -1922,11 +1915,10 @@ def _fetch_all_scenarios(console):
     Returns:
         List of full scenario dictionaries
     """
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'playbook')
 
     api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
-    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
@@ -1954,12 +1946,11 @@ def _fetch_all_plans(console):
     Returns:
         List of full plan dictionaries
     """
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
 
     api_url = f"{base_url}/api/config/v2/accounts/{account_id}/plans?details=true"
-    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     logger.info(f"Fetching custom plans from API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
@@ -2172,10 +2163,9 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         List of per-step stat dicts with simulationCount, matched counts,
         resolved_attacks, and optionally constraint details.
     """
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
-    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
     api_url = (
@@ -2406,12 +2396,11 @@ def sb_run_scenario(
     )
 
     # Get authentication and base URL for orchestrator
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
     headers = {
-        "x-apitoken": apitoken,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
     }
 
     # Build payload for queue API — different structure for OOB vs custom plans
@@ -2548,18 +2537,18 @@ def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
     Raises:
         requests.exceptions.RequestException: On API error
     """
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
+    auth_headers = get_auth_headers_for_console(console)
 
     try:
         if action == "cancel":
             url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
-            headers = {"x-apitoken": apitoken}
+            headers = {**auth_headers}
             response = requests.delete(url, headers=headers, timeout=30)
         elif action in ("pause", "resume"):
             url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}/state"
-            headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", **auth_headers}
             response = requests.put(
                 url, headers=headers, json={"status": action}, timeout=120
             )
@@ -2596,11 +2585,10 @@ def _append_test_note(
         Dict with note_status ("success" or "failed") and note text or error
     """
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
         url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
-        headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         # Step 1: Read existing comment
         response = requests.get(url, headers=headers, timeout=30)

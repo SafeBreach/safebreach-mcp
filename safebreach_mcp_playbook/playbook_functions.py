@@ -11,7 +11,8 @@ from typing import Dict, List, Optional, Any
 import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console
+from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url
 from .playbook_types import (
     transform_reduced_playbook_attack,
@@ -44,7 +45,7 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     """
 
     # Check cache first (only if caching is enabled)
-    cache_key = f"attacks_{console}"
+    cache_key = f"attacks_{console}{get_cache_user_suffix()}"
 
     if is_caching_enabled("playbook"):
         cached = playbook_cache.get(cache_key)
@@ -56,14 +57,13 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     logger.info("Cache miss for console %s playbook attacks - fetching from API", console)
 
     try:
-        # Get API token and environment info
-        apitoken = get_secret_for_console(console)
+        # Get environment info
         base_url = get_api_base_url(console, 'playbook')
 
         # Make API call
         headers = {
-            "x-apitoken": apitoken,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            **get_auth_headers_for_console(console)
         }
 
         url = f"{base_url}/api/kb/vLatest/moves?details=true"
