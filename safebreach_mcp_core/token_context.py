@@ -84,6 +84,7 @@ def get_cache_user_suffix() -> str:
     """
     bundle = _user_auth_artifacts.get()
     if not bundle:
+        logger.info("get_cache_user_suffix() → '' (no user bundle)")
         return ''
 
     # Priority: x-apitoken (most stable) > x-token > cookie value
@@ -95,9 +96,12 @@ def get_cache_user_suffix() -> str:
         if '=' in cookie:
             value = cookie.split('=', 1)[1]
     if not value:
+        logger.info("get_cache_user_suffix() → '' (bundle present but no usable value)")
         return ''
 
-    return '_' + hashlib.sha256(value.encode()).hexdigest()[:8]
+    suffix = '_' + hashlib.sha256(value.encode()).hexdigest()[:8]
+    logger.info("get_cache_user_suffix() → '%s' (from token ***%s)", suffix, value[-4:])
+    return suffix
 
 
 def cleanup_stale_artifacts(ttl: int = None) -> int:

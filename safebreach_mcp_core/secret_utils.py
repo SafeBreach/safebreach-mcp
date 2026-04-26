@@ -79,8 +79,8 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """
     bundle = _user_auth_artifacts.get()
     if bundle:
-        logger.debug(f"Using per-request user auth for '{console}' "
-                     f"(artifacts: {list(bundle.keys())})")
+        logger.info(f"get_auth_headers_for_console('{console}') → user bundle "
+                    f"(keys: {list(bundle.keys())}, token: ***{list(bundle.values())[0][-4:]})")
         return dict(bundle)  # copy — callers may mutate
 
     # No user auth artifacts — this is an RBAC violation in tool context

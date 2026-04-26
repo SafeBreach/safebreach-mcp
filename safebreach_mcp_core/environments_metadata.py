@@ -4,8 +4,10 @@ SafeBreach Environments Configuration
 This file contains metadata and configurations for Safebreach labs and AWS resources 
 in the scope of impact for SafeBreach MCP Servergi.
 '''
-import json, os
+import json, os, logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 safebreach_envs = {
     # Default example configurations:
@@ -109,6 +111,7 @@ def get_api_base_url(console:str, endpoint:str) -> str:
         if 'urls' in console_config and endpoint in console_config['urls']:
             service_url = console_config['urls'][endpoint]
             full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
+            logger.info("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV urls)", console, endpoint, full_url)
             return full_url
     except (ValueError, KeyError):
         pass
@@ -117,12 +120,14 @@ def get_api_base_url(console:str, endpoint:str) -> str:
     env_var_name = f'{endpoint.upper()}_URL'
     env_url = os.getenv(env_var_name)
     if env_url:
+        logger.info("get_api_base_url('%s', '%s') → %s (from env var %s)", console, endpoint, env_url, env_var_name)
         return env_url
 
     # Priority 3: SAFEBREACH_LOCAL_ENV default URL fallback
     try:
         console_config = get_environment_by_name(console)
         default_url = f"https://{console_config['url']}"
+        logger.info("get_api_base_url('%s', '%s') → %s (from default url)", console, endpoint, default_url)
         return default_url
     except (ValueError, KeyError):
         raise ValueError(f"No URL configured for console '{console}', endpoint '{endpoint}'")
