@@ -750,14 +750,11 @@ class TestPeerBenchmarkScoreE2E:
         print(f"  Console: {peer_benchmark_e2e_console}")
         print(f"  Window: {start_ms} -> {end_ms} (30 days)")
 
-        try:
-            result = sb_get_peer_benchmark_score(
-                console=peer_benchmark_e2e_console,
-                start_date=start_ms,
-                end_date=end_ms,
-            )
-        except Exception as e:
-            pytest.skip(f"Peer benchmark /score endpoint not available: {e}")
+        result = sb_get_peer_benchmark_score(
+            console=peer_benchmark_e2e_console,
+            start_date=start_ms,
+            end_date=end_ms,
+        )
 
         # Top-level renamed keys must always be present (even on 204 path).
         assert isinstance(result, dict)
