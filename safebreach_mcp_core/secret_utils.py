@@ -100,11 +100,8 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """
     bundle = _user_auth_artifacts.get()
     if bundle:
-        # Temporary INFO log for Slice 4 debugging — downgrade after validation
-        cookie_val = bundle.get('cookie', '')
-        logger.info(f"get_auth_headers_for_console('{console}') → bundle keys={list(bundle.keys())}, "
-                    f"cookie_has_fgp={'__secure-Fgp' in cookie_val or '__secure-fgp' in cookie_val.lower()}, "
-                    f"cookie_preview={cookie_val[:80]}...")
+        logger.debug(f"get_auth_headers_for_console('{console}') → user bundle "
+                     f"(keys: {list(bundle.keys())})")
         return dict(bundle)  # copy — callers may mutate
 
     # No user auth artifacts — this is an RBAC violation in tool context
