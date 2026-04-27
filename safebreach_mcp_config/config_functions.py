@@ -10,7 +10,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console, check_rbac_response
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .config_types import (
@@ -165,7 +165,7 @@ def _get_all_simulators_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         
         logger.info(f"Fetching simulators from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         try:
             response_data = response.json()
@@ -312,7 +312,7 @@ def sb_get_simulator_details(simulator_id: str, console: str = "default") -> Dic
                     **get_auth_headers_for_console(console)}
 
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         try:
             response_data = response.json()
@@ -381,7 +381,7 @@ def _get_all_plans_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
         logger.info(f"Fetching custom plans from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         response_data = response.json()
         # Plans API wraps the list in {"data": [...]}
@@ -425,7 +425,7 @@ def _get_users_map_from_cache_or_api(console: str) -> Dict[int, str]:
 
         logger.info(f"Fetching users from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         response_data = response.json()
         users_list = response_data.get("data", []) if isinstance(response_data, dict) else response_data
@@ -469,7 +469,7 @@ def _get_assets_map_from_cache_or_api(console: str) -> Dict[int, Dict[str, str]]
 
         logger.info(f"Fetching assets from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         response_data = response.json()
         assets_list = response_data.get("data", []) if isinstance(response_data, dict) else response_data
@@ -515,7 +515,7 @@ def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
         logger.info(f"Fetching scenarios from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         scenarios = response.json()
 
@@ -556,7 +556,7 @@ def _get_categories_map_from_cache_or_api(console: str) -> Dict[int, str]:
 
         logger.info(f"Fetching scenario categories from API for console '{console}'")
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         categories_list = response.json()
         categories_map = {cat["id"]: cat["name"] for cat in categories_list}

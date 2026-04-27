@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Iterable
 import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
+from safebreach_mcp_core.secret_utils import get_auth_headers_for_console, check_rbac_response
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.suggestions import get_suggestions_for_collection
@@ -221,7 +221,7 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
         
         logger.info("Fetching tests from API for console '%s'", console)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         try:
             tests_summaries = response.json()
@@ -491,7 +491,7 @@ def _fetch_single_test(test_id: str, console: str) -> Dict[str, Any]:
     headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    check_rbac_response(response)
 
     test_summary = response.json()
 
@@ -538,7 +538,7 @@ def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
             }
 
             response = requests.post(api_url, headers=headers, json=data, timeout=120)
-            response.raise_for_status()
+            check_rbac_response(response)
 
             try:
                 response_data = response.json()
@@ -711,7 +711,7 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
             
             logger.info("Fetching page %d for test '%s' from console '%s'", page, test_id, console)
             response = requests.post(api_url, headers=headers, json=data, timeout=120)
-            response.raise_for_status()
+            check_rbac_response(response)
             
             try:
                 response_data = response.json()
@@ -954,7 +954,7 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
         
         logger.info("Fetching security control events from API for %s:%s:%s", console, test_id, simulation_id)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         response_data = response.json()
         
@@ -1266,7 +1266,7 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
         
         logger.info("Fetching findings from API for %s:%s", console, test_id)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         data = response.json()
         findings_data = data.get('findings', [])
@@ -1833,7 +1833,7 @@ def _fetch_full_simulation_logs_from_api(
         elif response.status_code == 401:
             raise ValueError(f"Authentication failed for console '{console}'")
 
-        response.raise_for_status()
+        check_rbac_response(response)
 
         # Parse JSON response
         try:
@@ -1910,7 +1910,7 @@ def _fetch_and_cache_simulation_drifts(
     if response.status_code == 401:
         raise ValueError(f"Authentication failed (401) for console '{console}'")
 
-    response.raise_for_status()
+    check_rbac_response(response)
     records = response.json()
 
     logger.info(
@@ -2728,7 +2728,7 @@ def sb_get_simulation_lineage(
                     f"Authentication failed (401) for console '{console}'. "
                     "Check that the API token is valid."
                 )
-            response.raise_for_status()
+            check_rbac_response(response)
 
             response_data = response.json()
             page_sims = response_data.get("simulations", [])
@@ -2933,7 +2933,7 @@ def sb_get_peer_benchmark_score(
         return result
 
     try:
-        response.raise_for_status()
+        check_rbac_response(response)
     except requests.HTTPError:
         # Log without the API token — only console, URL, and status code.
         logger.error(

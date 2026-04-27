@@ -68,6 +68,27 @@ class AuthenticationRequired(Exception):
     pass
 
 
+RBAC_DENIED_HINT = (
+    "hint_to_llm: This user's role does not have permission to access this resource. "
+    "Advise the user to contact their SafeBreach administrator to review their role permissions."
+)
+
+
+def check_rbac_response(response) -> None:
+    """Call instead of response.raise_for_status() to add RBAC hints on 403.
+
+    For 403 Forbidden responses (OPA denial), raises an error with an
+    actionable hint for the LLM to advise the user about permissions.
+    For all other errors, behaves like raise_for_status().
+    """
+    if response.status_code == 403:
+        url = response.url if hasattr(response, 'url') else 'unknown'
+        raise PermissionError(
+            f"Access denied (403 Forbidden) for {url}.\n\n{RBAC_DENIED_HINT}"
+        )
+    response.raise_for_status()
+
+
 def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """Return auth headers for outbound backend API calls.
 

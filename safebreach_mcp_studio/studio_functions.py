@@ -14,7 +14,7 @@ from typing import Dict, Any
 
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console
+from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console, check_rbac_response
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from .studio_types import (
@@ -420,7 +420,7 @@ def _call_validation_api(
     data = {'class': 'python'}
 
     response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
-    response.raise_for_status()
+    check_rbac_response(response)
     api_response = response.json()
     return get_validation_response_mapping(api_response)
 
@@ -680,7 +680,7 @@ def sb_save_studio_attack_draft(
 
     try:
         response = requests.post(api_url, headers=headers, data=data, files=files, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         api_response = response.json()
         logger.info("Save draft API call successful")
     except requests.exceptions.RequestException as e:
@@ -759,7 +759,7 @@ def sb_get_all_studio_attacks(
 
     try:
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         api_response = response.json()
         logger.info("Get all attacks API call successful")
     except requests.exceptions.RequestException as e:
@@ -933,7 +933,7 @@ def sb_update_studio_attack_draft(
 
     try:
         response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         api_response = response.json()
         logger.info("Update draft API call successful")
     except requests.exceptions.RequestException as e:
@@ -996,7 +996,7 @@ def sb_get_studio_attack_source(
 
     try:
         response = requests.get(target_api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         target_response = response.json()
         logger.info("Get target source API call successful")
     except requests.exceptions.RequestException as e:
@@ -1166,7 +1166,7 @@ def sb_run_studio_attack(
 
     try:
         response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         api_response = response.json()
         logger.info("Run attack API call successful")
     except requests.exceptions.RequestException as e:
@@ -1288,7 +1288,7 @@ def sb_get_studio_attack_latest_result(
             json=payload,
             timeout=120
         )
-        response.raise_for_status()
+        check_rbac_response(response)
 
         api_response = response.json()
 
@@ -1478,7 +1478,7 @@ def sb_set_studio_attack_status(
 
     try:
         list_response = requests.get(list_url, headers=headers, timeout=120)
-        list_response.raise_for_status()
+        check_rbac_response(list_response)
         api_response = list_response.json()
         # API returns {"data": [...]} wrapper
         all_attacks = api_response.get("data", api_response) if isinstance(api_response, dict) else api_response
@@ -1517,7 +1517,7 @@ def sb_set_studio_attack_status(
 
     try:
         target_response = requests.get(target_url, headers=headers, timeout=120)
-        target_response.raise_for_status()
+        check_rbac_response(target_response)
         target_data = target_response.json().get('data', {})
         target_content = target_data.get('content', '')
         target_filename = target_data.get('filename', 'target.py')
@@ -1605,7 +1605,7 @@ def sb_set_studio_attack_status(
 
     try:
         response = requests.put(api_url, headers=headers, data=data, files=files, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         logger.info(f"Attack {attack_id} status successfully changed to '{new_status}'")
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to change attack {attack_id} status to '{new_status}': {e}")
@@ -1923,7 +1923,7 @@ def _fetch_all_scenarios(console):
     logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
     try:
-        response.raise_for_status()
+        check_rbac_response(response)
     except requests.exceptions.HTTPError:
         body = getattr(response, 'text', '')
         logger.error(f"Scenario fetch error {response.status_code}: {body}")
@@ -1955,7 +1955,7 @@ def _fetch_all_plans(console):
     logger.info(f"Fetching custom plans from API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
     try:
-        response.raise_for_status()
+        check_rbac_response(response)
     except requests.exceptions.HTTPError:
         body = getattr(response, 'text', '')
         logger.error(f"Plan fetch error {response.status_code}: {body}")
@@ -2178,7 +2178,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
                 f"{' (with constraints)' if include_constraints else ''}")
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
     try:
-        response.raise_for_status()
+        check_rbac_response(response)
     except requests.exceptions.HTTPError:
         body = getattr(response, 'text', '')
         logger.error(f"Statistics API error {response.status_code}: {body}")
@@ -2483,7 +2483,7 @@ def sb_run_scenario(
         response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
         if response.status_code >= 400:
             logger.error(f"Queue API error {response.status_code}: {response.text}")
-        response.raise_for_status()
+        check_rbac_response(response)
         api_response = response.json()
         logger.info("Queue API call successful")
     except requests.exceptions.RequestException as e:
@@ -2557,7 +2557,7 @@ def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
                 f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
             )
 
-        response.raise_for_status()
+        check_rbac_response(response)
         logger.info(f"Test {test_id} {action} successful")
     except requests.exceptions.RequestException as e:
         logger.error(f"{action.capitalize()} test {test_id} failed: {e}")
@@ -2592,7 +2592,7 @@ def _append_test_note(
 
         # Step 1: Read existing comment
         response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
+        check_rbac_response(response)
         existing_comment = response.json().get('comment') or ""
 
         # Step 2: Format new note
@@ -2610,7 +2610,7 @@ def _append_test_note(
         response = requests.put(
             url, headers=headers, json={"comment": combined}, timeout=30
         )
-        response.raise_for_status()
+        check_rbac_response(response)
 
         logger.info(f"Note appended to test {test_id}: {new_note}")
         return {"note_status": "success", "note": new_note}

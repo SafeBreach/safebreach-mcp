@@ -12,7 +12,7 @@ from typing import List, Dict, Any
 
 from .safebreach_cache import SafeBreachCache
 from .cache_config import is_caching_enabled
-from .secret_utils import get_auth_headers_for_console
+from .secret_utils import get_auth_headers_for_console, check_rbac_response
 from .token_context import get_cache_user_suffix
 from .environments_metadata import get_api_base_url, get_api_account_id
 
@@ -55,7 +55,7 @@ def _fetch_suggestions_entries(
             "Check API token configuration."
         )
 
-    response.raise_for_status()
+    check_rbac_response(response)
 
     data = response.json()
     completion = data.get("completion", {})
