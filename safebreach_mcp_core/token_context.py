@@ -53,20 +53,33 @@ def extract_auth_bundle(scope: dict) -> Optional[Dict[str, str]]:
     return bundle or None
 
 
-def _keep_only_cookie(raw_cookie: str, cookie_name: str) -> str:
-    """Parse a raw cookie header and return only the named cookie entry.
+# Cookies to keep when scrubbing — auth token + fingerprint needed for JWT validation.
+_ALLOWED_COOKIE_NAMES = frozenset()  # populated at module load from AUTH_COOKIE_NAME + fingerprint
 
-    Returns e.g. "X-Token=<value>" or empty string if not found.
+# The ui-server's JWT validation requires the __secure-Fgp (user fingerprint) cookie
+# alongside the JWT. Without it, x-token auth returns 401.
+_FINGERPRINT_COOKIE_NAME = '__secure-Fgp'
+
+
+def _keep_only_cookie(raw_cookie: str, cookie_name: str) -> str:
+    """Parse a raw cookie header and keep only auth-related cookies.
+
+    Keeps the auth cookie (X-Token) and the fingerprint cookie (__secure-Fgp)
+    needed for JWT validation. Drops all other cookies (analytics, CSRF, etc.).
+
+    Returns e.g. "X-Token=<value>; __secure-Fgp=<value>" or empty string.
     """
     if not raw_cookie:
         return ''
+    allowed = {cookie_name.lower(), _FINGERPRINT_COOKIE_NAME.lower()}
+    kept = []
     for part in raw_cookie.split(';'):
         part = part.strip()
         if '=' in part:
             name, _, value = part.partition('=')
-            if name.strip().lower() == cookie_name.lower():
-                return f'{cookie_name}={value.strip()}'
-    return ''
+            if name.strip().lower() in allowed:
+                kept.append(f'{name.strip()}={value.strip()}')
+    return '; '.join(kept)
 
 
 def mask_artifacts(bundle: Optional[Dict[str, str]]) -> Dict[str, str]:
