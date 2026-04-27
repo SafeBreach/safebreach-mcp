@@ -31,7 +31,8 @@ _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 from mcp_server_bug_423_hotfix import apply_patch
-from .safebreach_auth import SafeBreachAuth
+# SafeBreachAuth removed (SAF-29974): its get_base_url() bypasses the RBAC gateway.
+# Tool functions use get_auth_headers_for_console() + get_api_base_url() instead.
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,6 @@ class SafeBreachMCPBase:
             self.base_url = '/'
         
         self.mcp = FastMCP(server_name)
-        self.auth = SafeBreachAuth()
         self._cache = SafeBreachCache(name=f"{server_name}_base", maxsize=10, ttl=3600)
         self._uvicorn_server: Optional[Any] = None
     
