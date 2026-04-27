@@ -600,8 +600,21 @@ class SafeBreachMCPBase:
                             break
 
                 if session_id:
-                    # Session store fallback for auth (SAF-29974): if headers-first
-                    # extraction found nothing, try the session store
+                    # Auth bundle propagation (SAF-29974):
+                    # The ContextVar set at the ASGI level does NOT propagate into
+                    # the FastMCP tool handler because SseServerTransport.connect_sse
+                    # uses asyncio.create_task(). Although Python 3.12 copies ContextVars
+                    # to new tasks, the /messages/ POST handler runs in a DIFFERENT task
+                    # than the SSE GET's create_task where the tool handler lives.
+                    # Solution: store the user's bundle in a module-level variable that
+                    # the tool handler can read regardless of async context.
+                    if bundle and ('x-token' in bundle or 'cookie' in bundle):
+                        from .token_context import _last_user_auth_bundle
+                        import safebreach_mcp_core.token_context as _tc
+                        _tc._last_user_auth_bundle = bundle
+                        _session_auth_artifacts[session_id] = (bundle, time.time())
+
+                    # Session store fallback for auth
                     if not bundle:
                         art_entry = _session_auth_artifacts.get(session_id)
                         if art_entry:

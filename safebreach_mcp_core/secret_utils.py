@@ -99,6 +99,16 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     Non-tool callers (startup, health checks) should use get_secret_for_console() directly.
     """
     bundle = _user_auth_artifacts.get()
+
+    # SSE transport fallback (SAF-29974): the ContextVar set on the /messages/ POST
+    # doesn't propagate to the tool handler because the tool runs in the SSE GET's
+    # create_task (a different async context). Fall back to _last_user_auth_bundle
+    # which is a module-level variable updated on every POST with user auth.
+    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+        from .token_context import _last_user_auth_bundle
+        if _last_user_auth_bundle and ('x-token' in _last_user_auth_bundle or 'cookie' in _last_user_auth_bundle):
+            bundle = _last_user_auth_bundle
+
     if bundle:
         logger.debug(f"get_auth_headers_for_console('{console}') → user bundle "
                      f"(keys: {list(bundle.keys())})")

@@ -26,6 +26,11 @@ _session_auth_artifacts: Dict[str, Tuple[Dict[str, str], float]] = {}
 
 _SESSION_ARTIFACTS_TTL = 3600  # matches existing semaphore cleanup TTL
 
+# Last auth bundle from a /messages/ POST — used as fallback when ContextVar
+# doesn't propagate (SSE transport's create_task loses ContextVar state).
+# Updated on every /messages/ POST that carries user auth headers.
+_last_user_auth_bundle: Optional[Dict[str, str]] = None
+
 AUTH_COOKIE_NAME = os.environ.get('SAFEBREACH_MCP_AUTH_COOKIE_NAME', 'X-Token')
 
 
