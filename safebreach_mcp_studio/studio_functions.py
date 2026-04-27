@@ -1683,6 +1683,8 @@ def compute_scenario_readiness(scenario):
     if not steps:
         return False
     for step in steps:
+        if not isinstance(step, dict):
+            return False
         target = step.get('targetFilter', {})
         attacker = step.get('attackerFilter', {})
         if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):
@@ -1921,14 +1923,21 @@ def _fetch_all_scenarios(console):
         List of full scenario dictionaries
     """
     apitoken = get_secret_for_console(console)
-    base_url = get_api_base_url(console, 'content-manager')
+    base_url = get_api_base_url(console, 'playbook')
 
     api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
     headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
 
     logger.info(f"Fetching scenarios from content-manager API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Scenario fetch error {response.status_code}: {body}")
+        raise ValueError(
+            f"Scenario fetch error ({response.status_code}): {body}"
+        )
 
     scenarios = response.json()
     logger.info(f"Retrieved {len(scenarios)} scenarios for console '{console}'")
@@ -1954,7 +1963,14 @@ def _fetch_all_plans(console):
 
     logger.info(f"Fetching custom plans from API for console '{console}'")
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Plan fetch error {response.status_code}: {body}")
+        raise ValueError(
+            f"Plan fetch error ({response.status_code}): {body}"
+        )
 
     response_data = response.json()
     plans = response_data.get("data", []) if isinstance(response_data, dict) else response_data
@@ -2171,7 +2187,14 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
                 f"{' (with constraints)' if include_constraints else ''}")
     response = requests.post(api_url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        body = getattr(response, 'text', '')
+        logger.error(f"Statistics API error {response.status_code}: {body}")
+        raise ValueError(
+            f"Statistics API error ({response.status_code}): {body}"
+        )
 
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
@@ -2445,25 +2468,19 @@ def sb_run_scenario(
                 edges.append({"from": step_id, "to": wait_id})
                 edges.append({"from": wait_id, "to": next_step_id})
 
-        # For OOB: originalScenarioId = scenario UUID
-        # For augmented custom plans: use the plan's originalScenarioId field
-        # (the UUID of the OOB scenario it was cloned from)
-        original_id = (
-            scenario.get('originalScenarioId') or str(scenario['id'])
-            if is_custom_plan
-            else scenario['id']
-        )
-
-        payload = {
-            "plan": {
-                "name": effective_test_name,
-                "originalScenarioId": original_id,
-                "steps": steps,
-                "systemTags": scenario.get('systemTags') or [],
-                "actions": actions,
-                "edges": edges
-            }
+        plan_body = {
+            "name": effective_test_name,
+            "steps": steps,
+            "systemTags": scenario.get('systemTags') or [],
+            "actions": actions,
+            "edges": edges
         }
+
+        # originalScenarioId only applies to OOB scenarios (content-manager UUID)
+        if not is_custom_plan:
+            plan_body["originalScenarioId"] = scenario['id']
+
+        payload = {"plan": plan_body}
 
     # POST to queue API
     api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
@@ -2507,5 +2524,159 @@ def sb_run_scenario(
         f"Successfully queued scenario '{scenario['name']}' "
         f"(test_id: {result['test_id']}, steps: {result['step_count']})"
     )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# manage_test — SAF-29969: Test lifecycle management (pause/resume/cancel)
+# ---------------------------------------------------------------------------
+
+
+def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
+    """
+    Change a running test's state via the orchestrator API.
+
+    Args:
+        test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
+        action: Lifecycle action — currently "cancel" (pause/resume added later)
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with test_id, action, and status="success"
+
+    Raises:
+        requests.exceptions.RequestException: On API error
+    """
+    apitoken = get_secret_for_console(console)
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+
+    try:
+        if action == "cancel":
+            url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}"
+            headers = {"x-apitoken": apitoken}
+            response = requests.delete(url, headers=headers, timeout=30)
+        elif action in ("pause", "resume"):
+            url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue/{test_id}/state"
+            headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+            response = requests.put(
+                url, headers=headers, json={"status": action}, timeout=120
+            )
+        else:
+            raise ValueError(
+                f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+            )
+
+        response.raise_for_status()
+        logger.info(f"Test {test_id} {action} successful")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"{action.capitalize()} test {test_id} failed: {e}")
+        raise
+
+    return {"test_id": test_id, "action": action, "status": "success"}
+
+
+def _append_test_note(
+    test_id: str, action: str, reason: str, console: str
+) -> Dict[str, Any]:
+    """
+    Append a timestamped note to a test's comment field (best-effort).
+
+    Reads existing comment via GET, concatenates new note, writes back via PUT.
+    The data API comment field is NOT additive — must read-then-append.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        action: Lifecycle action that was performed (pause/resume/cancel)
+        reason: User-provided reason for the action
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with note_status ("success" or "failed") and note text or error
+    """
+    try:
+        apitoken = get_secret_for_console(console)
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+        headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+
+        # Step 1: Read existing comment
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        existing_comment = response.json().get('comment') or ""
+
+        # Step 2: Format new note
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        new_note = f"[{timestamp} UTC] Test {action}: {reason}"
+
+        # Step 3: Concatenate
+        if existing_comment:
+            combined = f"{existing_comment}\n{new_note}"
+        else:
+            combined = new_note
+
+        # Step 4: Write back
+        response = requests.put(
+            url, headers=headers, json={"comment": combined}, timeout=30
+        )
+        response.raise_for_status()
+
+        logger.info(f"Note appended to test {test_id}: {new_note}")
+        return {"note_status": "success", "note": new_note}
+
+    except Exception as e:
+        logger.warning(f"Failed to append note to test {test_id}: {e}")
+        return {"note_status": "failed", "note_error": str(e)}
+
+
+def sb_manage_test(
+    test_id: str,
+    action: str,
+    console: str = "default",
+    reason: str = None,
+) -> Dict[str, Any]:
+    """
+    Manage a running test's lifecycle (pause, resume, or cancel).
+
+    Args:
+        test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
+        action: Lifecycle action — "pause", "resume", or "cancel"
+        console: SafeBreach console identifier (default: "default")
+        reason: Optional reason for the action (appends note to test comment)
+
+    Returns:
+        Dict with test_id, action, status, and optional note info
+    """
+    if not test_id or not str(test_id).strip():
+        raise ValueError("test_id is required and cannot be empty")
+
+    valid_actions = ["pause", "resume", "cancel"]
+    if action not in valid_actions:
+        raise ValueError(
+            f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+        )
+
+    logger.info(f"Managing test {test_id}: action={action}, console={console}")
+
+    result = _set_test_state(test_id, action, console)
+
+    if reason and reason.strip():
+        note_result = _append_test_note(test_id, action, reason, console)
+        result.update(note_result)
+
+    hints = {
+        "pause": (
+            "Test is paused. Use manage_test with action='resume' to continue, "
+            "or action='cancel' to abort. Use get_test_details to check current status."
+        ),
+        "resume": "Test resumed. Use get_test_details to monitor progress.",
+        "cancel": (
+            "Test cancelled. Partial results may be available via get_test_details."
+        ),
+    }
+    result['hint_to_agent'] = hints.get(action, "")
 
     return result

@@ -292,7 +292,7 @@ class TestGetReducedScenarioMapping:
         result = get_reduced_scenario_mapping(sample_scenario_ready, sample_categories_map)
         expected_keys = {
             "id", "source_type", "name", "description", "createdBy", "recommended",
-            "category_names", "tags", "step_count", "is_ready_to_run",
+            "category_names", "tags", "step_count", "total_attack_count", "is_ready_to_run",
             "createdAt", "updatedAt", "userId", "originalScenarioId"
         }
         assert set(result.keys()) == expected_keys
@@ -386,7 +386,7 @@ class TestGetReducedPlanMapping:
         result = get_reduced_plan_mapping(sample_plan)
         expected_keys = {
             "id", "source_type", "name", "description", "createdBy", "recommended",
-            "category_names", "tags", "step_count", "is_ready_to_run",
+            "category_names", "tags", "step_count", "total_attack_count", "is_ready_to_run",
             "createdAt", "updatedAt", "userId", "originalScenarioId"
         }
         assert set(result.keys()) == expected_keys
@@ -549,7 +549,9 @@ class TestPaginateScenarios:
         result = paginate_scenarios(large_scenario_list, page_number=2, page_size=10)
         assert result["page_number"] == 2
         assert len(result["scenarios_in_page"]) == 5
-        assert result["hint_to_agent"] is None
+        # No pagination hint on last page (may still have attack count hint)
+        hint = result["hint_to_agent"]
+        assert hint is None or 'page_number=' not in hint
 
     def test_empty_list(self):
         result = paginate_scenarios([], page_number=0, page_size=10)
@@ -571,4 +573,40 @@ class TestPaginateScenarios:
         assert result["total_pages"] == 1
         assert result["total_scenarios"] == 5
         assert len(result["scenarios_in_page"]) == 5
-        assert result["hint_to_agent"] is None
+        # No pagination hint on single page (may still have attack count hint)
+        hint = result["hint_to_agent"]
+        assert hint is None or 'page_number=' not in hint
+
+
+class TestMalformedScenarioSteps:
+    """Regression tests for malformed scenario data from content-manager API.
+
+    Staging (scenario index 218) has a scenario with id=None where steps[0]
+    is a list instead of a dict, causing 'list' object has no attribute 'get'.
+    """
+
+    def test_compute_is_ready_to_run_with_list_step(self):
+        """Steps containing a list instead of dict should not crash."""
+        scenario = {
+            "id": None,
+            "name": "Malformed scenario",
+            "steps": [
+                [{"name": "inner step", "targetFilter": {}, "attackerFilter": {}}]
+            ],
+        }
+        result = compute_is_ready_to_run(scenario)
+        assert result is False
+
+    def test_get_reduced_scenario_mapping_with_list_step(self):
+        """get_reduced_scenario_mapping should handle scenario with list-type step."""
+        scenario = {
+            "id": "abc-123",
+            "name": "Malformed scenario",
+            "steps": [
+                [{"name": "inner step"}]
+            ],
+            "categories": [],
+        }
+        result = get_reduced_scenario_mapping(scenario, {})
+        assert result["is_ready_to_run"] is False
+        assert result["step_count"] == 1

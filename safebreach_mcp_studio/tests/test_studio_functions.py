@@ -25,6 +25,7 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_all_plans,
     _get_scenario_statistics,
     sb_run_scenario,
+    sb_manage_test,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -5329,7 +5330,7 @@ class TestFetchAllScenarios:
         assert call_args[0][0] == "https://test.safebreach.com/api/content-manager/vLatest/scenarios"
         assert call_args[1]['headers']['x-apitoken'] == "test-token"
         assert call_args[1]['headers']['Content-Type'] == "application/json"
-        mock_base_url.assert_called_once_with("test-console", "content-manager")
+        mock_base_url.assert_called_once_with("test-console", "playbook")
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
@@ -6687,10 +6688,8 @@ class TestCustomPlanAugmentation:
         assert 'planId' not in payload['plan']
         assert len(payload['plan']['steps']) == 2
 
-        # originalScenarioId should be the plan's UUID (or string ID if no UUID)
-        assert isinstance(payload['plan']['originalScenarioId'], str)
-        # mock_custom_plan has originalScenarioId="da4a7098-..."
-        assert payload['plan']['originalScenarioId'] == "da4a7098-9e26-4f4e-a5cd-bc39a0d71eba"
+        # originalScenarioId should NOT be present for custom plans
+        assert 'originalScenarioId' not in payload['plan']
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
            return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
@@ -7061,3 +7060,472 @@ class TestVerboseFailures:
         # Should have aggregated, not per-attack
         assert 'constraint_summary_aggregated' in step1
         assert 'constraint_summary' not in step1
+
+
+# ---------------------------------------------------------------------------
+# manage_test — SAF-29969
+# ---------------------------------------------------------------------------
+
+
+class TestManageTest:
+    """Tests for sb_manage_test — test lifecycle management (pause/resume/cancel)."""
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_cancel_success(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """Cancel a running test via DELETE — happy path."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(
+            test_id="1776488350786.15", action="cancel", console="test"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['action'] == "cancel"
+        assert result['status'] == "success"
+
+        mock_delete.assert_called_once()
+        call_args = mock_delete.call_args
+        assert "1776488350786.15" in call_args[0][0] or \
+            "1776488350786.15" in str(call_args)
+        expected_url = (
+            "https://test.safebreach.com/api/orch/v4/accounts/"
+            "1234567890/queue/1776488350786.15"
+        )
+        assert call_args[0][0] == expected_url
+        assert call_args[1]['headers']['x-apitoken'] == "test-token"
+        assert call_args[1]['timeout'] == 30
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_cancel_api_error(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """API error during cancel propagates as RequestException."""
+        import requests as req
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_delete.side_effect = req.exceptions.RequestException("API error")
+
+        with pytest.raises(req.exceptions.RequestException, match="API error"):
+            sb_manage_test(
+                test_id="1776488350786.15", action="cancel", console="test"
+            )
+
+    # --- Phase 2: Pause ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_pause_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Pause a running test via PUT /state — happy path."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(
+            test_id="1776488350786.15", action="pause", console="test"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['action'] == "pause"
+        assert result['status'] == "success"
+
+        mock_put.assert_called_once()
+        call_args = mock_put.call_args
+        expected_url = (
+            "https://test.safebreach.com/api/orch/v4/accounts/"
+            "1234567890/queue/1776488350786.15/state"
+        )
+        assert call_args[0][0] == expected_url
+        assert call_args[1]['json'] == {"status": "pause"}
+        assert call_args[1]['headers']['x-apitoken'] == "test-token"
+        assert call_args[1]['headers']['Content-Type'] == "application/json"
+        assert call_args[1]['timeout'] == 120
+
+    # --- Phase 3: Resume ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resume_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Resume a paused test via PUT /state — happy path."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(
+            test_id="1776488350786.15", action="resume", console="test"
+        )
+
+        assert result['test_id'] == "1776488350786.15"
+        assert result['action'] == "resume"
+        assert result['status'] == "success"
+
+        mock_put.assert_called_once()
+        call_args = mock_put.call_args
+        assert call_args[1]['json'] == {"status": "resume"}
+
+    # --- Phase 4: Input validation ---
+
+    def test_invalid_action(self):
+        """Invalid action raises ValueError listing valid actions."""
+        with pytest.raises(ValueError, match="pause.*resume.*cancel"):
+            sb_manage_test(test_id="1776488350786.15", action="stop")
+
+    def test_empty_test_id(self):
+        """Empty test_id raises ValueError."""
+        with pytest.raises(ValueError, match="test_id"):
+            sb_manage_test(test_id="", action="cancel")
+
+    def test_none_test_id(self):
+        """None test_id raises ValueError."""
+        with pytest.raises(ValueError, match="test_id"):
+            sb_manage_test(test_id=None, action="cancel")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_not_found_404(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """404 from API propagates as HTTPError."""
+        import requests as req
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = req.exceptions.HTTPError(
+            "404 Not Found"
+        )
+        mock_delete.return_value = mock_response
+
+        with pytest.raises(req.exceptions.HTTPError, match="404"):
+            sb_manage_test(test_id="nonexistent.123", action="cancel", console="test")
+
+    # --- Phase 5: Reason notes ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_append_to_existing_comment(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+    ):
+        """Append note to existing comment via read-then-append."""
+        from safebreach_mcp_studio.studio_functions import _append_test_note
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # GET returns existing comment
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = {"comment": "existing note"}
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # PUT succeeds
+        mock_put_response = MagicMock()
+        mock_put_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_put_response
+
+        result = _append_test_note("test123", "pause", "maintenance window", "test")
+
+        assert result['note_status'] == "success"
+        assert "Test pause: maintenance window" in result['note']
+
+        # Verify PUT was called with concatenated comment
+        mock_put.assert_called_once()
+        put_body = mock_put.call_args[1]['json']
+        assert put_body['comment'].startswith("existing note\n")
+        assert "Test pause: maintenance window" in put_body['comment']
+        assert "UTC]" in put_body['comment']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_append_to_null_comment(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+    ):
+        """Append note when existing comment is null — no leading newline."""
+        from safebreach_mcp_studio.studio_functions import _append_test_note
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = {"comment": None}
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_put_response = MagicMock()
+        mock_put_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_put_response
+
+        result = _append_test_note("test123", "cancel", "cleanup", "test")
+
+        assert result['note_status'] == "success"
+        put_body = mock_put.call_args[1]['json']
+        # Should NOT start with newline
+        assert not put_body['comment'].startswith("\n")
+        assert "Test cancel: cleanup" in put_body['comment']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_append_to_empty_comment(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+    ):
+        """Append note when existing comment is empty string."""
+        from safebreach_mcp_studio.studio_functions import _append_test_note
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = {"comment": ""}
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_put_response = MagicMock()
+        mock_put_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_put_response
+
+        result = _append_test_note("test123", "resume", "deploy done", "test")
+
+        assert result['note_status'] == "success"
+        put_body = mock_put.call_args[1]['json']
+        assert not put_body['comment'].startswith("\n")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_manage_test_with_reason(
+        self, mock_secret, mock_base_url, mock_account_id,
+        mock_get, mock_put, mock_delete
+    ):
+        """sb_manage_test with reason calls _append_test_note."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        # DELETE succeeds (cancel lifecycle)
+        mock_del_response = MagicMock()
+        mock_del_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_del_response
+
+        # GET returns existing comment
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = {"comment": ""}
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # PUT succeeds (write note)
+        mock_put_response = MagicMock()
+        mock_put_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_put_response
+
+        result = sb_manage_test(
+            test_id="test123", action="cancel", console="test",
+            reason="no longer needed"
+        )
+
+        assert result['status'] == "success"
+        assert result['note_status'] == "success"
+        assert "Test cancel: no longer needed" in result['note']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_manage_test_without_reason(
+        self, mock_secret, mock_base_url, mock_account_id, mock_delete
+    ):
+        """sb_manage_test without reason does NOT call _append_test_note."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_del_response = MagicMock()
+        mock_del_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_del_response
+
+        result = sb_manage_test(
+            test_id="test123", action="cancel", console="test"
+        )
+
+        assert result['status'] == "success"
+        assert 'note_status' not in result
+
+    # --- Phase 6: Note resilience ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_note_get_failure(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get
+    ):
+        """GET failure in _append_test_note returns failure dict, does NOT raise."""
+        from safebreach_mcp_studio.studio_functions import _append_test_note
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get.side_effect = Exception("network error")
+
+        result = _append_test_note("test123", "pause", "test reason", "test")
+
+        assert result['note_status'] == "failed"
+        assert 'note_error' in result
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_note_put_failure(
+        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+    ):
+        """PUT failure in _append_test_note returns failure dict, does NOT raise."""
+        from safebreach_mcp_studio.studio_functions import _append_test_note
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get_response = MagicMock()
+        mock_get_response.json.return_value = {"comment": "existing"}
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        mock_put.side_effect = Exception("write failed")
+
+        result = _append_test_note("test123", "pause", "test reason", "test")
+
+        assert result['note_status'] == "failed"
+        assert 'note_error' in result
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_note_failure_doesnt_block_lifecycle(
+        self, mock_secret, mock_base_url, mock_account_id, mock_delete
+    ):
+        """Lifecycle succeeds even when note append fails."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_del_response = MagicMock()
+        mock_del_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_del_response
+
+        # Patch _append_test_note to simulate failure
+        with patch('safebreach_mcp_studio.studio_functions._append_test_note') as mock_note:
+            mock_note.return_value = {"note_status": "failed", "note_error": "boom"}
+
+            result = sb_manage_test(
+                test_id="test123", action="cancel", console="test",
+                reason="test reason"
+            )
+
+        assert result['status'] == "success"
+        assert result['note_status'] == "failed"
+
+    # --- Phase 7: hint_to_agent ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_pause_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Pause result includes hint_to_agent mentioning resume and cancel."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="pause", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "resume" in result['hint_to_agent']
+        assert "cancel" in result['hint_to_agent']
+        assert "get_test_details" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_resume_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+        """Resume result includes hint_to_agent mentioning monitoring."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="resume", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "get_test_details" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
+    def test_cancel_hint(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+        """Cancel result includes hint_to_agent mentioning partial results."""
+        mock_secret.return_value = "test-token"
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="cancel", console="test")
+
+        assert 'hint_to_agent' in result
+        assert "get_test_details" in result['hint_to_agent']
+        assert "partial" in result['hint_to_agent'].lower()

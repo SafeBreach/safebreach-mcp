@@ -513,7 +513,7 @@ def _get_all_scenarios_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
 
     try:
         apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'content-manager')
+        base_url = get_api_base_url(console, 'playbook')
 
         api_url = f"{base_url}/api/content-manager/vLatest/scenarios"
         headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
@@ -555,7 +555,7 @@ def _get_categories_map_from_cache_or_api(console: str) -> Dict[int, str]:
 
     try:
         apitoken = get_secret_for_console(console)
-        base_url = get_api_base_url(console, 'content-manager')
+        base_url = get_api_base_url(console, 'playbook')
 
         api_url = f"{base_url}/api/content-manager/vLatest/scenarioCategories"
         headers = {"Content-Type": "application/json", "x-apitoken": apitoken}

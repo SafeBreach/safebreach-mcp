@@ -130,6 +130,8 @@ def compute_is_ready_to_run(scenario: Dict[str, Any]) -> bool:
     if not steps:
         return False
     for step in steps:
+        if not isinstance(step, dict):
+            return False
         target = step.get('targetFilter', {})
         attacker = step.get('attackerFilter', {})
         if not _has_real_filter_criteria(target) or not _has_real_filter_criteria(attacker):
@@ -142,6 +144,31 @@ def _truncate_description(description: Optional[str]) -> Optional[str]:
     if description and len(description) > 200:
         return description[:200] + "..."
     return description
+
+
+def _compute_total_attack_count(steps: List[Dict[str, Any]]) -> Optional[int]:
+    """Compute total attack count across all scenario steps.
+
+    Returns the sum of playbook IDs across steps. If any step uses criteria-based
+    attack selection (no explicit playbook IDs), returns None to indicate
+    the count is indeterminate at listing time.
+    """
+    if not steps:
+        return 0
+    total = 0
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        attacks_filter = step.get('attacksFilter', {})
+        if not isinstance(attacks_filter, dict):
+            continue
+        playbook_values = attacks_filter.get('playbook', {}).get('values', [])
+        if playbook_values:
+            total += len(playbook_values)
+        else:
+            # Step uses criteria-based selection — count is indeterminate
+            return None
+    return total
 
 
 def get_reduced_scenario_mapping(
@@ -168,6 +195,7 @@ def get_reduced_scenario_mapping(
         "category_names": category_names,
         "tags": scenario.get("tags") or [],
         "step_count": len(scenario.get("steps", [])),
+        "total_attack_count": _compute_total_attack_count(scenario.get("steps", [])),
         "is_ready_to_run": compute_is_ready_to_run(scenario),
         "createdAt": scenario.get("createdAt"),
         "updatedAt": scenario.get("updatedAt"),
@@ -200,6 +228,7 @@ def get_reduced_plan_mapping(
         "category_names": [],  # Custom plans don't have categories
         "tags": plan.get("tags") or [],
         "step_count": len(plan.get("steps", [])),
+        "total_attack_count": _compute_total_attack_count(plan.get("steps", [])),
         "is_ready_to_run": compute_is_ready_to_run(plan),
         "createdAt": plan.get("createdAt"),
         "updatedAt": plan.get("updatedAt"),
@@ -299,14 +328,28 @@ def paginate_scenarios(
 
     start_idx = page_number * page_size
     end_idx = min(start_idx + page_size, total_scenarios)
+    page_scenarios = scenarios[start_idx:end_idx]
+
+    # Build hint_to_agent: pagination + optional attack count note
+    hints = []
+    if page_number + 1 < total_pages:
+        hints.append(f'You can scan next page by calling with page_number={page_number + 1}')
+    has_indeterminate = any(
+        s.get('total_attack_count') is None for s in page_scenarios
+    )
+    if has_indeterminate:
+        hints.append(
+            'Some scenarios have criteria-based attack selection, so their '
+            'total_attack_count is unavailable at listing time. Use run_scenario '
+            'with dry_run=True to determine the exact attack count for those scenarios.'
+        )
 
     return {
         'page_number': page_number,
         'total_pages': total_pages,
         'total_scenarios': total_scenarios,
-        'scenarios_in_page': scenarios[start_idx:end_idx],
-        'hint_to_agent': f'You can scan next page by calling with page_number={page_number + 1}'
-                         if page_number + 1 < total_pages else None,
+        'scenarios_in_page': page_scenarios,
+        'hint_to_agent': ' | '.join(hints) if hints else None,
     }
 
 

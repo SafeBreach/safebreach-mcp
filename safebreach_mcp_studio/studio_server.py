@@ -26,6 +26,7 @@ from .studio_functions import (
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
     sb_run_scenario,
+    sb_manage_test,
 )
 
 logger = logging.getLogger(__name__)
@@ -1020,9 +1021,22 @@ Parameters:
   overrides for non-ready scenarios. Use this when the scenario is not ready to run and you
   need to provide missing targetFilter/attackerFilter for specific steps.
   Overrides REPLACE the entire filter (not merge) — include all needed filter keys.
-  Supports a "default" key that applies to all missing steps without explicit overrides.
+
+  **Filter schema** — each filter key must contain an object with THREE required fields:
+  `{"<filter_type>": {"operator": "is", "values": [...], "name": "<filter_type>"}}`
+  The `name` field MUST match the outer key name. Available filter types and valid values:
+  - os: values=["WINDOWS","MAC","LINUX","DOCKER","NETWORK"] (NETWORK is target-only)
+  - role: values=["isInfiltration","isExfiltration","isAWSAttacker","isAzureAttacker",
+    "isGCPAttacker","isWebApplicationAttacker"]
+  - simulators: values=["<uuid>", ...] (use get_console_simulators to discover UUIDs)
+  - connection: values=[true] (all connected simulators)
+
+  **"default" key**: Use `"default"` to apply the same override to ALL steps that are
+  missing filters. Steps with explicit per-number overrides take precedence over "default".
+  Limitation: "default" only applies to steps that are fully missing the relevant filter —
+  it does NOT merge with partially-ready steps that already have one filter side set.
+
   Format: '{"default": {"targetFilter": {...}, "attackerFilter": {...}}, "8": {"attackerFilter": {...}}}'
-  Per-step entries override the default entirely for that step.
 - dry_run (optional, bool, default False): If True, predict simulation counts per step
   without actually queuing the test. Use this to preview what would happen before committing
   to a real execution. Shows resolved attacks per step and constraint diagnostics.
@@ -1130,6 +1144,9 @@ Example (3-turn workflow for non-ready scenarios):
                         "Use `get_console_simulators` (Config Server) to discover "
                         "available simulators and their roles.",
                         "",
+                        "**Filter schema** — each filter key MUST have 3 fields: "
+                        "`operator`, `values`, and `name` (must match the key):",
+                        "",
                         "**Filter options:**",
                         '- OS: `{"os": {"operator": "is", '
                         '"values": ["WINDOWS", "LINUX"], "name": "os"}}`',
@@ -1140,6 +1157,10 @@ Example (3-turn workflow for non-ready scenarios):
                         '- All connected: `{"connection": {"operator": "is", '
                         '"values": [true], "name": "connection"}}`',
                         "",
+                        "**Valid OS values:**",
+                        "- targetFilter: WINDOWS, MAC, LINUX, DOCKER, NETWORK",
+                        "- attackerFilter: WINDOWS, MAC, LINUX, DOCKER",
+                        "",
                         "**Valid role values** (use with attackerFilter):",
                         "- `isInfiltration` — infiltration attacker (network-in)",
                         "- `isExfiltration` — exfiltration attacker (data-out)",
@@ -1147,6 +1168,14 @@ Example (3-turn workflow for non-ready scenarios):
                         "- `isAzureAttacker` — Azure cloud attacker",
                         "- `isGCPAttacker` — GCP cloud attacker",
                         "- `isWebApplicationAttacker` — web application attacker",
+                        "",
+                        "**\"default\" key shortcut:** Use `\"default\"` in "
+                        "step_overrides to apply the same filter to ALL missing "
+                        "steps at once. Example: "
+                        '`\'{"default": {"targetFilter": {"os": {"operator": "is", '
+                        '"values": ["LINUX"], "name": "os"}}}}\'`',
+                        "Note: \"default\" only applies to steps fully missing "
+                        "the relevant filter, not to partially-ready steps.",
                         "",
                         "Use `get_console_simulators` to see which simulators have "
                         "which roles (look for role fields in the output).",
@@ -1348,6 +1377,71 @@ Example (3-turn workflow for non-ready scenarios):
             except Exception as e:
                 logger.error(f"Error in run_scenario: {e}")
                 return f"Error running scenario: {str(e)}"
+
+        # ----- manage_test (SAF-29969) -----
+
+        @self.mcp.tool(
+            name="manage_test",
+            description="""Manage a running test's lifecycle — pause, resume, or cancel.
+
+Use this tool to control tests that were queued via run_scenario. The test_id is the
+planRunId returned by run_scenario.
+
+Parameters:
+- test_id (required, str): Test execution ID (planRunId), e.g. "1776488350786.15"
+- action (required, str): Lifecycle action — "pause", "resume", or "cancel"
+- console (required, str): SafeBreach console name
+- reason (optional, str): Why this action is being taken. When provided, appends a
+  timestamped UTC note to the test's comment field for audit trail.
+
+Returns: Markdown summary with test_id, action taken, and status.
+
+Example (cancel a test):
+manage_test(test_id="1776488350786.15", action="cancel", console="demo")
+
+Example (pause with reason):
+manage_test(test_id="1776488350786.15", action="pause", console="demo",
+            reason="Maintenance window — resuming after deploy")"""
+        )
+        def manage_test(
+            test_id: str,
+            action: str,
+            console: str = "default",
+            reason: str = None,
+        ) -> str:
+            """Manage a running test's lifecycle."""
+            try:
+                result = sb_manage_test(test_id, action, console, reason)
+
+                action_display = action.capitalize()
+                response_parts = [
+                    f"## Test {action_display}",
+                    "",
+                    f"**Test ID:** {result['test_id']}",
+                    f"**Action:** {result['action']}",
+                    f"**Status:** {result['status']}",
+                ]
+
+                if result.get('note_status') == 'success':
+                    response_parts.append(f"**Note:** {result['note']}")
+                elif result.get('note_status') == 'failed':
+                    response_parts.append(
+                        f"**Note Warning:** Failed to append note — "
+                        f"{result.get('note_error', 'unknown error')}"
+                    )
+
+                if result.get('hint_to_agent'):
+                    response_parts.append("")
+                    response_parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+                return "\n".join(response_parts)
+
+            except ValueError as e:
+                logger.error(f"Manage test error: {e}")
+                return f"Manage Test Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in manage_test: {e}")
+                return f"Error managing test: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:
