@@ -35,19 +35,12 @@ from .safebreach_auth import SafeBreachAuth
 
 logger = logging.getLogger(__name__)
 
-# Per-request flag indicating whether the caller (mcp-proxy) wants destructive
-# (write) tools hidden. Set from the X-Disable-Tools request header by the
-# ASGI middleware below; consumed by the tool manager wrappers. Note this
-# only affects tools whose annotation says `readOnlyHint != True` AND that
-# are NOT already in DISABLE_TOOL_LIST (the deny list trumps the gate).
-_disable_tools_flag: contextvars.ContextVar[bool] = contextvars.ContextVar('disable_tools_flag', default=False)
-
 # Server-wide absolute deny list. Configured via the DISABLE_TOOL_LIST env
-# var at startup — expected format is a JSON array of tool names, e.g.
-# '["save_studio_attack_draft","run_studio_attack"]'. Tools whose names appear
-# here are stripped from `tools/list` and rejected by `tools/call` regardless
-# of any per-request header, FF, or account setting. The only way to re-enable
-# a tool is to remove it from the env var and restart the server.
+# var (JSON array of tool names, e.g. '["save_studio_attack_draft"]'). Tools
+# whose names appear here are stripped from `tools/list` and rejected by
+# `tools/call`. The env var is read fresh on every server start, so the
+# operator (mcp-proxy in the SaaS deployment) can update it and restart the
+# server to change which tools are gated.
 def _parse_disable_tool_list(raw: Optional[str]) -> frozenset[str]:
     raw = (raw or '').strip()
     if not raw:
@@ -61,8 +54,6 @@ def _parse_disable_tool_list(raw: Optional[str]) -> frozenset[str]:
         logger.error("DISABLE_TOOL_LIST must be a JSON array of strings, ignoring")
         return frozenset()
     return frozenset(n for n in parsed if n)
-
-_DISABLE_TOOL_LIST: frozenset[str] = _parse_disable_tool_list(os.environ.get('DISABLE_TOOL_LIST'))
 
 # Concurrency limiter state — shared across all server instances
 _mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('mcp_session_id', default=None)
@@ -142,70 +133,37 @@ class SafeBreachMCPBase:
         self._cache.clear()
 
     def _install_disable_filtering(self, app):
-        """Install two independent filter layers and return the app wrapped
-        with the X-Disable-Tools header reader.
-
-        Layer 1 — DISABLE_TOOL_LIST (absolute deny):
-            tools whose names appear in DISABLE_TOOL_LIST are always stripped
-            from list_tools and rejected by call_tool, regardless of header.
-
-        Layer 2 — write-tool gate (header-driven):
-            when `X-Disable-Tools: true` is set on the request, write tools
-            (annotation `readOnlyHint != True`) are also stripped / rejected.
-            Read-only tools always pass.
-
-        SIMP sets the header per-request based on the account's FF + consent
-        state. Combined effect: deny-list tools are unreachable forever; other
-        write tools are gated by the FF + consent; read tools are always
-        available."""
+        """Wrap the tool manager so any tool whose name is in DISABLE_TOOL_LIST
+        is hidden from `tools/list` and rejected by `tools/call`. The env var
+        is re-read on every install (every server start), so a restart with a
+        new env-var value takes effect for the new instance. Returns `app`
+        unchanged."""
         from mcp.server.fastmcp.exceptions import ToolError
+        deny_list = _parse_disable_tool_list(os.environ.get('DISABLE_TOOL_LIST'))
         tool_manager = self.mcp._tool_manager
         original_list_tools = tool_manager.list_tools
         original_call_tool = tool_manager.call_tool
 
-        def _is_read_only(tool) -> bool:
-            return getattr(getattr(tool, 'annotations', None), 'readOnlyHint', None) is True
-
         def filtered_list_tools():
             tools = original_list_tools()
-            if _DISABLE_TOOL_LIST:
-                tools = [t for t in tools if t.name not in _DISABLE_TOOL_LIST]
-            if _disable_tools_flag.get():
-                tools = [t for t in tools if _is_read_only(t)]
+            if deny_list:
+                tools = [t for t in tools if t.name not in deny_list]
             return tools
 
         async def filtered_call_tool(name, arguments, context=None, convert_result=False):
-            if name in _DISABLE_TOOL_LIST:
+            if name in deny_list:
                 logger.warning("Blocked deny-listed tool call: '%s'", name)
                 raise ToolError(
                     f"Tool '{name}' is not available. "
                     "This tool has been disabled by the server administrator."
                 )
-            if _disable_tools_flag.get():
-                tool = tool_manager.get_tool(name)
-                if tool is not None and not _is_read_only(tool):
-                    logger.warning("Blocked write tool while gate closed: '%s'", name)
-                    raise ToolError(
-                        f"Tool '{name}' is not available. "
-                        "AI actions are not enabled for this account."
-                    )
             return await original_call_tool(name, arguments, context=context, convert_result=convert_result)
 
         tool_manager.list_tools = filtered_list_tools
         tool_manager.call_tool = filtered_call_tool
 
-        async def disable_aware_app(scope, receive, send):
-            if scope["type"] == "http":
-                headers = dict(scope.get("headers", []))
-                raw = headers.get(b"x-disable-tools", b"").decode("utf-8", errors="replace").strip().lower()
-                _disable_tools_flag.set(raw == "true")
-            return await app(scope, receive, send)
-
-        logger.info(
-            'Tool-disable filtering installed (deny list: %d, write gate: header-driven)',
-            len(_DISABLE_TOOL_LIST),
-        )
-        return disable_aware_app
+        logger.info('Tool-disable filtering installed (deny list: %d)', len(deny_list))
+        return app
 
     def request_shutdown(self) -> None:
         """Signal the uvicorn server to exit gracefully.
@@ -278,8 +236,8 @@ class SafeBreachMCPBase:
         else:
             logger.info("🏠 Local-only server - no authentication wrapper applied")
 
-        # Install X-Disable-Tools support (tool-manager wrap + ASGI middleware).
-        # No-op when DISABLE_TOOL_LIST is empty — returns `app` unchanged.
+        # Wrap the tool manager so DISABLE_TOOL_LIST entries are hidden from
+        # tools/list and rejected by tools/call. Returns `app` unchanged.
         app = self._install_disable_filtering(app)
 
         # Wrap with concurrency limiter (applies to all servers)

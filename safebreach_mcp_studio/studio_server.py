@@ -815,7 +815,7 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
 
         @self.mcp.tool(
             name="create_new_studio_attack",
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
             description="""Returns boilerplate template code and default parameters for creating a new custom attack.
 
 IMPORTANT: When creating a new attack from scratch, ALWAYS start by calling this tool first.
@@ -1382,6 +1382,7 @@ Example (3-turn workflow for non-ready scenarios):
 
         @self.mcp.tool(
             name="manage_test",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Manage a running test's lifecycle — pause, resume, or cancel.
 
 Use this tool to control tests that were queued via run_scenario. The test_id is the
