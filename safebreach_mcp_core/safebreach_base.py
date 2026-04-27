@@ -138,17 +138,18 @@ class SafeBreachMCPBase:
         is re-read on every install (every server start), so a restart with a
         new env-var value takes effect for the new instance. Returns `app`
         unchanged."""
-        from mcp.server.fastmcp.exceptions import ToolError
         deny_list = _parse_disable_tool_list(os.environ.get('DISABLE_TOOL_LIST'))
+        if not deny_list:
+            logger.info('Tool-disable filtering installed (deny list: 0)')
+            return app
+
+        from mcp.server.fastmcp.exceptions import ToolError
         tool_manager = self.mcp._tool_manager
         original_list_tools = tool_manager.list_tools
         original_call_tool = tool_manager.call_tool
 
         def filtered_list_tools():
-            tools = original_list_tools()
-            if deny_list:
-                tools = [t for t in tools if t.name not in deny_list]
-            return tools
+            return [t for t in original_list_tools() if t.name not in deny_list]
 
         async def filtered_call_tool(name, arguments, context=None, convert_result=False):
             if name in deny_list:
