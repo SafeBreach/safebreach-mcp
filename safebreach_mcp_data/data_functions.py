@@ -218,8 +218,11 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
 
         headers = {"Content-Type": "application/json",
                     **get_auth_headers_for_console(console)}
-        
-        logger.info("Fetching tests from API for console '%s'", console)
+
+        logger.info("Fetching tests: url=%s, header_keys=%s, cookie_has_fgp=%s, cookie_len=%s",
+                     api_url, list(headers.keys()),
+                     '__secure-Fgp' in headers.get('cookie', ''),
+                     len(headers.get('cookie', '')))
         response = requests.get(api_url, headers=headers, timeout=120)
         check_rbac_response(response)
 
