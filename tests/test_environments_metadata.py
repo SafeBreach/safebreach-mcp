@@ -23,13 +23,19 @@ class TestEnvironmentsMetadata(unittest.TestCase):
             'test_console_apitoken',
             'my_local_console_apitoken'
         ]
-        
+
         self.original_env_vars = {}
         for var in self.env_vars_to_clean:
             self.original_env_vars[var] = os.environ.get(var)
             if var in os.environ:
                 del os.environ[var]
-    
+
+        # Snapshot the module-level safebreach_envs dict so we can restore it.
+        # Other modules hold references to this exact dict object, so we must
+        # restore in-place (clear + update), not replace.
+        from safebreach_mcp_core.environments_metadata import safebreach_envs
+        self._original_envs_snapshot = dict(safebreach_envs)
+
     def tearDown(self):
         """Clean up test environment."""
         # Restore original environment variables
@@ -38,7 +44,13 @@ class TestEnvironmentsMetadata(unittest.TestCase):
                 os.environ[var] = original_value
             elif var in os.environ:
                 del os.environ[var]
-        
+
+        # Restore safebreach_envs in-place so all existing references see the
+        # original state (prevents cross-test pollution via module-level dict).
+        from safebreach_mcp_core.environments_metadata import safebreach_envs
+        safebreach_envs.clear()
+        safebreach_envs.update(self._original_envs_snapshot)
+
         # Clear modules cache to ensure fresh imports in each test
         import sys
         modules_to_clear = [
@@ -186,13 +198,17 @@ class TestEnvironmentsMetadata(unittest.TestCase):
     
     def test_safebreach_local_env_invalid_json(self):
         """Test that invalid JSON in SAFEBREACH_LOCAL_ENV raises proper error."""
+        import sys
         # Set invalid JSON
         os.environ['SAFEBREACH_LOCAL_ENV'] = '{"invalid": json}'
-        
+
+        # Force fresh import so module-level code re-parses the env var
+        sys.modules.pop('safebreach_mcp_core.environments_metadata', None)
+
         # Import should raise ValueError
         with self.assertRaises(ValueError) as context:
-            from safebreach_mcp_core.environments_metadata import safebreach_envs
-        
+            from safebreach_mcp_core.environments_metadata import safebreach_envs  # noqa: F811
+
         self.assertIn("Invalid JSON in SAFEBREACH_LOCAL_ENV", str(context.exception))
     
     def test_combined_environment_loading(self):
