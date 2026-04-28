@@ -671,6 +671,11 @@ class SafeBreachMCPBase:
 
             # Streamable HTTP — single endpoint, session identified by Mcp-Session-Id header
             if transport == 'streamable-http' and path == endpoint_path:
+                # Update module-level auth bundle for streamable-http (SAF-29974)
+                if bundle and ('x-token' in bundle or 'cookie' in bundle):
+                    import safebreach_mcp_core.token_context as _tc
+                    _tc._last_user_auth_bundle = bundle
+
                 headers_dict = dict(scope.get("headers", []))
                 session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
 
