@@ -580,29 +580,9 @@ class SafeBreachMCPBase:
                 )
 
                 real_session_id = None
-                response_started = False
 
                 async def cleanup_send(message):
-                    nonlocal real_session_id, response_started
-
-                    # ASGI invariant: at most one `http.response.start` per
-                    # response. When uvicorn force-exits an in-flight SSE
-                    # (e.g. mcp-proxy restarts the server on an AI-actions
-                    # gate flip), starlette's exception handler tries to
-                    # render a 500 by emitting a second `response.start` —
-                    # which crashes h11 with `Expected
-                    # 'http.response.body', got 'http.response.start'`.
-                    # Drop the duplicate so the original SSE just
-                    # terminates.
-                    if message.get("type") == "http.response.start":
-                        if response_started:
-                            logger.debug(
-                                f"Suppressing duplicate http.response.start for session "
-                                f"{(real_session_id or middleware_session_id)[:8]}..."
-                            )
-                            return
-                        response_started = True
-
+                    nonlocal real_session_id
                     await send(message)
 
                     # Capture the real session_id from FastMCP's endpoint event
