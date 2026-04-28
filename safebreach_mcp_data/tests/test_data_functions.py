@@ -1719,20 +1719,22 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id):
-        """Test that missing auth context raises AuthenticationRequired (SAF-29974)."""
+        """Test that missing auth context raises AuthenticationRequired in embedded mode (SAF-29974)."""
         from safebreach_mcp_core.token_context import _user_auth_artifacts
         from safebreach_mcp_core.secret_utils import AuthenticationRequired
 
         # Temporarily clear the auth context set by the autouse fixture
         token = _user_auth_artifacts.set(None)
         try:
-            # All functions now use get_auth_headers_for_console which raises
-            # AuthenticationRequired when no ContextVar is set
-            with pytest.raises(AuthenticationRequired):
-                sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
+            # Simulate embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP)
+            with patch.dict('os.environ', {'SAFEBREACH_LOCAL_ENV': '{"default":{}}'}):
+                # All functions now use get_auth_headers_for_console which raises
+                # AuthenticationRequired when no ContextVar is set in embedded mode
+                with pytest.raises(AuthenticationRequired):
+                    sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
 
-            with pytest.raises(AuthenticationRequired):
-                sb_get_test_details(console="test-console", test_id="test123")
+                with pytest.raises(AuthenticationRequired):
+                    sb_get_test_details(console="test-console", test_id="test123")
         finally:
             _user_auth_artifacts.reset(token)
     

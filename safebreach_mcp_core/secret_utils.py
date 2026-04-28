@@ -96,9 +96,8 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     1. Per-request user auth bundle (from ContextVar)
     2. MCP SDK request_ctx — reads POST headers directly from tool handler context
     3. Session store lookup via session_id from request_ctx
-    4. Raises AuthenticationRequired if no credentials found
-
-    Non-tool callers (startup, health checks) should use get_secret_for_console() directly.
+    4. Embedded mode (SAFEBREACH_LOCAL_ENV set): raise AuthenticationRequired
+       Standalone mode (no SAFEBREACH_LOCAL_ENV): fall back to env-var API key
     """
     bundle = _user_auth_artifacts.get()
 
@@ -126,11 +125,20 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
                      f"(keys: {list(bundle.keys())})")
         return dict(bundle)  # copy — callers may mutate
 
-    # No user auth artifacts — this is an RBAC violation in tool context
-    logger.warning(f"No user auth in context for '{console}' — rejecting (RBAC enforcement)")
-    raise AuthenticationRequired(
-        f"Authentication required for console '{console}': no user credentials in request context"
-    )
+    # No user auth in request context.
+    # In embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP) this is an RBAC violation.
+    # In standalone mode (no SAFEBREACH_LOCAL_ENV) fall back to env-var API key.
+    if os.environ.get('SAFEBREACH_LOCAL_ENV'):
+        logger.warning(f"No user auth in context for '{console}' — rejecting (RBAC enforcement)")
+        raise AuthenticationRequired(
+            f"Authentication required for console '{console}': no user credentials in request context"
+        )
+
+    # Standalone mode — use shared API key from env/secret provider
+    logger.debug(f"get_auth_headers_for_console('{console}') → standalone mode, "
+                 f"falling back to env-var API key")
+    api_key = get_secret_for_console(console)
+    return {'x-apitoken': api_key}
 
 
 def _get_or_create_provider(provider_type: str, secret_config: Dict[str, Any]) -> SecretProvider:

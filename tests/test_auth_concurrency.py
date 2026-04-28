@@ -267,10 +267,23 @@ class TestLastUserAuthBundleRemoved:
 
 class TestGetAuthHeadersForConsole:
 
-    def test_raises_when_no_auth_available(self):
-        """Raises AuthenticationRequired when no auth is found anywhere."""
-        with pytest.raises(AuthenticationRequired):
-            get_auth_headers_for_console('default')
+    def test_raises_when_no_auth_in_embedded_mode(self):
+        """Raises AuthenticationRequired in embedded mode (SAFEBREACH_LOCAL_ENV set)."""
+        with patch.dict('os.environ', {'SAFEBREACH_LOCAL_ENV': '{"default":{}}'}):
+            with pytest.raises(AuthenticationRequired):
+                get_auth_headers_for_console('default')
+
+    def test_falls_back_to_api_key_in_standalone_mode(self):
+        """Falls back to get_secret_for_console() in standalone mode (no SAFEBREACH_LOCAL_ENV)."""
+        with patch.dict('os.environ', {}, clear=False):
+            # Ensure SAFEBREACH_LOCAL_ENV is not set
+            import os
+            os.environ.pop('SAFEBREACH_LOCAL_ENV', None)
+            with patch('safebreach_mcp_core.secret_utils.get_secret_for_console',
+                       return_value='standalone-api-key') as mock_secret:
+                result = get_auth_headers_for_console('staging')
+                assert result == {'x-apitoken': 'standalone-api-key'}
+                mock_secret.assert_called_once_with('staging')
 
     def test_contextvar_primary_path(self):
         """ContextVar is the primary source when available."""
