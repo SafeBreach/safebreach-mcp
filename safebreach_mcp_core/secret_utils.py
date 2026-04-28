@@ -93,21 +93,33 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """Return auth headers for outbound backend API calls.
 
     Priority:
-    1. Per-request user auth bundle (from ContextVar) — RBAC-enforced path
-    2. Raises AuthenticationRequired if ContextVar is empty in tool context
+    1. Per-request user auth bundle (from ContextVar)
+    2. MCP SDK request_ctx — reads POST headers directly from tool handler context
+    3. Session store lookup via session_id from request_ctx
+    4. Raises AuthenticationRequired if no credentials found
 
     Non-tool callers (startup, health checks) should use get_secret_for_console() directly.
     """
     bundle = _user_auth_artifacts.get()
 
-    # SSE transport fallback (SAF-29974): the ContextVar set on the /messages/ POST
-    # doesn't propagate to the tool handler because the tool runs in the SSE GET's
-    # create_task (a different async context). Fall back to _last_user_auth_bundle
-    # which is a module-level variable updated on every POST with user auth.
+    # SSE transport fallback (SAF-29974 Slice 6): the ContextVar set on the
+    # /messages/ POST doesn't propagate to the tool handler (SSE GET's create_task
+    # uses a different async context).  Read the POST's headers directly from the
+    # MCP SDK's request_ctx, which IS set on the tool handler's task.
     if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
-        from .token_context import _last_user_auth_bundle
-        if _last_user_auth_bundle and ('x-token' in _last_user_auth_bundle or 'cookie' in _last_user_auth_bundle):
-            bundle = _last_user_auth_bundle
+        from .token_context import _get_auth_from_mcp_request_ctx
+        mcp_bundle = _get_auth_from_mcp_request_ctx()
+        if mcp_bundle:
+            bundle = mcp_bundle
+
+    # Tertiary fallback: session store lookup via session_id from request_ctx
+    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+        from .token_context import _get_session_id_from_mcp_ctx, _session_auth_artifacts
+        session_id = _get_session_id_from_mcp_ctx()
+        if session_id:
+            entry = _session_auth_artifacts.get(session_id)
+            if entry:
+                bundle = entry[0]
 
     if bundle:
         logger.debug(f"get_auth_headers_for_console('{console}') → user bundle "

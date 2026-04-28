@@ -600,18 +600,11 @@ class SafeBreachMCPBase:
                             break
 
                 if session_id:
-                    # Auth bundle propagation (SAF-29974):
-                    # The ContextVar set at the ASGI level does NOT propagate into
-                    # the FastMCP tool handler because SseServerTransport.connect_sse
-                    # uses asyncio.create_task(). Although Python 3.12 copies ContextVars
-                    # to new tasks, the /messages/ POST handler runs in a DIFFERENT task
-                    # than the SSE GET's create_task where the tool handler lives.
-                    # Solution: store the user's bundle in a module-level variable that
-                    # the tool handler can read regardless of async context.
+                    # Auth bundle propagation (SAF-29974 Slice 6):
+                    # Store the user's auth bundle in the session store so that
+                    # get_auth_headers_for_console() can look it up by session_id
+                    # via the MCP SDK's request_ctx (which IS available in tool handlers).
                     if bundle and ('x-token' in bundle or 'cookie' in bundle):
-                        from .token_context import _last_user_auth_bundle
-                        import safebreach_mcp_core.token_context as _tc
-                        _tc._last_user_auth_bundle = bundle
                         _session_auth_artifacts[session_id] = (bundle, time.time())
 
                     # Session store fallback for auth
@@ -671,13 +664,12 @@ class SafeBreachMCPBase:
 
             # Streamable HTTP — single endpoint, session identified by Mcp-Session-Id header
             if transport == 'streamable-http' and path == endpoint_path:
-                # Update module-level auth bundle for streamable-http (SAF-29974)
-                if bundle and ('x-token' in bundle or 'cookie' in bundle):
-                    import safebreach_mcp_core.token_context as _tc
-                    _tc._last_user_auth_bundle = bundle
-
                 headers_dict = dict(scope.get("headers", []))
                 session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
+
+                # Store auth bundle in session store for streamable-http (SAF-29974 Slice 6)
+                if bundle and session_id:
+                    _session_auth_artifacts[session_id] = (bundle, time.time())
 
                 if not session_id:
                     # Initialize request — no session yet, pass through

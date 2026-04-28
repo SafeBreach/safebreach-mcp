@@ -26,11 +26,6 @@ _session_auth_artifacts: Dict[str, Tuple[Dict[str, str], float]] = {}
 
 _SESSION_ARTIFACTS_TTL = 3600  # matches existing semaphore cleanup TTL
 
-# Last auth bundle from a /messages/ POST — used as fallback when ContextVar
-# doesn't propagate (SSE transport's create_task loses ContextVar state).
-# Updated on every /messages/ POST that carries user auth headers.
-_last_user_auth_bundle: Optional[Dict[str, str]] = None
-
 AUTH_COOKIE_NAME = os.environ.get('SAFEBREACH_MCP_AUTH_COOKIE_NAME', 'X-Token')
 
 
@@ -56,6 +51,74 @@ def extract_auth_bundle(scope: dict) -> Optional[Dict[str, str]]:
         bundle['cookie'] = scrubbed
 
     return bundle or None
+
+
+def _get_auth_from_mcp_request_ctx() -> Optional[Dict[str, str]]:
+    """Extract user auth headers from the MCP SDK's request context.
+
+    Inside a tool handler, the SDK's request_ctx ContextVar holds a
+    RequestContext whose .request attribute is the Starlette Request from
+    the POST that triggered the tool call.  The request carries the user's
+    auth headers that SIMP forwarded.
+
+    Returns auth bundle dict or None if request_ctx is not available.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get()
+    except (ImportError, LookupError):
+        return None
+
+    request = getattr(ctx, 'request', None)
+    if request is None:
+        return None
+
+    headers = getattr(request, 'headers', None)
+    if headers is None:
+        return None
+
+    bundle: Dict[str, str] = {}
+    apitoken = headers.get('x-apitoken', '')
+    if apitoken:
+        bundle['x-apitoken'] = apitoken
+    x_token = headers.get('x-token', '')
+    if x_token:
+        bundle['x-token'] = x_token
+    raw_cookie = headers.get('cookie', '')
+    scrubbed = _keep_only_cookie(raw_cookie, AUTH_COOKIE_NAME)
+    if scrubbed:
+        bundle['cookie'] = scrubbed
+    return bundle or None
+
+
+def _get_session_id_from_mcp_ctx() -> Optional[str]:
+    """Extract session_id from the MCP SDK's request context.
+
+    SSE: query_params['session_id'].  Streamable-HTTP: header 'mcp-session-id'.
+    Returns None if request_ctx is not available or has no session_id.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        ctx = request_ctx.get()
+    except (ImportError, LookupError):
+        return None
+
+    request = getattr(ctx, 'request', None)
+    if request is None:
+        return None
+
+    qp = getattr(request, 'query_params', None)
+    if qp:
+        sid = qp.get('session_id')
+        if sid:
+            return sid
+
+    hdrs = getattr(request, 'headers', None)
+    if hdrs:
+        sid = hdrs.get('mcp-session-id')
+        if sid:
+            return sid
+    return None
 
 
 # Cookies to keep when scrubbing — auth token + fingerprint needed for JWT validation.
@@ -101,6 +164,8 @@ def get_cache_user_suffix() -> str:
     artifact present, or '' when no user bundle is set.
     """
     bundle = _user_auth_artifacts.get()
+    if not bundle:
+        bundle = _get_auth_from_mcp_request_ctx()
     if not bundle:
         logger.debug("get_cache_user_suffix() → '' (no user bundle)")
         return ''
