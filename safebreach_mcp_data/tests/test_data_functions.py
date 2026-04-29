@@ -47,7 +47,15 @@ from safebreach_mcp_data.data_functions import (
 
 class TestDataFunctions:
     """Test suite for data functions."""
-    
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        """Set up auth context for all tests (SAF-29974)."""
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def setup_method(self):
         """Setup for each test method."""
         # Clear caches before each test
@@ -179,37 +187,35 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_test_data):
+    def test_get_all_tests_from_cache_or_api_success(self, mock_get, mock_base_url, mock_account_id, mock_test_data):
         """Test successful retrieval of tests from API."""
-        # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = mock_test_data
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
-        
+
         # Test
         result = _get_all_tests_from_cache_or_api("test-console")
-        
+
         # Assertions
         assert len(result) == 2
         assert result[0]["test_id"] == "test1"
         assert result[1]["test_id"] == "test2"
-        
-        # Verify API was called
+
+        # Verify API was called with user's auth header
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
+        call_headers = mock_get.call_args.kwargs.get('headers', mock_get.call_args[1].get('headers', {}))
+        assert call_headers.get('x-apitoken') == 'test-token'
     
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_tests_from_cache(self, mock_get, mock_secret, mock_cache_enabled, mock_test_data):
+    def test_get_all_tests_from_cache(self, mock_get, mock_cache_enabled, mock_test_data):
         """Test retrieval of tests from cache when caching is enabled."""
         # Setup cache
-        cache_key = "tests_test-console"
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f"tests_test-console{get_cache_user_suffix()}"
         tests_cache.set(cache_key, mock_test_data)
 
         # Test
@@ -220,7 +226,6 @@ class TestDataFunctions:
 
         # Verify API was NOT called
         mock_get.assert_not_called()
-        mock_secret.assert_not_called()
     
     def test_apply_filters_test_type(self, mock_test_data):
         """Test test type filtering."""
@@ -461,17 +466,15 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
     def test_sb_get_test_details_fallback_to_single_endpoint(self, mock_get_all_tests, mock_get,
-                                                              mock_secret, mock_base_url, mock_account_id):
+                                                              mock_base_url, mock_account_id):
         """Test fallback to single-test endpoint when test is not in cached list."""
         # Cached list doesn't contain this test
         mock_get_all_tests.return_value = []
 
         # Single endpoint returns the test
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {
             "planName": "Test Plan",
@@ -506,16 +509,14 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
     def test_sb_get_test_details_error(self, mock_get_all_tests, mock_get,
-                                        mock_secret, mock_base_url, mock_account_id):
+                                        mock_base_url, mock_account_id):
         """Test error handling when both cached list and single endpoint fail."""
         # Cached list returns empty (test not found)
         mock_get_all_tests.return_value = []
         # Single endpoint also fails
-        mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
 
         with pytest.raises(Exception) as exc_info:
@@ -525,29 +526,26 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_get_all_simulations_from_cache_or_api_success(self, mock_post, mock_secret, mock_base_url, mock_account_id, mock_simulation_data):
+    def test_get_all_simulations_from_cache_or_api_success(self, mock_post, mock_base_url, mock_account_id, mock_simulation_data):
         """Test successful retrieval of simulations from API."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = mock_simulation_data
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
         mock_post.return_value = mock_response
-        
+
         # Test
         result = _get_all_simulations_from_cache_or_api("test1", "test-console")
-        
+
         # Assertions
         assert len(result) == 2
         assert result[0]["simulation_id"] == "sim1"
         assert result[1]["simulation_id"] == "sim2"
-        
+
         # Verify API was called
         mock_post.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     def test_apply_simulation_filters_status(self, mock_simulation_data):
         """Test simulation status filtering."""
@@ -651,12 +649,10 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_success(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_simulation_details_success(self, mock_post, mock_base_url, mock_account_id):
         """Test successful simulation details retrieval."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {
             "simulations": [{
@@ -673,23 +669,23 @@ class TestDataFunctions:
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
         mock_post.return_value = mock_response
-        
+
         result = sb_get_simulation_details(
-            "sim1", 
+            "sim1",
             "test-console",
             include_mitre_techniques=True,
             include_basic_attack_logs=True
         )
-        
+
         assert "simulation_id" in result
         assert "mitre_techniques" in result
         assert "basic_attack_logs_by_hosts" in result
-        
+
         # Verify attack logs structure
         attack_logs = result["basic_attack_logs_by_hosts"]
         assert isinstance(attack_logs, list)
         assert len(attack_logs) == 2  # Two hosts (node1 and node2)
-        
+
         # Check each host log structure
         for host_log in attack_logs:
             assert "host_info" in host_log
@@ -697,32 +693,29 @@ class TestDataFunctions:
             assert "node_id" in host_log["host_info"]
             assert "event_count" in host_log["host_info"]
             assert isinstance(host_log["host_logs"], list)
-            
+
         # Verify specific host data
         host_nodes = [log["host_info"]["node_id"] for log in attack_logs]
         assert "node1" in host_nodes
         assert "node2" in host_nodes
-        
+
         # Find node1 and verify it has 2 events
         node1_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node1")
         assert node1_log["host_info"]["event_count"] == 2
         assert len(node1_log["host_logs"]) == 2
-        
+
         # Find node2 and verify it has 1 event
         node2_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node2")
         assert node2_log["host_info"]["event_count"] == 1
         assert len(node2_log["host_logs"]) == 1
-        
+
         mock_post.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_error(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_simulation_details_error(self, mock_post, mock_base_url, mock_account_id):
         """Test error handling in simulation details retrieval."""
-        mock_secret.return_value = "test-token"
         mock_post.side_effect = Exception("API Error")
         
         # Should now raise exception
@@ -734,36 +727,31 @@ class TestDataFunctions:
     # Security Control Events Tests
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_from_cache_or_api_success(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_security_control_events_data):
+    def test_get_all_security_control_events_from_cache_or_api_success(self, mock_get, mock_base_url, mock_account_id, mock_security_control_events_data):
         """Test successful retrieval of security control events from API."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {"result": {"siemLogs": mock_security_control_events_data}}
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
-        
+
         # Test
         result = _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
-        
+
         # Assertions
         assert len(result) == 2
         assert result[0]["id"] == "8207d61e-d14b-5e1d-adcb-8ea461249001"
         assert result[1]["id"] == "c867d8e7-8065-5d1f-a624-00ef716a72b3"
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
+    def test_get_all_security_control_events_cache_behavior(self, mock_get, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
         """Test cache behavior for security control events when caching is enabled."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {"result": {"siemLogs": mock_security_control_events_data}}
         mock_response.raise_for_status.return_value = None
@@ -784,12 +772,10 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_secret, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
+    def test_get_all_security_control_events_cache_expired(self, mock_get, mock_base_url, mock_account_id, mock_cache_enabled, mock_security_control_events_data):
         """Test cache expiration for security control events when caching is enabled."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {"result": {"siemLogs": mock_security_control_events_data}}
         mock_response.raise_for_status.return_value = None
@@ -811,22 +797,19 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_get_all_security_control_events_api_error(self, mock_get, mock_secret, mock_base_url, mock_account_id):
+    def test_get_all_security_control_events_api_error(self, mock_get, mock_base_url, mock_account_id):
         """Test API error handling for security control events."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
-        
+
         # Test - should now raise exception
         with pytest.raises(Exception) as exc_info:
             _get_all_security_control_events_from_cache_or_api("test1", "sim1", "test-console")
-        
+
         # Assertions
         assert "API Error" in str(exc_info.value)
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     def test_apply_security_control_events_filters_product_name(self, mock_security_control_events_data):
         """Test filtering by product name."""
@@ -1359,19 +1342,17 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     def test_get_all_findings_from_cache_or_api_success(self, mock_base_url, mock_account_id):
         """Test successful findings retrieval from API."""
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
-             patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
-            
+        with patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
+
             # Setup mocks
-            mock_get_secret.return_value = "test-token"
             mock_response = Mock()
             mock_response.json.return_value = {"findings": [{"type": "test", "id": "1"}]}
             mock_response.raise_for_status.return_value = None
             mock_requests.get.return_value = mock_response
-            
+
             # Test the function
             result = _get_all_findings_from_cache_or_api("test-id", "test-console")
-            
+
             # Assertions
             assert len(result) == 1
             assert result[0]["type"] == "test"
@@ -1383,10 +1364,8 @@ class TestDataFunctions:
     def test_get_all_findings_cache_behavior(self, mock_base_url, mock_account_id, mock_cache_enabled):
         """Test findings cache behavior when caching is enabled."""
         # First call should hit the API
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
-             patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
+        with patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
 
-            mock_get_secret.return_value = "test-token"
             mock_response = Mock()
             mock_response.json.return_value = {"findings": [{"type": "test"}]}
             mock_response.raise_for_status.return_value = None
@@ -1407,10 +1386,8 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     def test_get_all_findings_cache_miss_fetches_api(self, mock_base_url, mock_account_id, mock_cache_enabled):
         """Test that cache miss (expired or empty) triggers API fetch."""
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
-             patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
+        with patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
 
-            mock_get_secret.return_value = "test-token"
             mock_response = Mock()
             mock_response.json.return_value = {"findings": [{"type": "test"}]}
             mock_response.raise_for_status.return_value = None
@@ -1432,10 +1409,8 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     def test_get_all_findings_api_error(self, mock_base_url, mock_account_id):
         """Test findings API error handling."""
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_get_secret, \
-             patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
-            
-            mock_get_secret.return_value = "test-token"
+        with patch('safebreach_mcp_data.data_functions.requests') as mock_requests:
+
             mock_requests.get.side_effect = Exception("API Error")
             
             # Should now raise exception
@@ -1715,58 +1690,53 @@ class TestDataFunctions:
     
     def test_unknown_console_validation(self):
         """Test that unknown console names return proper error messages."""
-        # Test sb_get_tests_history with unknown console - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_tests_history(console="unknown_console", test_type="validate", page_number=0)
-        
-        # In single-tenant mode, the error message is about missing environment variable
-        # In multi-tenant mode, it would be about console not found
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
         
     def test_unknown_console_validation_other_functions(self):
         """Test unknown console validation in other main functions."""
         # Test sb_get_test_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_test_details(console="unknown_console", test_id="test123")
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
-        
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
+
         # Test sb_get_test_simulations - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_test_simulations(console="unknown_console", test_id="test123")
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
-        
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
+
         # Test sb_get_simulation_details - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_simulation_details("sim123", console="unknown_console")
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
-        
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
+
         # Test sb_get_security_controls_events - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_security_controls_events("test123", "sim123", console="unknown_console")
-        assert "not found" in str(exc_info.value) or "Environment variable" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id):
-        """Test that secret provider failures return proper error messages."""
-        from botocore.exceptions import ClientError
-        
-        # Mock ClientError for parameter not found
-        with patch('safebreach_mcp_data.data_functions.get_secret_for_console') as mock_secret:
-            mock_secret.side_effect = ClientError(
-                error_response={'Error': {'Code': 'ParameterNotFound', 'Message': 'Parameter not found'}},
-                operation_name='GetParameter'
-            )
-            
-            # Test sb_get_tests_history - should now raise ClientError
-            with pytest.raises(ClientError) as exc_info:
-                sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
-            assert "ParameterNotFound" in str(exc_info.value)
-            
-            # Test sb_get_test_details - should now raise ClientError
-            with pytest.raises(ClientError) as exc_info:
-                sb_get_test_details(console="test-console", test_id="test123")
-            assert "ParameterNotFound" in str(exc_info.value)
+        """Test that missing auth context raises AuthenticationRequired in embedded mode (SAF-29974)."""
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        from safebreach_mcp_core.secret_utils import AuthenticationRequired
+
+        # Temporarily clear the auth context set by the autouse fixture
+        token = _user_auth_artifacts.set(None)
+        try:
+            # Simulate embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP)
+            with patch.dict('os.environ', {'SAFEBREACH_LOCAL_ENV': '{"default":{}}'}):
+                # All functions now use get_auth_headers_for_console which raises
+                # AuthenticationRequired when no ContextVar is set in embedded mode
+                with pytest.raises(AuthenticationRequired):
+                    sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
+
+                with pytest.raises(AuthenticationRequired):
+                    sb_get_test_details(console="test-console", test_id="test123")
+        finally:
+            _user_auth_artifacts.reset(token)
     
     # New parameter validation tests
     def test_sb_get_test_details_empty_test_id(self):
@@ -1905,11 +1875,9 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    def test_sb_get_test_details_invalid_response_validation(self, mock_get, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_test_details_invalid_response_validation(self, mock_get, mock_base_url, mock_account_id):
         """Test validation for invalid test response in get_test_details."""
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status.return_value = None
@@ -2021,11 +1989,9 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_with_drift_info(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_simulation_details_with_drift_info(self, mock_post, mock_base_url, mock_account_id):
         """Test get_test_simulation_details with include_drift_info parameter."""
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -2058,11 +2024,9 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_no_drift_info(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_simulation_details_no_drift_info(self, mock_post, mock_base_url, mock_account_id):
         """Test get_test_simulation_details when simulation has no drift."""
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -2088,11 +2052,9 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_unknown_drift_type(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_sb_get_simulation_details_unknown_drift_type(self, mock_post, mock_base_url, mock_account_id):
         """Test get_test_simulation_details with unknown drift type."""
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -2123,13 +2085,10 @@ class TestDataFunctions:
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_drift_statistics_counting(self, mock_post, mock_secret, mock_base_url, mock_account_id):
+    def test_drift_statistics_counting(self, mock_post, mock_base_url, mock_account_id):
         """Test that streaming drift count correctly counts drifted simulations page by page."""
         from safebreach_mcp_data.data_functions import _count_drifted_simulations
-
-        mock_secret.return_value = "test-token"
 
         # Page 1: 3 sims, 2 drifted (full page triggers next page fetch)
         page1_response = Mock()
@@ -2652,14 +2611,16 @@ class TestDataFunctions:
         assert result['attacker'] is None
 
         # Verify cache was populated
-        cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f'full_simulation_logs_test-console_1477531_1764165600525.2{get_cache_user_suffix()}'
         assert cache_key in full_simulation_logs_cache
 
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     def test_sb_get_full_simulation_logs_cache_hit(self, mock_cache_enabled):
         """Test full simulation logs retrieval from cache when caching is enabled."""
         # Populate cache with TRANSFORMED data (validate-then-cache pattern)
-        cache_key = 'full_simulation_logs_test-console_sim123_test456'
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f'full_simulation_logs_test-console_sim123_test456{get_cache_user_suffix()}'
         cached_data = {
             'simulation_id': 'sim123',
             'test_id': 'test456',
@@ -2710,12 +2671,10 @@ class TestDataFunctions:
             )
 
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id')
-    def test_fetch_full_simulation_logs_from_api_404(self, mock_account, mock_base_url, mock_secret, mock_get):
+    def test_fetch_full_simulation_logs_from_api_404(self, mock_account, mock_base_url, mock_get):
         """Test handling of 404 response from API."""
-        mock_secret.return_value = 'test-token'
         mock_base_url.return_value = 'https://test.safebreach.com'
         mock_account.return_value = '123456'
 
@@ -2733,12 +2692,10 @@ class TestDataFunctions:
             )
 
     @patch('safebreach_mcp_data.data_functions.requests.get')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id')
-    def test_fetch_full_simulation_logs_from_api_401(self, mock_account, mock_base_url, mock_secret, mock_get):
+    def test_fetch_full_simulation_logs_from_api_401(self, mock_account, mock_base_url, mock_get):
         """Test handling of 401 authentication failure."""
-        mock_secret.return_value = 'test-token'
         mock_base_url.return_value = 'https://test.safebreach.com'
         mock_account.return_value = '123456'
 
@@ -2826,7 +2783,8 @@ class TestDataFunctions:
         )
 
         # Verify cache contains TRANSFORMED data (not raw)
-        cache_key = 'full_simulation_logs_test-console_1477531_1764165600525.2'
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f'full_simulation_logs_test-console_1477531_1764165600525.2{get_cache_user_suffix()}'
         cached = full_simulation_logs_cache.get(cache_key)
         assert cached is not None, "Expected data to be cached"
         assert 'logs_available' in cached, "Cache should store transformed data with logs_available"
@@ -2835,7 +2793,8 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     def test_cache_hit_returns_transformed_directly(self, mock_cache_enabled):
         """Cache hit should return transformed data directly without re-transforming."""
-        cache_key = 'full_simulation_logs_test-console_sim789_test012'
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f'full_simulation_logs_test-console_sim789_test012{get_cache_user_suffix()}'
         # Pre-populate cache with TRANSFORMED data
         transformed_data = {
             'simulation_id': 'sim789',
@@ -2892,7 +2851,8 @@ class TestDataFunctions:
         assert result['logs_available'] is False
 
         # Verify the graceful response IS cached
-        cache_key = 'full_simulation_logs_test-console_3213805_1771853252399.2'
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cache_key = f'full_simulation_logs_test-console_3213805_1771853252399.2{get_cache_user_suffix()}'
         cached = full_simulation_logs_cache.get(cache_key)
         assert cached is not None, "Empty-data graceful response should be cached"
         assert cached['logs_available'] is False, "Cached value should be the transformed response"
@@ -3019,6 +2979,14 @@ _END_MS = 1711929600000    # 2024-04-01T00:00:00Z
 class TestPeerBenchmarkFunction:
     """Test suite for sb_get_peer_benchmark_score (SAF-29415 Phase 2)."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        """Set up auth context for all tests (SAF-29974)."""
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def setup_method(self):
         """Clear the peer benchmark cache before each test."""
         peer_benchmark_cache.clear()
@@ -3088,13 +3056,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 1 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_happy_path_no_filters(self, mock_post, mock_secret, mock_base_url,
+    def test_happy_path_no_filters(self, mock_post, mock_base_url,
                                    mock_account_id, happy_backend_response,
                                    make_post_response):
         """Happy path: no filters -> correct URL, headers, body, timeout, shape."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         result = sb_get_peer_benchmark_score(
@@ -3132,13 +3098,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 2 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_include_only_filter(self, mock_post, mock_secret, mock_base_url,
+    def test_include_only_filter(self, mock_post, mock_base_url,
                                  mock_account_id, happy_backend_response,
                                  make_post_response):
         """Include filter is trimmed, split, sent as includeTestIds."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3153,13 +3117,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 3 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_exclude_only_filter(self, mock_post, mock_secret, mock_base_url,
+    def test_exclude_only_filter(self, mock_post, mock_base_url,
                                  mock_account_id, happy_backend_response,
                                  make_post_response):
         """Exclude filter is trimmed, split, sent as excludeTestIds."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3174,12 +3136,10 @@ class TestPeerBenchmarkFunction:
     # ---- Test 4 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_mutual_exclusivity_raises_value_error(self, mock_post, mock_secret,
+    def test_mutual_exclusivity_raises_value_error(self, mock_post,
                                                    mock_base_url, mock_account_id):
         """Both filters non-empty -> ValueError; requests.post never called."""
-        mock_secret.return_value = "test-token"
 
         with pytest.raises(ValueError) as excinfo:
             sb_get_peer_benchmark_score(
@@ -3194,14 +3154,12 @@ class TestPeerBenchmarkFunction:
     # ---- Test 5 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
     def test_empty_filter_strings_treated_as_absent(
-        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        self, mock_post, mock_base_url, mock_account_id,
         happy_backend_response, make_post_response,
     ):
         """Empty string and None for filters -> no filter keys in body."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3217,12 +3175,10 @@ class TestPeerBenchmarkFunction:
     # ---- Test 6 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_date_ordering_validation(self, mock_post, mock_secret,
+    def test_date_ordering_validation(self, mock_post,
                                       mock_base_url, mock_account_id):
         """start_date >= end_date -> ValueError; requests.post never called."""
-        mock_secret.return_value = "test-token"
 
         # start > end
         with pytest.raises(ValueError) as excinfo:
@@ -3242,13 +3198,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 7 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_epoch_to_iso_conversion(self, mock_post, mock_secret, mock_base_url,
+    def test_epoch_to_iso_conversion(self, mock_post, mock_base_url,
                                      mock_account_id, happy_backend_response,
                                      make_post_response):
         """Epoch ms -> ISO 8601 UTC Z strings in body."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3262,12 +3216,10 @@ class TestPeerBenchmarkFunction:
     # ---- Test 8 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_http_204_handling(self, mock_post, mock_secret, mock_base_url,
+    def test_http_204_handling(self, mock_post, mock_base_url,
                                mock_account_id, make_post_response):
         """HTTP 204 -> empty-shape result + hint mentioning no executions/custom."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(status_code=204, json_data=None)
 
         result = sb_get_peer_benchmark_score(
@@ -3288,13 +3240,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 9 -----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_null_customer_score_hint(self, mock_post, mock_secret, mock_base_url,
+    def test_null_customer_score_hint(self, mock_post, mock_base_url,
                                       mock_account_id, happy_backend_response,
                                       make_post_response):
         """200 with customerScore: None -> hint explains no customer executions."""
-        mock_secret.return_value = "test-token"
         payload = copy.deepcopy(happy_backend_response)
         payload["customerScore"] = None
         mock_post.return_value = make_post_response(200, payload)
@@ -3310,13 +3260,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 10 ----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_null_peer_score_hint(self, mock_post, mock_secret, mock_base_url,
+    def test_null_peer_score_hint(self, mock_post, mock_base_url,
                                   mock_account_id, happy_backend_response,
                                   make_post_response):
         """200 with peerScore: None -> hint mentions all-peers missing."""
-        mock_secret.return_value = "test-token"
         payload = copy.deepcopy(happy_backend_response)
         payload["peerScore"] = None
         mock_post.return_value = make_post_response(200, payload)
@@ -3332,13 +3280,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 11 ----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_empty_industry_scores_hint(self, mock_post, mock_secret, mock_base_url,
+    def test_empty_industry_scores_hint(self, mock_post, mock_base_url,
                                         mock_account_id, happy_backend_response,
                                         make_post_response):
         """200 with industryScores: [] -> hint mentions customer-industry missing."""
-        mock_secret.return_value = "test-token"
         payload = copy.deepcopy(happy_backend_response)
         payload["industryScores"] = []
         mock_post.return_value = make_post_response(200, payload)
@@ -3354,13 +3300,11 @@ class TestPeerBenchmarkFunction:
     # ---- Test 12 ----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_composed_hint_multiple_nulls(self, mock_post, mock_secret, mock_base_url,
+    def test_composed_hint_multiple_nulls(self, mock_post, mock_base_url,
                                           mock_account_id, happy_backend_response,
                                           make_post_response):
         """peerScore null AND industryScores empty -> hint joins fragments with '; '."""
-        mock_secret.return_value = "test-token"
         payload = copy.deepcopy(happy_backend_response)
         payload["peerScore"] = None
         payload["industryScores"] = []
@@ -3380,12 +3324,10 @@ class TestPeerBenchmarkFunction:
     # ---- Test 13 ----------------------------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_500_backend_error_logging(self, mock_post, mock_secret, mock_base_url,
+    def test_500_backend_error_logging(self, mock_post, mock_base_url,
                                        mock_account_id, make_post_response, caplog):
         """500 -> logger.error called, HTTPError re-raised, no token in log."""
-        mock_secret.return_value = "test-token-secret-value"
         mock_post.return_value = make_post_response(
             status_code=500,
             raise_for_status_effect=HTTPError("500 Server Error"),
@@ -3402,7 +3344,7 @@ class TestPeerBenchmarkFunction:
 
         # Security regression: token must never appear in log messages
         for record in caplog.records:
-            assert "test-token-secret-value" not in record.getMessage(), (
+            assert "test-token" not in record.getMessage(), (
                 f"API token leaked in log: {record.getMessage()!r}"
             )
 
@@ -3410,12 +3352,10 @@ class TestPeerBenchmarkFunction:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_cache_hit(self, mock_post, mock_secret, mock_base_url, mock_account_id,
+    def test_cache_hit(self, mock_post, mock_base_url, mock_account_id,
                        mock_cache_enabled, happy_backend_response, make_post_response):
         """Cache enabled + identical calls -> requests.post called once."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         first = sb_get_peer_benchmark_score(
@@ -3432,12 +3372,10 @@ class TestPeerBenchmarkFunction:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=False)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_cache_disabled(self, mock_post, mock_secret, mock_base_url, mock_account_id,
+    def test_cache_disabled(self, mock_post, mock_base_url, mock_account_id,
                             mock_cache_disabled, happy_backend_response, make_post_response):
         """Cache disabled -> identical calls hit backend each time."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3453,13 +3391,11 @@ class TestPeerBenchmarkFunction:
     @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_cache_key_order_independence(self, mock_post, mock_secret, mock_base_url,
+    def test_cache_key_order_independence(self, mock_post, mock_base_url,
                                           mock_account_id, mock_cache_enabled,
                                           happy_backend_response, make_post_response):
         """Same IDs in different order -> second call hits cache (key uses sorted list)."""
-        mock_secret.return_value = "test-token"
         mock_post.return_value = make_post_response(200, happy_backend_response)
 
         sb_get_peer_benchmark_score(
@@ -3476,10 +3412,9 @@ class TestPeerBenchmarkFunction:
     # ---- Test 17 (hint sanitization) -------------------------------
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_data.data_functions.get_secret_for_console')
     @patch('safebreach_mcp_data.data_functions.requests.post')
     def test_hints_do_not_leak_internal_details(
-        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        self, mock_post, mock_base_url, mock_account_id,
         happy_backend_response, make_post_response,
     ):
         """All hint paths must avoid leaking internal infra terms.
@@ -3489,7 +3424,6 @@ class TestPeerBenchmarkFunction:
         names ("staging", "private-dev", "frozen snapshot") or implementation
         constants (the `>= 10_000_000` custom-attack threshold).
         """
-        mock_secret.return_value = "test-token"
         forbidden = ["staging", "private-dev", "frozen snapshot", "10_000_000", "10000000"]
 
         def _assert_clean(hint, scenario):

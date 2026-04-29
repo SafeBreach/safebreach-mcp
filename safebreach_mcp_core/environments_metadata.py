@@ -4,8 +4,10 @@ SafeBreach Environments Configuration
 This file contains metadata and configurations for Safebreach labs and AWS resources 
 in the scope of impact for SafeBreach MCP Servergi.
 '''
-import json, os
+import json, os, logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 safebreach_envs = {
     # Default example configurations:
@@ -89,12 +91,12 @@ def get_environment_by_name(name: str) -> dict:
 def get_api_base_url(console:str, endpoint:str) -> str:
     """
     Get the base URL for SafeBreach API for a given console and endpoint.
-    
-    Priority order:
-    1. Single-tenant mode: Environment variables (DATA_URL, CONFIG_URL, etc.)
-    2. Multi-tenant mode with service-specific URLs: console config 'urls[endpoint]'
-    3. Multi-tenant mode fallback: console config 'url' (default)
-    
+
+    Priority order (SAF-29974: reordered so SAFEBREACH_LOCAL_ENV wins over env vars):
+    1. SAFEBREACH_LOCAL_ENV service-specific URLs (set by mcp_manager in SIMP)
+    2. Per-service environment variables (DATA_URL, CONFIG_URL, etc.)
+    3. SAFEBREACH_LOCAL_ENV default URL fallback
+
     Args:
         console: Console name (e.g., 'demo-console', 'example-console')
         endpoint: Endpoint name can only be one of 'data', 'config', 'moves', 'queue', 'siem', 'playbook', 'orchestrator'
@@ -102,25 +104,41 @@ def get_api_base_url(console:str, endpoint:str) -> str:
     Returns:
         Base URL as a string
     """
-    # Priority 1: Single-tenant mode (environment variables)
+    # Priority 1: SAFEBREACH_LOCAL_ENV service-specific URL (SAF-29974)
+    # When running inside SIMP, mcp_manager sets these to the RBAC gateway URL.
+    # If the exact console name isn't found, fall back to the 'default' entry —
+    # this prevents callers from bypassing OPA by specifying an unknown console name.
+    for lookup_name in (console, 'default'):
+        try:
+            console_config = get_environment_by_name(lookup_name)
+            if 'urls' in console_config and endpoint in console_config['urls']:
+                service_url = console_config['urls'][endpoint]
+                full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
+                if lookup_name != console:
+                    logger.debug("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV 'default' fallback)",
+                                 console, endpoint, full_url)
+                else:
+                    logger.debug("get_api_base_url('%s', '%s') → %s (from SAFEBREACH_LOCAL_ENV urls)",
+                                 console, endpoint, full_url)
+                return full_url
+        except (ValueError, KeyError):
+            continue
+
+    # Priority 2: Per-service environment variables (standalone MCP server mode)
     env_var_name = f'{endpoint.upper()}_URL'
     env_url = os.getenv(env_var_name)
-
     if env_url:
+        logger.debug("get_api_base_url('%s', '%s') → %s (from env var %s)", console, endpoint, env_url, env_var_name)
         return env_url
-    
-    # Priority 2 & 3: Multi-tenant mode - get console configuration
-    console_config = get_environment_by_name(console)
-    
-    # Priority 2: Service-specific URL (new feature)
-    if 'urls' in console_config and endpoint in console_config['urls']:
-        service_url = console_config['urls'][endpoint]
-        full_url = f"https://{service_url}" if not service_url.startswith(('http://', 'https://')) else service_url
-        return full_url
-    
-    # Priority 3: Default fallback URL (backward compatibility)
-    default_url = f"https://{console_config['url']}"
-    return default_url
+
+    # Priority 3: SAFEBREACH_LOCAL_ENV default URL fallback
+    try:
+        console_config = get_environment_by_name(console)
+        default_url = f"https://{console_config['url']}"
+        logger.debug("get_api_base_url('%s', '%s') → %s (from default url)", console, endpoint, default_url)
+        return default_url
+    except (ValueError, KeyError):
+        raise ValueError(f"No URL configured for console '{console}', endpoint '{endpoint}'")
 
 def get_api_account_id(console: str) -> str:
     """

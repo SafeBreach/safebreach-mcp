@@ -13,7 +13,8 @@ from typing import Dict, List, Optional, Any, Iterable
 import requests
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
-from safebreach_mcp_core.secret_utils import get_secret_for_console
+from safebreach_mcp_core.secret_utils import get_auth_headers_for_console, check_rbac_response
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.suggestions import get_suggestions_for_collection
 from safebreach_mcp_core.datetime_utils import convert_epoch_to_datetime
@@ -199,7 +200,7 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
     Returns:
         List of test dictionaries
     """
-    cache_key = f"tests_{console}"
+    cache_key = f"tests_{console}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if use_cache and is_caching_enabled("data"):
@@ -210,18 +211,17 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
     
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
-        
+
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries?size=1000&includeArchived=false"
-        
+
         headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
-        
+                    **get_auth_headers_for_console(console)}
+
         logger.info("Fetching tests from API for console '%s'", console)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
 
         try:
             tests_summaries = response.json()
@@ -484,15 +484,14 @@ def _fetch_single_test(test_id: str, console: str) -> Dict[str, Any]:
     Fetch a single test from the /testsummaries/{test_id} endpoint.
     This endpoint omits findingsCount/compromisedHosts but works for any test ID.
     """
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
 
     api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
-    headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     response = requests.get(api_url, headers=headers, timeout=120)
-    response.raise_for_status()
+    check_rbac_response(response)
 
     test_summary = response.json()
 
@@ -518,12 +517,11 @@ def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
         Number of drifted simulations
     """
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         drifts = 0
         page = 1
@@ -540,7 +538,7 @@ def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
             }
 
             response = requests.post(api_url, headers=headers, json=data, timeout=120)
-            response.raise_for_status()
+            check_rbac_response(response)
 
             try:
                 response_data = response.json()
@@ -675,7 +673,7 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
     Returns:
         List of simulation dictionaries
     """
-    cache_key = f"simulations_{console}_{test_id}"
+    cache_key = f"simulations_{console}_{test_id}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if is_caching_enabled("data"):
@@ -686,15 +684,14 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
     
     # Cache miss or expired - proceed to fetch from API with proper pagination
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
-        
+
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
-        
+
         headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
-        
+                    **get_auth_headers_for_console(console)}
+
         # Fetch all pages of simulations
         all_simulations_results = []
         page = 1
@@ -714,7 +711,7 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
             
             logger.info("Fetching page %d for test '%s' from console '%s'", page, test_id, console)
             response = requests.post(api_url, headers=headers, json=data, timeout=120)
-            response.raise_for_status()
+            check_rbac_response(response)
             
             try:
                 response_data = response.json()
@@ -858,14 +855,13 @@ def sb_get_simulation_details(
     """
     try:
         logger.info("Getting api key for console %s", console)
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
-        
+
         headers = {"Content-Type": "application/json",
-                    "x-apitoken": apitoken}
+                    **get_auth_headers_for_console(console)}
         
         data = {
             "runId": "*",
@@ -938,7 +934,7 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
     Returns:
         List of security control events
     """
-    cache_key = f"{console}:{test_id}:{simulation_id}"
+    cache_key = f"{console}:{test_id}:{simulation_id}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if is_caching_enabled("data"):
@@ -949,17 +945,16 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
     
     # Fetch from API
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'siem')
         account_id = get_api_account_id(console)
-        
+
         # Use the SIEM API endpoint for security control events
         api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/eventLogs?planRunId={test_id}&simulationId={simulation_id}"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
         
         logger.info("Fetching security control events from API for %s:%s:%s", console, test_id, simulation_id)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         response_data = response.json()
         
@@ -1253,7 +1248,7 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
     Returns:
         List of findings data for the entire test
     """
-    cache_key = f"{console}:{test_id}"
+    cache_key = f"{console}:{test_id}{get_cache_user_suffix()}"
 
     # Check if we have valid cached data (only if caching is enabled)
     if is_caching_enabled("data"):
@@ -1263,16 +1258,15 @@ def _get_all_findings_from_cache_or_api(test_id: str, console: str = "default") 
             return cached
     
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
-        
+
         # Use the propagateSummary API endpoint for findings
         api_url = f"{base_url}/api/data/v1/propagateSummary/{test_id}/findings/"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
         
         logger.info("Fetching findings from API for %s:%s", console, test_id)
         response = requests.get(api_url, headers=headers, timeout=120)
-        response.raise_for_status()
+        check_rbac_response(response)
         
         data = response.json()
         findings_data = data.get('findings', [])
@@ -1770,7 +1764,7 @@ def _get_full_simulation_logs_from_cache_or_api(
     Returns:
         Transformed simulation logs dictionary (already mapped)
     """
-    cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}"
+    cache_key = f"full_simulation_logs_{console}_{simulation_id}_{test_id}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if is_caching_enabled("data"):
@@ -1817,7 +1811,6 @@ def _fetch_full_simulation_logs_from_api(
         ValueError: If response is invalid
     """
     try:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
@@ -1826,7 +1819,7 @@ def _fetch_full_simulation_logs_from_api(
 
         headers = {
             "Content-Type": "application/json",
-            "x-apitoken": apitoken
+            **get_auth_headers_for_console(console),
         }
 
         logger.info("GET request to: %s", api_url)
@@ -1840,7 +1833,7 @@ def _fetch_full_simulation_logs_from_api(
         elif response.status_code == 401:
             raise ValueError(f"Authentication failed for console '{console}'")
 
-        response.raise_for_status()
+        check_rbac_response(response)
 
         # Parse JSON response
         try:
@@ -1895,7 +1888,6 @@ def _fetch_and_cache_simulation_drifts(
             logger.info("Retrieved simulation drifts from cache: %s", cache_key)
             return cached, 0.0
 
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
 
@@ -1904,7 +1896,7 @@ def _fetch_and_cache_simulation_drifts(
     api_url = f"{base_url}{api_path}"
     headers = {
         "Content-Type": "application/json",
-        "x-apitoken": apitoken,
+        **get_auth_headers_for_console(console),
     }
 
     logger.info("Fetching simulation drifts from API for console '%s'", console)
@@ -1918,7 +1910,7 @@ def _fetch_and_cache_simulation_drifts(
     if response.status_code == 401:
         raise ValueError(f"Authentication failed (401) for console '{console}'")
 
-    response.raise_for_status()
+    check_rbac_response(response)
     records = response.json()
 
     logger.info(
@@ -2258,7 +2250,7 @@ def sb_get_simulation_result_drifts(
     cache_key = (
         f"result_drifts_{console}_{window_start}_{window_end}"
         f"_{drift_type}_{attack_id}_{attack_type}_{attack_name}_{from_status}_{to_status}"
-        f"_{look_back_time}"
+        f"_{look_back_time}{get_cache_user_suffix()}"
     )
 
     records, elapsed_seconds = _fetch_and_cache_simulation_drifts(console, payload, cache_key)
@@ -2346,7 +2338,7 @@ def sb_get_simulation_status_drifts(
     cache_key = (
         f"status_drifts_{console}_{window_start}_{window_end}"
         f"_{drift_type}_{attack_id}_{attack_type}_{attack_name}_{from_final_status}_{to_final_status}"
-        f"_{look_back_time}"
+        f"_{look_back_time}{get_cache_user_suffix()}"
     )
 
     records, elapsed_seconds = _fetch_and_cache_simulation_drifts(console, payload, cache_key)
@@ -2649,6 +2641,7 @@ def sb_get_security_control_drifts(
         f"_{from_logged}_{from_alerted}_{to_prevented}_{to_reported}"
         f"_{to_logged}_{to_alerted}_{drift_type}_{earliest_search_time}"
         f"_{max_outside_window_executions}_{attack_id}_{attack_type}_{attack_name}"
+        f"{get_cache_user_suffix()}"
     )
 
     # 7. Fetch via shared helper with v2 api_path
@@ -2696,7 +2689,7 @@ def sb_get_simulation_lineage(
     if not tracking_code or not tracking_code.strip():
         raise ValueError("tracking_code must be a non-empty string")
 
-    cache_key = f"lineage_{console}_{tracking_code}"
+    cache_key = f"lineage_{console}_{tracking_code}{get_cache_user_suffix()}"
     all_simulations = None
 
     # Check cache
@@ -2708,12 +2701,11 @@ def sb_get_simulation_lineage(
 
     # Fetch from API if not cached
     if all_simulations is None:
-        apitoken = get_secret_for_console(console)
         base_url = get_api_base_url(console, "data")
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
-        headers = {"Content-Type": "application/json", "x-apitoken": apitoken}
+        headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
         all_raw: List[Dict[str, Any]] = []
         page = 1
@@ -2736,7 +2728,7 @@ def sb_get_simulation_lineage(
                     f"Authentication failed (401) for console '{console}'. "
                     "Check that the API token is valid."
                 )
-            response.raise_for_status()
+            check_rbac_response(response)
 
             response_data = response.json()
             page_sims = response_data.get("simulations", [])
@@ -2888,7 +2880,7 @@ def sb_get_peer_benchmark_score(
 
     cache_key = (
         f"peer_benchmark_{console}_{start_date}_{end_date}_"
-        f"{','.join(sorted(inc))}_{','.join(sorted(exc))}"
+        f"{','.join(sorted(inc))}_{','.join(sorted(exc))}{get_cache_user_suffix()}"
     )
     if is_caching_enabled("data"):
         cached = peer_benchmark_cache.get(cache_key)
@@ -2899,7 +2891,6 @@ def sb_get_peer_benchmark_score(
             )
             return cached
 
-    apitoken = get_secret_for_console(console)
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
     api_url = f"{base_url}/api/data/v1/accounts/{account_id}/score"
@@ -2913,7 +2904,7 @@ def sb_get_peer_benchmark_score(
     if exc:
         body["excludeTestIds"] = exc
 
-    headers = {"x-apitoken": apitoken, "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     logger.info(
         "Fetching peer benchmark score for console '%s' "
@@ -2942,7 +2933,7 @@ def sb_get_peer_benchmark_score(
         return result
 
     try:
-        response.raise_for_status()
+        check_rbac_response(response)
     except requests.HTTPError:
         # Log without the API token — only console, URL, and status code.
         logger.error(

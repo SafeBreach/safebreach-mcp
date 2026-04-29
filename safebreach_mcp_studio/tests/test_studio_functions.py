@@ -46,6 +46,7 @@ from safebreach_mcp_studio.studio_types import (
     get_execution_result_mapping,
     _parse_simulation_steps,
 )
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 
 
 # Test fixtures
@@ -250,13 +251,18 @@ def mock_run_response():
 class TestValidateStudioCode:
     """Test the sb_validate_studio_code function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validate_studio_code_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -265,7 +271,6 @@ class TestValidateStudioCode:
     ):
         """Test successful validation of valid Python code with main function."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -292,10 +297,8 @@ class TestValidateStudioCode:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validate_studio_code_missing_main(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -304,7 +307,6 @@ class TestValidateStudioCode:
     ):
         """Test validation of code without required main function signature."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -337,10 +339,8 @@ class TestValidateStudioCode:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validate_studio_code_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -348,7 +348,6 @@ class TestValidateStudioCode:
     ):
         """Test validation when API returns an error."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -366,10 +365,8 @@ class TestValidateStudioCode:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validate_studio_code_with_errors(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -378,7 +375,6 @@ class TestValidateStudioCode:
     ):
         """Test validation of code with syntax errors."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -399,13 +395,18 @@ class TestValidateStudioCode:
 class TestSaveStudioAttackDraft:
     """Test the sb_save_studio_attack_draft function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_studio_draft_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -415,7 +416,6 @@ class TestSaveStudioAttackDraft:
     ):
         """Test successfully saving a draft simulation."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -498,10 +498,8 @@ class TestSaveStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_studio_draft_with_windows_constraint(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -511,7 +509,6 @@ class TestSaveStudioAttackDraft:
     ):
         """Test saving draft with WINDOWS OS constraint."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -541,10 +538,8 @@ class TestSaveStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_studio_draft_with_all_constraint(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -554,7 +549,6 @@ class TestSaveStudioAttackDraft:
     ):
         """Test saving draft with 'All' OS constraint (no constraint)."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -583,10 +577,8 @@ class TestSaveStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_studio_draft_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -594,7 +586,6 @@ class TestSaveStudioAttackDraft:
     ):
         """Test saving draft when API returns an error."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -617,10 +608,8 @@ class TestSaveStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_studio_draft_caching(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -630,7 +619,6 @@ class TestSaveStudioAttackDraft:
         clear_cache
     ):
         """Test that draft metadata is cached correctly."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -646,7 +634,7 @@ class TestSaveStudioAttackDraft:
         )
 
         # Verify cache was populated
-        cache_key = f"studio_draft_demo_{result['draft_id']}"
+        cache_key = f"studio_draft_demo_{result['draft_id']}{get_cache_user_suffix()}"
         assert cache_key in studio_draft_cache
         cached_item = studio_draft_cache.get(cache_key)
         assert cached_item['draft_id'] == result['draft_id']
@@ -655,13 +643,18 @@ class TestSaveStudioAttackDraft:
 class TestGetAllStudioAttacks:
     """Test the sb_get_all_studio_attacks function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get,
@@ -669,7 +662,6 @@ class TestGetAllStudioAttacks:
     ):
         """Test successfully retrieving all simulations."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -695,10 +687,8 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_filter_draft(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get,
@@ -706,7 +696,6 @@ class TestGetAllStudioAttacks:
     ):
         """Test retrieving only draft simulations."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -724,10 +713,8 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_filter_published(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get,
@@ -735,7 +722,6 @@ class TestGetAllStudioAttacks:
     ):
         """Test retrieving only published simulations."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -760,10 +746,8 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_filter_by_name(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get,
@@ -771,7 +755,6 @@ class TestGetAllStudioAttacks:
     ):
         """Test filtering simulations by name."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -789,17 +772,14 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_filter_by_user_id(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get
     ):
         """Test filtering simulations by user ID."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -856,17 +836,14 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_combined_filters(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get
     ):
         """Test filtering with multiple filters combined."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -931,17 +908,14 @@ class TestGetAllStudioAttacks:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_all_simulations_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get
     ):
         """Test handling API errors."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -960,13 +934,18 @@ class TestGetAllStudioAttacks:
 class TestUpdateStudioAttackDraft:
     """Test the sb_update_studio_attack_draft function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -976,7 +955,6 @@ class TestUpdateStudioAttackDraft:
     ):
         """Test successfully updating a draft simulation."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1086,10 +1064,8 @@ class TestUpdateStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_with_linux_constraint(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -1099,7 +1075,6 @@ class TestUpdateStudioAttackDraft:
     ):
         """Test updating draft with LINUX OS constraint."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1130,10 +1105,8 @@ class TestUpdateStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_with_mac_constraint(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -1143,7 +1116,6 @@ class TestUpdateStudioAttackDraft:
     ):
         """Test updating draft with MAC OS constraint."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1174,10 +1146,8 @@ class TestUpdateStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_with_all_constraint(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -1187,7 +1157,6 @@ class TestUpdateStudioAttackDraft:
     ):
         """Test updating draft with 'All' OS constraint (removes constraint)."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1217,10 +1186,8 @@ class TestUpdateStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -1228,7 +1195,6 @@ class TestUpdateStudioAttackDraft:
     ):
         """Test updating draft when API returns an error."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1252,10 +1218,8 @@ class TestUpdateStudioAttackDraft:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_draft_caching(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_put,
@@ -1265,7 +1229,6 @@ class TestUpdateStudioAttackDraft:
         clear_cache
     ):
         """Test that updated draft metadata is cached correctly."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1282,7 +1245,7 @@ class TestUpdateStudioAttackDraft:
         )
 
         # Verify cache was updated
-        cache_key = f"studio_draft_demo_{result['draft_id']}"
+        cache_key = f"studio_draft_demo_{result['draft_id']}{get_cache_user_suffix()}"
         assert cache_key in studio_draft_cache
         cached_item = studio_draft_cache.get(cache_key)
         assert cached_item['draft_id'] == result['draft_id']
@@ -1292,13 +1255,18 @@ class TestUpdateStudioAttackDraft:
 class TestGetStudioAttackSource:
     """Test the sb_get_studio_attack_source function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_source_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get,
@@ -1306,7 +1274,6 @@ class TestGetStudioAttackSource:
     ):
         """Test successfully retrieving simulation source code."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1355,17 +1322,14 @@ class TestGetStudioAttackSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_source_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get
     ):
         """Test getting source when API returns an error."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1383,17 +1347,14 @@ class TestGetStudioAttackSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_source_empty_content(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_get
     ):
         """Test getting source when content is empty."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1426,13 +1387,18 @@ class TestGetStudioAttackSource:
 class TestRunStudioAttack:
     """Test the sb_run_studio_attack function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_simulation_all_connected(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1440,7 +1406,6 @@ class TestRunStudioAttack:
     ):
         """Test running simulation on all connected simulators."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1475,10 +1440,8 @@ class TestRunStudioAttack:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_simulation_specific_simulators(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1486,7 +1449,6 @@ class TestRunStudioAttack:
     ):
         """Test running simulation on specific simulators."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1518,10 +1480,8 @@ class TestRunStudioAttack:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_simulation_custom_test_name(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1529,7 +1489,6 @@ class TestRunStudioAttack:
     ):
         """Test running simulation with custom test name."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1571,17 +1530,14 @@ class TestRunStudioAttack:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_simulation_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post
     ):
         """Test running simulation when API returns an error."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1776,13 +1732,18 @@ def mock_execution_result_empty_response():
 class TestGetStudioAttackLatestResult:
     """Test suite for sb_get_studio_attack_latest_result function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_latest_result_success(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1790,7 +1751,6 @@ class TestGetStudioAttackLatestResult:
     ):
         """Test successfully retrieving latest execution result."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1840,10 +1800,8 @@ class TestGetStudioAttackLatestResult:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_multiple_results(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1851,7 +1809,6 @@ class TestGetStudioAttackLatestResult:
     ):
         """Test retrieving multiple execution results."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1884,10 +1841,8 @@ class TestGetStudioAttackLatestResult:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_latest_result_no_results(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -1895,7 +1850,6 @@ class TestGetStudioAttackLatestResult:
     ):
         """Test when no execution results are found."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1962,17 +1916,14 @@ class TestGetStudioAttackLatestResult:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_get_latest_result_api_error(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post
     ):
         """Test API error handling."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -1992,6 +1943,13 @@ class TestGetStudioAttackLatestResult:
 
 class TestParameterValidationAndBuilding:
     """Test suite for parameter validation and building functionality."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def test_validate_and_build_parameters_empty_list(self):
         """Test building with empty parameters list."""
@@ -2042,10 +2000,8 @@ class TestParameterValidationAndBuilding:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_draft_with_parameters(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -2055,7 +2011,6 @@ class TestParameterValidationAndBuilding:
     ):
         """Test saving draft with parameters."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -2092,6 +2047,13 @@ class TestParameterValidationAndBuilding:
 
 class TestProtocolParameterValidation:
     """Test suite for PROTOCOL parameter type validation."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def test_validate_protocol_parameter_valid_tcp(self):
         """Test valid TCP protocol parameter."""
@@ -2181,10 +2143,8 @@ class TestProtocolParameterValidation:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_draft_with_protocol_parameter(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -2194,7 +2154,6 @@ class TestProtocolParameterValidation:
     ):
         """Test saving draft with protocol parameter."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -2227,6 +2186,13 @@ class TestProtocolParameterValidation:
 
 class TestMultiValueParameters:
     """Test suite for parameters with multiple values."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def test_single_value_parameter(self):
         """Test parameter with single value (backward compatibility)."""
@@ -2316,10 +2282,8 @@ class TestMultiValueParameters:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_save_draft_with_multi_value_parameters(
         self,
-        mock_get_secret,
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
@@ -2329,7 +2293,6 @@ class TestMultiValueParameters:
     ):
         """Test saving draft with multi-value parameters."""
         # Setup mocks
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -2411,16 +2374,21 @@ def main(system_data, asset, proxy, *args, **kwargs):
 class TestValidateAttackType:
     """Test attack type validation in sb_validate_studio_code."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_valid_host_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test validation with valid 'host' attack type."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2435,13 +2403,11 @@ class TestValidateAttackType:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_valid_exfil_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
     ):
         """Test validation with valid 'exfil' attack type and attacker code."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2458,13 +2424,11 @@ class TestValidateAttackType:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_valid_infil_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
     ):
         """Test validation with valid 'infil' attack type."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2480,13 +2444,11 @@ class TestValidateAttackType:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_valid_lateral_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
     ):
         """Test validation with valid 'lateral' attack type."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2510,13 +2472,11 @@ class TestValidateAttackType:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_case_insensitive_attack_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test that attack type is case-insensitive (e.g., 'Host' normalizes to 'host')."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2532,16 +2492,21 @@ class TestValidateAttackType:
 class TestDualScriptValidation:
     """Test dual-script validation in sb_validate_studio_code."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_exfil_with_both_scripts_valid(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
     ):
         """Test exfil with both valid scripts passes."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2588,13 +2553,11 @@ class TestDualScriptValidation:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_with_only_target_valid(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test host attack with only target code is valid."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2612,14 +2575,12 @@ class TestDualScriptValidation:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_attacker_code_syntax_error(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code_syntax_error,
         mock_validation_response_valid
     ):
         """Test attacker code with syntax error causes is_valid=False."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2638,14 +2599,12 @@ class TestDualScriptValidation:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_both_scripts_api_errors_combined(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code,
         mock_validation_response_invalid
     ):
         """Test both scripts with API errors produces combined errors."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2750,16 +2709,21 @@ class TestLintSB012:
 class TestOSConstraintValidation:
     """Test OS constraint validation in sb_validate_studio_code."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_valid_target_os_and_attacker_os(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_validation_response_valid
     ):
         """Test valid target_os and attacker_os pass validation."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2794,13 +2758,11 @@ class TestOSConstraintValidation:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_attack_ignores_attacker_os(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test host attack does not validate attacker_os (even if invalid)."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2818,16 +2780,21 @@ class TestOSConstraintValidation:
 class TestValidationWithLintIntegration:
     """Test SB011/SB012 lint checks integrated into sb_validate_studio_code."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validation_with_lint_warnings(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test that lint warnings are included in validation result."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2846,13 +2813,11 @@ class TestValidationWithLintIntegration:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validation_with_no_parameters(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test that no lint warnings when no parameters provided."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2865,13 +2830,11 @@ class TestValidationWithLintIntegration:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_validation_result_structure(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_validation_response_valid
     ):
         """Test that validation result has all expected fields."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2895,16 +2858,21 @@ class TestValidationWithLintIntegration:
 class TestDualScriptSave:
     """Test dual-script support in sb_save_studio_attack_draft."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_save_single_file_method_type_5(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, mock_draft_response, clear_cache
     ):
         """Test host save sends single file with methodType=5."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2926,13 +2894,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_exfil_save_two_files_method_type_0(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
     ):
         """Test exfil save sends two files with methodType=0."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2954,13 +2920,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_infil_save_method_type_2(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
     ):
         """Test infil save with methodType=2."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -2980,13 +2944,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_lateral_save_method_type_1(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
     ):
         """Test lateral save with methodType=1."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3015,13 +2977,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dual_script_multipart_structure(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
     ):
         """Test multipart form data structure for dual-script save."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3047,13 +3007,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dual_script_attacker_constraints(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, sample_attacker_code, mock_draft_response, clear_cache
     ):
         """Test attackerConstraints sent when attacker_os != 'All'."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3075,13 +3033,11 @@ class TestDualScriptSave:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_save_no_attacker_constraints(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         sample_valid_python_code, mock_draft_response, clear_cache
     ):
         """Test host save does not include attackerConstraints or attackerFile."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3106,16 +3062,21 @@ class TestDualScriptSave:
 class TestDualScriptUpdate:
     """Test dual-script support in sb_update_studio_attack_draft."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_host_attack_single_file(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, mock_update_response, clear_cache
     ):
         """Test update host attack sends single file."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3137,13 +3098,11 @@ class TestDualScriptUpdate:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_exfil_attack_both_files(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
     ):
         """Test update exfil attack sends both files."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3166,13 +3125,11 @@ class TestDualScriptUpdate:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_with_changed_attack_type(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
         sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
     ):
         """Test update with changed attack_type sends correct methodType."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3211,13 +3168,11 @@ class TestDualScriptUpdate:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_update_cache_includes_attack_type_info(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put, mock_cache_enabled,
+        self, mock_get_base_url, mock_get_account_id, mock_put, mock_cache_enabled,
         sample_valid_python_code, sample_attacker_code, mock_update_response, clear_cache
     ):
         """Test that cache update includes attack type related info."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3231,7 +3186,7 @@ class TestDualScriptUpdate:
         )
 
         # Verify cache was updated
-        cache_key = f"studio_draft_demo_{result['draft_id']}"
+        cache_key = f"studio_draft_demo_{result['draft_id']}{get_cache_user_suffix()}"
         assert cache_key in studio_draft_cache
         cached = studio_draft_cache.get(cache_key)
         assert cached['draft_id'] == result['draft_id']
@@ -3240,15 +3195,20 @@ class TestDualScriptUpdate:
 class TestDualScriptSource:
     """Test dual-script support in sb_get_studio_attack_source."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_attack_source_target_only(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test host attack source returns target only, attacker is None."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3271,12 +3231,10 @@ class TestDualScriptSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dual_script_source_both_present(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test dual-script source returns both target and attacker content."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3301,12 +3259,10 @@ class TestDualScriptSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_attacker_file_404_graceful(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test attacker file 404 is handled gracefully."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3325,12 +3281,10 @@ class TestDualScriptSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_target_api_error_raises(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test API error on target fetch raises exception."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3345,12 +3299,10 @@ class TestDualScriptSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_return_structure_keys(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test return structure has attack_id, target, attacker keys."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3369,12 +3321,10 @@ class TestDualScriptSource:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_attacker_fetch_network_error_graceful(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test attacker fetch network error is handled gracefully (non-fatal)."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3465,15 +3415,20 @@ class TestPaginateStudioAttacks:
 class TestGetAllStudioAttacksPagination:
     """Test pagination integration in sb_get_all_studio_attacks."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_pagination_with_filters(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test pagination works with filters applied."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3499,12 +3454,10 @@ class TestGetAllStudioAttacksPagination:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_applied_filters_present(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test applied_filters is present in result."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3523,12 +3476,10 @@ class TestGetAllStudioAttacksPagination:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_hint_to_agent_present(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test hint_to_agent is present and meaningful."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3557,16 +3508,21 @@ class TestGetAllStudioAttacksPagination:
 class TestExplicitSimulatorSelection:
     """Test explicit simulator selection in sb_run_studio_attack (Phase 5)."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_host_attack_target_ids_used_for_both(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Host attack: target_simulator_ids used for both attacker and target filters."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3588,13 +3544,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_network_attack_separate_attacker_and_target(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Network attack: separate attacker and target simulator IDs in payload."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3617,13 +3571,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_no_attacker_ids_defaults_to_target_ids(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """When attacker_simulator_ids not provided, attacker uses target IDs."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3645,13 +3597,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_all_connected_uses_connection_filter(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """all_connected=True uses connection filter in payload."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3673,13 +3623,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_all_connected_ignores_simulator_ids(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """all_connected=True ignores provided simulator IDs."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3714,13 +3662,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_return_has_test_id_and_attack_id(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Return structure has test_id and attack_id keys."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3740,13 +3686,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_return_has_status_queued(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Return structure has status key set to 'queued'."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3763,13 +3707,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_payload_structure_matches_api_format(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Verify full API payload structure."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3810,13 +3752,11 @@ class TestExplicitSimulatorSelection:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_return_has_step_run_id(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post,
+        self, mock_get_base_url, mock_get_account_id, mock_post,
         mock_run_response
     ):
         """Return structure includes step_run_id from API response."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -3834,6 +3774,13 @@ class TestExplicitSimulatorSelection:
 
 class TestEnhancedResults:
     """Test enhanced results with simulation_steps, logs, and output (Phase 6)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def test_result_with_simulation_events_populates_steps(self):
         """Result with simulation events produces populated simulation_steps."""
@@ -3912,12 +3859,10 @@ class TestEnhancedResults:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_include_logs_false_strips_debug_fields(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+        self, mock_get_base_url, mock_get_account_id, mock_post
     ):
         """include_logs=False strips simulation_steps, logs, and output."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -3951,12 +3896,10 @@ class TestEnhancedResults:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_include_logs_true_keeps_debug_fields(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+        self, mock_get_base_url, mock_get_account_id, mock_post
     ):
         """include_logs=True (default) keeps simulation_steps, logs, and output."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4415,6 +4358,13 @@ class TestGetStudioAttackBoilerplate:
 class TestAttackTypeNormalization:
     """Test _normalize_attack_type() function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def test_canonical_lowercase_passthrough(self):
         """Canonical lowercase keys pass through unchanged."""
         for key in VALID_ATTACK_TYPES:
@@ -4466,12 +4416,10 @@ class TestAttackTypeNormalization:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_alias_in_save_draft(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put
+        self, mock_get_base_url, mock_get_account_id, mock_put
     ):
         """Alias attack type works in save_studio_attack_draft."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4508,6 +4456,13 @@ class TestAttackTypeNormalization:
 class TestOSConstraintNormalization:
     """Test _validate_os_constraint() case-insensitive normalization."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def test_canonical_values_passthrough(self):
         """Canonical values pass through unchanged."""
         assert _validate_os_constraint("All") == "All"
@@ -4540,12 +4495,10 @@ class TestOSConstraintNormalization:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_lowercase_os_in_validate(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_put,
+        self, mock_get_base_url, mock_get_account_id, mock_put,
     ):
         """Lowercase OS values normalize in sb_validate_studio_code."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
@@ -4663,15 +4616,20 @@ class TestASTMainSignatureValidation:
 class TestTestIdFilter:
     """Test test_id filter in sb_get_studio_attack_latest_result."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_without_test_id(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+        self, mock_get_base_url, mock_get_account_id, mock_post
     ):
         """Without test_id, query contains only Playbook_id."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4690,12 +4648,10 @@ class TestTestIdFilter:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_with_test_id(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+        self, mock_get_base_url, mock_get_account_id, mock_post
     ):
         """With test_id, query includes AND runId:{test_id}."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4716,12 +4672,10 @@ class TestTestIdFilter:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_empty_test_id_ignored(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_post
+        self, mock_get_base_url, mock_get_account_id, mock_post
     ):
         """Empty string test_id is treated as None (not included)."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4741,6 +4695,13 @@ class TestTestIdFilter:
 
 class TestSetStudioAttackStatus:
     """Test the sb_set_studio_attack_status function."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def _mock_list_response(self, attack_id=10000298, name="Test Attack",
                             status="draft", method_type=5):
@@ -4774,13 +4735,11 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_publish_success(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        self, mock_get_base_url, mock_get_account_id,
         mock_get, mock_put
     ):
         """Test successful DRAFT → PUBLISHED transition."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4815,13 +4774,11 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_unpublish_success(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        self, mock_get_base_url, mock_get_account_id,
         mock_get, mock_put
     ):
         """Test successful PUBLISHED → DRAFT transition."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4863,12 +4820,10 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_attack_not_found(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test that a non-existent attack ID raises ValueError."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4889,12 +4844,10 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_already_target_status(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id, mock_get
+        self, mock_get_base_url, mock_get_account_id, mock_get
     ):
         """Test that setting status to current status raises ValueError."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4922,13 +4875,11 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_case_insensitive_status(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        self, mock_get_base_url, mock_get_account_id,
         mock_get, mock_put
     ):
         """Test that new_status is case-insensitive (e.g., 'PUBLISHED' works)."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4955,13 +4906,11 @@ class TestSetStudioAttackStatus:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_cache_invalidation(
-        self, mock_get_secret, mock_get_base_url, mock_get_account_id,
+        self, mock_get_base_url, mock_get_account_id,
         mock_get, mock_put
     ):
         """Test that cache entry is removed after successful status change."""
-        mock_get_secret.return_value = "test-api-token"
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
 
@@ -4973,7 +4922,7 @@ class TestSetStudioAttackStatus:
         mock_put.return_value = mock_put_response
 
         # Seed the cache with a matching entry
-        cache_key = "studio_draft_demo_10000298"
+        cache_key = f"studio_draft_demo_10000298{get_cache_user_suffix()}"
         studio_draft_cache.set(cache_key, {"name": "Test Attack", "status": "draft"})
         assert cache_key in studio_draft_cache
 
@@ -5292,12 +5241,17 @@ class TestComputeScenarioReadiness:
 class TestFetchAllScenarios:
     """Test the _fetch_all_scenarios function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url, mock_oob_scenario):
+    def test_successful_fetch(self, mock_get, mock_base_url, mock_oob_scenario):
         """Successful fetch returns list of scenarios."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_response = MagicMock()
@@ -5311,11 +5265,9 @@ class TestFetchAllScenarios:
         assert result[0]["id"] == "3b8eade5-9285-43b8-b3e7-6350420983a5"
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url):
+    def test_correct_url_construction(self, mock_get, mock_base_url):
         """Verify the correct URL and headers are used."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_response = MagicMock()
@@ -5333,11 +5285,9 @@ class TestFetchAllScenarios:
         mock_base_url.assert_called_once_with("test-console", "playbook")
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url):
+    def test_http_error_propagates(self, mock_get, mock_base_url):
         """HTTP errors from the API should propagate."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_response = MagicMock()
@@ -5348,11 +5298,9 @@ class TestFetchAllScenarios:
             _fetch_all_scenarios("test-console")
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_empty_response(self, mock_get, mock_secret, mock_base_url):
+    def test_empty_response(self, mock_get, mock_base_url):
         """Empty scenario list is returned as-is."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_response = MagicMock()
@@ -5372,19 +5320,24 @@ class TestRunScenario:
     separately in TestRunScenarioWithStatistics.
     """
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_success(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats,
         mock_oob_scenario, mock_queue_response_scenario
     ):
         """Successfully queue an OOB scenario for execution."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5437,14 +5390,12 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_custom_test_name(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats,
         mock_oob_scenario, mock_queue_response_scenario
     ):
         """Custom test_name overrides scenario name in payload."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5471,12 +5422,10 @@ class TestRunScenario:
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_not_found(
-        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario
+        self, mock_base_url, mock_get, mock_oob_scenario
     ):
         """Scenario ID not in the fetched list raises ValueError."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -5492,12 +5441,10 @@ class TestRunScenario:
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_not_ready(
-        self, mock_secret, mock_base_url, mock_get, mock_oob_scenario_not_ready
+        self, mock_base_url, mock_get, mock_oob_scenario_not_ready
     ):
         """Non-ready scenario returns diagnostic (not error)."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -5527,13 +5474,11 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_api_error(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
         """Queue API error propagates."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5559,13 +5504,11 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_multi_step_response(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
         """Multi-step scenario response returns all stepRunIds."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5604,13 +5547,11 @@ class TestRunScenario:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_run_scenario_none_fields_builds_dag(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_oob_scenario, mock_queue_response_scenario
     ):
         """Scenarios with None actions/edges/systemTags/uuids get DAG built for them."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5719,16 +5660,21 @@ def mock_statistics_response_all_zero():
 class TestGetScenarioStatistics:
     """Test the _get_scenario_statistics function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     def test_returns_per_step_counts(
-        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        self, mock_post, mock_base_url, mock_account_id,
         mock_oob_scenario, mock_statistics_response_all_good
     ):
         """Returns list of simulationCount per step."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5749,14 +5695,12 @@ class TestGetScenarioStatistics:
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     def test_correct_url_and_payload(
-        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        self, mock_post, mock_base_url, mock_account_id,
         mock_oob_scenario, mock_statistics_response_all_good
     ):
         """Verify correct URL, query params, and payload structure."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5780,14 +5724,12 @@ class TestGetScenarioStatistics:
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     def test_api_error_propagates(
-        self, mock_post, mock_secret, mock_base_url, mock_account_id,
+        self, mock_post, mock_base_url, mock_account_id,
         mock_oob_scenario
     ):
         """API errors propagate."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5803,8 +5745,14 @@ class TestGetScenarioStatistics:
 class TestRunScenarioWithStatistics:
     """Test sb_run_scenario statistics pre-flight and allow_partial_steps."""
 
-    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
-        mock_secret.return_value = "test-token"
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -5832,15 +5780,14 @@ class TestRunScenarioWithStatistics:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_all_steps_good_proceeds(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post,
         mock_oob_scenario, mock_statistics_response_all_good,
         mock_queue_response_scenario
     ):
         """All steps produce simulations — proceeds to queue."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
         self._mock_get(mock_get, [mock_oob_scenario])
         self._mock_post_sequence(mock_post, mock_statistics_response_all_good,
                                  mock_queue_response_scenario)
@@ -5858,14 +5805,13 @@ class TestRunScenarioWithStatistics:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_one_empty_step_default_refuses(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post,
         mock_oob_scenario, mock_statistics_response_one_empty
     ):
         """One step with 0 simulations + allow_partial_steps=False (default) → refuse."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
         self._mock_get(mock_get, [mock_oob_scenario])
 
         stats_resp = MagicMock()
@@ -5886,15 +5832,14 @@ class TestRunScenarioWithStatistics:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_one_empty_step_partial_allowed_proceeds(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post,
         mock_oob_scenario, mock_statistics_response_one_empty,
         mock_queue_response_scenario
     ):
         """One step with 0 + allow_partial_steps=True → proceeds to queue."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
         self._mock_get(mock_get, [mock_oob_scenario])
         self._mock_post_sequence(mock_post, mock_statistics_response_one_empty,
                                  mock_queue_response_scenario)
@@ -5912,14 +5857,13 @@ class TestRunScenarioWithStatistics:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_all_zero_always_refuses(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post,
         mock_oob_scenario, mock_statistics_response_all_zero
     ):
         """All steps 0 simulations → always refuse, even with allow_partial_steps=True."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
         self._mock_get(mock_get, [mock_oob_scenario])
 
         stats_resp = MagicMock()
@@ -6018,14 +5962,19 @@ def mock_custom_plan():
 class TestFetchAllPlans:
     """Test the _fetch_all_plans function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_successful_fetch(self, mock_get, mock_secret, mock_base_url,
+    def test_successful_fetch(self, mock_get, mock_base_url,
                               mock_account_id, mock_custom_plan):
         """Successful fetch returns list of plans from data wrapper."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6042,12 +5991,10 @@ class TestFetchAllPlans:
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_correct_url_construction(self, mock_get, mock_secret, mock_base_url,
+    def test_correct_url_construction(self, mock_get, mock_base_url,
                                       mock_account_id):
         """Verify correct URL with account_id and details=true."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6066,12 +6013,10 @@ class TestFetchAllPlans:
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    def test_http_error_propagates(self, mock_get, mock_secret, mock_base_url,
+    def test_http_error_propagates(self, mock_get, mock_base_url,
                                    mock_account_id):
         """API errors propagate."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6086,8 +6031,14 @@ class TestFetchAllPlans:
 class TestRunScenarioCustomPlan:
     """Test sb_run_scenario with custom plans (Slice 2)."""
 
-    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
-        mock_secret.return_value = "test-token"
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6096,14 +6047,13 @@ class TestRunScenarioCustomPlan:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_custom_plan_success(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats,
         mock_custom_plan, mock_queue_response_scenario
     ):
         """Custom plan found by integer ID, queued with planId payload."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
 
         # GET: first call returns empty OOB list, second returns plans
         oob_response = MagicMock()
@@ -6145,13 +6095,12 @@ class TestRunScenarioCustomPlan:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_custom_plan_not_ready(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats
     ):
         """Custom plan that is not ready-to-run returns diagnostic."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
 
         not_ready_plan = {
             "id": 999,
@@ -6178,12 +6127,11 @@ class TestRunScenarioCustomPlan:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_not_found_in_either_source(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get
+        self, mock_base_url, mock_account_id, mock_get
     ):
         """ID not found in OOB or custom plans raises ValueError."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
 
         oob_response = MagicMock()
         oob_response.json.return_value = []
@@ -6203,14 +6151,13 @@ class TestRunScenarioCustomPlan:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_custom_plan_with_custom_name(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats,
         mock_custom_plan, mock_queue_response_scenario
     ):
         """Custom test_name overrides plan name in queue payload."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
 
         oob_response = MagicMock()
         oob_response.json.return_value = []
@@ -6487,14 +6434,19 @@ class TestApplyStepOverrides:
 class TestRunScenarioWithOverrides:
     """Test sb_run_scenario two-turn workflow with step_overrides (Slice 3)."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_not_ready_no_overrides_returns_diagnostic(
-        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+        self, mock_base_url, mock_get, mock_scenario_all_missing
     ):
         """Not ready + no overrides → return diagnostic (not error)."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6517,14 +6469,12 @@ class TestRunScenarioWithOverrides:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_not_ready_with_overrides_proceeds(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats,
         mock_scenario_all_missing, mock_queue_response_scenario
     ):
         """Not ready + valid overrides → augment and queue."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6562,12 +6512,10 @@ class TestRunScenarioWithOverrides:
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_overrides_still_not_ready_returns_diagnostic(
-        self, mock_secret, mock_base_url, mock_get, mock_scenario_all_missing
+        self, mock_base_url, mock_get, mock_scenario_all_missing
     ):
         """Overrides provided but still not ready (incomplete) → diagnostic."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6611,8 +6559,14 @@ class TestRunScenarioWithOverrides:
 class TestCustomPlanAugmentation:
     """Test that augmented custom plans use full payload, not planId."""
 
-    def _setup_mocks(self, mock_secret, mock_base_url, mock_account_id):
-        mock_secret.return_value = "test-token"
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6634,14 +6588,13 @@ class TestCustomPlanAugmentation:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_augmented_custom_plan_uses_full_payload(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_custom_plan,
         mock_queue_response_scenario
     ):
         """Custom plan with step_overrides sends full payload (not planId)."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
 
         # Make plan not ready by clearing filters
         import copy
@@ -6697,14 +6650,13 @@ class TestCustomPlanAugmentation:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_ready_custom_plan_no_overrides_still_uses_planid(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_custom_plan,
         mock_queue_response_scenario
     ):
         """Ready custom plan without overrides keeps using planId reference."""
-        self._setup_mocks(mock_secret, mock_base_url, mock_account_id)
+        self._setup_mocks(mock_base_url, mock_account_id)
         self._mock_get_oob_empty_plans_found(mock_get, mock_custom_plan)
 
         queue_resp = MagicMock()
@@ -6731,19 +6683,24 @@ class TestCustomPlanAugmentation:
 class TestDryRun:
     """Test dry_run parameter — returns predictions without queuing."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
            return_value=[{'simulationCount': 1676, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 12, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 12}, {'simulationCount': 2198, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 22, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 22}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dry_run_returns_prediction_without_queuing(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
         """dry_run=True returns statistics but does NOT call queue API."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -6773,13 +6730,11 @@ class TestDryRun:
            return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 0, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0, 'matchedAttacks': 0, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dry_run_with_empty_steps_reports_them(
-        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        self, mock_base_url, mock_get, mock_stats,
         mock_oob_scenario
     ):
         """dry_run with some steps producing 0 still returns (no error)."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6801,13 +6756,11 @@ class TestDryRun:
            return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dry_run_with_overrides(
-        self, mock_secret, mock_base_url, mock_get, mock_stats,
+        self, mock_base_url, mock_get, mock_stats,
         mock_scenario_all_missing
     ):
         """dry_run with step_overrides — augments then predicts."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6850,18 +6803,23 @@ class TestDryRun:
 class TestResolvedAttacks:
     """Test that dry_run includes resolved attacks per step."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
            return_value={'281': 'Transfer malware via HTTPS', '226': 'Hidden malware drop'})
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_dry_run_includes_resolved_attacks(
-        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        self, mock_base_url, mock_get, mock_stats, mock_names,
         mock_oob_scenario
     ):
         """dry_run response includes resolved_attacks per step with names."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6908,13 +6866,11 @@ class TestResolvedAttacks:
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_resolved_attacks_without_name_map(
-        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        self, mock_base_url, mock_get, mock_stats, mock_names,
         mock_oob_scenario
     ):
         """resolved_attacks still work when playbook name map is empty."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -6951,18 +6907,23 @@ class TestResolvedAttacks:
 class TestVerboseFailures:
     """Test verbose_failures flag for per-attack detail on partial steps."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
            return_value={'281': 'Attack A', '226': 'Attack B'})
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_verbose_failures_shows_per_attack_on_partial(
-        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        self, mock_base_url, mock_get, mock_stats, mock_names,
         mock_oob_scenario
     ):
         """verbose_failures=True shows constraint_summary (not aggregated) for partial steps."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -7012,13 +6973,11 @@ class TestVerboseFailures:
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_without_verbose_uses_aggregated(
-        self, mock_secret, mock_base_url, mock_get, mock_stats, mock_names,
+        self, mock_base_url, mock_get, mock_stats, mock_names,
         mock_oob_scenario
     ):
         """Without verbose_failures, partial steps use aggregated summary."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -7070,13 +7029,18 @@ class TestVerboseFailures:
 class TestManageTest:
     """Tests for sb_manage_test — test lifecycle management (pause/resume/cancel)."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_cancel_success(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_success(self, mock_base_url, mock_account_id, mock_delete):
         """Cancel a running test via DELETE — happy path."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7109,11 +7073,9 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_cancel_api_error(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_api_error(self, mock_base_url, mock_account_id, mock_delete):
         """API error during cancel propagates as RequestException."""
         import requests as req
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7129,10 +7091,8 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_pause_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+    def test_pause_success(self, mock_base_url, mock_account_id, mock_put):
         """Pause a running test via PUT /state — happy path."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7167,10 +7127,8 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_resume_success(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+    def test_resume_success(self, mock_base_url, mock_account_id, mock_put):
         """Resume a paused test via PUT /state — happy path."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7212,11 +7170,9 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_not_found_404(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+    def test_not_found_404(self, mock_base_url, mock_account_id, mock_delete):
         """404 from API propagates as HTTPError."""
         import requests as req
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7236,13 +7192,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_append_to_existing_comment(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+        self, mock_base_url, mock_account_id, mock_get, mock_put
     ):
         """Append note to existing comment via read-then-append."""
         from safebreach_mcp_studio.studio_functions import _append_test_note
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7273,13 +7227,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_append_to_null_comment(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+        self, mock_base_url, mock_account_id, mock_get, mock_put
     ):
         """Append note when existing comment is null — no leading newline."""
         from safebreach_mcp_studio.studio_functions import _append_test_note
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7304,13 +7256,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_append_to_empty_comment(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+        self, mock_base_url, mock_account_id, mock_get, mock_put
     ):
         """Append note when existing comment is empty string."""
         from safebreach_mcp_studio.studio_functions import _append_test_note
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7334,13 +7284,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_manage_test_with_reason(
-        self, mock_secret, mock_base_url, mock_account_id,
+        self, mock_base_url, mock_account_id,
         mock_get, mock_put, mock_delete
     ):
         """sb_manage_test with reason calls _append_test_note."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7372,12 +7320,10 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_manage_test_without_reason(
-        self, mock_secret, mock_base_url, mock_account_id, mock_delete
+        self, mock_base_url, mock_account_id, mock_delete
     ):
         """sb_manage_test without reason does NOT call _append_test_note."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7397,13 +7343,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_note_get_failure(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get
+        self, mock_base_url, mock_account_id, mock_get
     ):
         """GET failure in _append_test_note returns failure dict, does NOT raise."""
         from safebreach_mcp_studio.studio_functions import _append_test_note
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7418,13 +7362,11 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_note_put_failure(
-        self, mock_secret, mock_base_url, mock_account_id, mock_get, mock_put
+        self, mock_base_url, mock_account_id, mock_get, mock_put
     ):
         """PUT failure in _append_test_note returns failure dict, does NOT raise."""
         from safebreach_mcp_studio.studio_functions import _append_test_note
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7443,12 +7385,10 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
     def test_note_failure_doesnt_block_lifecycle(
-        self, mock_secret, mock_base_url, mock_account_id, mock_delete
+        self, mock_base_url, mock_account_id, mock_delete
     ):
         """Lifecycle succeeds even when note append fails."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7473,10 +7413,8 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_pause_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+    def test_pause_hint(self, mock_base_url, mock_account_id, mock_put):
         """Pause result includes hint_to_agent mentioning resume and cancel."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7494,10 +7432,8 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_resume_hint(self, mock_secret, mock_base_url, mock_account_id, mock_put):
+    def test_resume_hint(self, mock_base_url, mock_account_id, mock_put):
         """Resume result includes hint_to_agent mentioning monitoring."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7513,10 +7449,8 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.get_secret_for_console')
-    def test_cancel_hint(self, mock_secret, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_hint(self, mock_base_url, mock_account_id, mock_delete):
         """Cancel result includes hint_to_agent mentioning partial results."""
-        mock_secret.return_value = "test-token"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 

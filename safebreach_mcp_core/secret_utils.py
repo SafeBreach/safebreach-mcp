@@ -11,6 +11,7 @@ import os
 from .cache_config import is_caching_enabled
 from .secret_providers import SecretProviderFactory, SecretProvider
 from .environments_metadata import safebreach_envs, get_environment_by_name
+from .token_context import _user_auth_artifacts, mask_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,84 @@ def get_secret_for_console(console: str) -> str:
     # Retrieve the secret
     logger.info(f"Getting secret for console '{console}' using provider '{provider_type}'")
     return provider.get_secret(secret_identifier)
+
+
+class AuthenticationRequired(Exception):
+    """Raised when a tool call lacks user credentials and RBAC enforcement is active."""
+    pass
+
+
+RBAC_DENIED_HINT = (
+    "hint_to_llm: This user's role does not have permission to access this resource. "
+    "Advise the user to contact their SafeBreach administrator to review their role permissions."
+)
+
+
+def check_rbac_response(response) -> None:
+    """Call instead of response.raise_for_status() to add RBAC hints on 403.
+
+    For 403 Forbidden responses (OPA denial), raises an error with an
+    actionable hint for the LLM to advise the user about permissions.
+    For all other errors, behaves like raise_for_status().
+    """
+    if response.status_code == 403:
+        url = response.url if hasattr(response, 'url') else 'unknown'
+        raise PermissionError(
+            f"Access denied (403 Forbidden) for {url}.\n\n{RBAC_DENIED_HINT}"
+        )
+    response.raise_for_status()
+
+
+def get_auth_headers_for_console(console: str) -> Dict[str, str]:
+    """Return auth headers for outbound backend API calls.
+
+    Priority:
+    1. Per-request user auth bundle (from ContextVar)
+    2. MCP SDK request_ctx — reads POST headers directly from tool handler context
+    3. Session store lookup via session_id from request_ctx
+    4. Embedded mode (SAFEBREACH_LOCAL_ENV set): raise AuthenticationRequired
+       Standalone mode (no SAFEBREACH_LOCAL_ENV): fall back to env-var API key
+    """
+    bundle = _user_auth_artifacts.get()
+
+    # SSE transport fallback (SAF-29974 Slice 6): the ContextVar set on the
+    # /messages/ POST doesn't propagate to the tool handler (SSE GET's create_task
+    # uses a different async context).  Read the POST's headers directly from the
+    # MCP SDK's request_ctx, which IS set on the tool handler's task.
+    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+        from .token_context import _get_auth_from_mcp_request_ctx
+        mcp_bundle = _get_auth_from_mcp_request_ctx()
+        if mcp_bundle:
+            bundle = mcp_bundle
+
+    # Tertiary fallback: session store lookup via session_id from request_ctx
+    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+        from .token_context import _get_session_id_from_mcp_ctx, _session_auth_artifacts
+        session_id = _get_session_id_from_mcp_ctx()
+        if session_id:
+            entry = _session_auth_artifacts.get(session_id)
+            if entry:
+                bundle = entry[0]
+
+    if bundle:
+        logger.debug(f"get_auth_headers_for_console('{console}') → user bundle "
+                     f"(keys: {list(bundle.keys())})")
+        return dict(bundle)  # copy — callers may mutate
+
+    # No user auth in request context.
+    # In embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP) this is an RBAC violation.
+    # In standalone mode (no SAFEBREACH_LOCAL_ENV) fall back to env-var API key.
+    if os.environ.get('SAFEBREACH_LOCAL_ENV'):
+        logger.warning(f"No user auth in context for '{console}' — rejecting (RBAC enforcement)")
+        raise AuthenticationRequired(
+            f"Authentication required for console '{console}': no user credentials in request context"
+        )
+
+    # Standalone mode — use shared API key from env/secret provider
+    logger.debug(f"get_auth_headers_for_console('{console}') → standalone mode, "
+                 f"falling back to env-var API key")
+    api_key = get_secret_for_console(console)
+    return {'x-apitoken': api_key}
 
 
 def _get_or_create_provider(provider_type: str, secret_config: Dict[str, Any]) -> SecretProvider:

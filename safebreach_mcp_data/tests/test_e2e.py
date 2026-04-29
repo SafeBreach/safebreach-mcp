@@ -523,16 +523,13 @@ class TestDataServerE2E:
         print(f"==================================\n")
 
     @pytest.mark.e2e
-    def test_get_full_simulation_logs_e2e(self):
+    def test_get_full_simulation_logs_e2e(self, e2e_console, sample_simulation_id):
         """Test getting comprehensive simulation execution logs from SafeBreach console.
 
-        This test uses simulation ID 3629934 from the pentest01 console
-        (from BAS Scheduled Scenario test 1772969627545.69, status: detected).
-        The test first retrieves simulation details to get the test_id, then calls
-        get_full_simulation_logs to retrieve the comprehensive execution logs.
+        Uses the sample_simulation_id fixture to find a simulation with actual logs.
         """
-        console = "pentest01"
-        simulation_id = "3629934"
+        console = e2e_console
+        simulation_id = sample_simulation_id
         
         print(f"\n=== Testing get_full_simulation_logs for simulation {simulation_id} ===")
         
@@ -695,26 +692,23 @@ class TestDataServerE2E:
 # ---------------------------------------------------------------------
 # Peer benchmark score E2E (SAF-29415 Phase 4)
 # ---------------------------------------------------------------------
-# This test is pinned to the `staging` console because the backend
-# /api/data/v1/accounts/{id}/score endpoint (SAF-27621) is deployed on
-# staging.sbops.com but NOT yet on pentest01.safebreach.com (the default
-# E2E_CONSOLE for this repo as of 2026-04-13). Reusing the shared
-# `e2e_console` fixture would point at pentest01 and cause a 404.
-#
-# TODO (SAF-29415 follow-up): once /score lands on pentest01, retire the
-# `peer_benchmark_e2e_console` fixture and switch this test to use the
-# shared `e2e_console` fixture.
+# The /api/data/v1/accounts/{id}/score endpoint is now available on
+# pentest01, so this fixture defaults to E2E_CONSOLE (pentest01).
+# Override via PEER_BENCHMARK_E2E_CONSOLE if you need a different console.
 
 @pytest.fixture(scope="class")
 def peer_benchmark_e2e_console():
     """Resolve the console for the peer benchmark E2E test.
 
-    Defaults to `staging` (where the backend /score endpoint lives).
-    Override via PEER_BENCHMARK_E2E_CONSOLE. Skips (does not fail) when
-    the resolved console isn't configured locally — neither environments
-    metadata nor a credential is set.
+    Defaults to E2E_CONSOLE (pentest01) where the /score endpoint is now
+    available. Override via PEER_BENCHMARK_E2E_CONSOLE. Skips (does not
+    fail) when the resolved console isn't configured locally.
+
+    SAF-29974: Sets the ContextVar to the console-specific token so that
+    get_auth_headers_for_console() returns the right credentials.
     """
-    console = os.environ.get('PEER_BENCHMARK_E2E_CONSOLE', 'staging')
+    console = os.environ.get('PEER_BENCHMARK_E2E_CONSOLE',
+                             os.environ.get('E2E_CONSOLE', 'pentest01'))
     skip_msg = (
         "Peer Benchmark E2E skipped: endpoint not yet deployed on the "
         "default E2E console; set PEER_BENCHMARK_E2E_CONSOLE to a console "
@@ -722,21 +716,21 @@ def peer_benchmark_e2e_console():
         "credentials for the 'staging' console."
     )
 
-    # Defer imports so collection-time failures here don't affect other tests.
     from safebreach_mcp_core.environments_metadata import get_environment_by_name
-    from safebreach_mcp_core.secret_utils import get_secret_for_console
+    from safebreach_mcp_core.token_context import _user_auth_artifacts
 
     try:
         get_environment_by_name(console)
     except Exception:
         pytest.skip(skip_msg)
 
-    try:
-        token = get_secret_for_console(console)
-        if not token:
-            pytest.skip(skip_msg)
-    except Exception:
+    token_key = f"{console.replace('-', '_')}_apitoken"
+    api_token = os.environ.get(token_key) or os.environ.get('SB_API_KEY')
+    if not api_token:
         pytest.skip(skip_msg)
+
+    # Swap ContextVar to this console's token
+    _user_auth_artifacts.set({"x-apitoken": api_token})
 
     return console
 
@@ -746,7 +740,7 @@ class TestPeerBenchmarkScoreE2E:
 
     @pytest.mark.e2e
     def test_peer_benchmark_score_e2e(self, peer_benchmark_e2e_console):
-        """Smoke: 30-day window against staging; assert renamed top-level shape."""
+        """Smoke: 30-day window; assert renamed top-level shape."""
         import time
 
         end_ms = int(time.time() * 1000)

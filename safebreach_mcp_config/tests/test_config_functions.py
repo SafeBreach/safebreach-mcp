@@ -26,9 +26,17 @@ from safebreach_mcp_config.config_functions import (
     clear_categories_cache,
     clear_plans_cache,
 )
+from safebreach_mcp_core.token_context import get_cache_user_suffix
 
 class TestConfigFunctions:
     """Test suite for config functions."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
     
     def setup_method(self):
         """Setup for each test method."""
@@ -95,12 +103,10 @@ class TestConfigFunctions:
     @patch('safebreach_mcp_config.config_functions._get_assets_map_from_cache_or_api', return_value={})
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_assets, mock_api_response):
+    def test_get_all_simulators_from_cache_or_api_success(self, mock_get, mock_account_id, mock_base_url, mock_assets, mock_api_response):
         """Test successful retrieval of simulators from API."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = mock_api_response
         mock_response.status_code = 200
@@ -117,15 +123,13 @@ class TestConfigFunctions:
 
         # Verify API was called
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_from_cache(self, mock_get, mock_secret, mock_cache_enabled, mock_simulator_data):
+    def test_get_all_simulators_from_cache(self, mock_get, mock_cache_enabled, mock_simulator_data):
         """Test retrieval of simulators from cache when caching is enabled."""
         # Setup cache
-        cache_key = "simulators_test-console"
+        cache_key = f"simulators_test-console{get_cache_user_suffix()}"
         simulators_cache.set(cache_key, mock_simulator_data)
 
         # Test
@@ -137,20 +141,17 @@ class TestConfigFunctions:
 
         # Verify API was NOT called
         mock_get.assert_not_called()
-        mock_secret.assert_not_called()
     
     @patch('safebreach_mcp_config.config_functions._get_assets_map_from_cache_or_api', return_value={})
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_get_all_simulators_cache_miss_fetches_api(self, mock_get, mock_secret, mock_account_id, mock_base_url, mock_cache_enabled, mock_assets, mock_api_response):
+    def test_get_all_simulators_cache_miss_fetches_api(self, mock_get, mock_account_id, mock_base_url, mock_cache_enabled, mock_assets, mock_api_response):
         """Test that cache miss (expired or empty) falls through to API fetch."""
         # Cache is empty (simulates expired/missing entry - TTLCache handles expiry internally)
 
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = mock_api_response
         mock_response.status_code = 200
@@ -165,7 +166,6 @@ class TestConfigFunctions:
 
         # Verify API was called due to cache miss
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     def test_apply_simulator_filters_status(self, mock_simulator_data):
         """Test status filtering."""
@@ -293,12 +293,10 @@ class TestConfigFunctions:
     
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_sb_get_simulator_details_success(self, mock_get, mock_secret, mock_account_id, mock_base_url):
+    def test_sb_get_simulator_details_success(self, mock_get, mock_account_id, mock_base_url):
         """Test successful simulator details retrieval."""
         # Setup mocks
-        mock_secret.return_value = "test-token"
         mock_response = Mock()
         mock_response.json.return_value = {
             "data": {
@@ -334,15 +332,12 @@ class TestConfigFunctions:
         assert "id" in result
         assert result["id"] == "sim1"
         mock_get.assert_called_once()
-        mock_secret.assert_called_once_with("test-console")
     
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_sb_get_simulator_details_error(self, mock_get, mock_secret, mock_account_id, mock_base_url):
+    def test_sb_get_simulator_details_error(self, mock_get, mock_account_id, mock_base_url):
         """Test error handling in simulator details retrieval."""
-        mock_secret.return_value = "test-token"
         mock_get.side_effect = Exception("API Error")
         
         # The function should now raise an exception
@@ -359,39 +354,13 @@ class TestConfigFunctions:
         # Should return error, not empty results
         assert "error" in result
         assert result["console"] == "unknown_console"
-        assert "not found" in result["error"]
-        assert "Available consoles:" in result["error"]
-        
+        assert "not found" in result["error"] or "No URL configured" in result["error"]
+
     def test_unknown_console_validation_simulator_details(self):
         """Test unknown console validation in sb_get_simulator_details."""
-        # Test sb_get_simulator_details - should raise ValueError
         with pytest.raises(ValueError) as exc_info:
             sb_get_simulator_details(simulator_id="sim123", console="unknown_console")
-        assert "not found" in str(exc_info.value)
-    
-    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
-    def test_secret_provider_failure_validation(self, mock_account_id, mock_base_url):
-        """Test that secret provider failures return proper error messages."""
-        from botocore.exceptions import ClientError
-        
-        # Mock ClientError for parameter not found
-        with patch('safebreach_mcp_config.config_functions.get_secret_for_console') as mock_secret:
-            mock_secret.side_effect = ClientError(
-                error_response={'Error': {'Code': 'ParameterNotFound', 'Message': 'Parameter not found'}},
-                operation_name='GetParameter'
-            )
-            
-            # Test sb_get_console_simulators
-            result = sb_get_console_simulators(console="test-console")
-            assert "error" in result
-            assert result.get("console") == "test-console"
-            assert "ParameterNotFound" in result["error"]
-            
-            # Test sb_get_simulator_details - should raise ClientError
-            with pytest.raises(ClientError) as exc_info:
-                sb_get_simulator_details(simulator_id="sim123", console="test-console")
-            assert "ParameterNotFound" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
     
     def test_sb_get_simulator_details_empty_simulator_id(self):
         """Test validation for empty simulator_id parameter."""
@@ -504,6 +473,13 @@ MOCK_CATEGORIES_DATA = [
 class TestGetAllScenariosFromCacheOrApi:
     """Test _get_all_scenarios_from_cache_or_api function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def setup_method(self):
         clear_scenarios_cache()
         clear_categories_cache()
@@ -513,9 +489,8 @@ class TestGetAllScenariosFromCacheOrApi:
         clear_categories_cache()
 
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_api_call_success(self, mock_get, mock_secret, mock_base_url):
+    def test_api_call_success(self, mock_get, mock_base_url):
         mock_response = Mock()
         mock_response.json.return_value = MOCK_SCENARIO_DATA
         mock_response.status_code = 200
@@ -531,10 +506,9 @@ class TestGetAllScenariosFromCacheOrApi:
         assert '/api/content-manager/vLatest/scenarios' in str(mock_get.call_args)
 
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_cache_hit(self, mock_get, mock_secret, mock_cache_enabled):
-        scenarios_cache.set("scenarios_test-console", MOCK_SCENARIO_DATA)
+    def test_cache_hit(self, mock_get, mock_cache_enabled):
+        scenarios_cache.set(f"scenarios_test-console{get_cache_user_suffix()}", MOCK_SCENARIO_DATA)
 
         result = _get_all_scenarios_from_cache_or_api("test-console")
 
@@ -543,9 +517,8 @@ class TestGetAllScenariosFromCacheOrApi:
 
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_cache_miss_fetches_api(self, mock_get, mock_secret, mock_base_url, mock_cache_enabled):
+    def test_cache_miss_fetches_api(self, mock_get, mock_base_url, mock_cache_enabled):
         mock_response = Mock()
         mock_response.json.return_value = MOCK_SCENARIO_DATA
         mock_response.raise_for_status.return_value = None
@@ -557,9 +530,8 @@ class TestGetAllScenariosFromCacheOrApi:
         mock_get.assert_called_once()
 
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_api_error_propagates(self, mock_get, mock_secret, mock_base_url):
+    def test_api_error_propagates(self, mock_get, mock_base_url):
         mock_get.side_effect = Exception("Connection timeout")
 
         with pytest.raises(Exception, match="Connection timeout"):
@@ -568,6 +540,13 @@ class TestGetAllScenariosFromCacheOrApi:
 
 class TestGetCategoriesMapFromCacheOrApi:
     """Test _get_categories_map_from_cache_or_api function."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
 
     def setup_method(self):
         clear_scenarios_cache()
@@ -578,9 +557,8 @@ class TestGetCategoriesMapFromCacheOrApi:
         clear_categories_cache()
 
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_returns_id_to_name_map(self, mock_get, mock_secret, mock_base_url):
+    def test_returns_id_to_name_map(self, mock_get, mock_base_url):
         mock_response = Mock()
         mock_response.json.return_value = MOCK_CATEGORIES_DATA
         mock_response.raise_for_status.return_value = None
@@ -594,10 +572,9 @@ class TestGetCategoriesMapFromCacheOrApi:
         assert result[4] == "Baseline Scenarios"
 
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_cache_hit(self, mock_get, mock_secret, mock_cache_enabled):
-        categories_cache.set("categories_test-console", {2: "Known Threats Series"})
+    def test_cache_hit(self, mock_get, mock_cache_enabled):
+        categories_cache.set(f"categories_test-console{get_cache_user_suffix()}", {2: "Known Threats Series"})
 
         result = _get_categories_map_from_cache_or_api("test-console")
 
@@ -605,9 +582,8 @@ class TestGetCategoriesMapFromCacheOrApi:
         mock_get.assert_not_called()
 
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_api_error_propagates(self, mock_get, mock_secret, mock_base_url):
+    def test_api_error_propagates(self, mock_get, mock_base_url):
         mock_get.side_effect = Exception("API unreachable")
 
         with pytest.raises(Exception, match="API unreachable"):
@@ -768,6 +744,13 @@ class TestSbGetScenarios:
 class TestGetAllPlansFromCacheOrApi:
     """Test _get_all_plans_from_cache_or_api function."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def setup_method(self):
         clear_plans_cache()
 
@@ -776,9 +759,8 @@ class TestGetAllPlansFromCacheOrApi:
 
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123456')
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_api_call_success_unwraps_data(self, mock_get, mock_secret, mock_base_url, mock_account):
+    def test_api_call_success_unwraps_data(self, mock_get, mock_base_url, mock_account):
         mock_response = Mock()
         mock_response.json.return_value = {"data": [{"id": 1, "name": "Plan 1"}]}
         mock_response.raise_for_status.return_value = None
@@ -795,7 +777,7 @@ class TestGetAllPlansFromCacheOrApi:
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=True)
     @patch('safebreach_mcp_config.config_functions.requests.get')
     def test_cache_hit_skips_api(self, mock_get, mock_cache_enabled):
-        plans_cache.set("plans_test-console", [{"id": 99, "name": "Cached"}])
+        plans_cache.set(f"plans_test-console{get_cache_user_suffix()}", [{"id": 99, "name": "Cached"}])
 
         result = _get_all_plans_from_cache_or_api("test-console")
 
@@ -804,9 +786,8 @@ class TestGetAllPlansFromCacheOrApi:
 
     @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://test.com')
-    @patch('safebreach_mcp_config.config_functions.get_secret_for_console', return_value='test-token')
     @patch('safebreach_mcp_config.config_functions.requests.get')
-    def test_api_error_propagates(self, mock_get, mock_secret, mock_base_url, mock_account):
+    def test_api_error_propagates(self, mock_get, mock_base_url, mock_account):
         mock_get.side_effect = Exception("API unreachable")
 
         with pytest.raises(Exception, match="API unreachable"):

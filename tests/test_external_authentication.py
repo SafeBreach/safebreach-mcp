@@ -70,7 +70,7 @@ class TestAuthenticationSimple(unittest.TestCase):
         launcher = MultiServerLauncher(mock_args)
         
         # Should enable external connections for all servers
-        expected = {'config': True, 'data': True, 'utilities': True, 'playbook': True}
+        expected = {'config': True, 'data': True, 'utilities': True, 'playbook': True, 'studio': True}
         self.assertEqual(launcher.external_config, expected)
     
     def test_multi_server_launcher_specific_external_config(self):
@@ -86,7 +86,7 @@ class TestAuthenticationSimple(unittest.TestCase):
         launcher = MultiServerLauncher(mock_args)
         
         # Should enable external only for specified servers
-        expected = {'config': True, 'data': False, 'utilities': True, 'playbook': False}
+        expected = {'config': True, 'data': False, 'utilities': True, 'playbook': False, 'studio': False}
         self.assertEqual(launcher.external_config, expected)
     
     def test_bind_host_determination(self):
@@ -124,7 +124,7 @@ class TestAuthenticationSimple(unittest.TestCase):
         with patch.dict(os.environ, {'SAFEBREACH_MCP_ALLOW_EXTERNAL': 'true'}):
             from start_all_servers import parse_external_config
             config = parse_external_config()
-            expected = {'config': True, 'data': True, 'utilities': True, 'playbook': True}
+            expected = {'config': True, 'data': True, 'utilities': True, 'playbook': True, 'studio': True}
             self.assertEqual(config, expected)
         
         # Test server-specific flags
@@ -134,7 +134,7 @@ class TestAuthenticationSimple(unittest.TestCase):
             'SAFEBREACH_MCP_UTILITIES_EXTERNAL': 'true'
         }):
             config = parse_external_config()
-            expected = {'config': True, 'data': False, 'utilities': True, 'playbook': False}
+            expected = {'config': True, 'data': False, 'utilities': True, 'playbook': False, 'studio': False}
             self.assertEqual(config, expected)
     
     def test_security_warning_log_method(self):

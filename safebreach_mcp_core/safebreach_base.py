@@ -31,7 +31,8 @@ _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 from mcp_server_bug_423_hotfix import apply_patch
-from .safebreach_auth import SafeBreachAuth
+# SafeBreachAuth removed (SAF-29974): its get_base_url() bypasses the RBAC gateway.
+# Tool functions use get_auth_headers_for_console() + get_api_base_url() instead.
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,12 @@ _mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 _session_semaphores: Dict[str, tuple[asyncio.Semaphore, float]] = {}
 _concurrency_limit = int(os.environ.get('SAFEBREACH_MCP_CONCURRENCY_LIMIT', '2'))
 _SEMAPHORE_MAX_AGE = 3600  # 1 hour — stale semaphores are cleaned up after this
+
+# Auth artifact propagation (SAF-29974)
+from .token_context import (  # noqa: E402
+    _user_auth_artifacts, _session_auth_artifacts,
+    extract_auth_bundle, cleanup_stale_artifacts, mask_artifacts
+)
 
 
 async def _cleanup_stale_semaphores() -> None:
@@ -56,6 +63,8 @@ async def _cleanup_stale_semaphores() -> None:
             _session_semaphores.pop(sid, None)
         if stale:
             logger.info(f"🧹 Cleaned up {len(stale)} stale SSE semaphore(s), {len(_session_semaphores)} remaining")
+        # Also clean up stale auth artifacts (SAF-29974)
+        cleanup_stale_artifacts(_SEMAPHORE_MAX_AGE)
 
 
 class SafeBreachMCPBase:
@@ -78,7 +87,6 @@ class SafeBreachMCPBase:
             self.base_url = '/'
         
         self.mcp = FastMCP(server_name)
-        self.auth = SafeBreachAuth()
         self._cache = SafeBreachCache(name=f"{server_name}_base", maxsize=10, ttl=3600)
         self._uvicorn_server: Optional[Any] = None
     
@@ -510,6 +518,11 @@ class SafeBreachMCPBase:
 
             path = scope.get("path", "/")
 
+            # Headers-first auth bundle extraction (SAF-29974)
+            bundle = extract_auth_bundle(scope)
+            if bundle:
+                _user_auth_artifacts.set(bundle)
+
             # SSE connection establishment — assign a new session ID
             if path.endswith("/sse"):
                 middleware_session_id = str(uuid.uuid4())
@@ -520,6 +533,11 @@ class SafeBreachMCPBase:
                     f"🆔 New SSE session: {middleware_session_id[:8]}... "
                     f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
                 )
+                # Stash auth bundle for SSE session resilience (SAF-29974)
+                if bundle:
+                    _session_auth_artifacts[middleware_session_id] = (bundle, time.time())
+                    logger.info(f"🔑 Auth artifacts for session {middleware_session_id[:8]}...: "
+                                f"{list(bundle.keys())}")
 
                 real_session_id = None
 
@@ -537,6 +555,10 @@ class SafeBreachMCPBase:
                             real_session_id = match.group(1)
                             _session_semaphores.pop(middleware_session_id, None)
                             _session_semaphores[real_session_id] = (sem, time.time())
+                            # Migrate auth artifacts alongside semaphore (SAF-29974)
+                            auth_entry = _session_auth_artifacts.pop(middleware_session_id, None)
+                            if auth_entry is not None:
+                                _session_auth_artifacts[real_session_id] = auth_entry
                             logger.info(
                                 f"🔄 Session migrated: {middleware_session_id[:8]}... "
                                 f"→ {real_session_id[:8]}..."
@@ -547,10 +569,11 @@ class SafeBreachMCPBase:
                                 f"— no session_id found (len={len(body)})"
                             )
 
-                    # Clean up semaphore when SSE connection ends
+                    # Clean up semaphore and auth artifacts when SSE connection ends
                     if message.get("type") == "http.response.body" and not message.get("more_body", False):
                         cleanup_id = real_session_id or middleware_session_id
                         _session_semaphores.pop(cleanup_id, None)
+                        _session_auth_artifacts.pop(cleanup_id, None)
                         logger.info(
                             f"🧹 Cleaned up session: {cleanup_id[:8]}... "
                             f"(migrated={'yes' if real_session_id else 'no'}, "
@@ -577,6 +600,22 @@ class SafeBreachMCPBase:
                             break
 
                 if session_id:
+                    # Auth bundle propagation (SAF-29974 Slice 6):
+                    # Store the user's auth bundle in the session store so that
+                    # get_auth_headers_for_console() can look it up by session_id
+                    # via the MCP SDK's request_ctx (which IS available in tool handlers).
+                    if bundle and ('x-token' in bundle or 'cookie' in bundle):
+                        _session_auth_artifacts[session_id] = (bundle, time.time())
+
+                    # Session store fallback for auth
+                    if not bundle:
+                        art_entry = _session_auth_artifacts.get(session_id)
+                        if art_entry:
+                            _user_auth_artifacts.set(art_entry[0])
+                            logger.debug(
+                                f"🔑 Auth from session store for {session_id[:8]}..."
+                            )
+
                     # Lazy semaphore creation for sessions first seen via query string
                     if session_id not in _session_semaphores:
                         _session_semaphores[session_id] = (
@@ -627,6 +666,10 @@ class SafeBreachMCPBase:
             if transport == 'streamable-http' and path == endpoint_path:
                 headers_dict = dict(scope.get("headers", []))
                 session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
+
+                # Store auth bundle in session store for streamable-http (SAF-29974 Slice 6)
+                if bundle and session_id:
+                    _session_auth_artifacts[session_id] = (bundle, time.time())
 
                 if not session_id:
                     # Initialize request — no session yet, pass through

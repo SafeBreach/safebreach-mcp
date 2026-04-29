@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 class TestRequestShutdown:
 
-    @patch("safebreach_mcp_core.safebreach_base.SafeBreachAuth")
-    def test_no_op_when_server_not_running(self, _mock_auth):
+    def test_no_op_when_server_not_running(self):
         from safebreach_mcp_core.safebreach_base import SafeBreachMCPBase
 
         base = SafeBreachMCPBase("test-server")
@@ -14,8 +13,7 @@ class TestRequestShutdown:
         base.request_shutdown()  # should not raise
         assert base._uvicorn_server is None
 
-    @patch("safebreach_mcp_core.safebreach_base.SafeBreachAuth")
-    def test_sets_should_exit_when_server_running(self, _mock_auth):
+    def test_sets_should_exit_when_server_running(self):
         from safebreach_mcp_core.safebreach_base import SafeBreachMCPBase
 
         base = SafeBreachMCPBase("test-server")

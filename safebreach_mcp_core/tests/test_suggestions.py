@@ -49,6 +49,14 @@ SAMPLE_SUGGESTIONS_RESPONSE = {
 class TestGetSuggestionsForCollection:
     """Tests for the shared suggestions helper."""
 
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        """Set up auth context for all tests (SAF-29974)."""
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
     def setup_method(self):
         """Clear the suggestions cache before each test."""
         suggestions_cache.clear()
@@ -56,10 +64,10 @@ class TestGetSuggestionsForCollection:
     # --- Happy path ---
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_success(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_success(self, mock_account, mock_url, mock_get):
         """Calls API, parses response, returns list of keys for valid collection."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -79,10 +87,10 @@ class TestGetSuggestionsForCollection:
 
     @patch("safebreach_mcp_core.suggestions.is_caching_enabled", return_value=True)
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_cache_hit(self, mock_account, mock_url, mock_secret, mock_get, mock_cache_enabled):
+    def test_get_suggestions_cache_hit(self, mock_account, mock_url, mock_get, mock_cache_enabled):
         """Second call returns cached data; requests.get called only once."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -98,10 +106,10 @@ class TestGetSuggestionsForCollection:
 
     @patch("safebreach_mcp_core.suggestions.is_caching_enabled", return_value=True)
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_cache_miss_stores(self, mock_account, mock_url, mock_secret, mock_get, mock_cache_enabled):
+    def test_get_suggestions_cache_miss_stores(self, mock_account, mock_url, mock_get, mock_cache_enabled):
         """First call stores result in cache; verified via suggestions_cache.get()."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -110,7 +118,8 @@ class TestGetSuggestionsForCollection:
 
         get_suggestions_for_collection("demo", "security_product")
 
-        cached = suggestions_cache.get("demo_security_product")
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        cached = suggestions_cache.get(f"demo_security_product{get_cache_user_suffix()}")
         assert cached is not None
         # Cache stores full entries (key + doc_count), not just keys
         assert [e["key"] for e in cached] == [
@@ -120,10 +129,10 @@ class TestGetSuggestionsForCollection:
     # --- Error handling ---
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_invalid_collection(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_invalid_collection(self, mock_account, mock_url, mock_get):
         """Unknown collection raises ValueError listing available collection names."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -134,10 +143,10 @@ class TestGetSuggestionsForCollection:
             get_suggestions_for_collection("demo", "nonexistent_collection")
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_empty_collection(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_empty_collection(self, mock_account, mock_url, mock_get):
         """Collection exists with empty entries — returns empty list, no error."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -154,10 +163,10 @@ class TestGetSuggestionsForCollection:
         assert result == []
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_api_401(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_api_401(self, mock_account, mock_url, mock_get):
         """401 response raises ValueError mentioning authentication."""
         mock_response = MagicMock()
         mock_response.status_code = 401
@@ -170,10 +179,10 @@ class TestGetSuggestionsForCollection:
             get_suggestions_for_collection("demo", "security_product")
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_api_timeout(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_api_timeout(self, mock_account, mock_url, mock_get):
         """Timeout is propagated."""
         mock_get.side_effect = req.exceptions.Timeout("timed out")
 
@@ -183,10 +192,10 @@ class TestGetSuggestionsForCollection:
     # --- Key extraction ---
 
     @patch("safebreach_mcp_core.suggestions.requests.get")
-    @patch("safebreach_mcp_core.suggestions.get_secret_for_console", return_value="test-token")
+
     @patch("safebreach_mcp_core.suggestions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_core.suggestions.get_api_account_id", return_value="12345")
-    def test_get_suggestions_extracts_keys_only(self, mock_account, mock_url, mock_secret, mock_get):
+    def test_get_suggestions_extracts_keys_only(self, mock_account, mock_url, mock_get):
         """Only 'key' string values extracted; doc_count discarded."""
         mock_response = MagicMock()
         mock_response.status_code = 200
