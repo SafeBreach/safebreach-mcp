@@ -12,6 +12,7 @@ import logging
 # Add parent directory to path to import core components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase, convert_datetime_to_epoch, convert_epoch_to_datetime
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class SafeBreachUtilitiesServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="convert_datetime_to_epoch",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Converts a datetime string in ISO format to Unix epoch timestamp in MILLISECONDS.
 Returns timestamps in milliseconds format to match SafeBreach API expectations for date filtering parameters (start_date, end_date).
 Supports various ISO datetime formats including timezone information.
@@ -43,6 +45,7 @@ Parameters: datetime_str (required, ISO format string like '2024-01-15T10:30:00Z
 
         @self.mcp.tool(
             name="convert_epoch_to_datetime",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Converts a Unix epoch timestamp to ISO format datetime string.
 Accepts timestamps in both MILLISECONDS (SafeBreach API format) and seconds - auto-detects the format.
 Supports optional timezone specification for the output format. Useful for interpreting epoch timestamps from SafeBreach API responses.

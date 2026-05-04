@@ -112,6 +112,22 @@ This MCP server enables AI agents to interact with SafeBreach management console
 **Additional Components:**
 - **`mcp_server_bug_423_hotfix.py`**: MCP initialization fix
 
+## Tool Annotations
+
+Every tool ships with MCP
+[`ToolAnnotations`](https://modelcontextprotocol.io/specification/server/tools#tool-annotations)
+so clients can decide whether to prompt the user before a call.
+
+| Hint | Use when the tool… |
+|---|---|
+| `readOnlyHint=True` | only fetches data — no state change on the console. |
+| `readOnlyHint=False`, `destructiveHint=False` | mutates user-owned drafts/templates and is reversible (e.g. `save_studio_attack_draft`). |
+| `readOnlyHint=False`, `destructiveHint=True` | triggers execution or changes shared/published state (e.g. `run_studio_attack`, `set_studio_attack_status`, `manage_test`). |
+
+When adding a tool, set it `readOnlyHint=True` unless it calls a
+state-changing API; if the effect can't be reversed from the same
+client, also set `destructiveHint=True`.
+
 ## Configuration
 Configuration of the SafeBreach MCP Server consists of:
 - Specifying which SafeBreach consoles are in scope for the MCP. For each SafeBreach console, provide the 'url', 'account' and the provider (method) for fetching the API key

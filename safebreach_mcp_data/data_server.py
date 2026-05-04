@@ -12,6 +12,7 @@ from typing import Optional
 # Add parent directory to path to import core components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from safebreach_mcp_core.datetime_utils import normalize_timestamp
 from .data_functions import (
@@ -51,6 +52,7 @@ class SafeBreachDataServer(SafeBreachMCPBase):
         
         @self.mcp.tool(
             name="get_tests_history",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console.
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
@@ -86,6 +88,7 @@ Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
         
         @self.mcp.tool(
             name="get_test_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns the full details for a specific test by id executed on a given Safebreach management console.
 Always includes simulation status counts (missed, stopped, prevented, detected, logged, no-result, inconsistent) at no extra cost.
 Optionally includes drift count via include_drift_count parameter.
@@ -100,6 +103,7 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
         
         @self.mcp.tool(
             name="get_test_simulations",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
 Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
 Each simulation includes a drift_tracking_code — a lineage identifier grouping all executions of the same \
@@ -139,6 +143,7 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
         
         @self.mcp.tool(
             name="get_test_simulation_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
 Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
 When include_drift_info=True, returns drift_tracking_code for drifted simulations. Pass this code to \
@@ -165,6 +170,7 @@ For time-window-based drift trends, see get_simulation_result_drifts and get_sim
         
         @self.mcp.tool(
             name="get_security_controls_events",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paginated list of security control events for a specific test and simulation.
 These events represent the security controls (products) that SafeBreach was able to correlate to the malicious activity simulation.
 Supports filtering by product name, vendor name, security action, connector name, source host, and destination host.
@@ -199,6 +205,7 @@ connector_name_filter (partial match), source_host_filter (partial match), desti
         
         @self.mcp.tool(
             name="get_security_control_event_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns detailed information for a specific security control event.
 Provides comprehensive data to help SecOps engineers understand the causality between SafeBreach malicious activity simulation and the event emitted by the security control.
 Supports different verbosity levels for context-aware information density.
@@ -222,6 +229,7 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         
         @self.mcp.tool(
             name="get_test_findings_counts",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns counts of findings by type for a specific test, with optional filtering by any attribute.
             Findings are the main data points identified by SafeBreach Propagate tests in the customer's environment.
             This function provides a summary view showing how many findings of each type were identified.
@@ -240,6 +248,7 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         
         @self.mcp.tool(
             name="get_test_findings_details",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns detailed findings for a specific test with filtering and pagination by any attribute.
             Findings are the main data points identified by SafeBreach Propagate tests, similar to a Penetration Test report.
             This function provides the full details of findings with support for filtering by any attribute (type, source, severity, hostname, IP addresses, etc.).
@@ -260,6 +269,7 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         
         @self.mcp.tool(
             name="get_test_drifts",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Analyzes drift between the given test and the most recent previous test with the same name.
             Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test,
             (3) simulations with matching drift_tracking_code but different status values.
@@ -280,6 +290,7 @@ use get_simulation_result_drifts or get_simulation_status_drifts instead."""
 
         @self.mcp.tool(
             name="get_full_simulation_logs",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Retrieves comprehensive low-level execution logs for a specific simulation (~40KB detailed traces per node).
 
 IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, returned no-result, or produced unexpected results.
@@ -311,6 +322,7 @@ Note: Results are cached for 5 minutes. Use get_simulation_details with include_
 
         @self.mcp.tool(
             name="get_simulation_result_drifts",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns time-window-based simulation result drift analysis showing transitions between \
 blocked (FAIL) and not-blocked (SUCCESS) states.
 
@@ -394,6 +406,7 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
 
         @self.mcp.tool(
             name="get_simulation_status_drifts",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns time-window-based simulation status drift analysis showing transitions between \
 security control final statuses (prevented, stopped, detected, logged, missed, inconsistent).
 
@@ -479,6 +492,7 @@ WARNING: This endpoint has no server-side pagination. Large time windows (7+ day
 
         @self.mcp.tool(
             name="get_security_control_drifts",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Analyze capability transitions for a specific security control over time. \
 Shows how a control's prevented/reported/logged/alerted capabilities changed within a time window.
 
@@ -617,6 +631,7 @@ Start with a narrow window (1-2 days) and widen only if needed."""
 
         @self.mcp.tool(
             name="get_simulation_lineage",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns the full chronological execution history (lineage) of a simulation across all \
 test runs, identified by its drift_tracking_code.
 
@@ -657,6 +672,7 @@ Parameters:
 
         @self.mcp.tool(
             name="get_peer_benchmark_score",
+            annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns the customer's security posture score compared to SafeBreach peers for a given time window.
 Wraps POST /api/data/v1/accounts/{account_id}/score (SAF-27621).
 

@@ -36,6 +36,26 @@ from mcp_server_bug_423_hotfix import apply_patch
 
 logger = logging.getLogger(__name__)
 
+# Server-wide absolute deny list. Configured via the DISABLE_TOOL_LIST env
+# var (JSON array of tool names, e.g. '["save_studio_attack_draft"]'). Tools
+# whose names appear here are stripped from `tools/list` and rejected by
+# `tools/call`. The env var is read fresh on every server start, so the
+# operator (mcp-proxy in the SaaS deployment) can update it and restart the
+# server to change which tools are gated.
+def _parse_disable_tool_list(raw: Optional[str]) -> frozenset[str]:
+    raw = (raw or '').strip()
+    if not raw:
+        return frozenset()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.error(f"Invalid DISABLE_TOOL_LIST JSON, ignoring: {exc}")
+        return frozenset()
+    if not isinstance(parsed, list) or not all(isinstance(n, str) for n in parsed):
+        logger.error("DISABLE_TOOL_LIST must be a JSON array of strings, ignoring")
+        return frozenset()
+    return frozenset(n for n in parsed if n)
+
 # Concurrency limiter state — shared across all server instances
 _mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('mcp_session_id', default=None)
 # Stores (semaphore, creation_timestamp) tuples to enable stale entry cleanup
@@ -120,6 +140,40 @@ class SafeBreachMCPBase:
         """Clear all cache data."""
         self._cache.clear()
 
+    def _install_disable_filtering(self, app):
+        """Wrap the tool manager so any tool whose name is in DISABLE_TOOL_LIST
+        is hidden from `tools/list` and rejected by `tools/call`. The env var
+        is re-read on every install (every server start), so a restart with a
+        new env-var value takes effect for the new instance. Returns `app`
+        unchanged."""
+        deny_list = _parse_disable_tool_list(os.environ.get('DISABLE_TOOL_LIST'))
+        if not deny_list:
+            logger.info('Tool-disable filtering installed (deny list: 0)')
+            return app
+
+        from mcp.server.fastmcp.exceptions import ToolError
+        tool_manager = self.mcp._tool_manager
+        original_list_tools = tool_manager.list_tools
+        original_call_tool = tool_manager.call_tool
+
+        def filtered_list_tools():
+            return [t for t in original_list_tools() if t.name not in deny_list]
+
+        async def filtered_call_tool(name, arguments, context=None, convert_result=False):
+            if name in deny_list:
+                logger.warning("Blocked deny-listed tool call: '%s'", name)
+                raise ToolError(
+                    f"Tool '{name}' is not available. "
+                    "This tool has been disabled by the server administrator."
+                )
+            return await original_call_tool(name, arguments, context=context, convert_result=convert_result)
+
+        tool_manager.list_tools = filtered_list_tools
+        tool_manager.call_tool = filtered_call_tool
+
+        logger.info('Tool-disable filtering installed (deny list: %d)', len(deny_list))
+        return app
+
     def request_shutdown(self) -> None:
         """Signal the uvicorn server to exit gracefully.
 
@@ -190,6 +244,10 @@ class SafeBreachMCPBase:
             self._log_external_binding_warning(port)
         else:
             logger.info("🏠 Local-only server - no authentication wrapper applied")
+
+        # Wrap the tool manager so DISABLE_TOOL_LIST entries are hidden from
+        # tools/list and rejected by tools/call. Returns `app` unchanged.
+        app = self._install_disable_filtering(app)
 
         # Wrap with concurrency limiter (applies to all servers)
         app = self._create_concurrency_limited_app(app, transport=transport, endpoint_path=endpoint_path)
