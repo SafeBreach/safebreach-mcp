@@ -82,8 +82,10 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_DATA_EXTERNAL=true uv run 
 
 **Running the MCP Server (Remote Installation):**
 ```bash
-# Install and run from git repository
+# Install and run from git repository (latest)
 uv tool install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git
+# Or install a specific version
+uv tool install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git@1.1.0
 export PATH="$HOME/.local/bin:$PATH"  # If needed
 
 # Run multi-server architecture
@@ -585,8 +587,10 @@ Basic installation commands:
 git clone git@github.com:SafeBreach/safebreach-mcp.git
 uv sync
 
-# Remote installation
+# Remote installation (latest)
 uv tool install git+ssh://git@github.com:SafeBreach/safebreach-mcp.git/
+# Or install a specific version
+uv tool install git+ssh://git@github.com:SafeBreach/safebreach-mcp.git/@1.1.0
 ```
 
 

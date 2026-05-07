@@ -308,8 +308,11 @@ Install and run the MCP server directly from the repository:
 4. Test: `ssh -T git@github.com`
 
 ```bash
-# Method 1: Install latest version of the package as a tool with SSH (recommended for private repos)
+# Method 1: Install with SSH (recommended for private repos)
+# Latest:
 uv tool install --force git+ssh://git@github.com/SafeBreach/safebreach-mcp.git
+# Specific version:
+uv tool install --force git+ssh://git@github.com/SafeBreach/safebreach-mcp.git@1.1.0
 
 # Update PATH if needed (uv will show a warning if required)
 export PATH="/Users/$(whoami)/.local/bin:$PATH"  # or run: uv tool update-shell
@@ -325,19 +328,33 @@ safebreach-mcp-playbook-server   # Port 8003
 safebreach-mcp-studio-server    # Port 8004
 
 # Method 2: Install with HTTPS authentication
-# First, configure git credentials or use personal access token
-uv tool install git+https://username:personal-access-token@github.com/SafeBreach/safebreach-mcp.git
+# First, configure git credentials: git config credential.helper store
+# Then install (git will prompt for credentials):
+# Latest:
+uv tool install git+https://github.com/SafeBreach/safebreach-mcp.git
+# Specific version:
+uv tool install git+https://github.com/SafeBreach/safebreach-mcp.git@1.1.0
 safebreach-mcp-all-servers
 
 # Method 3: Install with pip in a uv environment
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+# Latest:
 uv pip install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git
+# Specific version:
+uv pip install git+ssh://git@github.com/SafeBreach/safebreach-mcp.git@1.1.0
 safebreach-mcp-all-servers
 
 # Method 4: For newer uv versions (0.4.0+) with SSH
+# Latest:
 uv run --from git+ssh://git@github.com/SafeBreach/safebreach-mcp.git safebreach-mcp-all-servers
+# Specific version:
+uv run --from git+ssh://git@github.com/SafeBreach/safebreach-mcp.git@1.1.0 safebreach-mcp-all-servers
 ```
+
+> **Version pinning:** Append `@<version>` to any git URL to install a specific release
+> (e.g., `@1.1.0`). See [Releases](https://github.com/SafeBreach/safebreach-mcp/releases)
+> for available versions.
 
 ### Option 2: Local Development Setup 🛠️
 
