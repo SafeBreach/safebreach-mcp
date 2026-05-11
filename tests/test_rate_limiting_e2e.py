@@ -57,14 +57,14 @@ class TestRateLimitingE2E:
         yield
         _rate_limit_store.clear()
 
-    @patch("safebreach_mcp_core.rate_limiter._action_limit", 2)
+    @patch("safebreach_mcp_core.rate_limiter._action_limit", 3)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
     def test_total_action_limit_enforced(self):
-        """Pause (1) -> resume (2) -> cancel (3, rate-limited)."""
+        """run_scenario (1) -> pause (2) -> resume (3, hits limit) -> cancel (rate-limited)."""
         scenario = _find_ready_scenario(E2E_CONSOLE)
         test_id = None
         try:
-            # Queue a real test
+            # Queue a real test — action 1 (run_scenario records an action)
             queue_result = sb_run_scenario(
                 scenario_id=str(scenario["id"]),
                 console=E2E_CONSOLE,
@@ -73,7 +73,7 @@ class TestRateLimitingE2E:
             test_id = queue_result["test_id"]
             logger.info("Queued test %s for rate limit E2E", test_id)
 
-            # Action 1: pause (should succeed)
+            # Action 2: pause (should succeed)
             result = sb_manage_test(
                 test_id=test_id,
                 action="pause",
@@ -84,7 +84,7 @@ class TestRateLimitingE2E:
 
             time.sleep(1)
 
-            # Action 2: resume (should succeed — hits limit of 2)
+            # Action 3: resume (should succeed — hits limit of 3)
             result = sb_manage_test(
                 test_id=test_id,
                 action="resume",
@@ -93,7 +93,7 @@ class TestRateLimitingE2E:
             )
             assert result["status"] == "success"
 
-            # Action 3: cancel (should be rate-limited)
+            # Action 4: cancel (should be rate-limited)
             with pytest.raises(ToolError, match="total actions") as exc_info:
                 sb_manage_test(
                     test_id=test_id,
@@ -103,7 +103,7 @@ class TestRateLimitingE2E:
                 )
 
             error_msg = str(exc_info.value)
-            assert "2/2" in error_msg
+            assert "3/3" in error_msg
             # Verify retry-after seconds is present (a number)
             assert any(c.isdigit() for c in error_msg)
             logger.info("Rate limit correctly enforced: %s", error_msg)
@@ -151,6 +151,69 @@ class TestRateLimitingE2E:
             assert "1/1" in error_msg
             assert any(c.isdigit() for c in error_msg)
 
+        finally:
+            if test_id:
+                _cancel_test_best_effort(test_id, E2E_CONSOLE)
+
+    @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
+    @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
+    @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
+    def test_run_scenario_per_tool_limit_enforced(self):
+        """run_scenario (1, hits per-tool limit of 1) -> 2nd run_scenario (rate-limited)."""
+        scenario = _find_ready_scenario(E2E_CONSOLE)
+        test_id = None
+        try:
+            # Action 1: run_scenario succeeds — hits per-tool limit of 1
+            queue_result = sb_run_scenario(
+                scenario_id=str(scenario["id"]),
+                console=E2E_CONSOLE,
+                test_name="E2E: run_scenario_rate_limit_test",
+            )
+            test_id = queue_result["test_id"]
+            assert queue_result["status"] == "queued"
+
+            # Action 2: run_scenario again — same tool, should be rate-limited
+            with pytest.raises(ToolError, match="run_scenario") as exc_info:
+                sb_run_scenario(
+                    scenario_id=str(scenario["id"]),
+                    console=E2E_CONSOLE,
+                    test_name="E2E: run_scenario_rate_limit_should_fail",
+                )
+
+            error_msg = str(exc_info.value)
+            assert "1/1" in error_msg
+            assert any(c.isdigit() for c in error_msg)
+            logger.info("run_scenario rate limit correctly enforced: %s", error_msg)
+
+        finally:
+            if test_id:
+                _cancel_test_best_effort(test_id, E2E_CONSOLE)
+
+    @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 5)
+    @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
+    @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
+    def test_run_scenario_dry_run_bypasses_rate_limit(self):
+        """dry_run=True does not consume rate limit quota."""
+        scenario = _find_ready_scenario(E2E_CONSOLE)
+        # Multiple dry runs should all succeed — none count toward limit
+        for i in range(3):
+            result = sb_run_scenario(
+                scenario_id=str(scenario["id"]),
+                console=E2E_CONSOLE,
+                dry_run=True,
+            )
+            assert result["status"] == "dry_run", f"dry_run #{i+1} should succeed"
+
+        # Real run should still work (no quota consumed by dry runs)
+        test_id = None
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(scenario["id"]),
+                console=E2E_CONSOLE,
+                test_name="E2E: dry_run_bypass_test",
+            )
+            test_id = queue_result["test_id"]
+            assert queue_result["status"] == "queued"
         finally:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)

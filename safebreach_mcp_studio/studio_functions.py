@@ -637,6 +637,10 @@ def sb_save_studio_attack_draft(
 
     logger.info(f"Saving draft attack '{name}' (type={attack_type}) for console: {console}")
 
+    # Rate limiting gate — check before mutating
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "save_studio_attack_draft")
+
     # Get authentication and base URL
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
@@ -700,6 +704,9 @@ def sb_save_studio_attack_draft(
         cache_key = f"studio_draft_{console}_{result['draft_id']}{get_cache_user_suffix()}"
         studio_draft_cache.set(cache_key, result)
         logger.debug(f"Cached draft with key: {cache_key}")
+
+    # Rate limiting gate — record after successful save
+    rate_limiter.record_action(caller_id, "save_studio_attack_draft")
 
     logger.info(f"Successfully saved draft with ID: {result['draft_id']}")
 
@@ -889,6 +896,10 @@ def sb_update_studio_attack_draft(
 
     logger.info(f"Updating draft attack {attack_id} '{name}' (type={attack_type}) for console: {console}")
 
+    # Rate limiting gate — check before mutating
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "update_studio_attack_draft")
+
     # Get authentication and base URL
     base_url = get_api_base_url(console, 'config')
     account_id = get_api_account_id(console)
@@ -953,6 +964,9 @@ def sb_update_studio_attack_draft(
         cache_key = f"studio_draft_{console}_{result['draft_id']}{get_cache_user_suffix()}"
         studio_draft_cache.set(cache_key, result)
         logger.debug(f"Updated cache with key: {cache_key}")
+
+    # Rate limiting gate — record after successful update
+    rate_limiter.record_action(caller_id, "update_studio_attack_draft")
 
     logger.info(f"Successfully updated draft with ID: {result['draft_id']}")
 
@@ -1098,6 +1112,10 @@ def sb_run_studio_attack(
                 f"targets={len(target_simulator_ids) if target_simulator_ids else 'N/A'}, "
                 f"attackers={len(attacker_simulator_ids) if attacker_simulator_ids else 'N/A'})")
 
+    # Rate limiting gate — check before mutating
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "run_studio_attack")
+
     # Get authentication and base URL
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
@@ -1186,6 +1204,9 @@ def sb_run_studio_attack(
         'attack_id': attack_id,
         'status': 'queued',
     }
+
+    # Rate limiting gate — record after successful queue
+    rate_limiter.record_action(caller_id, "run_studio_attack")
 
     logger.info(f"Successfully queued attack {attack_id} for execution "
                 f"(test_id: {result['test_id']}, step_run_id: {result['step_run_id']})")
@@ -1508,6 +1529,10 @@ def sb_set_studio_attack_status(
 
     old_status = current_status
 
+    # Rate limiting gate — check AFTER pre-check reads, before mutating PUT
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "set_studio_attack_status")
+
     # Fetch source code files needed for the PUT payload
     # Target file (always required)
     target_url = (
@@ -1616,6 +1641,9 @@ def sb_set_studio_attack_status(
     cache_key = f"studio_draft_{console}_{attack_id}{get_cache_user_suffix()}"
     if studio_draft_cache.delete(cache_key):
         logger.debug(f"Invalidated cache for key: {cache_key}")
+
+    # Rate limiting gate — record after successful status change
+    rate_limiter.record_action(caller_id, "set_studio_attack_status")
 
     # Build implications text
     if new_status == "published":
