@@ -111,3 +111,46 @@ class TestRateLimitingE2E:
         finally:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
+
+    @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
+    @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
+    @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
+    def test_per_tool_name_limit_enforced(self):
+        """Call manage_test once OK, 2nd call hits per-tool limit of 1."""
+        scenario = _find_ready_scenario(E2E_CONSOLE)
+        test_id = None
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(scenario["id"]),
+                console=E2E_CONSOLE,
+                test_name="E2E: rate_limit_per_tool_test",
+            )
+            test_id = queue_result["test_id"]
+
+            # Action 1: pause (should succeed — hits per-tool limit of 1)
+            result = sb_manage_test(
+                test_id=test_id,
+                action="pause",
+                console=E2E_CONSOLE,
+                reason="E2E per-tool rate limit test",
+            )
+            assert result["status"] == "success"
+
+            time.sleep(1)
+
+            # Action 2: resume (same tool, should be rate-limited)
+            with pytest.raises(ToolError, match="manage_test") as exc_info:
+                sb_manage_test(
+                    test_id=test_id,
+                    action="resume",
+                    console=E2E_CONSOLE,
+                    reason="E2E per-tool rate limit - should fail",
+                )
+
+            error_msg = str(exc_info.value)
+            assert "1/1" in error_msg
+            assert any(c.isdigit() for c in error_msg)
+
+        finally:
+            if test_id:
+                _cancel_test_best_effort(test_id, E2E_CONSOLE)

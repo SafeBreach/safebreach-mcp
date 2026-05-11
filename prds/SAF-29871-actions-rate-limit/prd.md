@@ -22,7 +22,7 @@
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-05-11 11:00 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 1 of 7 complete |
+| **Current Phase** | Phase 2 of 7 complete |
 
 ---
 
@@ -290,7 +290,7 @@ verified independently.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase 1: Total action limit on manage_test | ✅ Complete | 2026-05-11 | pending | 14 unit + 3 gate tests pass |
-| Phase 2: Per-tool-name limit | ⏳ Pending | - | - | Second limit type |
+| Phase 2: Per-tool-name limit | ✅ Complete | 2026-05-11 | pending | 6 new tests, 353 total pass |
 | Phase 3: Dry-run exclusion (run_scenario) | ⏳ Pending | - | - | Most complex gate |
 | Phase 4: Remaining 4 tools | ⏳ Pending | - | - | Full tool coverage |
 | Phase 5: Hybrid caller identity | ⏳ Pending | - | - | Production-ready identity |

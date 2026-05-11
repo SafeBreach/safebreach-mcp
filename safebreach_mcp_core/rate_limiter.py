@@ -91,6 +91,22 @@ class RateLimiter:
                 f"Try again in {retry_after} seconds."
             )
 
+        # Per-tool-name limit
+        tool_actions = data.per_tool_actions.get(tool_name, [])
+        tool_actions = self._prune(tool_actions, now)
+        data.per_tool_actions[tool_name] = tool_actions
+
+        tool_count = len(tool_actions)
+        if tool_count >= _identical_action_limit:
+            oldest = tool_actions[0]
+            retry_after = math.ceil(_window_seconds - (now - oldest))
+            raise ToolError(
+                f"Rate limit exceeded: {tool_name} "
+                f"({tool_count}/{_identical_action_limit} in last "
+                f"{_window_seconds // 60} min). "
+                f"Try again in {retry_after} seconds."
+            )
+
     def record_action(self, caller_id: str, tool_name: str) -> None:
         """Post-success: increment counters after action truly applied."""
         if not _rate_limit_enabled:

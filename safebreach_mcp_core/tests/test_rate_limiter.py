@@ -32,9 +32,10 @@ class TestCheckLimitBasic:
         limiter.check_limit("caller-1", "manage_test")  # should not raise
 
     def test_check_limit_passes_when_count_below_total_limit(self, limiter):
-        for _ in range(9):
-            limiter.record_action("caller-1", "manage_test")
-        limiter.check_limit("caller-1", "manage_test")  # should not raise
+        # Use different tool names to avoid per-tool limit (5) while testing total (10)
+        for i in range(9):
+            limiter.record_action("caller-1", f"tool_{i}")
+        limiter.check_limit("caller-1", "manage_test")  # 9 < 10, should not raise
 
     def test_check_limit_raises_tool_error_when_total_limit_reached(self, limiter):
         for _ in range(10):
@@ -143,6 +144,68 @@ class TestConfiguration:
         for _ in range(10):
             limiter.record_action("caller-1", "manage_test")
 
+        # Advance past 60s window
+        mock_time.time.return_value = 1061.0
+        limiter.check_limit("caller-1", "manage_test")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Per-tool-name limit (Phase 2)
+# ---------------------------------------------------------------------------
+class TestPerToolNameLimit:
+    def test_check_limit_raises_when_per_tool_limit_reached(self, limiter):
+        for _ in range(5):
+            limiter.record_action("caller-1", "manage_test")
+        with pytest.raises(ToolError, match="manage_test"):
+            limiter.check_limit("caller-1", "manage_test")
+
+    @patch("safebreach_mcp_core.rate_limiter.time")
+    def test_error_message_contains_tool_name_and_retry_after(
+        self, mock_time, limiter
+    ):
+        mock_time.time.return_value = 1000.0
+        for _ in range(5):
+            limiter.record_action("caller-1", "manage_test")
+
+        mock_time.time.return_value = 1100.0  # 100s later
+        # retry_after = 1800 - (1100 - 1000) = 1700
+        with pytest.raises(ToolError, match="manage_test") as exc_info:
+            limiter.check_limit("caller-1", "manage_test")
+        error_msg = str(exc_info.value)
+        assert "5/5" in error_msg
+        assert "1700" in error_msg
+
+    def test_per_tool_limit_independent_from_total(self, limiter):
+        """Hit per-tool limit (5) before total limit (10)."""
+        for _ in range(5):
+            limiter.record_action("caller-1", "manage_test")
+        # Per-tool at 5/5, total at 5/10
+        with pytest.raises(ToolError, match="manage_test"):
+            limiter.check_limit("caller-1", "manage_test")
+
+    def test_multiple_tool_names_tracked_independently(self, limiter):
+        for _ in range(4):
+            limiter.record_action("caller-1", "manage_test")
+        for _ in range(4):
+            limiter.record_action("caller-1", "run_scenario")
+        # Both tools at 4, below per-tool limit of 5
+        limiter.check_limit("caller-1", "manage_test")  # should not raise
+        limiter.check_limit("caller-1", "run_scenario")  # should not raise
+
+    @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 2)
+    def test_custom_identical_action_limit(self, limiter):
+        limiter.record_action("caller-1", "manage_test")
+        limiter.check_limit("caller-1", "manage_test")  # 1 < 2, should pass
+        limiter.record_action("caller-1", "manage_test")  # now 2
+        with pytest.raises(ToolError):
+            limiter.check_limit("caller-1", "manage_test")
+
+    @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
+    @patch("safebreach_mcp_core.rate_limiter.time")
+    def test_per_tool_window_pruning(self, mock_time, limiter):
+        mock_time.time.return_value = 1000.0
+        for _ in range(5):
+            limiter.record_action("caller-1", "manage_test")
         # Advance past 60s window
         mock_time.time.return_value = 1061.0
         limiter.check_limit("caller-1", "manage_test")  # should not raise
