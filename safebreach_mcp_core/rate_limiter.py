@@ -8,6 +8,7 @@ Two-phase gate pattern:
 Cross-server shared state via module-level dict (all servers in same process).
 """
 
+import hashlib
 import logging
 import math
 import os
@@ -18,7 +19,9 @@ from typing import Dict, List
 from mcp.server.fastmcp.exceptions import ToolError
 
 from safebreach_mcp_core.token_context import (
+    _get_auth_from_mcp_request_ctx,
     _get_session_id_from_mcp_ctx,
+    _user_auth_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -146,8 +149,29 @@ def get_caller_identity() -> str:
     """
     Hybrid caller identification.
 
-    Phase 1: session ID only. Auth token hash added in Phase 5.
+    Priority: auth token hash (survives reconnection) > session ID > anonymous.
+    Auth token priority: x-apitoken > x-token > cookie value.
     """
+    # Try auth artifacts — ContextVar first, MCP request context fallback
+    bundle = _user_auth_artifacts.get()
+    if not bundle:
+        bundle = _get_auth_from_mcp_request_ctx()
+
+    if bundle:
+        # Priority: x-apitoken > x-token > cookie value
+        value = bundle.get("x-apitoken")
+        if not value:
+            value = bundle.get("x-token")
+        if not value:
+            cookie = bundle.get("cookie", "")
+            if "=" in cookie:
+                value = cookie.split("=", 1)[1]
+        if value:
+            identity = hashlib.sha256(value.encode()).hexdigest()[:16]
+            logger.debug("Caller identity from auth token: %s...", identity[:8])
+            return identity
+
+    # Fallback: session ID
     session_id = _get_session_id_from_mcp_ctx()
     if session_id:
         logger.debug("Caller identity from session: %s...", session_id[:8])

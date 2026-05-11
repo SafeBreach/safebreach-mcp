@@ -215,16 +215,134 @@ class TestPerToolNameLimit:
 # get_caller_identity
 # ---------------------------------------------------------------------------
 class TestGetCallerIdentity:
+    """Hybrid caller identity: auth token hash > session ID > anonymous."""
+
+    # -- Auth token hash (highest priority) --
+
     @patch(
         "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
-        return_value="test-session-123",
+        return_value="session-abc",
     )
-    def test_returns_session_id_when_no_auth(self, _mock_session):
-        assert get_caller_identity() == "test-session-123"
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    def test_returns_apitoken_hash_when_auth_present(
+        self, mock_auth_var, _mock_session
+    ):
+        mock_auth_var.get.return_value = {"x-apitoken": "my-secret-token"}
+        result = get_caller_identity()
+        # Should be SHA256[:16] of "my-secret-token", NOT the session ID
+        import hashlib
+        expected = hashlib.sha256("my-secret-token".encode()).hexdigest()[:16]
+        assert result == expected
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
+        return_value="session-abc",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    def test_x_token_fallback_when_no_apitoken(self, mock_auth_var, _mock_session):
+        mock_auth_var.get.return_value = {"x-token": "x-token-value"}
+        import hashlib
+        expected = hashlib.sha256("x-token-value".encode()).hexdigest()[:16]
+        assert get_caller_identity() == expected
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
+        return_value="session-abc",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    def test_cookie_fallback_when_no_tokens(self, mock_auth_var, _mock_session):
+        mock_auth_var.get.return_value = {"cookie": "X-Token=cookie-secret"}
+        import hashlib
+        expected = hashlib.sha256("cookie-secret".encode()).hexdigest()[:16]
+        assert get_caller_identity() == expected
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
+        return_value="session-abc",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    def test_priority_apitoken_over_x_token(self, mock_auth_var, _mock_session):
+        """x-apitoken wins over x-token when both present."""
+        mock_auth_var.get.return_value = {
+            "x-apitoken": "apitoken-val",
+            "x-token": "xtoken-val",
+        }
+        import hashlib
+        expected = hashlib.sha256("apitoken-val".encode()).hexdigest()[:16]
+        assert get_caller_identity() == expected
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    def test_hash_is_stable(self, mock_auth_var):
+        """Same token always produces the same identity."""
+        mock_auth_var.get.return_value = {"x-apitoken": "stable-token"}
+        first = get_caller_identity()
+        second = get_caller_identity()
+        assert first == second
 
     @patch(
         "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
         return_value=None,
     )
-    def test_returns_anonymous_when_neither_available(self, _mock_session):
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_auth_from_mcp_request_ctx",
+        return_value={"x-apitoken": "from-request-ctx"},
+    )
+    def test_mcp_request_ctx_fallback(
+        self, _mock_req_ctx, mock_auth_var, _mock_session
+    ):
+        """Falls back to _get_auth_from_mcp_request_ctx when ContextVar is empty."""
+        mock_auth_var.get.return_value = None
+        import hashlib
+        expected = hashlib.sha256("from-request-ctx".encode()).hexdigest()[:16]
+        assert get_caller_identity() == expected
+
+    # -- Session ID fallback --
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
+        return_value="test-session-123",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_auth_from_mcp_request_ctx",
+        return_value=None,
+    )
+    def test_returns_session_id_when_no_auth(
+        self, _mock_req_ctx, mock_auth_var, _mock_session
+    ):
+        mock_auth_var.get.return_value = None
+        assert get_caller_identity() == "test-session-123"
+
+    # -- Anonymous fallback --
+
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_session_id_from_mcp_ctx",
+        return_value=None,
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._user_auth_artifacts",
+    )
+    @patch(
+        "safebreach_mcp_core.rate_limiter._get_auth_from_mcp_request_ctx",
+        return_value=None,
+    )
+    def test_returns_anonymous_when_neither_available(
+        self, _mock_req_ctx, mock_auth_var, _mock_session
+    ):
+        mock_auth_var.get.return_value = None
         assert get_caller_identity() == "anonymous"
