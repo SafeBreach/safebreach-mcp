@@ -2480,6 +2480,10 @@ def sb_run_scenario(
     }
     logger.info(f"Calling queue API: {api_url}")
 
+    # Rate limiting gate — check before queuing (after dry_run/not_ready early returns)
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "run_scenario")
+
     try:
         response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
         if response.status_code >= 400:
@@ -2509,6 +2513,9 @@ def sb_run_scenario(
         'empty_steps': empty_steps,
         'status': 'queued',
     }
+
+    # Rate limiting gate — record after successful queue
+    rate_limiter.record_action(caller_id, "run_scenario")
 
     logger.info(
         f"Successfully queued scenario '{scenario['name']}' "
