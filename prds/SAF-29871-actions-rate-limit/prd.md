@@ -19,10 +19,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-05-11 09:15 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-05-11 11:00 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A |
+| **Current Phase** | Phase 1 of 7 complete |
 
 ---
 
@@ -289,7 +289,7 @@ verified independently.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Total action limit on manage_test | ⏳ Pending | - | - | First E2E slice |
+| Phase 1: Total action limit on manage_test | ✅ Complete | 2026-05-11 | pending | 14 unit + 3 gate tests pass |
 | Phase 2: Per-tool-name limit | ⏳ Pending | - | - | Second limit type |
 | Phase 3: Dry-run exclusion (run_scenario) | ⏳ Pending | - | - | Most complex gate |
 | Phase 4: Remaining 4 tools | ⏳ Pending | - | - | Full tool coverage |
@@ -691,3 +691,4 @@ lifecycle, preventing unbounded memory growth.
 | 2026-05-11 09:15 | PRD created — initial draft |
 | 2026-05-11 09:45 | Revised: informative error messages with limit type + retry-after; added E2E testing |
 | 2026-05-11 10:15 | Restructured to elephant carpaccio TDD slices: 7 thin vertical phases, each with tests-first |
+| 2026-05-11 11:00 | Phase 1 complete: rate_limiter.py + manage_test gates + 17 tests (14 unit + 3 gate) |

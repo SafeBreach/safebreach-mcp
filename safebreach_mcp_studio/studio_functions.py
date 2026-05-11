@@ -17,6 +17,7 @@ from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console, check_rbac_response
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
@@ -2649,7 +2650,14 @@ def sb_manage_test(
 
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 
+    # Rate limiting gate — check before mutating
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "manage_test")
+
     result = _set_test_state(test_id, action, console)
+
+    # Rate limiting gate — record after successful state change
+    rate_limiter.record_action(caller_id, "manage_test")
 
     if reason and reason.strip():
         note_result = _append_test_note(test_id, action, reason, console)
