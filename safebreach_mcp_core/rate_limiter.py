@@ -8,14 +8,13 @@ Two-phase gate pattern:
 Cross-server shared state via module-level dict (all servers in same process).
 """
 
-import asyncio
 import hashlib
 import logging
 import math
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -180,57 +179,3 @@ def get_caller_identity() -> str:
 
     logger.debug("Caller identity: anonymous (no session)")
     return "anonymous"
-
-
-# ---------------------------------------------------------------------------
-# Stale entry cleanup
-# ---------------------------------------------------------------------------
-_STALE_TTL = 3600  # 1 hour — matches existing semaphore cleanup TTL
-_CLEANUP_INTERVAL = 600  # 10 minutes
-
-
-def cleanup_stale_rate_limits() -> int:
-    """Remove caller entries with no activity within the TTL period.
-
-    Returns the number of evicted entries.
-    """
-    now = time.time()
-    stale = [
-        caller_id
-        for caller_id, data in _rate_limit_store.items()
-        if (now - data.last_activity) > _STALE_TTL
-    ]
-    for caller_id in stale:
-        del _rate_limit_store[caller_id]
-    if stale:
-        logger.info(
-            "🧹 Rate limit cleanup: evicted %d stale caller(s), %d remaining",
-            len(stale),
-            len(_rate_limit_store),
-        )
-    return len(stale)
-
-
-_cleanup_started: bool = False
-_cleanup_task: Optional[asyncio.Task] = None
-
-
-async def _cleanup_loop() -> None:
-    """Background loop that periodically evicts stale rate limit entries."""
-    while True:
-        await asyncio.sleep(_CLEANUP_INTERVAL)
-        try:
-            cleanup_stale_rate_limits()
-        except Exception:
-            logger.exception("Rate limit cleanup error")
-
-
-def start_rate_limit_cleanup() -> asyncio.Task:
-    """Start the background cleanup task (singleton — idempotent)."""
-    global _cleanup_started, _cleanup_task
-    if not _cleanup_started:
-        _cleanup_task = asyncio.create_task(_cleanup_loop())
-        _cleanup_started = True
-        logger.info("🧹 Rate limit cleanup task started (interval=%ds, TTL=%ds)",
-                     _CLEANUP_INTERVAL, _STALE_TTL)
-    return _cleanup_task

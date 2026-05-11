@@ -256,8 +256,6 @@ class SafeBreachMCPBase:
         # Start background tasks
         cleanup_task = asyncio.create_task(_cleanup_stale_semaphores())
         monitoring_task = asyncio.create_task(start_cache_monitoring())
-        from safebreach_mcp_core.rate_limiter import start_rate_limit_cleanup
-        rate_limit_cleanup_task = start_rate_limit_cleanup()
 
         config = uvicorn.Config(app=app, host=bind_host, port=port, log_level="info",
                                 timeout_graceful_shutdown=3)
@@ -269,7 +267,6 @@ class SafeBreachMCPBase:
             self._uvicorn_server = None
             cleanup_task.cancel()
             monitoring_task.cancel()
-            rate_limit_cleanup_task.cancel()
     
     def _determine_bind_host(self, host: str, allow_external: bool) -> str:
         """Determine the appropriate bind host based on configuration."""

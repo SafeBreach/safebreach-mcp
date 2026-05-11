@@ -83,10 +83,8 @@ for each tool.
   - External connections: SHA256 hash of auth token (from `get_cache_user_suffix()` pattern)
   - Localhost connections: transport session ID (from `_get_session_id_from_mcp_ctx()`)
   - Fallback: `'anonymous'` if neither is available
-- Sliding window pruning: on every `check_limit` and `record_action` call, timestamps older than
-  the window duration are removed
-- `_cleanup_stale_rate_limits()` — background async task (every 10 minutes) that evicts caller
-  entries with no activity within the TTL period (1 hour, matching existing semaphore cleanup)
+- Sliding window pruning: on every `check_limit` call, timestamps older than
+  the window duration are removed (passive eviction — no background task needed)
 - Configuration read from environment variables at module load time
 
 **Data Structure**:
@@ -96,7 +94,7 @@ _rate_limit_store: Dict[str, CallerRateLimitData]
 CallerRateLimitData:
   total_actions: List[float]          # timestamps of all write tool calls
   per_tool_actions: Dict[str, List[float]]  # tool_name -> timestamps
-  last_activity: float                # for stale cleanup
+  last_activity: float                # tracks last action time
 ```
 
 ### Component B: Per-Tool Gate Integration (Studio Server)
@@ -154,8 +152,10 @@ Note: `create_new_studio_attack` was initially classified as write but is actual
 - **Overhead**: Sliding window check/prune is O(n) where n = number of timestamps in window.
   With max 10 actions per 30 minutes, this is negligible
 - **Memory**: Per-caller storage is bounded by window size × action count. With 10 actions max
-  per caller per 30 minutes, memory per caller is ~80 bytes (10 floats)
-- **Cleanup**: Background task every 10 minutes prevents unbounded growth from disconnected clients
+  per caller per 30 minutes, memory per caller is ~80 bytes (10 floats). Passive eviction via
+  sliding window pruning on each `check_limit` keeps active callers lean. Abandoned callers'
+  entries persist until server restart — at ~80 bytes each, even 10,000 abandoned callers is
+  under 1MB, so active cleanup is not justified
 
 ### Technical Constraints
 
@@ -171,13 +171,12 @@ Note: `create_new_studio_attack` was initially classified as write but is actual
 - **Logging**: Info-level log on each `record_action` (caller masked, tool name, current counts)
 - **Warning log**: When a caller is rate-limited (which limit was hit, current count, limit value)
 - **Debug log**: On `check_limit` pass (for troubleshooting)
-- **Cleanup log**: Info-level when stale entries are evicted
 
 ---
 
 ## 7. Definition of Done
 
-- [ ] `rate_limiter.py` module created with `RateLimiter` class, `get_caller_identity()`, and cleanup task
+- [ ] `rate_limiter.py` module created with `RateLimiter` class and `get_caller_identity()`
 - [ ] Two independent sliding-window limits enforced: total actions (default 10) and
   per-tool-name (default 5) within configurable window (default 30 min)
 - [ ] Hybrid caller identity: auth token hash for external, session ID for localhost, `'anonymous'` fallback
@@ -195,13 +194,12 @@ Note: `create_new_studio_attack` was initially classified as write but is actual
   - `SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT` (default: 5)
   - `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES` (default: 30)
 - [ ] Cross-server shared state verified (module-level dict across all 5 servers)
-- [ ] Stale caller data cleaned up periodically (10-min interval, 1-hour TTL)
 - [ ] CLAUDE.md updated with rate limiting pattern documentation
 - [ ] Unit tests pass for: both limit types, sliding window behavior, two-phase gate (dry-run
   excluded, failures excluded), hybrid identity, informative error messages (limit type +
-  retry-after), configuration overrides, enable/disable, stale cleanup
-- [ ] E2E tests pass: rate limit trigger, dry-run exclusion, disable switch, window expiry
-- [ ] Logging with masked caller ID on record, warning on limit hit, info on cleanup
+  retry-after), configuration overrides, enable/disable
+- [ ] E2E tests pass: rate limit trigger, dry-run exclusion
+- [ ] Logging with masked caller ID on record, warning on limit hit
 
 ---
 
@@ -223,8 +221,6 @@ Note: `create_new_studio_attack` was initially classified as write but is actual
 - Window boundary: action at exactly window edge is counted; action 1ms past is pruned
 - Multiple callers tracked independently
 - Multiple tool names tracked independently per caller
-- Stale cleanup removes entries with no activity past TTL
-- Stale cleanup preserves entries with recent activity
 
 **get_caller_identity()**:
 - Returns auth token hash when auth artifacts available
@@ -294,7 +290,7 @@ verified independently.
 | Phase 3: Dry-run exclusion (run_scenario) | ✅ Complete | 2026-05-11 | pending | 4 gate tests, dry_run+not_ready skip verified |
 | Phase 4: Remaining 4 tools | ⏳ Pending | - | - | Full tool coverage |
 | Phase 5: Hybrid caller identity | ⏳ Pending | - | - | Production-ready identity |
-| Phase 6: Cleanup + server lifecycle | ⏳ Pending | - | - | Memory management |
+| Phase 6: ~~Cleanup + server lifecycle~~ | ❌ Removed | - | - | Passive eviction sufficient |
 | Phase 7: Documentation | ⏳ Pending | - | - | CLAUDE.md pattern |
 
 ---
@@ -558,50 +554,11 @@ proving the most complex gate pattern.
 
 ### Phase 6: Cleanup + Server Lifecycle
 
-**Semantic Change**: Add stale entry cleanup and integrate rate limiter into the server
-lifecycle, preventing unbounded memory growth.
-
-**Deliverables**: Cleanup task, server integration, disable/enable E2E, window expiry E2E.
-
-**Tests First (TDD)**:
-
-1. **Unit tests** (add to `test_rate_limiter.py`):
-   - Record actions, advance time past TTL (1 hour), run cleanup, verify entries removed
-   - Record recent actions, run cleanup, verify entries preserved
-   - Multiple callers: only stale ones removed, active ones kept
-   - Cleanup singleton: calling `start_rate_limit_cleanup()` twice only starts one task
-
-2. **E2E tests** (add to `test_rate_limiting_e2e.py`):
-   - Set `SAFEBREACH_MCP_RATE_LIMIT_ENABLED=false`: verify tools execute without
-     rate limit interference regardless of call count
-   - Set `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES=1`: trigger limit, wait 60+ seconds,
-     verify tool succeeds again (window expiry)
-
-**Implementation (to pass the tests)**:
-
-1. Add `_cleanup_stale_rate_limits()` async function to `rate_limiter.py`:
-   - Infinite loop with `await asyncio.sleep(600)` (every 10 minutes)
-   - Find entries with `last_activity` older than 3600 seconds, remove them
-   - Log eviction count, wrap in try/except
-
-2. Add `start_rate_limit_cleanup()` singleton async function:
-   - Module-level `_cleanup_started: bool = False` flag
-   - First call creates the task, subsequent calls are no-ops
-
-3. In `safebreach_base.py` `run_server()`:
-   - Import and start cleanup task alongside existing tasks
-   - Cancel in `finally` block
-
-**Changes**:
-
-| File | Action | Description |
-|------|--------|-------------|
-| `safebreach_mcp_core/rate_limiter.py` | Modify | Add cleanup task + singleton starter |
-| `safebreach_mcp_core/safebreach_base.py` | Modify | Start cleanup task in run_server() |
-| `safebreach_mcp_core/tests/test_rate_limiter.py` | Modify | Add cleanup + lifecycle tests |
-| `tests/test_rate_limiting_e2e.py` | Modify | Add disable switch + window expiry E2E |
-
-**Git Commit**: `feat: rate limit cleanup task and server lifecycle (TDD)`
+**Status**: Removed — passive eviction via sliding window pruning in `check_limit` is sufficient.
+Active cleanup was implemented and then reverted: at ~80 bytes per caller, even 10,000 abandoned
+callers is under 1MB. The added complexity (async background task, singleton flag, server lifecycle
+integration, 4 tests) was not justified by the marginal memory savings. Rate limit state resets
+on server restart, which is acceptable for a safety guardrail.
 
 ---
 
@@ -692,3 +649,4 @@ lifecycle, preventing unbounded memory growth.
 | 2026-05-11 09:45 | Revised: informative error messages with limit type + retry-after; added E2E testing |
 | 2026-05-11 10:15 | Restructured to elephant carpaccio TDD slices: 7 thin vertical phases, each with tests-first |
 | 2026-05-11 11:00 | Phase 1 complete: rate_limiter.py + manage_test gates + 17 tests (14 unit + 3 gate) |
+| 2026-05-11 | Phase 6 removed: active cleanup task adds complexity with negligible value — passive eviction sufficient |
