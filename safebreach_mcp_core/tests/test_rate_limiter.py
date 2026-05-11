@@ -1,4 +1,6 @@
-"""Unit tests for rate_limiter module — Phase 1: total action limit + get_caller_identity."""
+"""Unit tests for rate_limiter module."""
+
+import asyncio
 
 import pytest
 from unittest.mock import patch
@@ -8,6 +10,8 @@ from safebreach_mcp_core.rate_limiter import (
     RateLimiter,
     get_caller_identity,
     _rate_limit_store,
+    cleanup_stale_rate_limits,
+    start_rate_limit_cleanup,
 )
 
 
@@ -346,3 +350,67 @@ class TestGetCallerIdentity:
     ):
         mock_auth_var.get.return_value = None
         assert get_caller_identity() == "anonymous"
+
+
+# ---------------------------------------------------------------------------
+# Stale entry cleanup
+# ---------------------------------------------------------------------------
+class TestCleanupStaleRateLimits:
+    @patch("safebreach_mcp_core.rate_limiter.time")
+    def test_stale_entries_removed(self, mock_time, limiter):
+        """Entries with last_activity older than TTL are evicted."""
+        mock_time.time.return_value = 1000.0
+        limiter.record_action("stale-caller", "manage_test")
+
+        # Advance past 1-hour TTL (3600s)
+        mock_time.time.return_value = 1000.0 + 3601.0
+        removed = cleanup_stale_rate_limits()
+        assert removed == 1
+        assert "stale-caller" not in _rate_limit_store
+
+    @patch("safebreach_mcp_core.rate_limiter.time")
+    def test_recent_entries_preserved(self, mock_time, limiter):
+        """Entries with recent activity are kept."""
+        mock_time.time.return_value = 1000.0
+        limiter.record_action("active-caller", "manage_test")
+
+        # Only 100s later — well within TTL
+        mock_time.time.return_value = 1100.0
+        removed = cleanup_stale_rate_limits()
+        assert removed == 0
+        assert "active-caller" in _rate_limit_store
+
+    @patch("safebreach_mcp_core.rate_limiter.time")
+    def test_mixed_callers_only_stale_removed(self, mock_time, limiter):
+        """Only stale callers removed; active ones kept."""
+        mock_time.time.return_value = 1000.0
+        limiter.record_action("old-caller", "manage_test")
+
+        mock_time.time.return_value = 5000.0
+        limiter.record_action("new-caller", "manage_test")
+
+        # At t=5000, old-caller last_activity=1000 (4000s ago > 3600 TTL)
+        removed = cleanup_stale_rate_limits()
+        assert removed == 1
+        assert "old-caller" not in _rate_limit_store
+        assert "new-caller" in _rate_limit_store
+
+
+class TestStartRateLimitCleanup:
+    @pytest.fixture(autouse=True)
+    def reset_cleanup_flag(self):
+        """Reset the singleton flag between tests."""
+        import safebreach_mcp_core.rate_limiter as rl
+        rl._cleanup_started = False
+        yield
+        rl._cleanup_started = False
+
+    def test_singleton_only_starts_once(self):
+        """Calling start_rate_limit_cleanup() twice returns same task."""
+        async def _run():
+            task1 = start_rate_limit_cleanup()
+            task2 = start_rate_limit_cleanup()
+            assert task1 is task2
+            task1.cancel()
+
+        asyncio.run(_run())
