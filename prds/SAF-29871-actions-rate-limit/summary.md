@@ -95,6 +95,22 @@ This prevents rate limit bypass via session reconnection for external clients.
 
 All other servers (Config, Data, Utilities, Playbook) currently have only readOnly tools.
 
+**Two-Phase Gate Pattern**
+Rate limiting uses a check-then-commit pattern with per-tool placement:
+* **Phase 1 — Pre-check (`check_limit`)**: Called early in the tool, before real work begins.
+  Verifies the caller's current count is below the limit. Rejects immediately if exceeded.
+  Does NOT increment the counter.
+* **Phase 2 — Post-increment (`record_action`)**: Called after the action is truly applied
+  (e.g., after the API call succeeds). Only increments if the invocation was both successful
+  and not a dry-run.
+
+This ensures that:
+* Dry-run invocations (e.g., `run_scenario` with `dry_run=True`) do not count toward limits
+* Failed invocations (wrong parameters, API errors) do not count toward limits
+* Only real, successfully-applied actions consume rate limit budget
+* Gate placement is per-tool — each tool's code must be reviewed to determine the correct
+  locations for `check_limit` (before work) and `record_action` (after success)
+
 **Problem Description**
 * Currently no rate limiting exists on MCP tool invocations
 * A client can call write tools without any frequency restriction
@@ -105,22 +121,28 @@ All other servers (Config, Data, Utilities, Playbook) currently have only readOn
 * Rate limiter installed on all servers (future-proofing for when other servers add write tools)
 
 **Affected Areas**
-* `safebreach_mcp_core/` — new `rate_limiter.py` module + integration into `safebreach_base.py`
+* `safebreach_mcp_core/` — new `rate_limiter.py` module (check_limit + record_action API)
 * `safebreach_mcp_core/token_context.py` — caller identity extraction
-* All 5 server modules — rate limiter installed in middleware stack
+* Each write tool in Studio server — per-tool gate placement (7 tools)
 
 ### Acceptance Criteria
 
 * A new `rate_limiter.py` module in `safebreach_mcp_core/` implements sliding-window rate limiting
+  with a two-phase gate API: `check_limit(caller_id, tool_name)` and
+  `record_action(caller_id, tool_name)`
 * Two independent limits enforced per caller identity:
   * Total non-readOnly tool calls limited to configurable max (default: 10) within a sliding window
   * Per-tool-name non-readOnly calls limited to configurable max (default: 5) within the same window
+* Two-phase gate pattern:
+  * `check_limit` verifies count < limit before tool execution (rejects if exceeded, no increment)
+  * `record_action` increments count only after successful, non-dry-run execution
+  * Dry-run invocations and failed invocations do NOT count toward limits
+* Gate placement is per-tool: each write tool's code reviewed for correct `check_limit` (early)
+  and `record_action` (after success) placement
 * Caller identity uses hybrid approach: auth token hash for external connections, session ID
   for localhost connections
 * Sliding window duration is configurable (default: 30 minutes)
-* Rate limiter uses tool annotations (`readOnlyHint`) to classify tools — read-only tools are exempt
 * Rate limiting state is shared across all 5 servers (cross-server enforcement)
-* Rate limiter is installed on all servers regardless of current tool classification
 * When a limit is exceeded, the client receives a clear error message:
   "You exceeded the allowed rate of actions. Please try again in a few minutes."
 * Configuration via environment variables:
@@ -128,9 +150,9 @@ All other servers (Config, Data, Utilities, Playbook) currently have only readOn
   * `SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT` (default: 5)
   * `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES` (default: 30)
 * Stale caller rate-limit data is cleaned up periodically (reuse existing cleanup pattern)
-* Unit tests cover: both limit types, sliding window behavior, cross-server shared state,
-  read-only exemption, hybrid identity (auth token + session fallback), error messages,
-  configuration overrides, stale cleanup
+* Unit tests cover: both limit types, sliding window behavior, two-phase gate (dry-run excluded,
+  failures excluded), cross-server shared state, hybrid identity (auth token + session fallback),
+  error messages, configuration overrides, stale cleanup
 * Logging: rate limit events logged with masked caller ID, action name, and current count
 
 ---
@@ -162,6 +184,15 @@ Rate limits tracked per caller using hybrid approach:
 `create_new_studio_attack`, `run_studio_attack`, `set_studio_attack_status`,
 `run_scenario`, `manage_test`. All other servers currently read-only.
 
+### Two-Phase Gate Pattern
+Rate limiting uses check-then-commit with per-tool placement:
+* **`check_limit(caller_id, tool_name)`**: called before real work. Rejects if limit exceeded.
+  Does NOT increment counter.
+* **`record_action(caller_id, tool_name)`**: called after action truly applied. Increments only
+  on successful, non-dry-run execution.
+* Dry-run and failed invocations do NOT count toward limits.
+* Each write tool reviewed for correct gate placement.
+
 ### Functional Requirements
 1. Two independent sliding-window counters per caller:
    * **Total actions count**: all non-readOnly tool calls — default limit: 10 per 30 minutes
@@ -178,21 +209,23 @@ Rate limits tracked per caller using hybrid approach:
 * `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES` (default: 30)
 
 ### Affected Areas
-* `safebreach_mcp_core/` — new `rate_limiter.py` module + `safebreach_base.py` integration
+* `safebreach_mcp_core/` — new `rate_limiter.py` module (check_limit + record_action API)
 * `safebreach_mcp_core/token_context.py` — caller identity extraction
-* All 5 server modules — rate limiter in middleware stack
+* Each write tool in Studio server — per-tool gate placement (7 tools)
 ```
 
 **Acceptance Criteria:**
 ```markdown
-* Two independent sliding-window limits enforced per caller (total actions + per-tool-name)
+* Two-phase gate: `check_limit` (pre-check, no increment) + `record_action` (post-success increment)
+* Dry-run and failed invocations do NOT count toward limits
+* Per-tool gate placement in each write tool's code
+* Two independent sliding-window limits per caller (total actions + per-tool-name)
 * Hybrid caller identity: auth token hash (external) / session ID (localhost)
-* Read-only tools exempt via `readOnlyHint` annotation
 * Cross-server shared state (all 5 servers share rate limit counters)
-* Rate limiter installed on all servers
 * Clear error message on limit exceeded
 * Configurable via environment variables (limits + window duration)
 * Stale caller data cleanup (reuse existing pattern)
-* Unit tests for both limits, sliding window, cross-server, identity, exemption, errors, config, cleanup
+* Unit tests: both limits, sliding window, two-phase gate, dry-run excluded, failures excluded,
+  cross-server, identity, errors, config, cleanup
 * Logging with masked caller ID
 ```
