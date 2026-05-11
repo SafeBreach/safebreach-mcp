@@ -19,10 +19,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
-| **Last Updated** | 2026-05-11 11:00 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-05-11 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 3 of 7 complete |
+| **Current Phase** | All phases complete (Phase 6 removed) |
 
 ---
 
@@ -288,10 +288,10 @@ verified independently.
 | Phase 1: Total action limit on manage_test | ✅ Complete | 2026-05-11 | pending | 14 unit + 3 gate tests pass |
 | Phase 2: Per-tool-name limit | ✅ Complete | 2026-05-11 | pending | 6 new tests, 353 total pass |
 | Phase 3: Dry-run exclusion (run_scenario) | ✅ Complete | 2026-05-11 | pending | 4 gate tests, dry_run+not_ready skip verified |
-| Phase 4: Remaining 4 tools | ⏳ Pending | - | - | Full tool coverage |
-| Phase 5: Hybrid caller identity | ⏳ Pending | - | - | Production-ready identity |
+| Phase 4: Remaining 4 tools | ✅ Complete | 2026-05-11 | e004a6e | 8 new gate tests, all 6 tools gated |
+| Phase 5: Hybrid caller identity | ✅ Complete | 2026-05-11 | 0e2b6b5 | 8 identity tests, SHA256[:16] |
 | Phase 6: ~~Cleanup + server lifecycle~~ | ❌ Removed | - | - | Passive eviction sufficient |
-| Phase 7: Documentation | ⏳ Pending | - | - | CLAUDE.md pattern |
+| Phase 7: Documentation | ✅ Complete | 2026-05-11 | 93825ea | CLAUDE.md pattern + env vars |
 
 ---
 
