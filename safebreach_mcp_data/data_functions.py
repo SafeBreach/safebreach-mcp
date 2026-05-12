@@ -70,7 +70,7 @@ def _get_timestamp_from_keys(test: Dict[str, Any], keys: Iterable[str], default:
 
 
 
-def sb_get_tests_history(
+def sb_get_tests(
     console: str = "default",
     page_number: int = 0,
     test_type: Optional[str] = None,
@@ -355,7 +355,7 @@ def _find_previous_test_by_name(
 ) -> Optional[Dict[str, Any]]:
     """
     Fallback helper to locate the most recent test matching ``test_name`` that ended before ``before_start_time``.
-    This bypasses pagination constraints of ``sb_get_tests_history``.
+    This bypasses pagination constraints of ``sb_get_tests``.
     """
     try:
         all_tests = _get_all_tests_from_cache_or_api(console, use_cache=False)
@@ -1548,7 +1548,7 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
         
         # Step 2: Find the most recent previous test with the same name
         logger.info("Searching for baseline test with name '%s' before start_time %s", test_name, current_start_time)
-        baseline_tests = sb_get_tests_history(
+        baseline_tests = sb_get_tests(
             console=console,
             page_number=0,
             name_filter=test_name,

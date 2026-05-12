@@ -16,7 +16,7 @@ from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from safebreach_mcp_core.datetime_utils import normalize_timestamp
 from .data_functions import (
-    sb_get_tests_history,
+    sb_get_tests,
     sb_get_test_details,
     sb_get_test_simulations,
     sb_get_simulation_details,
@@ -51,17 +51,17 @@ class SafeBreachDataServer(SafeBreachMCPBase):
         """Register all MCP tools for data operations."""
         
         @self.mcp.tool(
-            name="get_tests_history",
+            name="get_tests",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns a filtered and paged history listing of tests executed on a given Safebreach management console.
+            description="""Returns a filtered and paged listing of tests on a given Safebreach management console.
 Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
 start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
 end_date (epoch ms/seconds or ISO 8601 string),
-status_filter ('completed'/'canceled'/'failed'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
+status_filter ('completed'/'canceled'/'failed'/'running'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
 Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
         )
-        async def get_tests_history_tool(
+        async def get_tests_tool(
             console: str = "default",
             page_number: int = 0,
             test_type: Optional[str] = None,
@@ -74,7 +74,7 @@ Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
         ) -> dict:
             start_date = normalize_timestamp(start_date) if start_date is not None else None
             end_date = normalize_timestamp(end_date) if end_date is not None else None
-            return sb_get_tests_history(
+            return sb_get_tests(
                 console=console,
                 page_number=page_number,
                 test_type=test_type,
