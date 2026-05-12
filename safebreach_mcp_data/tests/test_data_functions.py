@@ -1228,7 +1228,7 @@ class TestDataFunctions:
     # Test QA bug fixes
     
     def test_sb_get_tests_date_range_validation(self):
-        """Test date range validation in get_tests_history (Bug #9)."""
+        """Test date range validation in get_tests (Bug #9)."""
         
         # Test valid range (should not raise exception)
         with patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api') as mock_get_tests:
@@ -1858,7 +1858,7 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
     def test_sb_get_tests_page_overflow(self, mock_get_all_tests):
-        """Test page overflow validation in get_tests_history."""
+        """Test page overflow validation in get_tests."""
         # Mock data for 15 tests (2 pages with PAGE_SIZE=10)
         mock_tests = [{"id": f"test{i}", "name": f"Test {i}", "endTime": 1640995200 + i} for i in range(15)]
         mock_get_all_tests.return_value = mock_tests

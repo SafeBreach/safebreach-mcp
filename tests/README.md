@@ -70,7 +70,7 @@ The test suite covers:
 2. `sb_get_simulator_details` - Get detailed simulator information
 
 **Data Server Functions:**
-3. `sb_get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options
+3. `sb_get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options
 4. `sb_get_test_details` ✨ **Enhanced** - Full details for specific tests with optional simulation statistics
 5. `sb_get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within tests
 6. `sb_get_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques and attack logs
