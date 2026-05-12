@@ -30,9 +30,16 @@ AUTH_COOKIE_NAME = os.environ.get('SAFEBREACH_MCP_AUTH_COOKIE_NAME', 'X-Token')
 
 
 def extract_auth_bundle(scope: dict) -> Optional[Dict[str, str]]:
-    """Extract x-apitoken/x-token/cookie(filtered) from ASGI scope headers.
+    """Extract auth artifacts from ASGI scope headers.
 
     Returns a dict with only the non-empty auth artifacts, or None if none present.
+
+    Credentials (any one is sufficient for outbound auth):
+      x-apitoken, x-token, cookie(filtered), authorization (OAuth Bearer)
+
+    Hint headers stamped by ui-server's mcpProxyHandler (SAF-27570):
+      x-sb-auth-type, x-sb-client-id — used only for cache scoping, not for
+      authenticating to ui-server (the credential headers above do that).
     """
     raw_headers = dict(scope.get('headers', []))
     bundle: Dict[str, str] = {}
@@ -49,6 +56,18 @@ def extract_auth_bundle(scope: dict) -> Optional[Dict[str, str]]:
     scrubbed = _keep_only_cookie(raw_cookie, AUTH_COOKIE_NAME)
     if scrubbed:
         bundle['cookie'] = scrubbed
+
+    authorization = raw_headers.get(b'authorization', b'').decode('utf-8', errors='ignore')
+    if authorization:
+        bundle['authorization'] = authorization
+
+    auth_type = raw_headers.get(b'x-sb-auth-type', b'').decode('utf-8', errors='ignore')
+    if auth_type:
+        bundle['x-sb-auth-type'] = auth_type
+
+    client_id = raw_headers.get(b'x-sb-client-id', b'').decode('utf-8', errors='ignore')
+    if client_id:
+        bundle['x-sb-client-id'] = client_id
 
     return bundle or None
 
@@ -88,6 +107,15 @@ def _get_auth_from_mcp_request_ctx() -> Optional[Dict[str, str]]:
     scrubbed = _keep_only_cookie(raw_cookie, AUTH_COOKIE_NAME)
     if scrubbed:
         bundle['cookie'] = scrubbed
+    authorization = headers.get('authorization', '')
+    if authorization:
+        bundle['authorization'] = authorization
+    auth_type = headers.get('x-sb-auth-type', '')
+    if auth_type:
+        bundle['x-sb-auth-type'] = auth_type
+    client_id = headers.get('x-sb-client-id', '')
+    if client_id:
+        bundle['x-sb-client-id'] = client_id
     return bundle or None
 
 
@@ -158,10 +186,14 @@ def mask_artifacts(bundle: Optional[Dict[str, str]]) -> Dict[str, str]:
 
 
 def get_cache_user_suffix() -> str:
-    """Return a user-scoped cache key suffix based on the current auth artifacts.
+    """Return a principal-scoped cache key suffix based on the current auth artifacts.
 
     Returns '_' + first 8 chars of SHA-256 hex digest of the most stable
     artifact present, or '' when no user bundle is set.
+
+    For OAuth callers (SAF-27570) we scope by x-sb-client-id when available — it's
+    stable across token refreshes, unlike the Bearer JWT itself. Falls back to
+    hashing the Authorization header value if the hint isn't present.
     """
     bundle = _user_auth_artifacts.get()
     if not bundle:
@@ -170,14 +202,22 @@ def get_cache_user_suffix() -> str:
         logger.debug("get_cache_user_suffix() → '' (no user bundle)")
         return ''
 
-    # Priority: x-apitoken (most stable) > x-token > cookie value
-    value = bundle.get('x-apitoken')
-    if not value:
-        value = bundle.get('x-token')
-    if not value:
-        cookie = bundle.get('cookie', '')
-        if '=' in cookie:
-            value = cookie.split('=', 1)[1]
+    # OAuth callers: prefer the stable client_id over the Bearer JWT (which
+    # rotates on token refresh and would invalidate the cache unnecessarily).
+    if bundle.get('x-sb-auth-type') == 'oauth':
+        value = bundle.get('x-sb-client-id') or bundle.get('authorization')
+    else:
+        # User callers: x-apitoken (most stable) > x-token > cookie value > authorization
+        value = bundle.get('x-apitoken')
+        if not value:
+            value = bundle.get('x-token')
+        if not value:
+            cookie = bundle.get('cookie', '')
+            if '=' in cookie:
+                value = cookie.split('=', 1)[1]
+        if not value:
+            value = bundle.get('authorization')
+
     if not value:
         logger.debug("get_cache_user_suffix() → '' (bundle present but no usable value)")
         return ''
