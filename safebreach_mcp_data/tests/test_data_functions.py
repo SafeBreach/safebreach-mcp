@@ -291,6 +291,25 @@ class TestDataFunctions:
         assert len(production) == 1
         assert production[0]["name"] == "Production Test"
     
+    def test_apply_filters_running_status(self):
+        """Test filtering by running status (case-insensitive)."""
+        test_data = [
+            {"name": "Active Test", "status": "RUNNING"},
+            {"name": "Done Test", "status": "completed"},
+            {"name": "Failed Test", "status": "failed"},
+            {"name": "Another Active", "status": "RUNNING"}
+        ]
+
+        # Test running filter (lowercase input matches uppercase API value)
+        running = _apply_filters(test_data, status_filter="running")
+        assert len(running) == 2
+        assert running[0]["name"] == "Active Test"
+        assert running[1]["name"] == "Another Active"
+
+        # Test that other statuses still work
+        completed = _apply_filters(test_data, status_filter="completed")
+        assert len(completed) == 1
+
     def test_apply_ordering(self):
         """Test test ordering."""
         test_data = [
