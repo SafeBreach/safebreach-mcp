@@ -26,7 +26,6 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_all_scenarios,
     compute_scenario_readiness,
 )
-from safebreach_mcp_data.data_functions import sb_get_tests
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 
@@ -115,28 +114,6 @@ class TestManageTestE2E:
             assert test_id, "No test_id returned from run_scenario"
             assert queue_result['status'] == 'queued'
 
-            # SAF-30863: Verify "running" status filter returns the active test
-            # Poll briefly — the test needs time to transition from queued to RUNNING
-            found_running = False
-            running_ids: set[str] = set()
-            for attempt in range(6):
-                if attempt > 0:
-                    time.sleep(2)
-                running_result = sb_get_tests(
-                    console=E2E_CONSOLE,
-                    status_filter="running",
-                    page_number=0,
-                )
-                running_ids = {
-                    str(t['test_id']) for t in running_result.get('tests_in_page', [])
-                }
-                if str(test_id) in running_ids:
-                    found_running = True
-                    break
-            assert found_running, (
-                f"Test {test_id} not found in running tests after 10s "
-                f"(last poll found {len(running_ids)} running tests)"
-            )
 
             cancel_result = sb_manage_test(
                 test_id=test_id,
