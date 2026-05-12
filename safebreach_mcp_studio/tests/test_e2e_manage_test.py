@@ -116,17 +116,26 @@ class TestManageTestE2E:
             assert queue_result['status'] == 'queued'
 
             # SAF-30863: Verify "running" status filter returns the active test
-            running_result = sb_get_tests(
-                console=E2E_CONSOLE,
-                status_filter="running",
-                page_number=0,
-            )
-            running_ids = {
-                str(t['test_id']) for t in running_result.get('tests_in_page', [])
-            }
-            assert str(test_id) in running_ids, (
-                f"Test {test_id} not found in running tests "
-                f"(found {len(running_ids)} running tests)"
+            # Poll briefly — the test needs time to transition from queued to RUNNING
+            found_running = False
+            running_ids: set[str] = set()
+            for attempt in range(6):
+                if attempt > 0:
+                    time.sleep(2)
+                running_result = sb_get_tests(
+                    console=E2E_CONSOLE,
+                    status_filter="running",
+                    page_number=0,
+                )
+                running_ids = {
+                    str(t['test_id']) for t in running_result.get('tests_in_page', [])
+                }
+                if str(test_id) in running_ids:
+                    found_running = True
+                    break
+            assert found_running, (
+                f"Test {test_id} not found in running tests after 10s "
+                f"(last poll found {len(running_ids)} running tests)"
             )
 
             cancel_result = sb_manage_test(
