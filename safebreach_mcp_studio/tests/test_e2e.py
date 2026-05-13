@@ -456,6 +456,15 @@ class TestStudioExecutionE2E:
                 assert 'logs' in execution
                 assert 'output' in execution
 
+                # Verify test overview enrichment (SAF-30717)
+                assert 'test_overview' in result
+                if result['test_overview'] is not None:
+                    overview = result['test_overview']
+                    assert 'status' in overview
+                    assert 'start_time' in overview
+                    assert 'total_simulations' in overview
+                    assert 'simulation_status_counts' in overview
+
                 print(f"\n=== Latest Result E2E ===")
                 print(f"  Attack ID: {attack_id}")
                 print(f"  Total found: {result['total_found']}")
@@ -465,6 +474,9 @@ class TestStudioExecutionE2E:
                 print(f"  Simulation Steps: {len(execution['simulation_steps'])} step(s)")
                 print(f"  Has Logs: {bool(execution['logs'])}")
                 print(f"  Has Output: {bool(execution['output'])}")
+                if result['test_overview'] is not None:
+                    print(f"  Test Status: {result['test_overview']['status']}")
+                    print(f"  Total Simulations: {result['test_overview']['total_simulations']}")
             else:
                 print(f"\n=== Latest Result E2E ===")
                 print(f"  No execution results found for attack {attack_id}")
@@ -515,6 +527,14 @@ class TestStudioDebugFlowE2E:
             )
 
             assert 'executions' in result
+
+            # Verify test overview enrichment (SAF-30717)
+            assert 'test_overview' in result
+            if result['test_overview'] is not None:
+                overview = result['test_overview']
+                assert overview['status'] in ('running', 'completed', 'canceled', 'failed', 'queued')
+                print(f"  Test Overview: status={overview['status']}, "
+                      f"total_simulations={overview['total_simulations']}")
 
             if result['total_found'] > 0:
                 # Verify the result structure supports debug use case
