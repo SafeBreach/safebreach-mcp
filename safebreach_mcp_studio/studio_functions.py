@@ -1336,13 +1336,56 @@ def sb_get_studio_attack_latest_result(
                 exec_result.pop('logs', None)
                 exec_result.pop('output', None)
 
+        # Fetch test-level overview (SAF-30717)
+        test_overview = None
+        if total_found > 0:
+            resolved_test_id = test_id if test_id else transformed_executions[0].get('test_id')
+            if resolved_test_id:
+                try:
+                    summary_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{resolved_test_id}"
+                    summary_response = requests.get(summary_url, headers=headers, timeout=120)
+                    check_rbac_response(summary_response)
+                    summary_data = summary_response.json()
+
+                    final_status = summary_data.get('finalStatus', {})
+                    simulation_status_counts = [
+                        {"status": status, "count": final_status.get(status, 0)}
+                        for status in ['missed', 'stopped', 'prevented', 'detected',
+                                       'logged', 'no-result', 'inconsistent']
+                    ]
+                    total_simulations = sum(entry['count'] for entry in simulation_status_counts)
+
+                    test_overview = {
+                        'status': summary_data.get('status', ''),
+                        'start_time': summary_data.get('startTime'),
+                        'end_time': summary_data.get('endTime'),
+                        'duration': summary_data.get('duration'),
+                        'simulation_status_counts': simulation_status_counts,
+                        'total_simulations': total_simulations,
+                    }
+
+                    terminal_statuses = {'completed', 'canceled', 'failed'}
+                    test_status = (test_overview['status'] or '').lower()
+                    if test_status not in terminal_statuses:
+                        test_overview['hint_to_agent'] = (
+                            f"Test is still {test_overview['status']} "
+                            f"({total_found} of {total_simulations} simulations completed so far). "
+                            f"Poll this tool again in 30 seconds, or use "
+                            f"get_test_details(test_id='{resolved_test_id}', console='{console}') "
+                            f"from the Data Server for detailed status."
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to fetch test summary for test_id '{resolved_test_id}': {e}")
+                    test_overview = None
+
         result = {
             'executions': transformed_executions,
             'returned_count': len(transformed_executions),
             'total_found': total_found,
             'attack_id': attack_id,
             'console': console,
-            'has_more': total_found > len(transformed_executions)
+            'has_more': total_found > len(transformed_executions),
+            'test_overview': test_overview,
         }
 
         logger.info(f"Successfully retrieved {len(transformed_executions)} execution results for attack {attack_id}")

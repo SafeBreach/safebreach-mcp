@@ -1729,6 +1729,50 @@ def mock_execution_result_empty_response():
     }
 
 
+@pytest.fixture
+def mock_test_summary_response():
+    """Mock test summary API response (completed test)."""
+    return {
+        "planRunId": "1764570357286.4",
+        "planName": "test registry shuit",
+        "status": "completed",
+        "startTime": "2025-11-02T07:58:00.000Z",
+        "endTime": "2025-11-02T08:01:11.000Z",
+        "duration": 191000,
+        "finalStatus": {
+            "missed": 5,
+            "stopped": 3,
+            "prevented": 10,
+            "detected": 2,
+            "logged": 1,
+            "no-result": 0,
+            "inconsistent": 1
+        }
+    }
+
+
+@pytest.fixture
+def mock_test_summary_running_response():
+    """Mock test summary API response (running test)."""
+    return {
+        "planRunId": "1764570357286.4",
+        "planName": "test registry shuit",
+        "status": "running",
+        "startTime": "2025-11-02T07:58:00.000Z",
+        "endTime": None,
+        "duration": None,
+        "finalStatus": {
+            "missed": 1,
+            "stopped": 0,
+            "prevented": 0,
+            "detected": 0,
+            "logged": 0,
+            "no-result": 0,
+            "inconsistent": 0
+        }
+    }
+
+
 class TestGetStudioAttackLatestResult:
     """Test suite for sb_get_studio_attack_latest_result function."""
 
@@ -1939,6 +1983,232 @@ class TestGetStudioAttackLatestResult:
             sb_get_studio_attack_latest_result(attack_id=10000291, console="demo")
 
         assert "API Error" in str(exc_info.value)
+
+    # --- Test Overview Enrichment Tests (SAF-30717) ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_with_test_overview(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response,
+        mock_test_summary_response
+    ):
+        """Test that test overview is populated from test summary API."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Mock POST (execution history)
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        # Mock GET (test summary)
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = mock_test_summary_response
+        mock_get_response.status_code = 200
+        mock_get.return_value = mock_get_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo"
+        )
+
+        # Verify test_overview is populated
+        assert result['test_overview'] is not None
+        overview = result['test_overview']
+        assert overview['status'] == "completed"
+        assert overview['start_time'] == "2025-11-02T07:58:00.000Z"
+        assert overview['end_time'] == "2025-11-02T08:01:11.000Z"
+        assert overview['duration'] == 191000
+        assert overview['total_simulations'] == 22  # 5+3+10+2+1+0+1
+        assert isinstance(overview['simulation_status_counts'], list)
+        assert 'hint_to_agent' not in overview  # completed = terminal
+
+        # Verify GET called with correct test_id (from first simulation's planRunId)
+        mock_get.assert_called_once()
+        get_url = mock_get.call_args[0][0]
+        assert '/testsummaries/1764570357286.4' in get_url
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_test_overview_with_test_id_param(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response,
+        mock_test_summary_response
+    ):
+        """Test that explicit test_id param is used for test summary fetch."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = mock_test_summary_response
+        mock_get_response.status_code = 200
+        mock_get.return_value = mock_get_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo", test_id="explicit-test-id-999"
+        )
+
+        # Verify GET used the explicit test_id, not planRunId from simulation
+        mock_get.assert_called_once()
+        get_url = mock_get.call_args[0][0]
+        assert '/testsummaries/explicit-test-id-999' in get_url
+        assert result['test_overview'] is not None
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_test_overview_running(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response,
+        mock_test_summary_running_response
+    ):
+        """Test that hint_to_agent is present when test is still running."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = mock_test_summary_running_response
+        mock_get_response.status_code = 200
+        mock_get.return_value = mock_get_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo"
+        )
+
+        overview = result['test_overview']
+        assert overview is not None
+        assert overview['status'] == "running"
+        assert overview['end_time'] is None
+        assert 'hint_to_agent' in overview
+        assert 'still running' in overview['hint_to_agent']
+        assert 'Poll' in overview['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_test_overview_completed(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response,
+        mock_test_summary_response
+    ):
+        """Test that hint_to_agent is NOT present when test is completed."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = mock_test_summary_response
+        mock_get_response.status_code = 200
+        mock_get.return_value = mock_get_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo"
+        )
+
+        overview = result['test_overview']
+        assert overview is not None
+        assert overview['status'] == "completed"
+        assert 'hint_to_agent' not in overview
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_test_overview_api_failure(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response
+    ):
+        """Test graceful degradation when test summary API fails."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        # Mock GET to raise exception
+        mock_get.side_effect = Exception("Connection timeout")
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo"
+        )
+
+        # Result should still be returned without test_overview
+        assert result['test_overview'] is None
+        assert len(result['executions']) > 0
+        assert result['total_found'] == 2
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_no_results_skips_test_overview(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_empty_response
+    ):
+        """Test that test summary fetch is skipped when no simulations found."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_empty_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        result = sb_get_studio_attack_latest_result(
+            attack_id=10000291, console="demo"
+        )
+
+        assert result['test_overview'] is None
+        assert result['total_found'] == 0
+        # Test summary API should NOT have been called
+        mock_get.assert_not_called()
 
 
 class TestParameterValidationAndBuilding:
