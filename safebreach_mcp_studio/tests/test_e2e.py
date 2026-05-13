@@ -12,8 +12,9 @@ Security: All real environment details must be in private local files only.
 
 Studio-specific environment variables:
 - E2E_CONSOLE: Console name (default: 'demo-console')
-- E2E_STUDIO_ATTACK_ID: Pre-existing draft attack ID for read tests
+- E2E_STUDIO_ATTACK_ID: Pre-existing attack ID for read tests (source retrieval)
 - E2E_STUDIO_ATTACK_NAME: Expected name of the pre-existing attack
+- E2E_STUDIO_TRANSITION_ATTACK_ID: Attack ID that supports publish/unpublish transitions
 - SKIP_E2E_TESTS: Set to 'true' to skip E2E tests
 """
 
@@ -37,6 +38,7 @@ E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'demo-console')
 SKIP_E2E_TESTS = os.environ.get('SKIP_E2E_TESTS', 'false').lower() == 'true'
 E2E_STUDIO_ATTACK_ID = os.environ.get('E2E_STUDIO_ATTACK_ID', '')
 E2E_STUDIO_ATTACK_NAME = os.environ.get('E2E_STUDIO_ATTACK_NAME', '')
+E2E_STUDIO_TRANSITION_ATTACK_ID = os.environ.get('E2E_STUDIO_TRANSITION_ATTACK_ID', '')
 
 skip_e2e = pytest.mark.skipif(
     SKIP_E2E_TESTS,
@@ -545,14 +547,14 @@ class TestStudioStatusTransitionE2E:
         studio_draft_cache.clear()
 
     def test_publish_unpublish_roundtrip_e2e(self):
-        """Test full DRAFT → PUBLISHED → DRAFT roundtrip."""
-        if not E2E_STUDIO_ATTACK_ID:
-            pytest.skip("E2E_STUDIO_ATTACK_ID not set")
+        """Test full status roundtrip: detects current status and transitions both ways."""
+        if not E2E_STUDIO_TRANSITION_ATTACK_ID:
+            pytest.skip("E2E_STUDIO_TRANSITION_ATTACK_ID not set")
 
-        attack_id = int(E2E_STUDIO_ATTACK_ID)
+        attack_id = int(E2E_STUDIO_TRANSITION_ATTACK_ID)
 
         try:
-            # Step 1: Verify attack exists and is currently draft
+            # Step 1: Find the attack and detect its current status
             list_result = sb_get_all_studio_attacks(
                 console=E2E_CONSOLE, page_number=0
             )
@@ -572,108 +574,112 @@ class TestStudioStatusTransitionE2E:
             if target_attack is None:
                 pytest.skip(f"Attack {attack_id} not found on {E2E_CONSOLE}")
 
-            original_status = target_attack['status']
-            if original_status != 'draft':
-                pytest.skip(
-                    f"Attack {attack_id} is '{original_status}', expected 'draft'. "
-                    f"E2E status transition test requires a draft attack."
-                )
+            original_status: str = target_attack['status']
+            if original_status == 'draft':
+                first_target, second_target = 'published', 'draft'
+                first_implication, second_implication = 'read-only', 'editable'
+                double_msg = 'already published'
+            elif original_status == 'published':
+                first_target, second_target = 'draft', 'published'
+                first_implication, second_implication = 'editable', 'read-only'
+                double_msg = 'already draft'
+            else:
+                pytest.skip(f"Attack {attack_id} has unexpected status '{original_status}'")
 
             print(f"\n=== Status Transition E2E ===")
             print(f"  Attack ID: {attack_id}")
             print(f"  Attack Name: {target_attack['name']}")
             print(f"  Initial Status: {original_status}")
 
-            # Step 2: Publish the attack (DRAFT → PUBLISHED)
-            publish_result = sb_set_studio_attack_status(
+            # Step 2: Transition to the opposite status
+            step2_result = sb_set_studio_attack_status(
                 attack_id=attack_id,
-                new_status="published",
+                new_status=first_target,
                 console=E2E_CONSOLE,
             )
 
-            assert publish_result['attack_id'] == attack_id
-            assert publish_result['old_status'] == 'draft'
-            assert publish_result['new_status'] == 'published'
-            assert 'read-only' in publish_result['implications']
-            print(f"  Published: DRAFT → PUBLISHED")
+            assert step2_result['attack_id'] == attack_id
+            assert step2_result['old_status'] == original_status
+            assert step2_result['new_status'] == first_target
+            assert first_implication in step2_result['implications']
+            print(f"  Transitioned: {original_status} → {first_target}")
 
-            # Step 3: Verify the attack is now published via list API
+            # Step 3: Verify the attack shows up in the target status list
             verify_list = sb_get_all_studio_attacks(
                 console=E2E_CONSOLE,
-                status_filter="published",
+                status_filter=first_target,
                 page_number=0,
             )
-            published_ids = [a['id'] for a in verify_list['attacks_in_page']]
-            # Check across all pages if needed
+            found_ids = [a['id'] for a in verify_list['attacks_in_page']]
             for page_num in range(1, verify_list['total_pages']):
                 page = sb_get_all_studio_attacks(
                     console=E2E_CONSOLE,
-                    status_filter="published",
+                    status_filter=first_target,
                     page_number=page_num,
                 )
-                published_ids.extend([a['id'] for a in page['attacks_in_page']])
+                found_ids.extend([a['id'] for a in page['attacks_in_page']])
 
-            assert attack_id in published_ids, (
-                f"Attack {attack_id} not found in published attacks after publish"
+            assert attack_id in found_ids, (
+                f"Attack {attack_id} not found in {first_target} list after transition"
             )
-            print(f"  Verified: attack appears in published list")
+            print(f"  Verified: attack appears in {first_target} list")
 
-            # Step 4: Verify publishing again raises ValueError (already published)
+            # Step 4: Verify double-transition raises ValueError
             with pytest.raises(ValueError) as exc_info:
                 sb_set_studio_attack_status(
                     attack_id=attack_id,
-                    new_status="published",
+                    new_status=first_target,
                     console=E2E_CONSOLE,
                 )
-            assert "already published" in str(exc_info.value)
-            print(f"  Verified: double-publish correctly rejected")
+            assert double_msg in str(exc_info.value)
+            print(f"  Verified: double-transition correctly rejected")
 
-            # Step 5: Unpublish the attack (PUBLISHED → DRAFT)
-            unpublish_result = sb_set_studio_attack_status(
+            # Step 5: Transition back to original status
+            step5_result = sb_set_studio_attack_status(
                 attack_id=attack_id,
-                new_status="draft",
+                new_status=second_target,
                 console=E2E_CONSOLE,
             )
 
-            assert unpublish_result['attack_id'] == attack_id
-            assert unpublish_result['old_status'] == 'published'
-            assert unpublish_result['new_status'] == 'draft'
-            assert 'editable' in unpublish_result['implications']
-            print(f"  Unpublished: PUBLISHED → DRAFT")
+            assert step5_result['attack_id'] == attack_id
+            assert step5_result['old_status'] == first_target
+            assert step5_result['new_status'] == second_target
+            assert second_implication in step5_result['implications']
+            print(f"  Transitioned back: {first_target} → {second_target}")
 
-            # Step 6: Verify the attack is back to draft
-            verify_draft_list = sb_get_all_studio_attacks(
+            # Step 6: Verify restored to original status
+            verify_restored = sb_get_all_studio_attacks(
                 console=E2E_CONSOLE,
-                status_filter="draft",
+                status_filter=original_status,
                 page_number=0,
             )
-            draft_ids = [a['id'] for a in verify_draft_list['attacks_in_page']]
-            for page_num in range(1, verify_draft_list['total_pages']):
+            restored_ids = [a['id'] for a in verify_restored['attacks_in_page']]
+            for page_num in range(1, verify_restored['total_pages']):
                 page = sb_get_all_studio_attacks(
                     console=E2E_CONSOLE,
-                    status_filter="draft",
+                    status_filter=original_status,
                     page_number=page_num,
                 )
-                draft_ids.extend([a['id'] for a in page['attacks_in_page']])
+                restored_ids.extend([a['id'] for a in page['attacks_in_page']])
 
-            assert attack_id in draft_ids, (
-                f"Attack {attack_id} not found in draft attacks after unpublish"
+            assert attack_id in restored_ids, (
+                f"Attack {attack_id} not found in {original_status} list after restore"
             )
-            print(f"  Verified: attack restored to draft list")
-            print(f"  Roundtrip complete: DRAFT → PUBLISHED → DRAFT")
+            print(f"  Verified: attack restored to {original_status} list")
+            print(f"  Roundtrip complete: {original_status} → {first_target} → {second_target}")
 
         except ValueError:
-            # Re-raise ValueError (from the double-publish check) — don't skip it
+            # Re-raise ValueError (from the double-transition check) — don't skip it
             raise
         except Exception as e:
-            # Safety net: try to restore to draft if we got partway through
+            # Safety net: try to restore to original status if we got partway through
             try:
                 sb_set_studio_attack_status(
                     attack_id=attack_id,
-                    new_status="draft",
+                    new_status=original_status,
                     console=E2E_CONSOLE,
                 )
-                print(f"  [Cleanup] Restored attack {attack_id} to draft after failure")
+                print(f"  [Cleanup] Restored attack {attack_id} to {original_status} after failure")
             except Exception:
                 pass  # Best effort cleanup
             pytest.skip(f"Status transition test failed on {E2E_CONSOLE}: {e}")

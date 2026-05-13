@@ -20,6 +20,11 @@ export E2E_CONSOLE_ACCOUNT="1234567890"
 # export E2E_TEST_ID="1234567890.123"
 # export E2E_SIMULATION_ID="12345"
 
+# Studio E2E: attack ID with accessible source code (for source retrieval tests)
+# export E2E_STUDIO_ATTACK_ID="10000002"
+# Studio E2E: attack ID that supports publish/unpublish transitions (for roundtrip test)
+# export E2E_STUDIO_TRANSITION_ATTACK_ID="10000005"
+
 # MCP Server Authentication (for external access testing)
 export SAFEBREACH_MCP_AUTH_TOKEN="your-mcp-auth-token"
 
