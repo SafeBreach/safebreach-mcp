@@ -407,6 +407,13 @@ Rate limiting environment variables:
   Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
   best-effort — failure does not block the lifecycle operation. Response includes
   `hint_to_agent` with contextual next-step guidance per action.
+22. `get_studio_attack_latest_result` ✨ **Enhanced** - Retrieves latest execution results for a Studio
+  attack by playbook ID. Now includes **Test Overview** section with test-level context fetched from
+  `GET /testsummaries/{test_id}`: test status (running/completed/canceled/failed), test-level
+  start/end times and duration, simulation status breakdown (missed/stopped/prevented/detected/
+  logged/no-result/inconsistent) with total count. When test is non-terminal, includes `hint_to_agent`
+  with polling guidance. Test ID resolved from parameter or extracted from first simulation's planRunId.
+  Graceful degradation: if test summary API fails, response is returned without test overview.
 
 
 ## Filtering and Search Capabilities
