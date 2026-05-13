@@ -980,7 +980,7 @@ class TestFetchAndCacheSimulationDrifts:
         simulation_drifts_cache.clear()
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_successful_api_call(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1003,7 +1003,7 @@ class TestFetchAndCacheSimulationDrifts:
 
     @patch("safebreach_mcp_data.data_functions.is_caching_enabled", return_value=True)
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_cache_hit_skips_api(self, mock_account, mock_url, mock_secret, mock_post, mock_cache_enabled):
@@ -1024,7 +1024,7 @@ class TestFetchAndCacheSimulationDrifts:
 
     @patch("safebreach_mcp_data.data_functions.is_caching_enabled", return_value=True)
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_cache_miss_stores_result(self, mock_account, mock_url, mock_secret, mock_post, mock_cache_enabled):
@@ -1046,7 +1046,7 @@ class TestFetchAndCacheSimulationDrifts:
         assert simulation_drifts_cache.get("new_key") == [{"trackingId": "new"}]
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_400_error_raises_valueerror(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1062,7 +1062,7 @@ class TestFetchAndCacheSimulationDrifts:
             _fetch_and_cache_simulation_drifts("demo", {}, "key")
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_401_error_raises_valueerror(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1077,7 +1077,7 @@ class TestFetchAndCacheSimulationDrifts:
             _fetch_and_cache_simulation_drifts("demo", {}, "key")
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_timeout_raises(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1093,7 +1093,7 @@ class TestFetchAndCacheSimulationDrifts:
     # --- Backward compatibility: api_path parameter (SAF-28331 Phase 3) ---
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_fetch_v1_default_unchanged(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1112,7 +1112,7 @@ class TestFetchAndCacheSimulationDrifts:
         assert "/api/data/v1/accounts/12345/drift/simulationStatus" in call_url
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_fetch_v2_custom_api_path(self, mock_account, mock_url, mock_secret, mock_post):
@@ -1569,7 +1569,7 @@ class TestSbGetSimulationResultDrifts:
         simulation_drifts_cache.clear()
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_summary_mode_valid_call(self, _acct, _url, _sec, mock_post):
@@ -1595,7 +1595,7 @@ class TestSbGetSimulationResultDrifts:
         assert "drift_groups" in result
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_drilldown_mode_valid_call(self, _acct, _url, _sec, mock_post):
@@ -1662,7 +1662,7 @@ class TestSbGetSimulationResultDrifts:
     @patch("safebreach_mcp_core.suggestions.get_suggestions_for_collection",
            return_value=["Suspicious File Creation"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -1722,7 +1722,7 @@ class TestSbGetSimulationResultDrifts:
             )
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_applied_filters_reflects_params(self, _acct, _url, _sec, mock_post):
@@ -1751,7 +1751,7 @@ class TestSbGetSimulationResultDrifts:
         assert filters["attack_id"] == 1263
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_applied_filters_includes_attack_name(self, _acct, _url, _sec, mock_post):
@@ -1773,7 +1773,7 @@ class TestSbGetSimulationResultDrifts:
         assert result["applied_filters"]["attack_name"] == "Test Attack"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_applied_filters_includes_attack_type(self, _acct, _url, _sec, mock_post):
@@ -1795,7 +1795,7 @@ class TestSbGetSimulationResultDrifts:
         assert result["applied_filters"]["attack_type"] == "host"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_attack_name_in_api_payload(self, _acct, _url, _sec, mock_post):
@@ -1818,7 +1818,7 @@ class TestSbGetSimulationResultDrifts:
         assert payload["attackName"] == "Credential Theft"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_cache_key_differentiates_on_attack_name(self, _acct, _url, _sec, mock_post):
@@ -1846,7 +1846,7 @@ class TestSbGetSimulationResultDrifts:
         assert mock_post.call_count == 2
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_from_status_to_status_in_payload(self, _acct, _url, _sec, mock_post):
@@ -1875,7 +1875,7 @@ class TestSbGetSimulationResultDrifts:
     # --- Phase 8: look_back_time in result drifts ---
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_look_back_time_default_in_payload(self, _acct, _url, _sec, mock_post):
@@ -1898,7 +1898,7 @@ class TestSbGetSimulationResultDrifts:
         assert call_payload["earliestSearchTime"] == "2024-02-23T00:00:00.000Z"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_look_back_time_explicit_in_payload(self, _acct, _url, _sec, mock_post):
@@ -1921,7 +1921,7 @@ class TestSbGetSimulationResultDrifts:
         assert call_payload["earliestSearchTime"] == "2024-02-20T00:00:00.000Z"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_look_back_time_in_cache_key(self, _acct, _url, _sec, mock_post):
@@ -1949,7 +1949,7 @@ class TestSbGetSimulationResultDrifts:
     # --- Phase 9: result drifts groups by result_status ---
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_result_drifts_groups_by_result_status(self, _acct, _url, _sec, mock_post):
@@ -1975,7 +1975,7 @@ class TestSbGetSimulationResultDrifts:
         assert result["drift_groups"][0]["count"] == 2
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_result_drifts_drilldown_has_final_status_breakdown(self, _acct, _url, _sec, mock_post):
@@ -2015,7 +2015,7 @@ class TestSbGetSimulationStatusDrifts:
         simulation_drifts_cache.clear()
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_summary_mode_valid_call(self, _acct, _url, _sec, mock_post):
@@ -2096,7 +2096,7 @@ class TestSbGetSimulationStatusDrifts:
             )
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_final_status_in_payload(self, _acct, _url, _sec, mock_post):
@@ -2123,7 +2123,7 @@ class TestSbGetSimulationStatusDrifts:
         assert "toStatus" not in call_payload
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_applied_filters_reflects_params(self, _acct, _url, _sec, mock_post):
@@ -2150,7 +2150,7 @@ class TestSbGetSimulationStatusDrifts:
         assert filters["attack_id"] == 42
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_applied_filters_includes_attack_name(self, _acct, _url, _sec, mock_post):
@@ -2172,7 +2172,7 @@ class TestSbGetSimulationStatusDrifts:
         assert result["applied_filters"]["attack_name"] == "Test Attack"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_attack_name_in_api_payload(self, _acct, _url, _sec, mock_post):
@@ -2195,7 +2195,7 @@ class TestSbGetSimulationStatusDrifts:
         assert payload["attackName"] == "Credential Theft"
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_drilldown_mode_valid_call(self, _acct, _url, _sec, mock_post):
@@ -2223,7 +2223,7 @@ class TestSbGetSimulationStatusDrifts:
     # --- Phase 8: look_back_time in status drifts ---
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_look_back_time_passed_to_payload(self, _acct, _url, _sec, mock_post):
@@ -2248,7 +2248,7 @@ class TestSbGetSimulationStatusDrifts:
     # --- Phase 9: status drifts uses final_status grouping ---
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_status_drifts_groups_by_final_status(self, _acct, _url, _sec, mock_post):
@@ -2275,7 +2275,7 @@ class TestSbGetSimulationStatusDrifts:
         assert keys == {"prevented-logged", "stopped-missed"}
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_status_drifts_drilldown_no_final_status_breakdown(self, _acct, _url, _sec, mock_post):
@@ -2406,7 +2406,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2431,7 +2431,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2450,7 +2450,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2471,7 +2471,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2496,7 +2496,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2524,7 +2524,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2550,7 +2550,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2571,7 +2571,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2593,7 +2593,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2612,7 +2612,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2638,7 +2638,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2663,7 +2663,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2688,7 +2688,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2706,7 +2706,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2730,7 +2730,7 @@ class TestSbGetSecurityControlDrifts:
     @patch("safebreach_mcp_data.data_functions.get_suggestions_for_collection",
            return_value=["Microsoft Defender for Endpoint", "CrowdStrike Falcon"])
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="tok")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "tok"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url",
            return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
@@ -2792,7 +2792,7 @@ class TestSbGetSimulationLineage:
         simulations_cache.clear()
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_happy_path(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2846,7 +2846,7 @@ class TestSbGetSimulationLineage:
         assert "track-abc-123" in payload["query"]
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_pagination(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2878,7 +2878,7 @@ class TestSbGetSimulationLineage:
         assert page1["total_simulations"] == 15
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_empty_results(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2900,7 +2900,7 @@ class TestSbGetSimulationLineage:
         assert len(result["hint_to_agent"]) > 0
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_single_result(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2927,7 +2927,7 @@ class TestSbGetSimulationLineage:
         assert result["status_summary"] == {"detected": 1}
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_api_error(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2944,7 +2944,7 @@ class TestSbGetSimulationLineage:
             sb_get_simulation_lineage("demo", "track-abc-123")
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_api_401(self, mock_account, mock_url, mock_secret, mock_post):
@@ -2962,7 +2962,7 @@ class TestSbGetSimulationLineage:
 
     @patch("safebreach_mcp_data.data_functions.is_caching_enabled", return_value=True)
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_cache_hit(self, mock_account, mock_url, mock_secret, mock_post, mock_cache):
@@ -2982,7 +2982,7 @@ class TestSbGetSimulationLineage:
         assert mock_post.call_count == 1  # API called only once
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_includes_status_summary(self, mock_account, mock_url, mock_secret, mock_post):
@@ -3014,7 +3014,7 @@ class TestSbGetSimulationLineage:
         assert sum(result["status_summary"].values()) == 5
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_includes_is_drifted(self, mock_account, mock_url, mock_secret, mock_post):
@@ -3045,7 +3045,7 @@ class TestSbGetSimulationLineage:
         assert sims[3]["is_drifted"] is False   # same status as previous
 
     @patch("safebreach_mcp_data.data_functions.requests.post")
-    @patch("safebreach_mcp_data.data_functions.get_secret_for_console", return_value="test-token")
+    @patch("safebreach_mcp_data.data_functions.get_auth_headers_for_console", return_value={"x-apitoken": "test-token"})
     @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://demo.safebreach.com")
     @patch("safebreach_mcp_data.data_functions.get_api_account_id", return_value="12345")
     def test_lineage_chronological_order(self, mock_account, mock_url, mock_secret, mock_post):

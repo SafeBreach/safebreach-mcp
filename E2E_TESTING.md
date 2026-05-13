@@ -61,7 +61,7 @@ source .vscode/set_env.sh
 uv run pytest safebreach_mcp_data/tests/test_e2e.py -v
 
 # Run specific E2E test
-uv run pytest safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_tests_history_e2e -v
+uv run pytest safebreach_mcp_data/tests/test_e2e.py::TestDataServerE2E::test_get_tests_e2e -v
 ```
 
 ## Environment Variables Reference

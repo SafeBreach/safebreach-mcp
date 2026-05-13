@@ -211,7 +211,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
   - `data_server.py`: FastMCP server for test and simulation data
   - `data_functions.py`: Business logic for test/simulation operations
   - `data_types.py`: Data transformations for test/simulation data
-  - **Tools**: `get_tests_history`, `get_test_details`, `get_test_simulations`, `get_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`, `get_test_findings_counts`, `get_test_findings_details`, `get_test_drifts`
+  - **Tools**: `get_tests`, `get_test_details`, `get_test_simulations`, `get_simulation_details`, `get_security_controls_events`, `get_security_control_event_details`, `get_test_findings_counts`, `get_test_findings_details`, `get_test_drifts`
 
 - **`safebreach_mcp_utilities/`**: Utilities Server (Port 8002)
   - `utilities_server.py`: FastMCP server for utility functions
@@ -329,7 +329,7 @@ Rate limiting environment variables:
   (empty for custom). Full payload preserved for future queue API integration.
 
 **Data Server (Port 8001):**
-3. `get_tests_history` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
+3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
 4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings
 5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering, and drift analysis filtering
 6. `get_simulation_details` ✨ **Enhanced** - Detailed simulation results with optional MITRE techniques, attack logs, and drift analysis information
@@ -411,7 +411,7 @@ Rate limiting environment variables:
 
 ## Filtering and Search Capabilities
 
-The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` functions now support comprehensive filtering:
+The `get_console_simulators`, `get_tests`, and `get_test_simulations` functions now support comprehensive filtering:
 
 **Enhanced Simulator Filtering (`get_console_simulators`):**
 - **Status**: Filter by "connected", "disconnected", "enabled", "disabled"
@@ -421,10 +421,10 @@ The `get_console_simulators`, `get_tests_history`, and `get_test_simulations` fu
 - **Criticality**: Filter for critical simulators only (True/False)
 - **Custom Ordering**: Sort by name, id, version, isConnected, isEnabled (ascending/descending)
 
-**Enhanced Test History Filtering (`get_tests_history`):**
+**Enhanced Test History Filtering (`get_tests`):**
 - **Test Type**: Filter by "validate" (BAS tests) or "propagate" (ALM tests)
 - **Time Windows**: Filter by start/end dates (epoch timestamps or ISO 8601 strings, e.g., '2026-03-01T00:00:00Z')
-- **Status**: Filter by "completed", "canceled", "failed"
+- **Status**: Filter by "completed", "canceled", "failed", "running"
 - **Name Patterns**: Case-insensitive partial matching on test names
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 

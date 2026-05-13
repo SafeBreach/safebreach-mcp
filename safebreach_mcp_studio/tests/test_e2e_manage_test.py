@@ -114,6 +114,7 @@ class TestManageTestE2E:
             assert test_id, "No test_id returned from run_scenario"
             assert queue_result['status'] == 'queued'
 
+
             cancel_result = sb_manage_test(
                 test_id=test_id,
                 action="cancel",

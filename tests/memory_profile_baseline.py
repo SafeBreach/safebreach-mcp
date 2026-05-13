@@ -48,7 +48,7 @@ from safebreach_mcp_data.data_functions import (
     sb_get_security_controls_events,
     sb_get_test_findings_details,
     sb_get_test_simulations,
-    sb_get_tests_history,
+    sb_get_tests,
     security_control_events_cache,
     simulations_cache,
     tests_cache,
@@ -155,7 +155,7 @@ def discover_workload(
     test_ids: list[str] = []
     page = 0
     while len(test_ids) < num_tests:
-        resp = sb_get_tests_history(console=console, page_number=page)
+        resp = sb_get_tests(console=console, page_number=page)
         tests_in_page = resp.get("tests_in_page", [])
         if not tests_in_page:
             break
@@ -258,7 +258,7 @@ def run_workload(
 
         # Tests history (populates tests_cache)
         try:
-            sb_get_tests_history(console=console, page_number=0)
+            sb_get_tests(console=console, page_number=0)
             api_call_count += 1
         except Exception as exc:
             log(f"  WARN tests_history: {exc}")

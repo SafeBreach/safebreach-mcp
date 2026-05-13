@@ -814,7 +814,7 @@ The MCP server exposes the following tools for SafeBreach operations:
 2. **`get_simulator_details`**
 
 **Data Server (Port 8001):**
-3. **`get_tests_history`** ✨ **Enhanced with Filtering**
+3. **`get_tests`** ✨ **Enhanced with Filtering**
 4. **`get_test_details`** ✨ **Enhanced with Optional Statistics**
 5. **`get_test_simulations`** ✨ **Enhanced with Filtering**
 6. **`get_simulation_details`** ✨ **Enhanced with Optional Extensions**
@@ -862,7 +862,7 @@ The MCP server exposes the following tools for SafeBreach operations:
    - Parameters: `console` (string), `simulator_id` (string)
    - Returns: Complete simulator configuration and host details
 
-3. **`get_tests_history`** ✨ **Enhanced with Filtering**
+3. **`get_tests`** ✨ **Enhanced with Filtering**
    - Retrieves filtered and paginated test execution history
    - Parameters: 
      - `console` (string, required) - SafeBreach console name
@@ -870,7 +870,7 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `test_type` (string, optional) - Filter by "validate" (BAS), "propagate" (ALM), or None for all
      - `start_date` (int, optional) - Filter tests with end_time >= start_date (Unix timestamp)
      - `end_date` (int, optional) - Filter tests with end_time <= end_date (Unix timestamp)
-     - `status_filter` (string, optional) - Filter by "completed", "canceled", "failed", or None for all
+     - `status_filter` (string, optional) - Filter by "completed", "canceled", "failed", "running", or None for all
      - `name_filter` (string, optional) - Case-insensitive partial match on test name
      - `order_by` (string, default "end_time") - Sort field: "end_time", "start_time", "name", "duration"
      - `order_direction` (string, default "desc") - Sort direction: "desc" or "asc"
@@ -1087,16 +1087,16 @@ result = get_console_simulators(
 **Basic test history usage (unchanged for backward compatibility):**
 ```python
 # Get first page of all tests
-tests = get_tests_history("sample-console", 0)
+tests = get_tests("sample-console", 0)
 ```
 
 **Filter by test type:**
 ```python
 # Get only validation tests (BAS)
-validation_tests = get_tests_history("sample-console", test_type="validate")
+validation_tests = get_tests("sample-console", test_type="validate")
 
 # Get only propagation tests (ALM)
-propagation_tests = get_tests_history("sample-console", test_type="propagate")
+propagation_tests = get_tests("sample-console", test_type="propagate")
 ```
 
 **Filter by time window:**
@@ -1105,37 +1105,37 @@ import time
 
 # Get tests from last 7 days
 week_ago = int(time.time()) - (7 * 24 * 3600)
-recent_tests = get_tests_history("sample-console", start_date=week_ago)
+recent_tests = get_tests("sample-console", start_date=week_ago)
 
 # Get tests from specific date range
 start_date = 1640995200  # 2022-01-01
 end_date = 1641081600    # 2022-01-02
-tests_jan_1_2 = get_tests_history("sample-console", start_date=start_date, end_date=end_date)
+tests_jan_1_2 = get_tests("sample-console", start_date=start_date, end_date=end_date)
 ```
 
 **Filter by status and name:**
 ```python
 # Get failed tests only
-failed_tests = get_tests_history("sample-console", status_filter="failed")
+failed_tests = get_tests("sample-console", status_filter="failed")
 
 # Search for specific test campaigns
-quarterly_tests = get_tests_history("sample-console", name_filter="quarterly")
+quarterly_tests = get_tests("sample-console", name_filter="quarterly")
 ```
 
 **Custom ordering:**
 ```python
 # Get tests ordered by name alphabetically
-tests_by_name = get_tests_history("sample-console", order_by="name", order_direction="asc")
+tests_by_name = get_tests("sample-console", order_by="name", order_direction="asc")
 
 # Get oldest tests first
-oldest_tests = get_tests_history("sample-console", order_direction="asc")
+oldest_tests = get_tests("sample-console", order_direction="asc")
 ```
 
 **Combined filters:**
 ```python
 # Get completed validation tests from last month, ordered by duration
 last_month = int(time.time()) - (30 * 24 * 3600)
-results = get_tests_history(
+results = get_tests(
     console="sample-console",
     test_type="validate",
     status_filter="completed", 

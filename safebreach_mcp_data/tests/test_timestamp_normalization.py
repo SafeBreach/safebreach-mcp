@@ -17,16 +17,16 @@ def server():
     return SafeBreachDataServer()
 
 
-class TestGetTestsHistoryTimestampNormalization:
-    """Test ISO 8601 normalization for get_tests_history wrapper."""
+class TestGetTestsTimestampNormalization:
+    """Test ISO 8601 normalization for get_tests wrapper."""
 
     def test_iso_start_date_normalized(self, server):
         """ISO string start_date is normalized to epoch ms before dispatch."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_tests_history"
+            "safebreach_mcp_data.data_server.sb_get_tests"
         ) as mock_fn:
             mock_fn.return_value = {"tests": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_tests_history"]
+            tool = server.mcp._tool_manager._tools["get_tests"]
             asyncio.run(tool.fn(console="demo", start_date="2024-01-01T00:00:00Z"))
             _, kwargs = mock_fn.call_args
             assert isinstance(kwargs["start_date"], int)
@@ -35,10 +35,10 @@ class TestGetTestsHistoryTimestampNormalization:
     def test_iso_end_date_normalized(self, server):
         """ISO string end_date is normalized to epoch ms before dispatch."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_tests_history"
+            "safebreach_mcp_data.data_server.sb_get_tests"
         ) as mock_fn:
             mock_fn.return_value = {"tests": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_tests_history"]
+            tool = server.mcp._tool_manager._tools["get_tests"]
             asyncio.run(tool.fn(console="demo", end_date="2024-06-15T23:59:59Z"))
             _, kwargs = mock_fn.call_args
             assert isinstance(kwargs["end_date"], int)
@@ -47,10 +47,10 @@ class TestGetTestsHistoryTimestampNormalization:
     def test_epoch_int_passthrough(self, server):
         """Epoch integer start_date passes through unchanged."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_tests_history"
+            "safebreach_mcp_data.data_server.sb_get_tests"
         ) as mock_fn:
             mock_fn.return_value = {"tests": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_tests_history"]
+            tool = server.mcp._tool_manager._tools["get_tests"]
             asyncio.run(tool.fn(console="demo", start_date=1640995200000))
             _, kwargs = mock_fn.call_args
             assert kwargs["start_date"] == 1640995200000
@@ -58,10 +58,10 @@ class TestGetTestsHistoryTimestampNormalization:
     def test_none_passthrough(self, server):
         """None start_date passes through as None."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_tests_history"
+            "safebreach_mcp_data.data_server.sb_get_tests"
         ) as mock_fn:
             mock_fn.return_value = {"tests": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_tests_history"]
+            tool = server.mcp._tool_manager._tools["get_tests"]
             asyncio.run(tool.fn(console="demo", start_date=None))
             _, kwargs = mock_fn.call_args
             assert kwargs["start_date"] is None

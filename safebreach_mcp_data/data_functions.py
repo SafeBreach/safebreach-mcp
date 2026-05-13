@@ -70,7 +70,7 @@ def _get_timestamp_from_keys(test: Dict[str, Any], keys: Iterable[str], default:
 
 
 
-def sb_get_tests_history(
+def sb_get_tests(
     console: str = "default",
     page_number: int = 0,
     test_type: Optional[str] = None,
@@ -126,7 +126,7 @@ def sb_get_tests_history(
         # Get all tests from cache or API
         normalized_status = status_filter.lower() if isinstance(status_filter, str) else None
         use_cache = normalized_status != 'running'  # Don't use cache when running tests are requested
-        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache)
+        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache, status_filter=normalized_status)
         
         # Apply filters
         filtered_tests = _apply_filters(
@@ -189,18 +189,24 @@ def sb_get_tests_history(
         raise
 
 
-def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool = True) -> List[Dict[str, Any]]:
+def _get_all_tests_from_cache_or_api(
+    console: str = "default",
+    use_cache: bool = True,
+    status_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Get all tests from cache or API.
-    
+
     Args:
         console: SafeBreach console name
         use_cache: Whether to use cached results when available
-        
+        status_filter: Optional server-side status filter (e.g., 'running', 'completed')
+
     Returns:
         List of test dictionaries
     """
-    cache_key = f"tests_{console}{get_cache_user_suffix()}"
+    suffix = f"_{status_filter}" if status_filter else ""
+    cache_key = f"tests_{console}{suffix}{get_cache_user_suffix()}"
 
     # Check cache first (only if caching is enabled)
     if use_cache and is_caching_enabled("data"):
@@ -208,13 +214,15 @@ def _get_all_tests_from_cache_or_api(console: str = "default", use_cache: bool =
         if cached is not None:
             logger.info("Retrieved %d tests from cache for console '%s'", len(cached), console)
             return cached
-    
+
     # Cache miss or expired - fetch from API using EXACT same pattern as original
     try:
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
         api_url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries?size=1000&includeArchived=false"
+        if status_filter:
+            api_url += f"&status={status_filter.upper()}"
 
         headers = {"Content-Type": "application/json",
                     **get_auth_headers_for_console(console)}
@@ -355,7 +363,7 @@ def _find_previous_test_by_name(
 ) -> Optional[Dict[str, Any]]:
     """
     Fallback helper to locate the most recent test matching ``test_name`` that ended before ``before_start_time``.
-    This bypasses pagination constraints of ``sb_get_tests_history``.
+    This bypasses pagination constraints of ``sb_get_tests``.
     """
     try:
         all_tests = _get_all_tests_from_cache_or_api(console, use_cache=False)
@@ -1548,7 +1556,7 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
         
         # Step 2: Find the most recent previous test with the same name
         logger.info("Searching for baseline test with name '%s' before start_time %s", test_name, current_start_time)
-        baseline_tests = sb_get_tests_history(
+        baseline_tests = sb_get_tests(
             console=console,
             page_number=0,
             name_filter=test_name,

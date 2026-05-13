@@ -12,7 +12,7 @@ import json
 from requests.exceptions import HTTPError
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_data.data_functions import (
-    sb_get_tests_history,
+    sb_get_tests,
     sb_get_test_details,
     sb_get_test_simulations,
     sb_get_simulation_details,
@@ -291,6 +291,25 @@ class TestDataFunctions:
         assert len(production) == 1
         assert production[0]["name"] == "Production Test"
     
+    def test_apply_filters_running_status(self):
+        """Test filtering by running status (case-insensitive)."""
+        test_data = [
+            {"name": "Active Test", "status": "RUNNING"},
+            {"name": "Done Test", "status": "completed"},
+            {"name": "Failed Test", "status": "failed"},
+            {"name": "Another Active", "status": "RUNNING"}
+        ]
+
+        # Test running filter (lowercase input matches uppercase API value)
+        running = _apply_filters(test_data, status_filter="running")
+        assert len(running) == 2
+        assert running[0]["name"] == "Active Test"
+        assert running[1]["name"] == "Another Active"
+
+        # Test that other statuses still work
+        completed = _apply_filters(test_data, status_filter="completed")
+        assert len(completed) == 1
+
     def test_apply_ordering(self):
         """Test test ordering."""
         test_data = [
@@ -372,11 +391,11 @@ class TestDataFunctions:
         assert no_match is None
 
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_sb_get_tests_history_success(self, mock_get_all, mock_test_data):
+    def test_sb_get_tests_success(self, mock_get_all, mock_test_data):
         """Test successful tests history retrieval."""
         mock_get_all.return_value = mock_test_data
         
-        result = sb_get_tests_history(console="test-console")
+        result = sb_get_tests(console="test-console")
         
         assert "tests_in_page" in result
         assert "total_tests" in result
@@ -388,7 +407,7 @@ class TestDataFunctions:
         assert result["page_number"] == 0
     
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_sb_get_tests_history_with_pagination(self, mock_get_all):
+    def test_sb_get_tests_with_pagination(self, mock_get_all):
         """Test tests history with pagination."""
         # Create test data larger than page size
         large_test_data = [
@@ -398,25 +417,25 @@ class TestDataFunctions:
         mock_get_all.return_value = large_test_data
         
         # Test first page
-        result = sb_get_tests_history(console="test-console", page_number=0)
+        result = sb_get_tests(console="test-console", page_number=0)
         assert len(result["tests_in_page"]) == PAGE_SIZE
         assert result["total_tests"] == 25
         assert result["total_pages"] == 3
         assert result["page_number"] == 0
         
         # Test second page
-        result = sb_get_tests_history(console="test-console", page_number=1)
+        result = sb_get_tests(console="test-console", page_number=1)
         assert len(result["tests_in_page"]) == PAGE_SIZE
         assert result["page_number"] == 1
     
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_sb_get_tests_history_error(self, mock_get_all):
+    def test_sb_get_tests_error(self, mock_get_all):
         """Test error handling in tests history retrieval."""
         mock_get_all.side_effect = Exception("API Error")
         
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
-            sb_get_tests_history(console="test-console")
+            sb_get_tests(console="test-console")
         
         assert "API Error" in str(exc_info.value)
     
@@ -1208,21 +1227,21 @@ class TestDataFunctions:
 
     # Test QA bug fixes
     
-    def test_sb_get_tests_history_date_range_validation(self):
-        """Test date range validation in get_tests_history (Bug #9)."""
+    def test_sb_get_tests_date_range_validation(self):
+        """Test date range validation in get_tests (Bug #9)."""
         
         # Test valid range (should not raise exception)
         with patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api') as mock_get_tests:
             mock_get_tests.return_value = []
             try:
-                result = sb_get_tests_history("demo-console", start_date=1000, end_date=2000)
+                result = sb_get_tests("demo-console", start_date=1000, end_date=2000)
                 # Should succeed - no exception expected
             except ValueError:
                 pytest.fail("Valid date range should not raise ValueError")
         
         # Test invalid range (start > end)
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("demo-console", start_date=2000, end_date=1000)
+            sb_get_tests("demo-console", start_date=2000, end_date=1000)
         assert "Invalid date range" in str(exc_info.value)
         assert "start_date (2000) must be before or equal to end_date (1000)" in str(exc_info.value)
     
@@ -1691,7 +1710,7 @@ class TestDataFunctions:
     def test_unknown_console_validation(self):
         """Test that unknown console names return proper error messages."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history(console="unknown_console", test_type="validate", page_number=0)
+            sb_get_tests(console="unknown_console", test_type="validate", page_number=0)
         assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
         
     def test_unknown_console_validation_other_functions(self):
@@ -1731,7 +1750,7 @@ class TestDataFunctions:
                 # All functions now use get_auth_headers_for_console which raises
                 # AuthenticationRequired when no ContextVar is set in embedded mode
                 with pytest.raises(AuthenticationRequired):
-                    sb_get_tests_history(console="test-console", test_type="validate", page_number=0)
+                    sb_get_tests(console="test-console", test_type="validate", page_number=0)
 
                 with pytest.raises(AuthenticationRequired):
                     sb_get_test_details(console="test-console", test_id="test123")
@@ -1751,33 +1770,33 @@ class TestDataFunctions:
             sb_get_test_details("   ")
         assert "test_id parameter is required and cannot be empty" in str(exc_info.value)
     
-    def test_sb_get_tests_history_invalid_order_by(self):
+    def test_sb_get_tests_invalid_order_by(self):
         """Test validation for invalid order_by parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("test-console", order_by="invalid_field")
+            sb_get_tests("test-console", order_by="invalid_field")
         assert "Invalid order_by parameter 'invalid_field'" in str(exc_info.value)
         assert "end_time, start_time, name, duration" in str(exc_info.value)
     
-    def test_sb_get_tests_history_invalid_order_direction(self):
+    def test_sb_get_tests_invalid_order_direction(self):
         """Test validation for invalid order_direction parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("test-console", order_direction="invalid_direction")
+            sb_get_tests("test-console", order_direction="invalid_direction")
         assert "Invalid order_direction parameter 'invalid_direction'" in str(exc_info.value)
         assert "asc, desc" in str(exc_info.value)
     
-    def test_sb_get_tests_history_negative_page_number(self):
+    def test_sb_get_tests_negative_page_number(self):
         """Test validation for negative page_number parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("test-console", page_number=-1)
+            sb_get_tests("test-console", page_number=-1)
         assert "Invalid page_number parameter '-1'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
     
-    def test_sb_get_tests_history_parameter_validation_order(self):
+    def test_sb_get_tests_parameter_validation_order(self):
         """Test that parameter validation happens in correct order - page_number should be checked before order_by."""
         # This test ensures that page_number errors are reported before order_by errors
         # Previously this would report order_by error instead of page_number error
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("test-console", page_number=-5)
+            sb_get_tests("test-console", page_number=-5)
         # Should report page_number error, not order_by error
         assert "Invalid page_number parameter '-5'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
@@ -1819,18 +1838,18 @@ class TestDataFunctions:
         assert "Invalid page_number parameter '-10'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
     
-    def test_sb_get_tests_history_invalid_test_type(self):
+    def test_sb_get_tests_invalid_test_type(self):
         """Test validation for invalid test_type parameter."""
         # Test parameter validation occurs before console validation by using a real console
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("demo-console", test_type="invalid_type")
+            sb_get_tests("demo-console", test_type="invalid_type")
         assert "Invalid test_type parameter 'invalid_type'" in str(exc_info.value)
         assert "validate, propagate" in str(exc_info.value)
         
         # Test that valid values work with case insensitivity
         # This should NOT raise an error since validation is case-insensitive
         try:
-            result = sb_get_tests_history("demo-console", test_type="VALIDATE", page_number=0)
+            result = sb_get_tests("demo-console", test_type="VALIDATE", page_number=0)
             # If we get here without an exception, the case-insensitive validation is working
         except Exception as e:
             # Only acceptable exceptions are AWS/network related, not validation errors
@@ -1838,20 +1857,20 @@ class TestDataFunctions:
                 pytest.fail("Case-insensitive validation should accept 'VALIDATE'")
     
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_sb_get_tests_history_page_overflow(self, mock_get_all_tests):
-        """Test page overflow validation in get_tests_history."""
+    def test_sb_get_tests_page_overflow(self, mock_get_all_tests):
+        """Test page overflow validation in get_tests."""
         # Mock data for 15 tests (2 pages with PAGE_SIZE=10)
         mock_tests = [{"id": f"test{i}", "name": f"Test {i}", "endTime": 1640995200 + i} for i in range(15)]
         mock_get_all_tests.return_value = mock_tests
         
         # Test requesting page 2 (which should exist)
-        result = sb_get_tests_history(console="test-console", page_number=1)
+        result = sb_get_tests(console="test-console", page_number=1)
         assert "tests_in_page" in result
         assert len(result["tests_in_page"]) == 5  # Last page has 5 items
         
         # Test requesting page 3 (which should not exist)
         with pytest.raises(ValueError) as exc_info:
-            sb_get_tests_history("test-console", page_number=2)
+            sb_get_tests("test-console", page_number=2)
         assert "Invalid page_number parameter '2'" in str(exc_info.value)
         assert "Available pages range from 0 to 1 (total 2 pages)" in str(exc_info.value)
     
@@ -2131,7 +2150,7 @@ class TestDataFunctions:
 
     # Test cases for sb_get_test_drifts function
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     def test_sb_get_test_drifts_success(self, mock_get_sims, mock_get_tests, mock_get_details):
         """Test successful drift analysis between two tests."""
@@ -2245,7 +2264,7 @@ class TestDataFunctions:
         assert metadata['status_drifts'] == 1
 
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._find_previous_test_by_name')
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     def test_sb_get_test_drifts_fallback_baseline(self, mock_get_sims, mock_fallback, mock_get_tests, mock_get_details):
@@ -2341,7 +2360,7 @@ class TestDataFunctions:
         assert result['test_name'] == 'Test Without Start Time'
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._find_previous_test_by_name')
     def test_sb_get_test_drifts_no_baseline_test(self, mock_fallback, mock_get_tests, mock_get_details):
         """Test drift analysis when no baseline test is found."""
@@ -2367,7 +2386,7 @@ class TestDataFunctions:
         assert result['current_start_time'] == 1640998800
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     def test_sb_get_test_drifts_no_drifts(self, mock_get_sims, mock_get_tests, mock_get_details):
         """Test drift analysis when no drifts are found."""
@@ -2429,7 +2448,7 @@ class TestDataFunctions:
         assert metadata['status_drifts'] == 0
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     def test_sb_get_test_drifts_unknown_drift_type(self, mock_get_sims, mock_get_tests, mock_get_details):
         """Test drift analysis with unknown drift type not in mapping."""
@@ -2477,7 +2496,7 @@ class TestDataFunctions:
         assert 'Status changed from custom_status_1 to custom_status_2' in drift['description']
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
-    @patch('safebreach_mcp_data.data_functions.sb_get_tests_history')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     def test_sb_get_test_drifts_simulations_without_drift_codes(self, mock_get_sims, mock_get_tests, mock_get_details):
         """Test drift analysis with simulations missing drift_tracking_code."""

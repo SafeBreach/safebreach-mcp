@@ -16,7 +16,7 @@ import os
 from typing import Dict, Any
 
 from safebreach_mcp_data.data_functions import (
-    sb_get_tests_history,
+    sb_get_tests,
     sb_get_test_details,
     sb_get_test_simulations,
     sb_get_simulation_details,
@@ -46,7 +46,7 @@ def sample_test_id(e2e_console):
     Scoped to class to avoid repeated API calls for each test.
     """
     # Get the first test from history to use for detailed testing
-    tests_response = sb_get_tests_history(console=e2e_console, page_number=0, test_type="propagate")
+    tests_response = sb_get_tests(console=e2e_console, page_number=0, test_type="propagate")
 
     if 'tests_in_page' not in tests_response or not tests_response['tests_in_page']:
         pytest.skip(f"No tests found in console {e2e_console} for E2E testing")
@@ -77,9 +77,9 @@ class TestDataServerE2E:
     """End-to-end tests for SafeBreach Data Server functions."""
 
     @pytest.mark.e2e
-    def test_get_tests_history_e2e(self, e2e_console):
+    def test_get_tests_e2e(self, e2e_console):
         """Test getting real test history from SafeBreach console."""
-        result = sb_get_tests_history(console=e2e_console, page_number=0)
+        result = sb_get_tests(console=e2e_console, page_number=0)
         
         # Verify response structure
         assert isinstance(result, dict)

@@ -4,7 +4,7 @@
 
 ## Implementation Analysis
 
-The `get_tests_history` function in the Data Server now includes:
+The `get_tests` function in the Data Server now includes:
 - ✅ Sorts by `end_time` in descending order (configurable)
 - ✅ Has caching mechanism (1-hour TTL)
 - ✅ Supports pagination
@@ -16,13 +16,13 @@ The `get_tests_history` function in the Data Server now includes:
 
 ### Function Signature (Data Server)
 ```python
-def sb_get_tests_history( 
+def sb_get_tests( 
     page_number: int = 0,
     console: Optional[str] = "default",
     test_type: Optional[str] = None,           # "validate", "propagate", or None (all)
     start_date: Optional[int] = None,          # Unix timestamp
     end_date: Optional[int] = None,            # Unix timestamp
-    status_filter: Optional[str] = None,       # "completed", "canceled", "failed", or None (all)
+    status_filter: Optional[str] = None,       # "completed", "canceled", "failed", "running", or None (all)
     name_filter: Optional[str] = None,         # Partial match on test name
     order_by: str = "end_time",                 # "end_time", "start_time", "name", "duration"
     order_direction: str = "desc"              # "desc" or "asc"
@@ -43,7 +43,7 @@ def sb_get_tests_history(
 
 3. **Status Filtering:**
    - Filter by test execution status
-   - Common values: "completed", "canceled", "failed"
+   - Common values: "completed", "canceled", "failed", "running"
 
 4. **Name Filtering:**
    - Case-insensitive partial match on test name
@@ -101,10 +101,10 @@ Current cache stores all tests without filter consideration. New approach:
 
 ```python
 # Current usage (unchanged)
-tests = sb_get_tests_history("sample-console", 0)
+tests = sb_get_tests("sample-console", 0)
 
 # Filter for validation tests from last week
-tests = sb_get_tests_history(
+tests = sb_get_tests(
     console="sample-console",
     page_number=0,
     test_type="validate",
@@ -112,7 +112,7 @@ tests = sb_get_tests_history(
 )
 
 # Filter for failed propagate tests, ordered by name
-tests = sb_get_tests_history(
+tests = sb_get_tests(
     console="sample-console",
     test_type="propagate",
     status_filter="failed",
@@ -121,7 +121,7 @@ tests = sb_get_tests_history(
 )
 
 # Search for specific test campaign
-tests = sb_get_tests_history(
+tests = sb_get_tests(
     console="sample-console", 
     name_filter="quarterly"
 )
