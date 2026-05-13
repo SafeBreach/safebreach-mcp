@@ -695,6 +695,33 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
                     ""
                 ]
 
+                # Add test overview section (SAF-30717)
+                test_overview = result.get('test_overview')
+                if test_overview is not None:
+                    end_time_display = test_overview['end_time'] or "In progress"
+                    duration_display = test_overview['duration'] if test_overview['duration'] is not None else "In progress"
+                    response_parts.extend([
+                        "### Test Overview",
+                        "",
+                        f"**Test Status:** {test_overview['status']}",
+                        f"**Test Start Time:** {test_overview['start_time']}",
+                        f"**Test End Time:** {end_time_display}",
+                        f"**Test Duration:** {duration_display}",
+                        "",
+                        "**Simulation Status Breakdown:**",
+                    ])
+                    for entry in test_overview['simulation_status_counts']:
+                        response_parts.append(f"- {entry['status']}: {entry['count']}")
+                    response_parts.append(f"- **Total: {test_overview['total_simulations']}**")
+
+                    if 'hint_to_agent' in test_overview:
+                        response_parts.extend([
+                            "",
+                            f"> **hint_to_agent:** {test_overview['hint_to_agent']}",
+                        ])
+
+                    response_parts.extend(["", "---", ""])
+
                 # Add each execution result
                 for idx, execution in enumerate(result['executions'], 1):
                     response_parts.extend([
