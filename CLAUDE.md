@@ -270,6 +270,43 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 
 **Data Pagination**: All listing operations use `PAGE_SIZE = 10` with proper pagination handling for large datasets.
 
+**Rate Limiting** (`safebreach_mcp_core/rate_limiter.py`): Per-caller sliding-window rate limiting
+for all write (non-readOnly) tools. Uses a two-phase gate pattern:
+
+- `check_limit(caller_id, tool_name)` — pre-check before the mutating API call. Raises `ToolError`
+  with informative message (which limit, count/max, retry-after seconds) if exceeded. Does NOT
+  increment counters.
+- `record_action(caller_id, tool_name)` — post-success increment after the API call succeeds.
+  Only called on successful, non-dry-run execution paths.
+
+Gate placement rules:
+1. `check_limit` goes after parameter validation but before the mutating API call
+2. `record_action` goes after the API call succeeds and response is processed
+3. Dry-run and diagnostic branches must NOT trigger either gate
+4. API failures must NOT call `record_action` (let the exception propagate)
+5. Read-only pre-checks (e.g., `set_studio_attack_status` fetching current status) are allowed
+   before `check_limit` — don't count reads against the limit
+
+Caller identity (`get_caller_identity()`): auth token SHA256[:16] for external connections
+(survives reconnection), session ID fallback for localhost, `'anonymous'` if neither available.
+
+**Any new tool with `readOnlyHint=False` MUST add rate limiting gates following this pattern.**
+
+| Tool | `check_limit` placement | `record_action` placement | Special handling |
+|------|------------------------|--------------------------|------------------|
+| `save_studio_attack_draft` | After param validation | After POST + cache write | — |
+| `update_studio_attack_draft` | After param validation | After PUT + cache update | — |
+| `run_studio_attack` | After input validation | After POST queue response | — |
+| `set_studio_attack_status` | After pre-check GET | After PUT + cache invalidate | Allow read first |
+| `run_scenario` | Before queue POST | After POST queue response | Skip on dry_run/not_ready |
+| `manage_test` | After input validation | After state change | Note append is best-effort |
+
+Rate limiting environment variables:
+- `SAFEBREACH_MCP_RATE_LIMIT_ENABLED` — enable/disable (default: `true`)
+- `SAFEBREACH_MCP_ACTION_LIMIT` — total actions per caller per window (default: `10`)
+- `SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT` — per-tool-name limit per caller per window (default: `5`)
+- `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES` — sliding window duration in minutes (default: `30`)
+
 ## MCP Tools Available
 
 ### Multi-Server Distribution
@@ -334,8 +371,8 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 18. `convert_datetime_to_epoch` - Convert ISO datetime strings to Unix epoch timestamps for API filtering
 19. `convert_epoch_to_datetime` - Convert Unix epoch timestamps to readable datetime strings
 
-**Studio Server (Port 8004):**
-20. `run_scenario` ✨ **NEW** - Execute a SafeBreach scenario (OOB or custom plan).
+**Studio Server (Port 8004):** *(all write tools are rate-limited — see Rate Limiting above)*
+20. `run_scenario` ✨ **NEW** 🔒 **Rate-limited** - Execute a SafeBreach scenario (OOB or custom plan).
   Supports both ready-to-run and non-ready scenarios via three-turn augmentation workflow.
   Fetches scenarios from content-manager API and custom plans from config API. Validates readiness,
   runs statistics pre-flight with per-step simulation predictions and constraint diagnostics,
@@ -362,7 +399,7 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
   and isProxySupported for informed filter planning.
   **Error handling**: Statistics API, scenario fetch, and plan fetch errors now propagate the
   full API response body in error messages (not just generic HTTP status codes).
-21. `manage_test` ✨ **NEW** - Manage a running test's lifecycle (pause, resume, cancel).
+21. `manage_test` ✨ **NEW** 🔒 **Rate-limited** - Manage a running test's lifecycle (pause, resume, cancel).
   Single tool with `action` parameter for all three operations. Accepts `test_id` (planRunId
   from `run_scenario`), `action` (required: "pause", "resume", or "cancel"), `console`,
   and optional `reason`. When `reason` is provided, appends a timestamped UTC note to the
@@ -490,6 +527,12 @@ export SAFEBREACH_MCP_CONCURRENCY_LIMIT=3
 # Transport mode (default: sse)
 export SAFEBREACH_MCP_TRANSPORT=sse            # Server-Sent Events (default) — endpoints: /sse + /messages/
 export SAFEBREACH_MCP_TRANSPORT=streamable-http # Streamable HTTP — single endpoint: /mcp (or $SAFEBREACH_MCP_BASE_URL)
+
+# Rate limiting (applies to all write tools)
+export SAFEBREACH_MCP_RATE_LIMIT_ENABLED=true              # Enable/disable (default: true)
+export SAFEBREACH_MCP_ACTION_LIMIT=10                      # Total actions per caller per window (default: 10)
+export SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT=5             # Per-tool limit per caller per window (default: 5)
+export SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES=30         # Sliding window in minutes (default: 30)
 ```
 
 **Command-Line Arguments:**

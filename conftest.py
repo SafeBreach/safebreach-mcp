@@ -10,6 +10,7 @@ and sets the ContextVar so get_auth_headers_for_console() works.
 import os
 import pytest
 from safebreach_mcp_core.token_context import _user_auth_artifacts
+from safebreach_mcp_core.rate_limiter import _rate_limit_store
 
 
 def _resolve_api_token(console: str):
@@ -60,3 +61,11 @@ def e2e_auth_for_console():
             _user_auth_artifacts.reset(old)
 
     return _swap
+
+
+@pytest.fixture(autouse=True)
+def clear_rate_limit_store():
+    """Clear rate limit state between tests to prevent cross-test accumulation."""
+    _rate_limit_store.clear()
+    yield
+    _rate_limit_store.clear()
