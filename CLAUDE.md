@@ -302,7 +302,7 @@ Caller identity (`get_caller_identity()`): auth token SHA256[:16] for external c
 | `manage_test` | After input validation | After state change | Note append is best-effort |
 
 Rate limiting environment variables:
-- `SAFEBREACH_MCP_RATE_LIMIT_ENABLED` — enable/disable (default: `true`)
+- `SAFEBREACH_MCP_RATE_LIMIT_ENABLED` — enable/disable (default: `false`)
 - `SAFEBREACH_MCP_ACTION_LIMIT` — total actions per caller per window (default: `10`)
 - `SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT` — per-tool-name limit per caller per window (default: `5`)
 - `SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES` — sliding window duration in minutes (default: `30`)
@@ -536,7 +536,7 @@ export SAFEBREACH_MCP_TRANSPORT=sse            # Server-Sent Events (default) �
 export SAFEBREACH_MCP_TRANSPORT=streamable-http # Streamable HTTP — single endpoint: /mcp (or $SAFEBREACH_MCP_BASE_URL)
 
 # Rate limiting (applies to all write tools)
-export SAFEBREACH_MCP_RATE_LIMIT_ENABLED=true              # Enable/disable (default: true)
+export SAFEBREACH_MCP_RATE_LIMIT_ENABLED=true              # Enable/disable (default: false)
 export SAFEBREACH_MCP_ACTION_LIMIT=10                      # Total actions per caller per window (default: 10)
 export SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT=5             # Per-tool limit per caller per window (default: 5)
 export SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES=30         # Sliding window in minutes (default: 30)

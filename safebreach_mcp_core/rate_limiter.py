@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Configuration (read at module load, patchable in tests)
 # ---------------------------------------------------------------------------
 _rate_limit_enabled: bool = os.environ.get(
-    "SAFEBREACH_MCP_RATE_LIMIT_ENABLED", "true"
+    "SAFEBREACH_MCP_RATE_LIMIT_ENABLED", "false"
 ).strip().lower() in ("true", "1", "yes")
 
 _action_limit: int = int(os.environ.get("SAFEBREACH_MCP_ACTION_LIMIT", "10"))
