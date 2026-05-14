@@ -29,6 +29,7 @@ class TestManageTestRateLimitingGate:
         "safebreach_mcp_studio.studio_functions.get_caller_identity",
         return_value="test-caller",
     )
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="RUNNING")
     @patch("safebreach_mcp_studio.studio_functions.requests.delete")
     @patch(
         "safebreach_mcp_studio.studio_functions.get_api_account_id",
@@ -43,6 +44,7 @@ class TestManageTestRateLimitingGate:
         _mock_base_url,
         _mock_account_id,
         mock_delete,
+        _mock_state,
         _mock_get_identity,
         mock_rate_limiter,
     ):
@@ -79,6 +81,7 @@ class TestManageTestRateLimitingGate:
         "safebreach_mcp_studio.studio_functions.get_caller_identity",
         return_value="test-caller",
     )
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="RUNNING")
     @patch("safebreach_mcp_studio.studio_functions.requests.delete")
     @patch(
         "safebreach_mcp_studio.studio_functions.get_api_account_id",
@@ -93,6 +96,7 @@ class TestManageTestRateLimitingGate:
         _mock_base_url,
         _mock_account_id,
         mock_delete,
+        _mock_state,
         _mock_get_identity,
         mock_rate_limiter,
     ):
@@ -115,6 +119,7 @@ class TestManageTestRateLimitingGate:
         "safebreach_mcp_studio.studio_functions.get_caller_identity",
         return_value="test-caller",
     )
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="RUNNING")
     @patch("safebreach_mcp_studio.studio_functions.requests.delete")
     @patch(
         "safebreach_mcp_studio.studio_functions.get_api_account_id",
@@ -129,6 +134,7 @@ class TestManageTestRateLimitingGate:
         _mock_base_url,
         _mock_account_id,
         mock_delete,
+        _mock_state,
         _mock_get_identity,
         mock_rate_limiter,
     ):
@@ -142,6 +148,39 @@ class TestManageTestRateLimitingGate:
             )
 
         mock_rate_limiter.check_limit.assert_called_once()
+        mock_rate_limiter.record_action.assert_not_called()
+
+    # --- SAF-31111: Quick-returns skip rate limiting ---
+
+    @patch("safebreach_mcp_studio.studio_functions.rate_limiter")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_caller_identity",
+        return_value="test-caller",
+    )
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="CANCELED")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_account_id",
+        return_value="1234567890",
+    )
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_base_url",
+        return_value="https://test.safebreach.com",
+    )
+    def test_quick_return_does_not_trigger_rate_limiting(
+        self,
+        _mock_base_url,
+        _mock_account_id,
+        _mock_state,
+        _mock_get_identity,
+        mock_rate_limiter,
+    ):
+        """Quick-return for already-canceled test does NOT call rate limiter."""
+        result = sb_manage_test(
+            test_id="test123", action="cancel", console="test"
+        )
+
+        assert result.get('was_already') is True
+        mock_rate_limiter.check_limit.assert_not_called()
         mock_rate_limiter.record_action.assert_not_called()
 
 

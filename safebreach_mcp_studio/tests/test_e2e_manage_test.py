@@ -221,3 +221,46 @@ class TestManageTestE2E:
         finally:
             if test_id:
                 _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_e2e_cancel_already_canceled_test(self):
+        """Queue, cancel, cancel again — second cancel returns idempotent success."""
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready = next(
+            (s for s in scenarios if compute_scenario_readiness(s)), None
+        )
+        assert ready is not None, f"No ready OOB scenario on {E2E_CONSOLE}"
+
+        test_id = None
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(ready['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_e2e_cancel_already_canceled_test",
+            )
+            test_id = queue_result['test_id']
+            assert test_id, "No test_id returned from run_scenario"
+
+            # First cancel — should succeed normally
+            cancel_result_1 = sb_manage_test(
+                test_id=test_id,
+                action="cancel",
+                console=E2E_CONSOLE,
+                reason="E2E first cancel",
+            )
+            assert cancel_result_1['status'] == "success"
+            assert cancel_result_1['action'] == "cancel"
+
+            # Wait for state propagation
+            time.sleep(COMMENT_PROPAGATION_DELAY)
+
+            # Second cancel — should return idempotent success (not error)
+            cancel_result_2 = sb_manage_test(
+                test_id=test_id,
+                action="cancel",
+                console=E2E_CONSOLE,
+            )
+            assert cancel_result_2.get('was_already') is True
+            assert "already" in cancel_result_2['status']
+            assert cancel_result_2['test_id'] == test_id
+        finally:
+            pass  # Test is already canceled, no cleanup needed

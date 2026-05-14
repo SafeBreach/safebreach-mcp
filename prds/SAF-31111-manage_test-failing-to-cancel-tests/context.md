@@ -1,7 +1,7 @@
 # SAF-31111: manage_test tool is failing to cancel a test
 
 ## Status
-Phase 5: Problem Analysis Complete
+Phase 6: PRD Created
 
 ## Ticket Info
 - **Type**: Bug
