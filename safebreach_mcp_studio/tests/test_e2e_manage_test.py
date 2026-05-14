@@ -250,8 +250,8 @@ class TestManageTestE2E:
             assert cancel_result_1['status'] == "success"
             assert cancel_result_1['action'] == "cancel"
 
-            # Wait for state propagation
-            time.sleep(COMMENT_PROPAGATION_DELAY)
+            # Wait for data API to reflect canceled state (longer than comment propagation)
+            time.sleep(10)
 
             # Second cancel — should return idempotent success (not error)
             cancel_result_2 = sb_manage_test(
