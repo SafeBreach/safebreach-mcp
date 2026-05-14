@@ -19,6 +19,13 @@ def reset_rate_limiter():
     _rate_limit_store.clear()
 
 
+@pytest.fixture(autouse=True)
+def enable_rate_limiter():
+    """Enable rate limiting for unit tests (overrides the disabled-by-default config)."""
+    with patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True):
+        yield
+
+
 @pytest.fixture
 def limiter():
     return RateLimiter()
