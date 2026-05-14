@@ -639,14 +639,16 @@ Parameters:
 - include_logs (optional): Include simulation_steps, logs, and output fields (default: True)
 - test_id (optional): Filter results to a specific test run (planRunId). Use the test_id returned by run_studio_attack.
 
-Returns detailed execution information including:
-- Execution status and status (missed, stopped, prevented, etc.)
-- Test/plan information and timing details
-- Attacker and target simulator details
-- Parameters used in the execution
-- Result codes and security actions
-- Simulation steps, logs, and output (when include_logs=True)
-- Drift tracking (is_drifted, drift_tracking_code)
+Returns:
+- **Test Overview** (from test summary API): test status (running/completed/canceled/failed),
+  test-level start/end times and duration, simulation status breakdown
+  (missed/stopped/prevented/detected/logged/no-result/inconsistent) with total count.
+  When the test is still running, includes hint_to_agent with polling guidance.
+- **Per-simulation details**: execution status, timing, attacker/target simulators,
+  result codes, security actions, drift tracking, simulation steps/logs/output (when include_logs=True).
+
+Note: "Executions Matched" shows how many simulations matched the query (may be less than
+the total in the test if the test is still running). See Test Overview for the full count.
 
 Typical workflow:
 1. result = run_studio_attack(attack_id=10000298, all_connected=True, console="demo")
@@ -690,10 +692,37 @@ get_studio_attack_latest_result(attack_id=10000291, console="demo", include_logs
                     "",
                     f"**Attack ID:** {result['attack_id']}",
                     f"**Console:** {result['console']}",
-                    f"**Total Executions Found:** {result['total_found']}",
+                    f"**Executions Matched:** {result['total_found']}",
                     f"**Showing:** {result['returned_count']} result(s)",
                     ""
                 ]
+
+                # Add test overview section (SAF-30717)
+                test_overview = result.get('test_overview')
+                if test_overview is not None:
+                    end_time_display = test_overview['end_time'] or "In progress"
+                    duration_display = test_overview['duration'] if test_overview['duration'] is not None else "In progress"
+                    response_parts.extend([
+                        "### Test Overview",
+                        "",
+                        f"**Test Status:** {test_overview['status']}",
+                        f"**Test Start Time:** {test_overview['start_time']}",
+                        f"**Test End Time:** {end_time_display}",
+                        f"**Test Duration:** {duration_display}",
+                        "",
+                        "**Simulation Status Breakdown:**",
+                    ])
+                    for entry in test_overview['simulation_status_counts']:
+                        response_parts.append(f"- {entry['status']}: {entry['count']}")
+                    response_parts.append(f"- **Total: {test_overview['total_simulations']}**")
+
+                    if 'hint_to_agent' in test_overview:
+                        response_parts.extend([
+                            "",
+                            f"> **hint_to_agent:** {test_overview['hint_to_agent']}",
+                        ])
+
+                    response_parts.extend(["", "---", ""])
 
                 # Add each execution result
                 for idx, execution in enumerate(result['executions'], 1):
