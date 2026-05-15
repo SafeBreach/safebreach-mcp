@@ -2606,11 +2606,6 @@ def _get_test_state(test_id: str, console: str) -> str:
     Fetch the current state of a test by consulting the orchestrator queue
     first (real-time), falling back to the data API (eventually consistent).
 
-    The orchestrator ``GET /queue`` endpoint returns live slot state including
-    ``isPaused`` for each running test.  If the test appears in a slot it is
-    either RUNNING or PAUSED.  If it does not appear, the data API
-    ``/testsummaries/{test_id}`` provides the terminal status.
-
     Args:
         test_id: Test execution ID (planRunId)
         console: SafeBreach console identifier
@@ -2621,36 +2616,19 @@ def _get_test_state(test_id: str, console: str) -> str:
     Raises:
         requests.exceptions.RequestException: On API error
     """
-    # --- Phase 1: ask the orchestrator (authoritative for active tests) ---
-    try:
-        orch_base = get_api_base_url(console, 'orchestrator')
-        account_id = get_api_account_id(console)
-        queue_url = f"{orch_base}/api/orch/v4/accounts/{account_id}/queue"
-        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+    from safebreach_mcp_core.queue_state import get_orchestrator_test_state
 
-        response = requests.get(queue_url, headers=headers, timeout=30)
-        check_rbac_response(response)
-        queue_data = response.json().get('data', {})
+    # Phase 1: orchestrator queue (real-time for active tests)
+    orch_state = get_orchestrator_test_state(test_id, console)
+    if orch_state is not None:
+        return orch_state
 
-        # Search slotState for this test
-        for slot in queue_data.get('slotState', []):
-            if slot.get('planRunId') == test_id:
-                if slot.get('isPaused'):
-                    return "PAUSED"
-                return "RUNNING"
+    logger.info(
+        "Test '%s' not found in orchestrator queue — "
+        "falling back to data API", test_id
+    )
 
-        # Test not in any slot — it's no longer active
-        logger.info(
-            "Test '%s' not found in orchestrator queue — "
-            "falling back to data API", test_id
-        )
-    except Exception as e:
-        logger.warning(
-            "Orchestrator queue check failed for '%s': %s — "
-            "falling back to data API", test_id, e
-        )
-
-    # --- Phase 2: fall back to data API (terminal / historical tests) ---
+    # Phase 2: data API (terminal / historical tests)
     data_base = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
     url = f"{data_base}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"

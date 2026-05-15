@@ -7759,55 +7759,20 @@ class TestManageTest:
 
     # --- Phase 8: State pre-check (_get_test_state) — SAF-31111 ---
 
-    @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_get_test_state_from_orchestrator_running(
-        self, mock_base_url, mock_account_id, mock_get
-    ):
-        """_get_test_state returns RUNNING from orchestrator queue slot."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-
-        # Orchestrator queue response — test found in a slot, not paused
-        mock_orch_response = MagicMock()
-        mock_orch_response.json.return_value = {
-            "data": {
-                "slotState": [
-                    {"planRunId": "test123", "isPaused": False,
-                     "slotStatus": "Running Step"},
-                ]
-            }
-        }
-        mock_orch_response.raise_for_status.return_value = None
-        mock_get.return_value = mock_orch_response
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_from_orchestrator_running(self, mock_orch):
+        """_get_test_state returns RUNNING from orchestrator queue."""
+        mock_orch.return_value = "RUNNING"
 
         result = _get_test_state("test123", "test")
 
         assert result == "RUNNING"
-        mock_get.assert_called_once()  # Only orchestrator called, no data API fallback
+        mock_orch.assert_called_once_with("test123", "test")
 
-    @patch('safebreach_mcp_studio.studio_functions.requests.get')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_get_test_state_from_orchestrator_paused(
-        self, mock_base_url, mock_account_id, mock_get
-    ):
-        """_get_test_state returns PAUSED from orchestrator queue slot."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-
-        mock_orch_response = MagicMock()
-        mock_orch_response.json.return_value = {
-            "data": {
-                "slotState": [
-                    {"planRunId": "test123", "isPaused": True,
-                     "slotStatus": "Running Step"},
-                ]
-            }
-        }
-        mock_orch_response.raise_for_status.return_value = None
-        mock_get.return_value = mock_orch_response
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_from_orchestrator_paused(self, mock_orch):
+        """_get_test_state returns PAUSED from orchestrator queue."""
+        mock_orch.return_value = "PAUSED"
 
         result = _get_test_state("test123", "test")
 
@@ -7816,58 +7781,46 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
     def test_get_test_state_falls_back_to_data_api(
-        self, mock_base_url, mock_account_id, mock_get
+        self, mock_orch, mock_base_url, mock_account_id, mock_get
     ):
         """_get_test_state falls back to data API when test not in queue."""
+        mock_orch.return_value = None  # Not in orchestrator queue
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
-        # First call: orchestrator — test not in any slot
-        mock_orch_response = MagicMock()
-        mock_orch_response.json.return_value = {
-            "data": {"slotState": [{"planRunId": "other-test", "isPaused": False}]}
-        }
-        mock_orch_response.raise_for_status.return_value = None
-
-        # Second call: data API — returns terminal status
         mock_data_response = MagicMock()
         mock_data_response.json.return_value = {"status": "CANCELED"}
         mock_data_response.raise_for_status.return_value = None
-
-        mock_get.side_effect = [mock_orch_response, mock_data_response]
+        mock_get.return_value = mock_data_response
 
         result = _get_test_state("test123", "test")
 
         assert result == "CANCELED"
-        assert mock_get.call_count == 2  # Orchestrator + data API
+        mock_orch.assert_called_once()
+        mock_get.assert_called_once()
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
     def test_get_test_state_orch_failure_falls_back(
-        self, mock_base_url, mock_account_id, mock_get
+        self, mock_orch, mock_base_url, mock_account_id, mock_get
     ):
-        """_get_test_state falls back to data API when orchestrator fails."""
-        import requests as req
+        """_get_test_state falls back to data API when orchestrator returns None."""
+        mock_orch.return_value = None
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
-        # First call: orchestrator fails
-        # Second call: data API succeeds
         mock_data_response = MagicMock()
         mock_data_response.json.return_value = {"status": "COMPLETED"}
         mock_data_response.raise_for_status.return_value = None
-
-        mock_get.side_effect = [
-            req.exceptions.ConnectionError("orchestrator down"),
-            mock_data_response,
-        ]
+        mock_get.return_value = mock_data_response
 
         result = _get_test_state("test123", "test")
 
         assert result == "COMPLETED"
-        assert mock_get.call_count == 2
 
     # --- Phase 9: State transition matrix — Cancel — SAF-31111 ---
 
