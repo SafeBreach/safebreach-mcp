@@ -255,6 +255,64 @@ class TestGetCacheUserSuffix:
         suffix = get_cache_user_suffix()
         assert suffix == expected
 
+    def test_oauth_caller_scoped_by_client_id(self):
+        """OAuth callers (x-sb-auth-type=oauth) use x-sb-client-id for cache scope.
+
+        client_id is stable across token refreshes, unlike the Bearer JWT itself
+        (which would otherwise invalidate the cache on every refresh).
+        """
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer rotating-jwt-1',
+            'x-sb-auth-type': 'oauth',
+            'x-sb-client-id': 'oauth_abc123',
+        })
+
+        import hashlib
+        expected = '_' + hashlib.sha256('oauth_abc123'.encode()).hexdigest()[:8]
+        suffix_1 = get_cache_user_suffix()
+
+        # Simulate a token refresh: same client_id, different Bearer.
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer rotating-jwt-2',
+            'x-sb-auth-type': 'oauth',
+            'x-sb-client-id': 'oauth_abc123',
+        })
+        suffix_2 = get_cache_user_suffix()
+
+        assert suffix_1 == expected
+        assert suffix_1 == suffix_2
+
+    def test_two_oauth_clients_get_different_suffixes(self):
+        """Different OAuth clients on the same account must not collide."""
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer jwt-A',
+            'x-sb-auth-type': 'oauth',
+            'x-sb-client-id': 'oauth_client_A',
+        })
+        suffix_a = get_cache_user_suffix()
+
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer jwt-B',
+            'x-sb-auth-type': 'oauth',
+            'x-sb-client-id': 'oauth_client_B',
+        })
+        suffix_b = get_cache_user_suffix()
+
+        assert suffix_a != suffix_b
+
+    def test_oauth_without_client_id_falls_back_to_bearer(self):
+        """If the hint is missing client_id, hash the Authorization value
+        (best available stability)."""
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer fallback-jwt',
+            'x-sb-auth-type': 'oauth',
+        })
+
+        import hashlib
+        expected = '_' + hashlib.sha256('Bearer fallback-jwt'.encode()).hexdigest()[:8]
+        suffix = get_cache_user_suffix()
+        assert suffix == expected
+
 
 class TestLastUserAuthBundleRemoved:
 
@@ -297,3 +355,16 @@ class TestGetAuthHeadersForConsole:
         result = get_auth_headers_for_console('default')
         result['x-token'] = 'mutated'
         assert _user_auth_artifacts.get()['x-token'] == 'jwt1'
+
+    def test_oauth_bearer_alone_passes_user_creds_check(self):
+        """OAuth Bearer in the bundle is enough — _has_user_creds must accept it
+        even without x-token / cookie / x-apitoken (SAF-27570)."""
+        _user_auth_artifacts.set({
+            'authorization': 'Bearer oauth-jwt',
+            'x-sb-auth-type': 'oauth',
+            'x-sb-client-id': 'oauth_abc',
+        })
+        result = get_auth_headers_for_console('default')
+        assert result['authorization'] == 'Bearer oauth-jwt'
+        assert result['x-sb-auth-type'] == 'oauth'
+        assert result['x-sb-client-id'] == 'oauth_abc'

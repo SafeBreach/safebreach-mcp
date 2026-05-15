@@ -101,18 +101,22 @@ def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """
     bundle = _user_auth_artifacts.get()
 
+    def _has_user_creds(b):
+        # Any credential is enough: legacy (x-token/cookie/x-apitoken) or OAuth Bearer.
+        return bool(b) and any(k in b for k in ('x-token', 'cookie', 'x-apitoken', 'authorization'))
+
     # SSE transport fallback (SAF-29974 Slice 6): the ContextVar set on the
     # /messages/ POST doesn't propagate to the tool handler (SSE GET's create_task
     # uses a different async context).  Read the POST's headers directly from the
     # MCP SDK's request_ctx, which IS set on the tool handler's task.
-    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+    if not _has_user_creds(bundle):
         from .token_context import _get_auth_from_mcp_request_ctx
         mcp_bundle = _get_auth_from_mcp_request_ctx()
         if mcp_bundle:
             bundle = mcp_bundle
 
     # Tertiary fallback: session store lookup via session_id from request_ctx
-    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
+    if not _has_user_creds(bundle):
         from .token_context import _get_session_id_from_mcp_ctx, _session_auth_artifacts
         session_id = _get_session_id_from_mcp_ctx()
         if session_id:
