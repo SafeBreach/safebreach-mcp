@@ -2603,21 +2603,57 @@ def sb_run_scenario(
 
 def _get_test_state(test_id: str, console: str) -> str:
     """
-    Fetch the current state of a test via the data API.
+    Fetch the current state of a test by consulting the orchestrator queue
+    first (real-time), falling back to the data API (eventually consistent).
+
+    The orchestrator ``GET /queue`` endpoint returns live slot state including
+    ``isPaused`` for each running test.  If the test appears in a slot it is
+    either RUNNING or PAUSED.  If it does not appear, the data API
+    ``/testsummaries/{test_id}`` provides the terminal status.
 
     Args:
         test_id: Test execution ID (planRunId)
         console: SafeBreach console identifier
 
     Returns:
-        Status string, e.g. "RUNNING", "PAUSED", "CANCELED", "COMPLETED"
+        Status string: "RUNNING", "PAUSED", "CANCELED", "COMPLETED", etc.
 
     Raises:
         requests.exceptions.RequestException: On API error
     """
-    base_url = get_api_base_url(console, 'data')
+    # --- Phase 1: ask the orchestrator (authoritative for active tests) ---
+    try:
+        orch_base = get_api_base_url(console, 'orchestrator')
+        account_id = get_api_account_id(console)
+        queue_url = f"{orch_base}/api/orch/v4/accounts/{account_id}/queue"
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(queue_url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        queue_data = response.json().get('data', {})
+
+        # Search slotState for this test
+        for slot in queue_data.get('slotState', []):
+            if slot.get('planRunId') == test_id:
+                if slot.get('isPaused'):
+                    return "PAUSED"
+                return "RUNNING"
+
+        # Test not in any slot — it's no longer active
+        logger.info(
+            "Test '%s' not found in orchestrator queue — "
+            "falling back to data API", test_id
+        )
+    except Exception as e:
+        logger.warning(
+            "Orchestrator queue check failed for '%s': %s — "
+            "falling back to data API", test_id, e
+        )
+
+    # --- Phase 2: fall back to data API (terminal / historical tests) ---
+    data_base = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
-    url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    url = f"{data_base}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
     headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     response = requests.get(url, headers=headers, timeout=30)
@@ -2631,7 +2667,7 @@ def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
 
     Args:
         test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
-        action: Lifecycle action — currently "cancel" (pause/resume added later)
+        action: Lifecycle action — "cancel", "pause", or "resume"
         console: SafeBreach console identifier
 
     Returns:
@@ -2752,7 +2788,8 @@ def sb_manage_test(
 
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 
-    # State pre-check — SAF-31111: validate transition before API call
+    # State pre-check — SAF-31111: validate transition before API call.
+    # Uses orchestrator GET /queue (real-time) with data API fallback.
     current_state = _get_test_state(test_id, console).upper()
     terminal_states = {"CANCELED", "COMPLETED"}
 
