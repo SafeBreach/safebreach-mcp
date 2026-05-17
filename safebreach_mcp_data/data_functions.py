@@ -488,12 +488,18 @@ def sb_get_test_details(test_id: str, console: str = "default",
         user_id = return_details.get('ran_by_user_id')
         return_details['launched_by'] = get_user_name(user_id, console)
 
-        # Add polling hint for non-terminal statuses
+        # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
         if final_status not in terminal_statuses:
             return_details['hint_to_agent'] = (
                 f"Test is still {return_details.get('status', 'in progress')}. "
                 "Poll again in 30 seconds using get_test_details with the same test_id."
+            )
+        else:
+            # Terminal test — hint about delete for storage management (SAF-29972)
+            return_details['hint_to_agent'] = (
+                "To see how much space this test uses and preview deletion, call "
+                "manage_test with action='delete' and dry_run=True."
             )
 
         return return_details

@@ -16,7 +16,7 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
+| **PRD Status** | Complete |
 | **Last Updated** | 2026-05-17 10:00 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | N/A |
@@ -185,7 +185,7 @@ to the user, and execute deletions after confirmation.
 | Phase 6: E2E test | ✅ Complete | 2026-05-17 | - | 1 E2E test (6-step lifecycle) |
 | Phase 7: User lookup and launched_by field | ✅ Complete | 2026-05-17 | - | 8 tests |
 | Phase 8: launched_by filter in get_tests | ✅ Complete | 2026-05-17 | - | 5 tests |
-| Phase 9: Storage hint in get_test_details | ⏳ Pending | - | - | |
+| Phase 9: Storage hint in get_test_details | ✅ Complete | 2026-05-17 | - | 2 tests |
 
 ---
 
