@@ -54,12 +54,15 @@ class SafeBreachDataServer(SafeBreachMCPBase):
             name="get_tests",
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paged listing of tests on a given Safebreach management console.
-Supports filtering by test type (validate/propagate), time windows, status, and name patterns. Results are ordered by end time (newest first) by default.
+Supports filtering by test type (validate/propagate), time windows, status, name patterns, and launcher. Results are ordered by end time (newest first) by default.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
 start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
 end_date (epoch ms/seconds or ISO 8601 string),
-status_filter ('completed'/'canceled'/'failed'/'running'/None), name_filter (partial name match), order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
-Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
+status_filter ('completed'/'canceled'/'failed'/'running'/None), name_filter (partial name match), \
+launched_by_filter (partial username match, case-insensitive — e.g. 'sbadmin'), \
+order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
+Accepts both epoch timestamps and ISO 8601 strings for date parameters.
+Each test includes a launched_by field with the resolved username of who ran the test."""
         )
         async def get_tests_tool(
             console: str = "default",
@@ -69,6 +72,7 @@ Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
             end_date: Optional[str | int] = None,
             status_filter: Optional[str] = None,
             name_filter: Optional[str] = None,
+            launched_by_filter: Optional[str] = None,
             order_by: str = "end_time",
             order_direction: str = "desc"
         ) -> dict:
@@ -82,6 +86,7 @@ Accepts both epoch timestamps and ISO 8601 strings for date parameters."""
                 end_date=end_date,
                 status_filter=status_filter,
                 name_filter=name_filter,
+                launched_by_filter=launched_by_filter,
                 order_by=order_by,
                 order_direction=order_direction
             )

@@ -3583,3 +3583,58 @@ class TestLaunchedByEnrichment:
         result = sb_get_test_details("test123", "test")
 
         assert result['launched_by'] is None
+
+
+class TestLaunchedByFilter:
+    """Tests for launched_by_filter in get_tests."""
+
+    def test_launched_by_filter_matches(self):
+        """Filter matches test by resolved username."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+            {"name": "Test2", "launched_by": "Yossi", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="sbadmin")
+        assert len(result) == 1
+        assert result[0]['launched_by'] == "sbadmin"
+
+    def test_launched_by_filter_case_insensitive(self):
+        """Filter is case-insensitive."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="SBAdmin")
+        assert len(result) == 1
+
+    def test_launched_by_filter_partial_match(self):
+        """Filter supports partial matching."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="admin")
+        assert len(result) == 1
+
+    def test_launched_by_filter_no_match(self):
+        """Filter returns empty when no tests match."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="nobody")
+        assert len(result) == 0
+
+    def test_launched_by_filter_skips_none(self):
+        """Tests with launched_by=None are excluded by filter."""
+        tests = [
+            {"name": "Test1", "launched_by": None, "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+            {"name": "Test2", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="admin")
+        assert len(result) == 1
+        assert result[0]['name'] == "Test2"
