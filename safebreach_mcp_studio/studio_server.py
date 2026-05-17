@@ -1533,11 +1533,17 @@ def _format_delete_preview(result: dict) -> str:
         limit = savings.get('usage_limit_bytes', 0)
         parts.append("")
         parts.append("### Storage Savings")
-        parts.append(f"**Space freed:** {_human_bytes(freed)}")
+        parts.append(f"**Index space freed:** {_human_bytes(freed)}")
         if events > 0:
             parts.append(f"**Events index freed:** {_human_bytes(events)}")
         if limit > 0:
-            parts.append(f"**Current usage:** {_human_bytes(current)} / {_human_bytes(limit)}")
+            parts.append(f"**Total index usage:** {_human_bytes(current)} / {_human_bytes(limit)}")
+        parts.append("")
+        parts.append(
+            "*Note: sizes reflect Elasticsearch index allocation "
+            "(includes metadata, mappings, and replicas) — "
+            "not raw simulation data volume.*"
+        )
 
     if result.get('hint_to_agent'):
         parts.append("")
@@ -1563,9 +1569,14 @@ def _format_delete_confirmation(result: dict) -> str:
         count = stats.get('tests_on_disk_count', 0)
         count_limit = stats.get('tests_limit_count', 0)
         parts.append("")
-        parts.append("### Storage After Deletion")
-        parts.append(f"**Disk usage:** {_human_bytes(on_disk)} / {_human_bytes(limit)}")
+        parts.append("### Platform Storage After Deletion")
+        parts.append(f"**Test history index:** {_human_bytes(on_disk)} / {_human_bytes(limit)}")
         parts.append(f"**Test count:** {count} / {count_limit}")
+        parts.append("")
+        parts.append(
+            "*Note: index sizes include Elasticsearch overhead — "
+            "not raw data volume.*"
+        )
 
     if result.get('hint_to_agent'):
         parts.append("")
