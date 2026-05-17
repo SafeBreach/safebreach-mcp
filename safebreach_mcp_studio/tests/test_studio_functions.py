@@ -8556,3 +8556,70 @@ class TestManageTest:
         assert result['tests_limit_count'] == 1000
         assert result['events_index_bytes'] == 5125119960
         assert "dbStorageStats" in mock_get.call_args[0][0]
+
+    # --- Phase 18: Delete — tool handler formatting — SAF-29972 ---
+
+    @patch('safebreach_mcp_studio.studio_functions.sb_delete_test')
+    def test_tool_handler_delete_preview_format(self, mock_delete):
+        """Tool handler formats delete dry-run as preview with storage savings."""
+        mock_delete.return_value = {
+            "test_id": "test123", "action": "delete", "status": "dry_run",
+            "dry_run": True,
+            "preview": {
+                "test_name": "CISA Alert Test",
+                "status": "CANCELED",
+                "simulation_count": 42,
+                "start_time": 1778678323893,
+                "end_time": 1778785706818,
+                "storage_savings": {
+                    "space_freed_bytes": 2128773512,
+                    "events_freed_bytes": 97373719,
+                    "current_usage_bytes": 8617546137,
+                    "usage_limit_bytes": 48318382080,
+                },
+            },
+            "hint_to_agent": "Call with dry_run=False to execute.",
+        }
+
+        result = sb_manage_test(
+            test_id="test123", action="delete", console="test",
+            reason="cleanup", dry_run=True
+        )
+
+        # Result is the raw dict from sb_delete_test (handler formats it)
+        assert result['status'] == "dry_run"
+        assert result['preview']['test_name'] == "CISA Alert Test"
+        assert result['preview']['storage_savings']['space_freed_bytes'] == 2128773512
+
+    @patch('safebreach_mcp_studio.studio_functions.sb_delete_test')
+    def test_tool_handler_delete_execute_format(self, mock_delete):
+        """Tool handler formats delete execute with deleted test info."""
+        mock_delete.return_value = {
+            "test_id": "test123", "action": "delete", "status": "deleted",
+            "deleted_test_name": "CISA Alert",
+            "reason": "no longer needed",
+            "storage_stats": {
+                "tests_on_disk_bytes": 8000000000,
+                "tests_limit_bytes": 48000000000,
+                "tests_on_disk_count": 957,
+                "tests_limit_count": 1000,
+            },
+            "hint_to_agent": "Test permanently deleted.",
+        }
+
+        result = sb_manage_test(
+            test_id="test123", action="delete", console="test",
+            reason="no longer needed", dry_run=False
+        )
+
+        assert result['status'] == "deleted"
+        assert result['deleted_test_name'] == "CISA Alert"
+        assert result['storage_stats']['tests_on_disk_count'] == 957
+
+    def test_tool_handler_delete_missing_reason_error(self):
+        """Delete without reason returns ValueError message."""
+        with pytest.raises(ValueError, match="reason.*required"):
+            sb_manage_test(
+                test_id="test123", action="delete", console="test",
+                reason=None
+            )
