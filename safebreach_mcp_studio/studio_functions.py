@@ -2810,6 +2810,40 @@ def _fetch_test_storage_info(test_id: str, console: str) -> Optional[Dict[str, A
         return None
 
 
+def _fetch_storage_stats(console: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch platform-wide storage utilization stats. Best-effort.
+
+    Args:
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with tests_on_disk_bytes, tests_limit_bytes, tests_on_disk_count,
+        tests_limit_count, last_cleanup_date, events_index_bytes — or None on error.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = f"{base_url}/api/data/v1/accounts/{account_id}/dbStorageStats"
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        data = response.json()
+
+        return {
+            "tests_on_disk_bytes": data.get('executionsHistoryIndexSizeInBytes', 0),
+            "tests_limit_bytes": data.get('executionsHistoryLimitSizeInBytes', 0),
+            "tests_on_disk_count": data.get('executionsHistoryIndexCount', 0),
+            "tests_limit_count": data.get('executionsHistoryLimitIndexesCount', 0),
+            "last_cleanup_date": data.get('lastTestsCleanupDate'),
+            "events_index_bytes": data.get('logHistoryIndexSizeInBytes', 0),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch storage stats for {console}: {e}")
+        return None
+
+
 def sb_delete_test(
     test_id: str,
     console: str,
@@ -2872,8 +2906,35 @@ def sb_delete_test(
             ),
         }
 
-    # TODO: execute delete, rate limiting, storage stats (Phases 3-4)
-    return {"test_id": test_id, "action": "delete", "status": "not_implemented"}
+    # Execute delete — rate limit, DELETE API, storage stats
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "manage_test")
+
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    delete_url = f"{base_url}/api/data/v1/accounts/{account_id}/tests/{test_id}"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    response = requests.delete(
+        delete_url, headers=headers,
+        json={"id": test_id, "planName": plan_name}, timeout=30
+    )
+    check_rbac_response(response)
+
+    rate_limiter.record_action(caller_id, "manage_test")
+    logger.info(f"Test {test_id} deleted. Reason: {reason}")
+
+    # Post-delete storage stats (best-effort)
+    storage_stats = _fetch_storage_stats(console)
+
+    return {
+        "test_id": test_id, "action": "delete", "status": "deleted",
+        "deleted_test_name": plan_name, "reason": reason,
+        "storage_stats": storage_stats,
+        "hint_to_agent": (
+            "Test permanently deleted. Use get_tests to see remaining tests."
+        ),
+    }
 
 
 def sb_manage_test(

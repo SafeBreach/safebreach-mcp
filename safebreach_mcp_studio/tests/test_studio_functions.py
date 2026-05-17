@@ -30,6 +30,7 @@ from safebreach_mcp_studio.studio_functions import (
     _get_test_state,
     _fetch_test_summary,
     _fetch_test_storage_info,
+    _fetch_storage_stats,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -8364,3 +8365,194 @@ class TestManageTest:
 
         result = _fetch_test_storage_info("test123", "test")
         assert result is None
+
+    # --- Phase 17: Delete — execute with storage stats — SAF-29972 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_storage_stats')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_delete_execute_calls_delete_api(
+        self, mock_base_url, mock_account_id,
+        mock_state, mock_summary, mock_del, mock_stats
+    ):
+        """Delete execute calls DELETE /tests/ with correct body."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "My Test"},
+            "status": "CANCELED",
+            "finalStatus": {"missed": 1},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+        mock_stats.return_value = None
+
+        sb_delete_test("test123", "test", "cleanup", dry_run=False)
+
+        mock_del.assert_called_once()
+        call_args = mock_del.call_args
+        assert "/tests/test123" in call_args[0][0]
+        assert call_args[1]['json'] == {"id": "test123", "planName": "My Test"}
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_storage_stats')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_delete_execute_returns_deleted_status(
+        self, mock_base_url, mock_account_id,
+        mock_state, mock_summary, mock_del, mock_stats
+    ):
+        """Delete execute returns status='deleted' with test name and reason."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "COMPLETED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "CISA Alert"},
+            "status": "COMPLETED",
+            "finalStatus": {"missed": 2},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+        mock_stats.return_value = None
+
+        result = sb_delete_test("test123", "test", "no longer needed", dry_run=False)
+
+        assert result['status'] == "deleted"
+        assert result['deleted_test_name'] == "CISA Alert"
+        assert result['reason'] == "no longer needed"
+        assert 'hint_to_agent' in result
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_storage_stats')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_delete_execute_includes_storage_stats(
+        self, mock_base_url, mock_account_id,
+        mock_state, mock_summary, mock_del, mock_stats
+    ):
+        """Delete execute includes post-delete storage stats."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test"},
+            "status": "CANCELED",
+            "finalStatus": {},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+        mock_stats.return_value = {
+            "tests_on_disk_bytes": 8000000000,
+            "tests_limit_bytes": 48000000000,
+            "tests_on_disk_count": 957,
+            "tests_limit_count": 1000,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup", dry_run=False)
+
+        assert result['storage_stats']['tests_on_disk_count'] == 957
+        assert result['storage_stats']['tests_limit_count'] == 1000
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_storage_stats')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_delete_execute_storage_failure_graceful(
+        self, mock_base_url, mock_account_id,
+        mock_state, mock_summary, mock_del, mock_stats
+    ):
+        """Delete succeeds even if post-delete storage stats fetch fails."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test"},
+            "status": "CANCELED",
+            "finalStatus": {},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+        mock_stats.return_value = None  # Stats fetch failed
+
+        result = sb_delete_test("test123", "test", "cleanup", dry_run=False)
+
+        assert result['status'] == "deleted"
+        assert result.get('storage_stats') is None
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_delete_api_error_propagates(
+        self, mock_base_url, mock_account_id, mock_state, mock_summary
+    ):
+        """HTTP error from DELETE API propagates as RequestException."""
+        import requests as req
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test"},
+            "status": "CANCELED",
+            "finalStatus": {},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+
+        with patch('safebreach_mcp_studio.studio_functions.requests.delete') as mock_del:
+            mock_del.side_effect = req.exceptions.RequestException("API error")
+            with pytest.raises(req.exceptions.RequestException, match="API error"):
+                sb_delete_test("test123", "test", "cleanup", dry_run=False)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_fetch_storage_stats_success(
+        self, mock_base_url, mock_account_id, mock_get
+    ):
+        """_fetch_storage_stats returns platform storage stats."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "executionsHistoryIndexSizeInBytes": 8617546137,
+            "executionsHistoryLimitSizeInBytes": 48318382080,
+            "executionsHistoryIndexCount": 958,
+            "executionsHistoryLimitIndexesCount": 1000,
+            "lastTestsCleanupDate": "1769335860039",
+            "logHistoryIndexSizeInBytes": 5125119960,
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_storage_stats("test")
+
+        assert result['tests_on_disk_bytes'] == 8617546137
+        assert result['tests_limit_bytes'] == 48318382080
+        assert result['tests_on_disk_count'] == 958
+        assert result['tests_limit_count'] == 1000
+        assert result['events_index_bytes'] == 5125119960
+        assert "dbStorageStats" in mock_get.call_args[0][0]
