@@ -28,6 +28,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_manage_test,
     sb_delete_test,
     _get_test_state,
+    _fetch_test_summary,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -8121,3 +8122,142 @@ class TestManageTest:
 
         result = sb_manage_test(test_id="t1", action="cancel", console="test")
         assert result['status'] == "success"
+
+    # --- Phase 15: Delete — state pre-check and summary fetch — SAF-29972 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_on_running_raises(self, mock_state):
+        """Delete on RUNNING test raises ValueError with cancel guidance."""
+        mock_state.return_value = "RUNNING"
+
+        with pytest.raises(ValueError, match="cancel"):
+            sb_delete_test("test123", "test", "cleanup")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_on_paused_raises(self, mock_state):
+        """Delete on PAUSED test raises ValueError."""
+        mock_state.return_value = "PAUSED"
+
+        with pytest.raises(ValueError, match="cancel"):
+            sb_delete_test("test123", "test", "cleanup")
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_on_completed_proceeds(self, mock_state, mock_summary):
+        """Delete on COMPLETED test passes state pre-check."""
+        mock_state.return_value = "COMPLETED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test Plan"},
+            "status": "COMPLETED",
+            "finalStatus": {"missed": 2, "stopped": 3},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup")
+
+        assert result['action'] == "delete"
+        mock_summary.assert_called_once_with("test123", "test")
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_on_canceled_proceeds(self, mock_state, mock_summary):
+        """Delete on CANCELED test passes state pre-check."""
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test Plan"},
+            "status": "CANCELED",
+            "finalStatus": {"missed": 0},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup")
+        assert result['action'] == "delete"
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_on_failed_proceeds(self, mock_state, mock_summary):
+        """Delete on FAILED test passes state pre-check."""
+        mock_state.return_value = "FAILED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test Plan"},
+            "status": "FAILED",
+            "finalStatus": {},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup")
+        assert result['action'] == "delete"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_fetch_test_summary_success(self, mock_base_url, mock_account_id, mock_get):
+        """_fetch_test_summary returns raw dict with planName."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "planRunId": "test123",
+            "originalPlan": {"name": "My Test"},
+            "status": "COMPLETED",
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_test_summary("test123", "test")
+
+        assert result["originalPlan"]["name"] == "My Test"
+        expected_url = (
+            "https://test.safebreach.com/api/data/v1/accounts/"
+            "1234567890/testsummaries/test123"
+        )
+        assert mock_get.call_args[0][0] == expected_url
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_fetch_test_summary_404_raises_valueerror(
+        self, mock_base_url, mock_account_id, mock_get
+    ):
+        """_fetch_test_summary raises ValueError on 404."""
+        import requests as req
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = req.exceptions.HTTPError(
+            "404 Not Found", response=mock_response
+        )
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="not found"):
+            _fetch_test_summary("test123", "test")
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_delete_preview_contains_test_info(self, mock_state, mock_summary):
+        """Dry-run preview contains test name, status, sim count, dates."""
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "CISA Alert Test"},
+            "status": "CANCELED",
+            "finalStatus": {"missed": 4, "stopped": 3, "prevented": 2},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup", dry_run=True)
+
+        assert result['status'] == "dry_run"
+        assert result['dry_run'] is True
+        preview = result['preview']
+        assert preview['test_name'] == "CISA Alert Test"
+        assert preview['status'] == "CANCELED"
+        assert preview['simulation_count'] == 9  # 4 + 3 + 2
+        assert 'hint_to_agent' in result

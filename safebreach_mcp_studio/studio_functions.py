@@ -2737,6 +2737,37 @@ def _append_test_note(
         return {"note_status": "failed", "note_error": str(e)}
 
 
+def _fetch_test_summary(test_id: str, console: str) -> Dict[str, Any]:
+    """
+    Fetch test summary from the data API.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+
+    Returns:
+        Raw JSON dict from GET /testsummaries/{test_id}
+
+    Raises:
+        ValueError: If test is not found (404)
+        requests.exceptions.RequestException: On other API errors
+    """
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    response = requests.get(url, headers=headers, timeout=30)
+    try:
+        check_rbac_response(response)
+    except Exception:
+        if hasattr(response, 'status_code') and response.status_code == 404:
+            raise ValueError(f"Test '{test_id}' not found")
+        raise
+
+    return response.json()
+
+
 def sb_delete_test(
     test_id: str,
     console: str,
@@ -2761,7 +2792,40 @@ def sb_delete_test(
             "for the permanent removal of this test."
         )
 
-    # TODO: state pre-check, summary fetch, dry-run/execute (Phases 2-4)
+    # State pre-check — only terminal tests can be deleted
+    current_state = _get_test_state(test_id, console).upper()
+    terminal_states = {"CANCELED", "COMPLETED", "FAILED"}
+    if current_state not in terminal_states:
+        raise ValueError(
+            f"Cannot delete a {current_state.lower()} test. "
+            "Use manage_test with action='cancel' first, then delete."
+        )
+
+    # Fetch test summary for planName and preview data
+    summary = _fetch_test_summary(test_id, console)
+    plan_name = summary.get('originalPlan', {}).get('name', 'Unknown')
+    final_status = summary.get('finalStatus', {})
+    simulation_count = sum(final_status.values()) if final_status else 0
+
+    preview = {
+        "test_name": plan_name,
+        "status": summary.get('status', current_state),
+        "simulation_count": simulation_count,
+        "start_time": summary.get('startTime'),
+        "end_time": summary.get('endTime'),
+    }
+
+    if dry_run:
+        return {
+            "test_id": test_id, "action": "delete", "status": "dry_run",
+            "dry_run": True, "preview": preview,
+            "hint_to_agent": (
+                "This is a preview. To permanently delete this test, call "
+                "manage_test again with dry_run=False. This action is irreversible."
+            ),
+        }
+
+    # TODO: execute delete, rate limiting, storage stats (Phases 3-4)
     return {"test_id": test_id, "action": "delete", "status": "not_implemented"}
 
 
