@@ -2737,32 +2737,68 @@ def _append_test_note(
         return {"note_status": "failed", "note_error": str(e)}
 
 
+def sb_delete_test(
+    test_id: str,
+    console: str,
+    reason: str,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """
+    Delete a test from history (SAF-29972). Only terminal tests allowed.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+        reason: Mandatory reason for the deletion (audit trail)
+        dry_run: If True (default), return preview without deleting
+
+    Returns:
+        Dict with test_id, action, status, and preview/deletion info
+    """
+    if not reason or not str(reason).strip():
+        raise ValueError(
+            "reason is required for delete — provide a justification "
+            "for the permanent removal of this test."
+        )
+
+    # TODO: state pre-check, summary fetch, dry-run/execute (Phases 2-4)
+    return {"test_id": test_id, "action": "delete", "status": "not_implemented"}
+
+
 def sb_manage_test(
     test_id: str,
     action: str,
     console: str = "default",
     reason: str = None,
+    dry_run: bool = None,
 ) -> Dict[str, Any]:
     """
-    Manage a running test's lifecycle (pause, resume, or cancel).
+    Manage a test's lifecycle — pause, resume, cancel, or delete.
 
     Args:
         test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
-        action: Lifecycle action — "pause", "resume", or "cancel"
+        action: Lifecycle action — "pause", "resume", "cancel", or "delete"
         console: SafeBreach console identifier (default: "default")
-        reason: Optional reason for the action (appends note to test comment)
+        reason: Reason for the action. Required for delete, optional for others.
+        dry_run: Only for delete — if True (default), preview without deleting.
 
     Returns:
-        Dict with test_id, action, status, and optional note info
+        Dict with test_id, action, status, and optional note/preview info
     """
     if not test_id or not str(test_id).strip():
         raise ValueError("test_id is required and cannot be empty")
 
-    valid_actions = ["pause", "resume", "cancel"]
+    valid_actions = ["pause", "resume", "cancel", "delete"]
     if action not in valid_actions:
         raise ValueError(
-            f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+            f"Invalid action '{action}'. Valid actions: pause, resume, cancel, delete"
         )
+
+    # Delete dispatches to dedicated function (SAF-29972)
+    if action == "delete":
+        if dry_run is None:
+            dry_run = True
+        return sb_delete_test(test_id, console, reason, dry_run)
 
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 

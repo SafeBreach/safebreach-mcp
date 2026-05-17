@@ -26,6 +26,7 @@ from safebreach_mcp_studio.studio_functions import (
     _get_scenario_statistics,
     sb_run_scenario,
     sb_manage_test,
+    sb_delete_test,
     _get_test_state,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
@@ -8052,3 +8053,71 @@ class TestManageTest:
 
         assert result['was_already'] is True
         assert result['status'] == "already_canceled"
+
+    # --- Phase 14: Delete — validation and dispatch — SAF-29972 ---
+
+    @patch('safebreach_mcp_studio.studio_functions.sb_delete_test')
+    def test_delete_dispatches_to_sb_delete_test(self, mock_delete):
+        """manage_test(action='delete') delegates to sb_delete_test."""
+        mock_delete.return_value = {
+            "test_id": "test123", "action": "delete", "status": "dry_run"
+        }
+
+        result = sb_manage_test(
+            test_id="test123", action="delete", console="test",
+            reason="cleanup", dry_run=True
+        )
+
+        mock_delete.assert_called_once_with("test123", "test", "cleanup", True)
+        assert result['action'] == "delete"
+
+    def test_delete_missing_reason_raises(self):
+        """Delete without reason raises ValueError."""
+        with pytest.raises(ValueError, match="reason.*required"):
+            sb_manage_test(
+                test_id="test123", action="delete", console="test",
+                reason=None
+            )
+
+    def test_delete_blank_reason_raises(self):
+        """Delete with blank reason raises ValueError."""
+        with pytest.raises(ValueError, match="reason.*required"):
+            sb_manage_test(
+                test_id="test123", action="delete", console="test",
+                reason="   "
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions.sb_delete_test')
+    def test_delete_dry_run_defaults_to_true(self, mock_delete):
+        """dry_run defaults to True when not specified for delete."""
+        mock_delete.return_value = {
+            "test_id": "test123", "action": "delete", "status": "dry_run"
+        }
+
+        sb_manage_test(
+            test_id="test123", action="delete", console="test",
+            reason="cleanup"
+        )
+
+        # dry_run should be True (defaulted from None)
+        call_args = mock_delete.call_args
+        assert call_args[0][3] is True  # 4th positional arg = dry_run
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_existing_actions_unaffected_by_delete(
+        self, mock_base_url, mock_account_id, mock_del, mock_state
+    ):
+        """Pause/resume/cancel still work after adding delete action."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "RUNNING"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+
+        result = sb_manage_test(test_id="t1", action="cancel", console="test")
+        assert result['status'] == "success"
