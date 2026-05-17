@@ -10,7 +10,7 @@ import ast
 import json
 import logging
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
@@ -2768,6 +2768,48 @@ def _fetch_test_summary(test_id: str, console: str) -> Dict[str, Any]:
     return response.json()
 
 
+def _fetch_test_storage_info(test_id: str, console: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch storage impact data for a test from the detailedTestSummaries API.
+    Best-effort — returns None on any error.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with space_freed_bytes, events_freed_bytes, current_usage_bytes,
+        usage_limit_bytes — or None on error.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = (
+            f"{base_url}/api/data/v1/accounts/{account_id}"
+            f"/detailedTestSummaries?planRunIds={test_id}"
+        )
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        data = response.json()
+
+        if not isinstance(data, list) or len(data) == 0:
+            return None
+
+        item = data[0]
+        breakdown = item.get('testSizeBreakdown', {})
+        return {
+            "space_freed_bytes": breakdown.get('executionsHistorySize', 0),
+            "events_freed_bytes": breakdown.get('integrationLogIndexSize', 0),
+            "current_usage_bytes": item.get('historyIndexSizeInBytes', 0),
+            "usage_limit_bytes": item.get('historyIndexLimitSizeInBytes', 0),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch storage info for test {test_id}: {e}")
+        return None
+
+
 def sb_delete_test(
     test_id: str,
     console: str,
@@ -2816,6 +2858,11 @@ def sb_delete_test(
     }
 
     if dry_run:
+        # Enrich preview with storage savings (best-effort)
+        storage_info = _fetch_test_storage_info(test_id, console)
+        if storage_info is not None:
+            preview['storage_savings'] = storage_info
+
         return {
             "test_id": test_id, "action": "delete", "status": "dry_run",
             "dry_run": True, "preview": preview,

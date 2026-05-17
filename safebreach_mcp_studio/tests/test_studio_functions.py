@@ -29,6 +29,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_delete_test,
     _get_test_state,
     _fetch_test_summary,
+    _fetch_test_storage_info,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -8261,3 +8262,105 @@ class TestManageTest:
         assert preview['status'] == "CANCELED"
         assert preview['simulation_count'] == 9  # 4 + 3 + 2
         assert 'hint_to_agent' in result
+
+    # --- Phase 16: Delete — dry-run storage savings — SAF-29972 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_storage_info')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_dry_run_includes_storage_savings(
+        self, mock_state, mock_summary, mock_storage
+    ):
+        """Dry-run preview includes storage_savings from detailedTestSummaries."""
+        mock_state.return_value = "CANCELED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test Plan"},
+            "status": "CANCELED",
+            "finalStatus": {"missed": 2},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_storage.return_value = {
+            "space_freed_bytes": 2128773512,
+            "events_freed_bytes": 97373719,
+            "current_usage_bytes": 8617546137,
+            "usage_limit_bytes": 48318382080,
+        }
+
+        result = sb_delete_test("test123", "test", "cleanup", dry_run=True)
+
+        assert result['status'] == "dry_run"
+        savings = result['preview']['storage_savings']
+        assert savings['space_freed_bytes'] == 2128773512
+        assert savings['events_freed_bytes'] == 97373719
+        assert savings['current_usage_bytes'] == 8617546137
+        assert savings['usage_limit_bytes'] == 48318382080
+        mock_storage.assert_called_once_with("test123", "test")
+
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_storage_info')
+    @patch('safebreach_mcp_studio.studio_functions._fetch_test_summary')
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    def test_dry_run_storage_fetch_failure_graceful(
+        self, mock_state, mock_summary, mock_storage
+    ):
+        """Dry-run still returns preview when storage fetch fails."""
+        mock_state.return_value = "COMPLETED"
+        mock_summary.return_value = {
+            "originalPlan": {"name": "Test Plan"},
+            "status": "COMPLETED",
+            "finalStatus": {"missed": 1},
+            "startTime": 1778678323893,
+            "endTime": 1778785706818,
+        }
+        mock_storage.return_value = None  # API failed
+
+        result = sb_delete_test("test123", "test", "cleanup", dry_run=True)
+
+        assert result['status'] == "dry_run"
+        assert 'storage_savings' not in result['preview']
+        assert 'hint_to_agent' in result
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_fetch_test_storage_info_success(
+        self, mock_base_url, mock_account_id, mock_get
+    ):
+        """_fetch_test_storage_info returns storage savings dict."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = [{
+            "historyIndexSizeInBytes": 8617546137,
+            "historyIndexLimitSizeInBytes": 48318382080,
+            "testSizeBreakdown": {
+                "executionsHistorySize": 2128773512,
+                "integrationLogIndexSize": 97373719,
+            },
+        }]
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = _fetch_test_storage_info("test123", "test")
+
+        assert result['space_freed_bytes'] == 2128773512
+        assert result['events_freed_bytes'] == 97373719
+        assert result['current_usage_bytes'] == 8617546137
+        assert result['usage_limit_bytes'] == 48318382080
+        assert "detailedTestSummaries" in mock_get.call_args[0][0]
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_fetch_test_storage_info_api_error_returns_none(
+        self, mock_base_url, mock_account_id, mock_get
+    ):
+        """_fetch_test_storage_info returns None on API error."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_get.side_effect = Exception("connection error")
+
+        result = _fetch_test_storage_info("test123", "test")
+        assert result is None
