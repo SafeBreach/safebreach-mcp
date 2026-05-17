@@ -16,7 +16,7 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Complete |
+| **PRD Status** | In Progress |
 | **Last Updated** | 2026-05-17 10:00 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | N/A |
@@ -183,6 +183,9 @@ to the user, and execute deletions after confirmation.
 | Phase 4: Execute delete with post-delete storage stats | ✅ Complete | 2026-05-17 | - | 8 tests |
 | Phase 5: Tool handler and response formatting | ✅ Complete | 2026-05-17 | - | 3 tests |
 | Phase 6: E2E test | ✅ Complete | 2026-05-17 | - | 1 E2E test (6-step lifecycle) |
+| Phase 7: User lookup and launched_by field | ✅ Complete | 2026-05-17 | - | 8 tests |
+| Phase 8: launched_by filter in get_tests | ⏳ Pending | - | - | |
+| Phase 9: Storage hint in get_test_details | ⏳ Pending | - | - | |
 
 ---
 
@@ -442,6 +445,128 @@ storage stats.
 - Single E2E test covering full lifecycle with both dry-run and execute
 
 **Git Commit**: `test(studio): add E2E test for delete action lifecycle (SAF-29972)`
+
+---
+
+### Phase 7: User Lookup and `launched_by` Field
+
+**Semantic Change**: Resolve numeric `ranBy`/`userId` to human-readable usernames and expose
+as `launched_by` in `get_tests` and `get_test_details` responses.
+
+**Deliverables**:
+- User lookup helper in core (fetches users from config API, cached, graceful failure)
+- `launched_by` field added to test summary mapping
+- `get_test_details` includes `launched_by`
+
+**Implementation Details**:
+
+1. **New module `safebreach_mcp_core/user_lookup.py`** (follows `suggestions.py` pattern):
+   - Module-level `SafeBreachCache(name="users", maxsize=5, ttl=3600)` — long TTL, users rarely change
+   - Cache is **always-on** (not gated by `is_caching_enabled`) since user lookup is a cross-cutting
+     concern used across servers and the data changes infrequently
+   - Function `get_user_name(user_id, console)` → returns username string or None
+   - Internal `_fetch_users_map(console)` → calls
+     `GET /api/config/v1/accounts/{account_id}/users?details=false&deleted=true`
+     on the **config** API, returns `{user_id: user_name}` dict, cached per console
+   - On any error (e.g., 403 insufficient permissions): log warning, return empty dict
+   - This is best-effort — missing user data should not break test listing
+
+2. **Extend `get_reduced_test_summary_mapping()` in `data_types.py`**:
+   - Add `ranBy` to `reduced_test_summary_mapping`: `'ran_by_user_id': 'ranBy'`
+   - The raw numeric ID is always included
+
+3. **Add `launched_by` resolution in `data_functions.py`**:
+   - After building the reduced test summary, call `_fetch_users(console)` to get the lookup
+   - Resolve `ran_by_user_id` → `launched_by` (username string)
+   - If user not found in lookup, set `launched_by` to None
+   - Apply to both `sb_get_tests()` (list) and `sb_get_test_details()` (single)
+
+**Changes**:
+
+| File | Change |
+|------|--------|
+| `safebreach_mcp_core/user_lookup.py` | New module: `get_user_name()`, `_fetch_users_map()`, cached |
+| `safebreach_mcp_data/data_functions.py` | Enrich tests with `launched_by` via `get_user_name()` |
+| `safebreach_mcp_data/data_types.py` | Add `ran_by_user_id` to mapping |
+| `safebreach_mcp_data/tests/test_data_functions.py` | Tests: user lookup, resolution, API failure graceful |
+
+**Test Plan**:
+- `test_fetch_users_success` — returns {id: name} dict
+- `test_fetch_users_api_error_returns_empty` — graceful on 403
+- `test_launched_by_resolved_in_test_details` — username appears in response
+- `test_launched_by_none_when_user_unknown` — unknown userId → None
+
+**Git Commit**: `feat(data): add launched_by field to test results via user lookup (SAF-29972)`
+
+---
+
+### Phase 8: `launched_by` Filter in `get_tests`
+
+**Semantic Change**: Add `launched_by_filter` parameter to `get_tests` for filtering tests by
+launcher username.
+
+**Deliverables**:
+- `launched_by_filter` parameter in `sb_get_tests()` and `get_tests` tool
+- Case-insensitive partial match on resolved username
+
+**Implementation Details**:
+
+1. **Extend `sb_get_tests()` in `data_functions.py`**:
+   - Add `launched_by_filter: str = None` parameter
+   - After enriching tests with `launched_by`, filter by case-insensitive partial match
+     (same pattern as `name_filter`)
+   - Include filter in response metadata
+
+2. **Update `get_tests` tool** in `data_server.py`:
+   - Add `launched_by_filter` parameter to tool handler
+   - Add to tool description with example
+
+**Changes**:
+
+| File | Change |
+|------|--------|
+| `safebreach_mcp_data/data_functions.py` | Add `launched_by_filter` to `sb_get_tests()` |
+| `safebreach_mcp_data/data_server.py` | Add `launched_by_filter` to tool handler |
+| `safebreach_mcp_data/tests/test_data_functions.py` | Tests: filter matching, case-insensitive |
+
+**Test Plan**:
+- `test_launched_by_filter_matches` — "sbadmin" matches test launched by "sbadmin"
+- `test_launched_by_filter_case_insensitive` — "SBAdmin" matches "sbadmin"
+- `test_launched_by_filter_partial_match` — "admin" matches "sbadmin"
+- `test_launched_by_filter_no_match` — returns empty when no tests match
+
+**Git Commit**: `feat(data): add launched_by_filter to get_tests (SAF-29972)`
+
+---
+
+### Phase 9: Storage Hint in `get_test_details`
+
+**Semantic Change**: Add a `hint_to_agent` in `get_test_details` for terminal tests, guiding the
+agent to use `manage_test(action="delete", dry_run=True)` for storage estimation.
+
+**Deliverables**:
+- Hint added to terminal test details response
+
+**Implementation Details**:
+
+1. **Extend `sb_get_test_details()` in `data_functions.py`**:
+   - After building the response, if the test status is terminal (completed/canceled/failed),
+     add `hint_to_agent`: "To see how much space this test uses and preview deletion, call
+     manage_test with action='delete' and dry_run=True."
+   - Only add if not already present (avoid overwriting existing hints)
+
+**Changes**:
+
+| File | Change |
+|------|--------|
+| `safebreach_mcp_data/data_functions.py` | Add storage hint for terminal tests |
+| `safebreach_mcp_data/tests/test_data_functions.py` | Test: hint present for terminal, absent for running |
+
+**Test Plan**:
+- `test_terminal_test_has_delete_hint` — completed test includes delete hint
+- `test_running_test_no_delete_hint` — running test does not include delete hint
+
+**Git Commit**: `feat(data): add storage hint for terminal tests in get_test_details (SAF-29972)`
 
 ## 10. Risks and Assumptions
 

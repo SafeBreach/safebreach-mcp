@@ -157,7 +157,13 @@ def sb_get_tests(
         start_index = page_number * PAGE_SIZE
         end_index = start_index + PAGE_SIZE
         page_tests = ordered_tests[start_index:end_index]
-        
+
+        # Enrich with launched_by (best-effort user lookup — SAF-29972)
+        from safebreach_mcp_core.user_lookup import get_user_name
+        for test in page_tests:
+            user_id = test.get('ran_by_user_id')
+            test['launched_by'] = get_user_name(user_id, console)
+
         # Track applied filters
         applied_filters = {}
         if test_type:
@@ -464,6 +470,11 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 ),
                 "drifted_count": drift_count
             })
+
+        # Enrich with launched_by (best-effort user lookup — SAF-29972)
+        from safebreach_mcp_core.user_lookup import get_user_name
+        user_id = return_details.get('ran_by_user_id')
+        return_details['launched_by'] = get_user_name(user_id, console)
 
         # Add polling hint for non-terminal statuses
         final_status = (return_details.get('status', '') or '').lower()
