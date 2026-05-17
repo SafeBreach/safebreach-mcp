@@ -1443,6 +1443,19 @@ manage_test(test_id="1776488350786.15", action="pause", console="demo",
             try:
                 result = sb_manage_test(test_id, action, console, reason)
 
+                # Idempotent quick-return — SAF-31111
+                if result.get('was_already'):
+                    response_parts = [
+                        f"## Test {action.capitalize()} — No Action Needed",
+                        "",
+                        f"**Test ID:** {result['test_id']}",
+                        f"**Status:** Test is already {result['current_state'].lower()}.",
+                    ]
+                    if result.get('hint_to_agent'):
+                        response_parts.append("")
+                        response_parts.append(f"**Hint:** {result['hint_to_agent']}")
+                    return "\n".join(response_parts)
+
                 action_display = action.capitalize()
                 response_parts = [
                     f"## Test {action_display}",
@@ -1454,11 +1467,6 @@ manage_test(test_id="1776488350786.15", action="pause", console="demo",
 
                 if result.get('note_status') == 'success':
                     response_parts.append(f"**Note:** {result['note']}")
-                elif result.get('note_status') == 'failed':
-                    response_parts.append(
-                        f"**Note Warning:** Failed to append note — "
-                        f"{result.get('note_error', 'unknown error')}"
-                    )
 
                 if result.get('hint_to_agent'):
                     response_parts.append("")

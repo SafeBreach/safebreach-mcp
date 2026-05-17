@@ -26,6 +26,7 @@ from safebreach_mcp_studio.studio_functions import (
     _get_scenario_statistics,
     sb_run_scenario,
     sb_manage_test,
+    _get_test_state,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -7306,11 +7307,13 @@ class TestManageTest:
         yield
         _user_auth_artifacts.reset(token)
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_cancel_success(self, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_success(self, mock_base_url, mock_account_id, mock_delete, mock_state):
         """Cancel a running test via DELETE — happy path."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7340,11 +7343,13 @@ class TestManageTest:
         assert call_args[1]['headers']['x-apitoken'] == "test-token"
         assert call_args[1]['timeout'] == 30
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_cancel_api_error(self, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_api_error(self, mock_base_url, mock_account_id, mock_delete, mock_state):
         """API error during cancel propagates as RequestException."""
+        mock_state.return_value = "RUNNING"
         import requests as req
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
@@ -7358,11 +7363,13 @@ class TestManageTest:
 
     # --- Phase 2: Pause ---
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_pause_success(self, mock_base_url, mock_account_id, mock_put):
+    def test_pause_success(self, mock_base_url, mock_account_id, mock_put, mock_state):
         """Pause a running test via PUT /state — happy path."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7394,11 +7401,13 @@ class TestManageTest:
 
     # --- Phase 3: Resume ---
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_resume_success(self, mock_base_url, mock_account_id, mock_put):
+    def test_resume_success(self, mock_base_url, mock_account_id, mock_put, mock_state):
         """Resume a paused test via PUT /state — happy path."""
+        mock_state.return_value = "PAUSED"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7437,11 +7446,13 @@ class TestManageTest:
         with pytest.raises(ValueError, match="test_id"):
             sb_manage_test(test_id=None, action="cancel")
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_not_found_404(self, mock_base_url, mock_account_id, mock_delete):
+    def test_not_found_404(self, mock_base_url, mock_account_id, mock_delete, mock_state):
         """404 from API propagates as HTTPError."""
+        mock_state.return_value = "RUNNING"
         import requests as req
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
@@ -7549,6 +7560,7 @@ class TestManageTest:
         put_body = mock_put.call_args[1]['json']
         assert not put_body['comment'].startswith("\n")
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
@@ -7556,9 +7568,10 @@ class TestManageTest:
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_manage_test_with_reason(
         self, mock_base_url, mock_account_id,
-        mock_get, mock_put, mock_delete
+        mock_get, mock_put, mock_delete, mock_state
     ):
         """sb_manage_test with reason calls _append_test_note."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7587,13 +7600,15 @@ class TestManageTest:
         assert result['note_status'] == "success"
         assert "Test cancel: no longer needed" in result['note']
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_manage_test_without_reason(
-        self, mock_base_url, mock_account_id, mock_delete
+        self, mock_base_url, mock_account_id, mock_delete, mock_state
     ):
         """sb_manage_test without reason does NOT call _append_test_note."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7652,13 +7667,15 @@ class TestManageTest:
         assert result['note_status'] == "failed"
         assert 'note_error' in result
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_note_failure_doesnt_block_lifecycle(
-        self, mock_base_url, mock_account_id, mock_delete
+        self, mock_base_url, mock_account_id, mock_delete, mock_state
     ):
         """Lifecycle succeeds even when note append fails."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7680,11 +7697,13 @@ class TestManageTest:
 
     # --- Phase 7: hint_to_agent ---
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_pause_hint(self, mock_base_url, mock_account_id, mock_put):
+    def test_pause_hint(self, mock_base_url, mock_account_id, mock_put, mock_state):
         """Pause result includes hint_to_agent mentioning resume and cancel."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7699,11 +7718,13 @@ class TestManageTest:
         assert "cancel" in result['hint_to_agent']
         assert "get_test_details" in result['hint_to_agent']
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_resume_hint(self, mock_base_url, mock_account_id, mock_put):
+    def test_resume_hint(self, mock_base_url, mock_account_id, mock_put, mock_state):
         """Resume result includes hint_to_agent mentioning monitoring."""
+        mock_state.return_value = "PAUSED"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7716,11 +7737,13 @@ class TestManageTest:
         assert 'hint_to_agent' in result
         assert "get_test_details" in result['hint_to_agent']
 
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_cancel_hint(self, mock_base_url, mock_account_id, mock_delete):
+    def test_cancel_hint(self, mock_base_url, mock_account_id, mock_delete, mock_state):
         """Cancel result includes hint_to_agent mentioning partial results."""
+        mock_state.return_value = "RUNNING"
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7733,3 +7756,299 @@ class TestManageTest:
         assert 'hint_to_agent' in result
         assert "get_test_details" in result['hint_to_agent']
         assert "partial" in result['hint_to_agent'].lower()
+
+    # --- Phase 8: State pre-check (_get_test_state) — SAF-31111 ---
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_from_orchestrator_running(self, mock_orch):
+        """_get_test_state returns RUNNING from orchestrator queue."""
+        mock_orch.return_value = "RUNNING"
+
+        result = _get_test_state("test123", "test")
+
+        assert result == "RUNNING"
+        mock_orch.assert_called_once_with("test123", "test")
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_from_orchestrator_paused(self, mock_orch):
+        """_get_test_state returns PAUSED from orchestrator queue."""
+        mock_orch.return_value = "PAUSED"
+
+        result = _get_test_state("test123", "test")
+
+        assert result == "PAUSED"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_falls_back_to_data_api(
+        self, mock_orch, mock_base_url, mock_account_id, mock_get
+    ):
+        """_get_test_state falls back to data API when test not in queue."""
+        mock_orch.return_value = None  # Not in orchestrator queue
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_data_response = MagicMock()
+        mock_data_response.json.return_value = {"status": "CANCELED"}
+        mock_data_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_data_response
+
+        result = _get_test_state("test123", "test")
+
+        assert result == "CANCELED"
+        mock_orch.assert_called_once()
+        mock_get.assert_called_once()
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    def test_get_test_state_orch_failure_falls_back(
+        self, mock_orch, mock_base_url, mock_account_id, mock_get
+    ):
+        """_get_test_state falls back to data API when orchestrator returns None."""
+        mock_orch.return_value = None
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_data_response = MagicMock()
+        mock_data_response.json.return_value = {"status": "COMPLETED"}
+        mock_data_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_data_response
+
+        result = _get_test_state("test123", "test")
+
+        assert result == "COMPLETED"
+
+    # --- Phase 9: State transition matrix — Cancel — SAF-31111 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_running_proceeds(
+        self, mock_base_url, mock_account_id, mock_delete, mock_state
+    ):
+        """Cancel on RUNNING test proceeds to DELETE API call."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "RUNNING"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "success"
+        assert result['action'] == "cancel"
+        mock_delete.assert_called_once()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_canceled_returns_idempotent(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Cancel on CANCELED test returns idempotent quick-return."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "already_canceled"
+        assert result['was_already'] is True
+        assert result['current_state'] == "CANCELED"
+        assert result['test_id'] == "test123"
+        assert result['action'] == "cancel"
+        assert 'hint_to_agent' in result
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_completed_returns_idempotent(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Cancel on COMPLETED test returns idempotent quick-return."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "COMPLETED"
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "already_completed"
+        assert result['was_already'] is True
+        assert result['current_state'] == "COMPLETED"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_paused_raises_error(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Cancel on PAUSED test raises ValueError with resume guidance."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "PAUSED"
+
+        with pytest.raises(ValueError, match="resume"):
+            sb_manage_test(test_id="test123", action="cancel", console="test")
+
+    # --- Phase 10: State transition matrix — Pause — SAF-31111 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_pause_on_running_proceeds(
+        self, mock_base_url, mock_account_id, mock_put, mock_state
+    ):
+        """Pause on RUNNING test proceeds to PUT API call."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "RUNNING"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="pause", console="test")
+
+        assert result['status'] == "success"
+        assert result['action'] == "pause"
+        mock_put.assert_called_once()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_pause_on_paused_returns_idempotent(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Pause on PAUSED test returns idempotent quick-return."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "PAUSED"
+
+        result = sb_manage_test(test_id="test123", action="pause", console="test")
+
+        assert result['status'] == "already_paused"
+        assert result['was_already'] is True
+        assert result['current_state'] == "PAUSED"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_pause_on_canceled_raises_error(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Pause on CANCELED test raises ValueError — terminal state."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+
+        with pytest.raises(ValueError):
+            sb_manage_test(test_id="test123", action="pause", console="test")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_pause_on_completed_raises_error(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Pause on COMPLETED test raises ValueError — terminal state."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "COMPLETED"
+
+        with pytest.raises(ValueError):
+            sb_manage_test(test_id="test123", action="pause", console="test")
+
+    # --- Phase 11: State transition matrix — Resume — SAF-31111 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_resume_on_paused_proceeds(
+        self, mock_base_url, mock_account_id, mock_put, mock_state
+    ):
+        """Resume on PAUSED test proceeds to PUT API call."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "PAUSED"
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_put.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="resume", console="test")
+
+        assert result['status'] == "success"
+        assert result['action'] == "resume"
+        mock_put.assert_called_once()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_resume_on_running_returns_idempotent(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Resume on RUNNING test returns idempotent quick-return."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "RUNNING"
+
+        result = sb_manage_test(test_id="test123", action="resume", console="test")
+
+        assert result['status'] == "already_running"
+        assert result['was_already'] is True
+        assert result['current_state'] == "RUNNING"
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_resume_on_canceled_raises_error(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Resume on CANCELED test raises ValueError — terminal state."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "CANCELED"
+
+        with pytest.raises(ValueError):
+            sb_manage_test(test_id="test123", action="resume", console="test")
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_resume_on_completed_raises_error(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """Resume on COMPLETED test raises ValueError — terminal state."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "COMPLETED"
+
+        with pytest.raises(ValueError):
+            sb_manage_test(test_id="test123", action="resume", console="test")
+
+    # --- Phase 12: State normalization — SAF-31111 ---
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_state_precheck_normalizes_lowercase_status(
+        self, mock_base_url, mock_account_id, mock_state
+    ):
+        """State pre-check normalizes lowercase status to uppercase."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "canceled"  # lowercase
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['was_already'] is True
+        assert result['status'] == "already_canceled"

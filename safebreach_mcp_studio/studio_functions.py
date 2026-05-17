@@ -2601,13 +2601,51 @@ def sb_run_scenario(
 # ---------------------------------------------------------------------------
 
 
+def _get_test_state(test_id: str, console: str) -> str:
+    """
+    Fetch the current state of a test by consulting the orchestrator queue
+    first (real-time), falling back to the data API (eventually consistent).
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+
+    Returns:
+        Status string: "RUNNING", "PAUSED", "CANCELED", "COMPLETED", etc.
+
+    Raises:
+        requests.exceptions.RequestException: On API error
+    """
+    from safebreach_mcp_core.queue_state import get_orchestrator_test_state
+
+    # Phase 1: orchestrator queue (real-time for active tests)
+    orch_state = get_orchestrator_test_state(test_id, console)
+    if orch_state is not None:
+        return orch_state
+
+    logger.info(
+        "Test '%s' not found in orchestrator queue — "
+        "falling back to data API", test_id
+    )
+
+    # Phase 2: data API (terminal / historical tests)
+    data_base = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    url = f"{data_base}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    response = requests.get(url, headers=headers, timeout=30)
+    check_rbac_response(response)
+    return response.json().get('status', 'UNKNOWN')
+
+
 def _set_test_state(test_id: str, action: str, console: str) -> Dict[str, Any]:
     """
     Change a running test's state via the orchestrator API.
 
     Args:
         test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
-        action: Lifecycle action — currently "cancel" (pause/resume added later)
+        action: Lifecycle action — "cancel", "pause", or "resume"
         console: SafeBreach console identifier
 
     Returns:
@@ -2727,6 +2765,58 @@ def sb_manage_test(
         )
 
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
+
+    # State pre-check — SAF-31111: validate transition before API call.
+    # Uses orchestrator GET /queue (real-time) with data API fallback.
+    current_state = _get_test_state(test_id, console).upper()
+    terminal_states = {"CANCELED", "COMPLETED"}
+
+    # Idempotent quick-returns and invalid transition checks
+    if action == "cancel":
+        if current_state in terminal_states:
+            status_key = f"already_{current_state.lower()}"
+            return {
+                "test_id": test_id, "action": action, "status": status_key,
+                "was_already": True, "current_state": current_state,
+                "hint_to_agent": (
+                    f"Test is already {current_state.lower()}. No action needed. "
+                    "Use get_test_details to view results."
+                ),
+            }
+        if current_state == "PAUSED":
+            raise ValueError(
+                "Cannot cancel a paused test. Use manage_test with "
+                "action='resume' first, then cancel."
+            )
+    elif action == "pause":
+        if current_state == "PAUSED":
+            return {
+                "test_id": test_id, "action": action, "status": "already_paused",
+                "was_already": True, "current_state": current_state,
+                "hint_to_agent": (
+                    "Test is already paused. Use manage_test with action='resume' "
+                    "to continue, or action='cancel' to abort."
+                ),
+            }
+        if current_state in terminal_states:
+            raise ValueError(
+                f"Cannot pause a {current_state.lower()} test. "
+                "The test has already finished."
+            )
+    elif action == "resume":
+        if current_state == "RUNNING":
+            return {
+                "test_id": test_id, "action": action, "status": "already_running",
+                "was_already": True, "current_state": current_state,
+                "hint_to_agent": (
+                    "Test is already running. Use get_test_details to monitor progress."
+                ),
+            }
+        if current_state in terminal_states:
+            raise ValueError(
+                f"Cannot resume a {current_state.lower()} test. "
+                "The test has already finished."
+            )
 
     # Rate limiting gate — check before mutating
     caller_id = get_caller_identity()

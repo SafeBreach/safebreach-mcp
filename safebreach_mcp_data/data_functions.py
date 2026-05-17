@@ -420,24 +420,35 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
         return_details = _find_test_in_cached_list(test_id, console)
 
-        # If cached entry shows a non-terminal status, fetch fresh from single-test
-        # endpoint. The cached list can be up to 30 minutes stale, and transient
+        # If cached entry shows a non-terminal status, fetch fresh status.
+        # The cached list can be up to 30 minutes stale, and transient
         # statuses (RUNNING, QUEUED, etc.) may have changed since caching.
+        # SAF-31111: Check orchestrator queue first (real-time) before the
+        # data API, which has 10-15s eventual consistency lag.
         terminal_statuses = {'completed', 'canceled', 'failed'}
         cached_status = (return_details.get('status', '') or '').lower() if return_details else ''
         if return_details is not None and cached_status not in terminal_statuses:
             logger.info("Test '%s' shows non-terminal status '%s' in cache — fetching fresh", test_id, cached_status)
-            try:
-                fresh = _fetch_single_test(test_id, console)
-                # Merge: use fresh status/end_time but keep cached extras
-                # (findingsCount, compromisedHosts) that single-test omits
-                return_details['status'] = fresh.get('status', return_details['status'])
-                return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
-                return_details['simulations_statistics'] = fresh.get(
-                    'simulations_statistics', return_details['simulations_statistics']
-                )
-            except Exception as e:
-                logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
+
+            # Phase 1: orchestrator queue (real-time, no lag)
+            from safebreach_mcp_core.queue_state import get_orchestrator_test_state
+            orch_state = get_orchestrator_test_state(test_id, console)
+            if orch_state is not None:
+                return_details['status'] = orch_state
+                logger.info("Test '%s' status from orchestrator queue: %s", test_id, orch_state)
+            else:
+                # Phase 2: data API single-test endpoint (eventual consistency)
+                try:
+                    fresh = _fetch_single_test(test_id, console)
+                    # Merge: use fresh status/end_time but keep cached extras
+                    # (findingsCount, compromisedHosts) that single-test omits
+                    return_details['status'] = fresh.get('status', return_details['status'])
+                    return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
+                    return_details['simulations_statistics'] = fresh.get(
+                        'simulations_statistics', return_details['simulations_statistics']
+                    )
+                except Exception as e:
+                    logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
 
         if return_details is None:
             # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
