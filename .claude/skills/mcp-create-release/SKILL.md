@@ -1,3 +1,11 @@
+---
+name: mcp-create-release
+description: >-
+  Prepare a release candidate for the SafeBreach MCP servers.
+  Bumps version in pyproject.toml, generates changelog from git history, and creates a GitHub PR.
+  Use when "create release", "prepare release", "version bump", or "new MCP release".
+---
+
 # Create MCP Release
 
 Prepare a release candidate for the SafeBreach MCP servers.
