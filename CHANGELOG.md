@@ -5,6 +5,30 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0 — 2026-05-18
+
+### Added
+
+- Delete historic test results via `manage_test` with storage impact preview — see how much space will be freed
+  before committing
+- See who launched each test with the new `launched_by` field in `get_tests` and `get_test_details`, plus filter
+  test history by user
+- Rate limiting for write operations to prevent accidental bulk actions
+- Automated release preparation workflow via `/mcp-create-release`
+- Test overview context in `get_studio_attack_latest_result` — see test status, duration, and simulation breakdown
+  at a glance
+
+### Changed
+
+- `get_tests_history` renamed to `get_tests` — now also supports filtering for currently running tests
+- Rate limiting is off by default and opt-in for deployments that need it
+- `manage_test` lifecycle actions (pause, resume, cancel) now verify current state before acting, preventing
+  conflicting operations
+
+### Fixed
+
+- Reduced false positive security alerts in CI scanning
+
 ## 1.1.0 — 2026-05-07
 
 ### Added
