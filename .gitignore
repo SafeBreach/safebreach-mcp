@@ -230,3 +230,9 @@ known_hosts
 *.db
 *.sqlite
 *.sqlite3
+
+# Skill testing workspace
+mcp-create-release-workspace/
+
+# Claude local settings
+.claude/settings.local.json
