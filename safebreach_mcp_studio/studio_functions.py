@@ -10,7 +10,7 @@ import ast
 import json
 import logging
 import requests
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
@@ -2737,32 +2737,240 @@ def _append_test_note(
         return {"note_status": "failed", "note_error": str(e)}
 
 
+def _fetch_test_summary(test_id: str, console: str) -> Dict[str, Any]:
+    """
+    Fetch test summary from the data API.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+
+    Returns:
+        Raw JSON dict from GET /testsummaries/{test_id}
+
+    Raises:
+        ValueError: If test is not found (404)
+        requests.exceptions.RequestException: On other API errors
+    """
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    url = f"{base_url}/api/data/v1/accounts/{account_id}/testsummaries/{test_id}"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    response = requests.get(url, headers=headers, timeout=30)
+    try:
+        check_rbac_response(response)
+    except Exception:
+        if hasattr(response, 'status_code') and response.status_code == 404:
+            raise ValueError(f"Test '{test_id}' not found")
+        raise
+
+    return response.json()
+
+
+def _fetch_test_storage_info(test_id: str, console: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch storage impact data for a test from the detailedTestSummaries API.
+    Best-effort — returns None on any error.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with space_freed_bytes, events_freed_bytes, current_usage_bytes,
+        usage_limit_bytes — or None on error.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = (
+            f"{base_url}/api/data/v1/accounts/{account_id}"
+            f"/detailedTestSummaries?planRunIds={test_id}"
+        )
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        data = response.json()
+
+        if not isinstance(data, list) or len(data) == 0:
+            return None
+
+        item = data[0]
+        breakdown = item.get('testSizeBreakdown', {})
+        return {
+            "space_freed_bytes": breakdown.get('executionsHistorySize', 0),
+            "events_freed_bytes": breakdown.get('integrationLogIndexSize', 0),
+            "current_usage_bytes": item.get('historyIndexSizeInBytes', 0),
+            "usage_limit_bytes": item.get('historyIndexLimitSizeInBytes', 0),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch storage info for test {test_id}: {e}")
+        return None
+
+
+def _fetch_storage_stats(console: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch platform-wide storage utilization stats. Best-effort.
+
+    Args:
+        console: SafeBreach console identifier
+
+    Returns:
+        Dict with tests_on_disk_bytes, tests_limit_bytes, tests_on_disk_count,
+        tests_limit_count, last_cleanup_date, events_index_bytes — or None on error.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        url = f"{base_url}/api/data/v1/accounts/{account_id}/dbStorageStats"
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        data = response.json()
+
+        return {
+            "tests_on_disk_bytes": data.get('executionsHistoryIndexSizeInBytes', 0),
+            "tests_limit_bytes": data.get('executionsHistoryLimitSizeInBytes', 0),
+            "tests_on_disk_count": data.get('executionsHistoryIndexCount', 0),
+            "tests_limit_count": data.get('executionsHistoryLimitIndexesCount', 0),
+            "last_cleanup_date": data.get('lastTestsCleanupDate'),
+            "events_index_bytes": data.get('logHistoryIndexSizeInBytes', 0),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch storage stats for {console}: {e}")
+        return None
+
+
+def sb_delete_test(
+    test_id: str,
+    console: str,
+    reason: str,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """
+    Delete a test from history (SAF-29972). Only terminal tests allowed.
+
+    Args:
+        test_id: Test execution ID (planRunId)
+        console: SafeBreach console identifier
+        reason: Mandatory reason for the deletion (audit trail)
+        dry_run: If True (default), return preview without deleting
+
+    Returns:
+        Dict with test_id, action, status, and preview/deletion info
+    """
+    if not reason or not str(reason).strip():
+        raise ValueError(
+            "reason is required for delete — provide a justification "
+            "for the permanent removal of this test."
+        )
+
+    # State pre-check — only terminal tests can be deleted
+    current_state = _get_test_state(test_id, console).upper()
+    terminal_states = {"CANCELED", "COMPLETED", "FAILED"}
+    if current_state not in terminal_states:
+        raise ValueError(
+            f"Cannot delete a {current_state.lower()} test. "
+            "Use manage_test with action='cancel' first, then delete."
+        )
+
+    # Fetch test summary for planName and preview data
+    summary = _fetch_test_summary(test_id, console)
+    plan_name = summary.get('originalPlan', {}).get('name', 'Unknown')
+    final_status = summary.get('finalStatus', {})
+    simulation_count = sum(final_status.values()) if final_status else 0
+
+    preview = {
+        "test_name": plan_name,
+        "status": summary.get('status', current_state),
+        "simulation_count": simulation_count,
+        "start_time": summary.get('startTime'),
+        "end_time": summary.get('endTime'),
+    }
+
+    if dry_run:
+        # Enrich preview with storage savings (best-effort)
+        storage_info = _fetch_test_storage_info(test_id, console)
+        if storage_info is not None:
+            preview['storage_savings'] = storage_info
+
+        return {
+            "test_id": test_id, "action": "delete", "status": "dry_run",
+            "dry_run": True, "preview": preview,
+            "hint_to_agent": (
+                "This is a preview. To permanently delete this test, call "
+                "manage_test again with dry_run=False. This action is irreversible."
+            ),
+        }
+
+    # Execute delete — rate limit, DELETE API, storage stats
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "manage_test")
+
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    delete_url = f"{base_url}/api/data/v1/accounts/{account_id}/tests/{test_id}"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    response = requests.delete(
+        delete_url, headers=headers,
+        json={"id": test_id, "planName": plan_name}, timeout=30
+    )
+    check_rbac_response(response)
+
+    rate_limiter.record_action(caller_id, "manage_test")
+    logger.info(f"Test {test_id} deleted. Reason: {reason}")
+
+    # Post-delete storage stats (best-effort)
+    storage_stats = _fetch_storage_stats(console)
+
+    return {
+        "test_id": test_id, "action": "delete", "status": "deleted",
+        "deleted_test_name": plan_name, "reason": reason,
+        "storage_stats": storage_stats,
+        "hint_to_agent": (
+            "Test permanently deleted. Use get_tests to see remaining tests."
+        ),
+    }
+
+
 def sb_manage_test(
     test_id: str,
     action: str,
     console: str = "default",
     reason: str = None,
+    dry_run: bool = None,
 ) -> Dict[str, Any]:
     """
-    Manage a running test's lifecycle (pause, resume, or cancel).
+    Manage a test's lifecycle — pause, resume, cancel, or delete.
 
     Args:
         test_id: Test execution ID (planRunId), e.g. "1776488350786.15"
-        action: Lifecycle action — "pause", "resume", or "cancel"
+        action: Lifecycle action — "pause", "resume", "cancel", or "delete"
         console: SafeBreach console identifier (default: "default")
-        reason: Optional reason for the action (appends note to test comment)
+        reason: Reason for the action. Required for delete, optional for others.
+        dry_run: Only for delete — if True (default), preview without deleting.
 
     Returns:
-        Dict with test_id, action, status, and optional note info
+        Dict with test_id, action, status, and optional note/preview info
     """
     if not test_id or not str(test_id).strip():
         raise ValueError("test_id is required and cannot be empty")
 
-    valid_actions = ["pause", "resume", "cancel"]
+    valid_actions = ["pause", "resume", "cancel", "delete"]
     if action not in valid_actions:
         raise ValueError(
-            f"Invalid action '{action}'. Valid actions: pause, resume, cancel"
+            f"Invalid action '{action}'. Valid actions: pause, resume, cancel, delete"
         )
+
+    # Delete dispatches to dedicated function (SAF-29972)
+    if action == "delete":
+        if dry_run is None:
+            dry_run = True
+        return sb_delete_test(test_id, console, reason, dry_run)
 
     logger.info(f"Managing test {test_id}: action={action}, console={console}")
 

@@ -1412,17 +1412,23 @@ Example (3-turn workflow for non-ready scenarios):
         @self.mcp.tool(
             name="manage_test",
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
-            description="""Manage a running test's lifecycle — pause, resume, or cancel.
+            description="""Manage a test's lifecycle — pause, resume, cancel, or delete.
 
 Use this tool to control tests that were queued via run_scenario. The test_id is the
 planRunId returned by run_scenario.
 
 Parameters:
 - test_id (required, str): Test execution ID (planRunId), e.g. "1776488350786.15"
-- action (required, str): Lifecycle action — "pause", "resume", or "cancel"
+- action (required, str): Lifecycle action — "pause", "resume", "cancel", or "delete"
 - console (required, str): SafeBreach console name
-- reason (optional, str): Why this action is being taken. When provided, appends a
-  timestamped UTC note to the test's comment field for audit trail.
+- reason (str): Why this action is being taken. Required for delete (audit trail).
+  For other actions, optional (appends a timestamped UTC note to the test's comment).
+- dry_run (bool): Only for delete. Defaults to True — preview what will be deleted
+  and how much space will be freed. Set to False to execute the deletion.
+
+Delete is IRREVERSIBLE — test data cannot be restored after deletion. Only tests in
+terminal states (completed, canceled, failed) can be deleted. Use the dry-run preview
+to confirm before executing.
 
 Returns: Markdown summary with test_id, action taken, and status.
 
@@ -1431,17 +1437,34 @@ manage_test(test_id="1776488350786.15", action="cancel", console="demo")
 
 Example (pause with reason):
 manage_test(test_id="1776488350786.15", action="pause", console="demo",
-            reason="Maintenance window — resuming after deploy")"""
+            reason="Maintenance window — resuming after deploy")
+
+Example (delete preview):
+manage_test(test_id="1776488350786.15", action="delete", console="demo",
+            reason="Cleaning up accidental test run")
+
+Example (delete execute after preview):
+manage_test(test_id="1776488350786.15", action="delete", console="demo",
+            reason="Cleaning up accidental test run", dry_run=False)"""
         )
         def manage_test(
             test_id: str,
             action: str,
             console: str = "default",
             reason: str = None,
+            dry_run: bool = None,
         ) -> str:
-            """Manage a running test's lifecycle."""
+            """Manage a test's lifecycle."""
             try:
-                result = sb_manage_test(test_id, action, console, reason)
+                result = sb_manage_test(test_id, action, console, reason, dry_run)
+
+                # Delete dry-run preview — SAF-29972
+                if result.get('dry_run'):
+                    return _format_delete_preview(result)
+
+                # Delete execute confirmation — SAF-29972
+                if result.get('status') == 'deleted':
+                    return _format_delete_confirmation(result)
 
                 # Idempotent quick-return — SAF-31111
                 if result.get('was_already'):
@@ -1480,6 +1503,86 @@ manage_test(test_id="1776488350786.15", action="pause", console="demo",
             except Exception as e:
                 logger.error(f"Error in manage_test: {e}")
                 return f"Error managing test: {str(e)}"
+
+
+def _human_bytes(n: int) -> str:
+    """Convert bytes to human-readable string (e.g., 2.0 GB)."""
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if abs(n) < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def _format_delete_preview(result: dict) -> str:
+    """Format delete dry-run preview as Markdown."""
+    preview = result.get('preview', {})
+    parts = [
+        "## Delete Preview",
+        "",
+        f"**Test:** {preview.get('test_name', 'Unknown')}",
+        f"**Status:** {preview.get('status', 'Unknown')}",
+        f"**Simulations:** {preview.get('simulation_count', 0)}",
+    ]
+
+    savings = preview.get('storage_savings')
+    if savings:
+        freed = savings.get('space_freed_bytes', 0)
+        events = savings.get('events_freed_bytes', 0)
+        current = savings.get('current_usage_bytes', 0)
+        limit = savings.get('usage_limit_bytes', 0)
+        parts.append("")
+        parts.append("### Storage Savings")
+        parts.append(f"**Index space freed:** {_human_bytes(freed)}")
+        if events > 0:
+            parts.append(f"**Events index freed:** {_human_bytes(events)}")
+        if limit > 0:
+            parts.append(f"**Total index usage:** {_human_bytes(current)} / {_human_bytes(limit)}")
+        parts.append("")
+        parts.append(
+            "*Note: sizes reflect Elasticsearch index allocation "
+            "(includes metadata, mappings, and replicas) — "
+            "not raw simulation data volume.*"
+        )
+
+    if result.get('hint_to_agent'):
+        parts.append("")
+        parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+    return "\n".join(parts)
+
+
+def _format_delete_confirmation(result: dict) -> str:
+    """Format delete execution confirmation as Markdown."""
+    parts = [
+        "## Test Deleted",
+        "",
+        f"**Test ID:** {result['test_id']}",
+        f"**Deleted:** {result.get('deleted_test_name', 'Unknown')}",
+        f"**Reason:** {result.get('reason', 'N/A')}",
+    ]
+
+    stats = result.get('storage_stats')
+    if stats:
+        on_disk = stats.get('tests_on_disk_bytes', 0)
+        limit = stats.get('tests_limit_bytes', 0)
+        count = stats.get('tests_on_disk_count', 0)
+        count_limit = stats.get('tests_limit_count', 0)
+        parts.append("")
+        parts.append("### Platform Storage After Deletion")
+        parts.append(f"**Test history index:** {_human_bytes(on_disk)} / {_human_bytes(limit)}")
+        parts.append(f"**Test count:** {count} / {count_limit}")
+        parts.append("")
+        parts.append(
+            "*Note: index sizes include Elasticsearch overhead — "
+            "not raw data volume.*"
+        )
+
+    if result.get('hint_to_agent'):
+        parts.append("")
+        parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+    return "\n".join(parts)
 
 
 def parse_external_config(server_type: str) -> bool:

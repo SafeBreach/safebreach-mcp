@@ -19,7 +19,8 @@ reduced_test_summary_mapping = {
     'start_time': 'startTime',
     'end_time': 'endTime',
     'duration': 'duration',
-    'status': 'status'
+    'status': 'status',
+    'ran_by_user_id': 'ranBy',
 }
 
 # Simulation result mappings

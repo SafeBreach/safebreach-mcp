@@ -78,12 +78,13 @@ def sb_get_tests(
     end_date: Optional[int] = None,
     status_filter: Optional[str] = None,
     name_filter: Optional[str] = None,
+    launched_by_filter: Optional[str] = None,
     order_by: str = "end_time",
     order_direction: str = "desc"
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated test history.
-    
+
     Args:
         console: SafeBreach console name
         page_number: Page number (0-based)
@@ -92,6 +93,7 @@ def sb_get_tests(
         end_date: End date filter (Unix timestamp)
         status_filter: Filter by status ('completed', 'canceled', 'failed', 'running')
         name_filter: Filter by test name (partial match)
+        launched_by_filter: Filter by launcher username (partial match, case-insensitive)
         order_by: Field to order by ('end_time', 'start_time', 'name', 'duration')
         order_direction: Order direction ('desc', 'asc')
         
@@ -128,6 +130,12 @@ def sb_get_tests(
         use_cache = normalized_status != 'running'  # Don't use cache when running tests are requested
         all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache, status_filter=normalized_status)
         
+        # Enrich with launched_by before filtering (best-effort — SAF-29972)
+        from safebreach_mcp_core.user_lookup import get_user_name
+        for test in all_tests:
+            user_id = test.get('ran_by_user_id')
+            test['launched_by'] = get_user_name(user_id, console)
+
         # Apply filters
         filtered_tests = _apply_filters(
             all_tests,
@@ -135,7 +143,8 @@ def sb_get_tests(
             start_date=start_date,
             end_date=end_date,
             status_filter=status_filter,
-            name_filter=name_filter
+            name_filter=name_filter,
+            launched_by_filter=launched_by_filter,
         )
         
         # Apply ordering
@@ -157,7 +166,7 @@ def sb_get_tests(
         start_index = page_number * PAGE_SIZE
         end_index = start_index + PAGE_SIZE
         page_tests = ordered_tests[start_index:end_index]
-        
+
         # Track applied filters
         applied_filters = {}
         if test_type:
@@ -170,6 +179,8 @@ def sb_get_tests(
             applied_filters['status_filter'] = status_filter
         if name_filter:
             applied_filters['name_filter'] = name_filter
+        if launched_by_filter:
+            applied_filters['launched_by_filter'] = launched_by_filter
         if order_by != "end_time":
             applied_filters['order_by'] = order_by
         if order_direction != "desc":
@@ -261,7 +272,8 @@ def _apply_filters(
     start_date: Optional[int] = None,
     end_date: Optional[int] = None,
     status_filter: Optional[str] = None,
-    name_filter: Optional[str] = None
+    name_filter: Optional[str] = None,
+    launched_by_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Apply filters to test list.
@@ -313,8 +325,14 @@ def _apply_filters(
     
     # Apply name filter
     if name_filter:
-        filtered = [t for t in filtered 
+        filtered = [t for t in filtered
                    if name_filter.lower() in t.get('name', '').lower()]
+
+    # Apply launched_by filter (SAF-29972)
+    if launched_by_filter:
+        filtered = [t for t in filtered
+                   if t.get('launched_by') and
+                   launched_by_filter.lower() in t['launched_by'].lower()]
     
     return filtered
 
@@ -465,12 +483,23 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 "drifted_count": drift_count
             })
 
-        # Add polling hint for non-terminal statuses
+        # Enrich with launched_by (best-effort user lookup — SAF-29972)
+        from safebreach_mcp_core.user_lookup import get_user_name
+        user_id = return_details.get('ran_by_user_id')
+        return_details['launched_by'] = get_user_name(user_id, console)
+
+        # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
         if final_status not in terminal_statuses:
             return_details['hint_to_agent'] = (
                 f"Test is still {return_details.get('status', 'in progress')}. "
                 "Poll again in 30 seconds using get_test_details with the same test_id."
+            )
+        else:
+            # Terminal test — hint about delete for storage management (SAF-29972)
+            return_details['hint_to_agent'] = (
+                "To see how much space this test uses and preview deletion, call "
+                "manage_test with action='delete' and dry_run=True."
             )
 
         return return_details

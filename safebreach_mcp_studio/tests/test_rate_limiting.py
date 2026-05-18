@@ -183,6 +183,96 @@ class TestManageTestRateLimitingGate:
         mock_rate_limiter.check_limit.assert_not_called()
         mock_rate_limiter.record_action.assert_not_called()
 
+    # --- SAF-29972: Delete rate limiting ---
+
+    @patch("safebreach_mcp_studio.studio_functions.rate_limiter")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_caller_identity",
+        return_value="test-caller",
+    )
+    @patch("safebreach_mcp_studio.studio_functions._fetch_storage_stats", return_value=None)
+    @patch("safebreach_mcp_studio.studio_functions.requests.delete")
+    @patch("safebreach_mcp_studio.studio_functions._fetch_test_summary")
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="CANCELED")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_account_id",
+        return_value="1234567890",
+    )
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_base_url",
+        return_value="https://test.safebreach.com",
+    )
+    def test_delete_rate_limit_check_before_delete(
+        self,
+        _mock_base_url,
+        _mock_account_id,
+        _mock_state,
+        mock_summary,
+        mock_del,
+        _mock_stats,
+        _mock_get_identity,
+        mock_rate_limiter,
+    ):
+        """Delete execute calls check_limit before DELETE API."""
+        mock_summary.return_value = {
+            "originalPlan": {"name": "T"}, "status": "CANCELED",
+            "finalStatus": {}, "startTime": 0, "endTime": 0,
+        }
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_del.return_value = mock_response
+
+        call_order = []
+        mock_rate_limiter.check_limit.side_effect = (
+            lambda *a, **kw: call_order.append("check_limit")
+        )
+        mock_rate_limiter.record_action.side_effect = (
+            lambda *a, **kw: call_order.append("record_action")
+        )
+
+        def delete_side_effect(*args, **kwargs):
+            call_order.append("api_call")
+            return mock_response
+        mock_del.side_effect = delete_side_effect
+
+        sb_manage_test(
+            test_id="t1", action="delete", console="test",
+            reason="cleanup", dry_run=False
+        )
+
+        assert call_order == ["check_limit", "api_call", "record_action"]
+
+    @patch("safebreach_mcp_studio.studio_functions.rate_limiter")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_caller_identity",
+        return_value="test-caller",
+    )
+    @patch("safebreach_mcp_studio.studio_functions._fetch_test_storage_info", return_value=None)
+    @patch("safebreach_mcp_studio.studio_functions._fetch_test_summary")
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="CANCELED")
+    def test_delete_dry_run_skips_rate_limit(
+        self,
+        _mock_state,
+        mock_summary,
+        _mock_storage,
+        _mock_get_identity,
+        mock_rate_limiter,
+    ):
+        """Delete dry-run does NOT call rate limiter."""
+        mock_summary.return_value = {
+            "originalPlan": {"name": "T"}, "status": "CANCELED",
+            "finalStatus": {}, "startTime": 0, "endTime": 0,
+        }
+
+        result = sb_manage_test(
+            test_id="t1", action="delete", console="test",
+            reason="cleanup", dry_run=True
+        )
+
+        assert result['status'] == "dry_run"
+        mock_rate_limiter.check_limit.assert_not_called()
+        mock_rate_limiter.record_action.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Shared fixtures for run_scenario tests

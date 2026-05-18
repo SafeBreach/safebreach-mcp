@@ -3488,3 +3488,231 @@ class TestPeerBenchmarkFunction:
             "test-console", start_date=_START_MS, end_date=_END_MS,
         )
         _assert_clean(result["hint_to_agent"], "empty industryScores")
+
+
+# ---------------------------------------------------------------------------
+# SAF-29972: launched_by enrichment
+# ---------------------------------------------------------------------------
+
+class TestLaunchedByEnrichment:
+    """Tests for launched_by field in test results."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_core.user_lookup.get_user_name')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    def test_launched_by_resolved_in_test_details(
+        self, mock_base_url, mock_account_id, mock_get,
+        mock_orch_state, mock_user_name
+    ):
+        """get_test_details includes launched_by with resolved username."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_orch_state.return_value = None  # Terminal, not in queue
+
+        # List endpoint (cache miss → API call)
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = [{
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "ranBy": 100001,
+        }]
+        mock_list_response.raise_for_status.return_value = None
+
+        # Single test endpoint (non-terminal refresh)
+        mock_single_response = MagicMock()
+        mock_single_response.json.return_value = {
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "userId": 100001,
+        }
+        mock_single_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [mock_list_response, mock_single_response]
+        mock_user_name.return_value = "sbadmin"
+
+        result = sb_get_test_details("test123", "test")
+
+        assert result['launched_by'] == "sbadmin"
+
+    @patch('safebreach_mcp_core.user_lookup.get_user_name')
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    def test_launched_by_none_when_user_unknown(
+        self, mock_base_url, mock_account_id, mock_get,
+        mock_orch_state, mock_user_name
+    ):
+        """launched_by is None when user ID can't be resolved."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_orch_state.return_value = None
+
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = [{
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "ranBy": 999999,
+        }]
+        mock_list_response.raise_for_status.return_value = None
+
+        mock_single_response = MagicMock()
+        mock_single_response.json.return_value = {
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "userId": 999999,
+        }
+        mock_single_response.raise_for_status.return_value = None
+
+        mock_get.side_effect = [mock_list_response, mock_single_response]
+        mock_user_name.return_value = None
+
+        result = sb_get_test_details("test123", "test")
+
+        assert result['launched_by'] is None
+
+
+class TestLaunchedByFilter:
+    """Tests for launched_by_filter in get_tests."""
+
+    def test_launched_by_filter_matches(self):
+        """Filter matches test by resolved username."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+            {"name": "Test2", "launched_by": "Yossi", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="sbadmin")
+        assert len(result) == 1
+        assert result[0]['launched_by'] == "sbadmin"
+
+    def test_launched_by_filter_case_insensitive(self):
+        """Filter is case-insensitive."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="SBAdmin")
+        assert len(result) == 1
+
+    def test_launched_by_filter_partial_match(self):
+        """Filter supports partial matching."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="admin")
+        assert len(result) == 1
+
+    def test_launched_by_filter_no_match(self):
+        """Filter returns empty when no tests match."""
+        tests = [
+            {"name": "Test1", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="nobody")
+        assert len(result) == 0
+
+    def test_launched_by_filter_skips_none(self):
+        """Tests with launched_by=None are excluded by filter."""
+        tests = [
+            {"name": "Test1", "launched_by": None, "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+            {"name": "Test2", "launched_by": "sbadmin", "status": "CANCELED",
+             "test_type": "BAS", "start_time": 1000, "end_time": 2000},
+        ]
+        result = _apply_filters(tests, launched_by_filter="admin")
+        assert len(result) == 1
+        assert result[0]['name'] == "Test2"
+
+
+class TestStorageHintForTerminalTests:
+    """Tests for delete hint in get_test_details for terminal tests."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_core.user_lookup.get_user_name', return_value=None)
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    def test_terminal_test_has_delete_hint(
+        self, mock_base_url, mock_account_id, mock_get,
+        mock_orch_state, mock_user_name
+    ):
+        """Completed test includes hint about delete dry-run for storage."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = [{
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "ranBy": 100001,
+        }]
+        mock_list_response.raise_for_status.return_value = None
+
+        mock_single_response = MagicMock()
+        mock_single_response.json.return_value = {
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": 2000, "duration": 1000,
+            "status": "COMPLETED", "systemTags": [],
+            "finalStatus": {"missed": 1}, "userId": 100001,
+        }
+        mock_single_response.raise_for_status.return_value = None
+        mock_get.side_effect = [mock_list_response, mock_single_response]
+
+        result = sb_get_test_details("test123", "test")
+
+        assert 'hint_to_agent' in result
+        assert "delete" in result['hint_to_agent'].lower()
+        assert "dry_run" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_core.user_lookup.get_user_name', return_value=None)
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    def test_running_test_no_delete_hint(
+        self, mock_base_url, mock_account_id, mock_get,
+        mock_orch_state, mock_user_name
+    ):
+        """Running test has polling hint, not delete hint."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+
+        mock_list_response = MagicMock()
+        mock_list_response.json.return_value = [{
+            "planRunId": "test123", "planName": "Test Plan",
+            "startTime": 1000, "endTime": None, "duration": 0,
+            "status": "RUNNING", "systemTags": [],
+            "finalStatus": {}, "ranBy": 100001,
+        }]
+        mock_list_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_list_response
+
+        result = sb_get_test_details("test123", "test")
+
+        assert 'hint_to_agent' in result
+        assert "poll" in result['hint_to_agent'].lower()
+        assert "delete" not in result['hint_to_agent'].lower()
