@@ -5,6 +5,16 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0 — 2026-05-18
+
+### Added
+
+- Support for per-caller (user) rate limiting of non-readonly actions. Caps are applied on a rolling window
+  with per tool counts and a total-tools counts. Rate limiting is disabled by default and configurable via env vars: SAFEBREACH_MCP_RATE_LIMIT_ENABLED, SAFEBREACH_MCP_ACTION_LIMIT, SAFEBREACH_MCP_IDENTICAL_ACTION_LIMIT, SAFEBREACH_MCP_RATE_LIMIT_WINDOW_MINUTES.
+- get_tests_history renamed to get_tests and supports fetching and filtering by `running` tests
+- get_studio_attack_latest_result enriched with test-level context
+- manage_test tool is idempotent in transitions from paused->paused, running->running and supports also `cancel` and `delete`
+
 ## 1.1.0 — 2026-05-07
 
 ### Added
