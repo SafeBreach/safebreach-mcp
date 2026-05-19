@@ -315,7 +315,7 @@ the implementation fulfills it.
 | Phase 2: Input validation & step construction (TDD) | ✅ Complete | 2026-05-19 | a420cf2 | 18 tests |
 | Phase 3: Simulator overrides & all_connected (TDD) | ✅ Complete | 2026-05-19 | fdd4ada | 10 tests |
 | Phase 4: Statistics, dry-run & execution (TDD) | ✅ Complete | 2026-05-19 | - | 13 tests |
-| Phase 5: MCP tool wrapper (TDD) | ⏳ Pending | - | - | |
+| Phase 5: MCP tool wrapper (TDD) | ✅ Complete | 2026-05-19 | - | 7 tests |
 | Phase 6: E2E tests | ⏳ Pending | - | - | |
 | Phase 7: Documentation updates | ⏳ Pending | - | - | |
 

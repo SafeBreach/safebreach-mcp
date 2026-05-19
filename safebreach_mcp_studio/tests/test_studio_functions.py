@@ -9795,3 +9795,146 @@ class TestAdhocScenarioTestName:
         )
         payload = mock_queue.call_args[0][0]
         assert "Ad-hoc" in payload["plan"]["name"] or "ad-hoc" in payload["plan"]["name"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (SAF-31295): MCP tool wrapper — run_adhoc_scenario
+# ---------------------------------------------------------------------------
+
+
+class TestAdhocScenarioMCPWrapper:
+    """Test the run_adhoc_scenario MCP tool wrapper (Markdown formatting)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _get_wrapper(self):
+        """Get the run_adhoc_scenario wrapper function from the server."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        server = SafeBreachStudioServer()
+        # Find the registered tool by name
+        for tool in server.mcp._tool_manager._tools.values():
+            if tool.name == "run_adhoc_scenario":
+                return tool.fn
+        raise AssertionError("run_adhoc_scenario tool not registered")
+
+    def test_tool_is_registered(self):
+        """Tool is registered with name run_adhoc_scenario."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        server = SafeBreachStudioServer()
+        tool_names = [
+            t.name for t in server.mcp._tool_manager._tools.values()
+        ]
+        assert "run_adhoc_scenario" in tool_names
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_dry_run_markdown_contains_preview_header(self, mock_fn):
+        """Dry-run Markdown contains 'Dry Run Preview'."""
+        mock_fn.return_value = {
+            'status': 'dry_run',
+            'attack_ids': [8849, 217],
+            'steps': [
+                {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
+                {"name": "Attack 217", "attacksFilter": {"playbook": {"values": [217]}}},
+            ],
+            'predicted_simulations': 15,
+            'predicted_per_step': [10, 5],
+            'step_stats': [{"simulationCount": 10}, {"simulationCount": 5}],
+            'empty_steps': [],
+            'step_count': 2,
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849,217", console="test")
+        assert "Dry Run" in result
+        assert "Preview" in result
+        assert "15" in result  # total predicted
+        assert "No test was queued" in result or "no test" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_dry_run_markdown_flags_zero_sim(self, mock_fn):
+        """Dry-run Markdown flags 0-sim attacks."""
+        mock_fn.return_value = {
+            'status': 'dry_run',
+            'attack_ids': [8849, 217],
+            'steps': [
+                {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
+                {"name": "Attack 217", "attacksFilter": {"playbook": {"values": [217]}}},
+            ],
+            'predicted_simulations': 10,
+            'predicted_per_step': [10, 0],
+            'step_stats': [{"simulationCount": 10}, {"simulationCount": 0}],
+            'empty_steps': [2],
+            'step_count': 2,
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849,217", console="test")
+        assert "0" in result
+        # Should mention the 0-sim attack
+        assert "217" in result or "0 sim" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_queued_markdown_contains_test_id(self, mock_fn):
+        """Queued Markdown contains test_id and queued header."""
+        mock_fn.return_value = {
+            'status': 'queued',
+            'test_id': '1779200000000.1',
+            'test_name': 'Ad-hoc Test',
+            'attack_ids': [8849],
+            'step_count': 1,
+            'step_run_ids': ['1779200000000.2'],
+            'predicted_simulations': 10,
+            'predicted_per_step': [10],
+            'step_stats': [{"simulationCount": 10}],
+            'empty_steps': [],
+            'skipped_attacks': [],
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849", console="test", dry_run=False)
+        assert "Queued" in result or "queued" in result
+        assert "1779200000000.1" in result
+        assert "get_test_details" in result
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_queued_markdown_shows_skipped_attacks(self, mock_fn):
+        """Partial execution Markdown lists skipped attacks."""
+        mock_fn.return_value = {
+            'status': 'queued',
+            'test_id': 'test.1',
+            'test_name': 'Test',
+            'attack_ids': [8849, 217, 1071],
+            'step_count': 2,
+            'step_run_ids': ['t.2', 't.3'],
+            'predicted_simulations': 15,
+            'predicted_per_step': [10, 0, 5],
+            'step_stats': [],
+            'empty_steps': [2],
+            'skipped_attacks': [217],
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(
+            attack_ids="8849,217,1071", console="test", dry_run=False,
+        )
+        assert "217" in result
+        assert "skipped" in result.lower() or "0 sim" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_valueerror_returns_error_message(self, mock_fn):
+        """ValueError returns error-prefixed message."""
+        mock_fn.side_effect = ValueError("attack_ids is required")
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="", console="test")
+        assert "Error" in result
+        assert "attack_ids is required" in result
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_exception_returns_error_message(self, mock_fn):
+        """Generic exception returns error message."""
+        mock_fn.side_effect = RuntimeError("unexpected failure")
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849", console="test")
+        assert "Error" in result or "error" in result
+        assert "unexpected failure" in result
