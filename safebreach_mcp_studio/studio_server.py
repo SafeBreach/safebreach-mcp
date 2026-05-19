@@ -1028,6 +1028,9 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Executes a ready-to-run SafeBreach scenario on the platform.
 
+Use this when you have an EXISTING scenario ID from get_scenarios. For running specific
+playbook attack IDs without a pre-existing scenario, use run_adhoc_scenario instead.
+
 IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
 scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
 and verify is_ready_to_run=True.
@@ -1415,6 +1418,9 @@ Example (3-turn workflow for non-ready scenarios):
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Execute an ad-hoc scenario from explicit playbook attack IDs.
 
+Use this when you have SPECIFIC playbook attack IDs to run without a pre-existing scenario.
+For running an existing OOB or custom scenario by ID, use run_scenario instead.
+
 Constructs one step per attack, predicts simulation counts via the statistics API,
 and presents a dry-run preview before execution. Use get_playbook_attacks to discover
 attack IDs beforehand.
@@ -1500,8 +1506,8 @@ Example (execute after preview):
 
                     parts.extend([
                         "",
-                        "**No test was queued.** To execute, call again "
-                        "with `dry_run=False`.",
+                        "**No test was queued.** "
+                        + result.get('hint_to_agent', 'To execute, call again with dry_run=False.'),
                     ])
 
                     return "\n".join(parts)
@@ -1527,11 +1533,8 @@ Example (execute after preview):
                         f"{', '.join(str(a) for a in skipped)}",
                     ])
 
-                parts.extend([
-                    "",
-                    f"Use `get_test_details` on the Data Server with test_id "
-                    f"`{result.get('test_id')}` to track progress.",
-                ])
+                if result.get('hint_to_agent'):
+                    parts.extend(["", f"**Hint:** {result['hint_to_agent']}"])
 
                 return "\n".join(parts)
 

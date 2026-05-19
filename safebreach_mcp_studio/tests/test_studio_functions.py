@@ -9891,12 +9891,17 @@ class TestAdhocScenarioMCPWrapper:
             'step_stats': [{"simulationCount": 10}],
             'empty_steps': [],
             'skipped_attacks': [],
+            'hint_to_agent': (
+                "Test queued. Use get_test_details with test_id '1779200000000.1' "
+                "to track execution progress. Use manage_test to pause, resume, or cancel."
+            ),
         }
         wrapper = self._get_wrapper()
         result = wrapper(attack_ids="8849", console="test", dry_run=False)
         assert "Queued" in result or "queued" in result
         assert "1779200000000.1" in result
         assert "get_test_details" in result
+        assert "manage_test" in result
 
     @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
     def test_queued_markdown_shows_skipped_attacks(self, mock_fn):

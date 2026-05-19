@@ -2642,6 +2642,29 @@ def sb_run_adhoc_scenario(
 
     # Dry-run: return preview without queuing
     if dry_run:
+        # Build contextual hint based on results
+        if total_predicted == 0:
+            hint = (
+                "All attacks produce 0 simulations. Check simulator availability "
+                "with get_console_simulators, or try simulator_overrides with "
+                "specific simulator UUIDs."
+            )
+        elif empty_steps:
+            hint = (
+                f"{len(empty_steps)} attack(s) will produce 0 simulations. "
+                "You can proceed (they will be skipped), provide "
+                "simulator_overrides for those attacks, or remove them. "
+                "To execute, call again with dry_run=False."
+            )
+        elif total_predicted > 1000:
+            hint = (
+                f"High simulation count ({total_predicted:,}). Consider using "
+                "simulator_overrides to target specific simulators and reduce "
+                "the count. To execute as-is, call again with dry_run=False."
+            )
+        else:
+            hint = "To execute, call again with dry_run=False."
+
         return {
             'status': 'dry_run',
             'attack_ids': parsed_ids,
@@ -2651,6 +2674,7 @@ def sb_run_adhoc_scenario(
             'step_stats': step_stats,
             'empty_steps': empty_steps,
             'step_count': len(steps),
+            'hint_to_agent': hint,
         }
 
     # Execution validation
@@ -2701,6 +2725,17 @@ def sb_run_adhoc_scenario(
     data = api_response.get('data', {})
     resp_steps = data.get('steps', [])
 
+    queued_hint = (
+        f"Test queued. Use get_test_details with test_id "
+        f"'{data.get('planRunId', '')}' to track execution progress. "
+        f"Use manage_test to pause, resume, or cancel."
+    )
+    if skipped_attacks:
+        queued_hint += (
+            f" Note: {len(skipped_attacks)} attack(s) were skipped "
+            f"(0 simulations): {skipped_attacks}."
+        )
+
     result = {
         'status': 'queued',
         'test_id': data.get('planRunId', ''),
@@ -2713,6 +2748,7 @@ def sb_run_adhoc_scenario(
         'step_stats': step_stats,
         'empty_steps': empty_steps,
         'skipped_attacks': skipped_attacks,
+        'hint_to_agent': queued_hint,
     }
 
     logger.info(
