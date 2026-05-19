@@ -2632,20 +2632,96 @@ def sb_run_adhoc_scenario(
     if parsed_overrides and not all_connected:
         _apply_adhoc_overrides(steps, parsed_overrides, parsed_ids)
 
-    # Phase 4: Statistics, dry-run, and execution (to be implemented)
-
-    # Temporary: return dry_run preview with constructed steps
-    step_stats = _get_scenario_statistics(steps, console)
+    # Phase 4: Statistics pre-flight
+    step_stats = _get_scenario_statistics(
+        steps, console, include_constraints=dry_run
+    )
     step_counts = [s.get('simulationCount', 0) for s in step_stats]
+    total_predicted = sum(step_counts)
+    empty_steps = [i + 1 for i, c in enumerate(step_counts) if c == 0]
 
-    return {
-        'status': 'dry_run',
+    # Dry-run: return preview without queuing
+    if dry_run:
+        return {
+            'status': 'dry_run',
+            'attack_ids': parsed_ids,
+            'steps': steps,
+            'predicted_simulations': total_predicted,
+            'predicted_per_step': step_counts,
+            'step_stats': step_stats,
+            'empty_steps': empty_steps,
+            'step_count': len(steps),
+        }
+
+    # Execution validation
+    if total_predicted == 0:
+        raise ValueError(
+            f"Ad-hoc scenario would produce 0 simulations across all "
+            f"{len(steps)} attacks. No matching simulators found."
+        )
+
+    # Filter out 0-sim steps for partial execution
+    skipped_attacks = []
+    if empty_steps:
+        exec_steps = []
+        for i, step in enumerate(steps):
+            if step_counts[i] > 0:
+                exec_steps.append(step)
+            else:
+                attack_id = step["attacksFilter"]["playbook"]["values"][0]
+                skipped_attacks.append(attack_id)
+        steps = exec_steps
+
+    # Build DAG for remaining steps
+    actions, edges = _build_linear_dag(steps)
+
+    # Build queue payload
+    effective_test_name = test_name or f"Ad-hoc Test ({len(steps)} attacks)"
+    payload = {
+        "plan": {
+            "name": effective_test_name,
+            "steps": steps,
+            "systemTags": [],
+            "actions": actions,
+            "edges": edges,
+        }
+    }
+
+    # Rate limiting gates
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "run_adhoc_scenario")
+
+    # Submit to queue
+    api_response = _submit_to_queue(payload, console)
+
+    # Record successful action
+    rate_limiter.record_action(caller_id, "run_adhoc_scenario")
+
+    # Extract response data
+    data = api_response.get('data', {})
+    resp_steps = data.get('steps', [])
+
+    result = {
+        'status': 'queued',
+        'test_id': data.get('planRunId', ''),
+        'test_name': data.get('name', effective_test_name),
         'attack_ids': parsed_ids,
-        'steps': steps,
-        'predicted_simulations': sum(step_counts),
+        'step_count': len(resp_steps),
+        'step_run_ids': [s.get('stepRunId', '') for s in resp_steps],
+        'predicted_simulations': total_predicted,
         'predicted_per_step': step_counts,
         'step_stats': step_stats,
+        'empty_steps': empty_steps,
+        'skipped_attacks': skipped_attacks,
     }
+
+    logger.info(
+        f"Successfully queued ad-hoc scenario "
+        f"(test_id: {result['test_id']}, attacks: {len(parsed_ids)}, "
+        f"steps queued: {result['step_count']})"
+    )
+
+    return result
 
 
 def sb_run_scenario(
