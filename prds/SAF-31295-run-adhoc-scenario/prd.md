@@ -313,7 +313,7 @@ the implementation fulfills it.
 |-------|--------|-----------|------------|-------|
 | Phase 1: Shared helpers (TDD) | ✅ Complete | 2026-05-19 | 75ee1e3 | 15 tests |
 | Phase 2: Input validation & step construction (TDD) | ✅ Complete | 2026-05-19 | a420cf2 | 18 tests |
-| Phase 3: Simulator overrides & all_connected (TDD) | ⏳ Pending | - | - | |
+| Phase 3: Simulator overrides & all_connected (TDD) | ✅ Complete | 2026-05-19 | fdd4ada | 10 tests |
 | Phase 4: Statistics, dry-run & execution (TDD) | ⏳ Pending | - | - | |
 | Phase 5: MCP tool wrapper (TDD) | ⏳ Pending | - | - | |
 | Phase 6: E2E tests | ⏳ Pending | - | - | |

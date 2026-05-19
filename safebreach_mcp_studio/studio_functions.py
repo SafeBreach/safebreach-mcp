@@ -2615,17 +2615,19 @@ def sb_run_adhoc_scenario(
     Raises:
         ValueError: If attack_ids invalid, not found, or overrides malformed
     """
-    # Phase 2: Input validation and step construction
-    parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
-    steps = _build_adhoc_steps(parsed_ids, name_map)
-
-    # Phase 3: Simulator overrides
+    # Fail-fast: parse JSON inputs before any API calls
     parsed_overrides = None
     if simulator_overrides is not None:
         try:
             parsed_overrides = json.loads(simulator_overrides)
         except (json.JSONDecodeError, TypeError) as e:
             raise ValueError(f"Invalid simulator_overrides JSON: {e}")
+
+    # Phase 2: Input validation and step construction
+    parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
+    steps = _build_adhoc_steps(parsed_ids, name_map)
+
+    # Phase 3: Simulator overrides
 
     if parsed_overrides and not all_connected:
         _apply_adhoc_overrides(steps, parsed_overrides, parsed_ids)

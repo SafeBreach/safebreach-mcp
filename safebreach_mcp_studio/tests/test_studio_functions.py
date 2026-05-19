@@ -9335,12 +9335,8 @@ class TestAdhocScenarioSimulatorOverrides:
                 simulator_overrides=overrides,
             )
 
-    @patch(
-        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
-        return_value=MOCK_PLAYBOOK_ATTACKS,
-    )
-    def test_invalid_json_raises(self, mock_playbook):
-        """Invalid JSON string raises ValueError."""
+    def test_invalid_json_raises(self):
+        """Invalid JSON string raises ValueError (fail-fast, before attack validation)."""
         with pytest.raises(ValueError, match="[Ii]nvalid.*JSON"):
             sb_run_adhoc_scenario(
                 attack_ids="8849", console="test",
