@@ -316,7 +316,7 @@ the implementation fulfills it.
 | Phase 3: Simulator overrides & all_connected (TDD) | ✅ Complete | 2026-05-19 | fdd4ada | 10 tests |
 | Phase 4: Statistics, dry-run & execution (TDD) | ✅ Complete | 2026-05-19 | - | 13 tests |
 | Phase 5: MCP tool wrapper (TDD) | ✅ Complete | 2026-05-19 | - | 7 tests |
-| Phase 6: E2E tests | ⏳ Pending | - | - | |
+| Phase 6: E2E tests | ✅ Complete | 2026-05-19 | - | 4 tests, all pass on pentest01 |
 | Phase 7: Documentation updates | ⏳ Pending | - | - | |
 
 ### Phase 1: Shared Helpers (TDD)
