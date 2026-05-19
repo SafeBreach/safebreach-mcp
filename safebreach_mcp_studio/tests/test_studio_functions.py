@@ -9479,6 +9479,8 @@ class TestAdhocScenarioDryRun:
         )
         assert result["status"] == "dry_run"
         mock_stats.assert_called_once()
+        # dry_run should pass include_constraints=True for diagnostic detail
+        assert mock_stats.call_args[1].get("include_constraints") is True
         mock_queue.assert_not_called()
 
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -9555,6 +9557,8 @@ class TestAdhocScenarioExecution:
         assert result["status"] == "queued"
         assert result["test_id"] == "1779200000000.1"
         mock_stats.assert_called_once()
+        # execution should pass include_constraints=False (just need counts)
+        assert mock_stats.call_args[1].get("include_constraints") is False
         mock_queue.assert_called_once()
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
