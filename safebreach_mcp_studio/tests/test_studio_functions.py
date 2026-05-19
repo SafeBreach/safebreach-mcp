@@ -9191,3 +9191,247 @@ class TestAdhocScenarioStepConstruction:
         assert af["operator"] == "is"
         assert af["values"] == [8849]
         assert af["name"] == "playbook"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (SAF-31295): Simulator overrides & all_connected
+# ---------------------------------------------------------------------------
+
+
+class TestAdhocScenarioSimulatorOverrides:
+    """Test simulator_overrides for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_single_override_replaces_filters(self, mock_playbook, mock_stats):
+        """Override for one attack replaces its filters, others keep defaults."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(2)]
+        overrides = json.dumps({
+            "8849": {
+                "target": ["sim-uuid-1", "sim-uuid-2"],
+                "attacker": ["sim-uuid-3"],
+            }
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test",
+            simulator_overrides=overrides,
+        )
+        steps = result["steps"]
+        # Attack 8849 — overridden
+        assert steps[0]["targetFilter"] == {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-1", "sim-uuid-2"],
+                "name": "simulators",
+            }
+        }
+        assert steps[0]["attackerFilter"] == {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-3"],
+                "name": "simulators",
+            }
+        }
+        # Attack 217 — default connection filter
+        assert steps[1]["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        assert steps[1]["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_target_only_infers_attacker(self, mock_playbook, mock_stats):
+        """Override with target only → attackerFilter inferred as same."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-uuid-1"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        expected_filter = {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-1"],
+                "name": "simulators",
+            }
+        }
+        assert step["targetFilter"] == expected_filter
+        assert step["attackerFilter"] == expected_filter
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_both_target_and_attacker(self, mock_playbook, mock_stats):
+        """Override with both target and attacker replaces both filters."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {
+                "target": ["sim-target"],
+                "attacker": ["sim-attacker"],
+            },
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        assert step["targetFilter"]["simulators"]["values"] == ["sim-target"]
+        assert step["attackerFilter"]["simulators"]["values"] == ["sim-attacker"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_multiple_overrides(self, mock_playbook, mock_stats):
+        """Multiple overrides: each attack gets its own filters."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(3)]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-a"]},
+            "1071": {"target": ["sim-b"], "attacker": ["sim-c"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test",
+            simulator_overrides=overrides,
+        )
+        steps = result["steps"]
+        # 8849 — target override, attacker inferred
+        assert steps[0]["targetFilter"]["simulators"]["values"] == ["sim-a"]
+        assert steps[0]["attackerFilter"]["simulators"]["values"] == ["sim-a"]
+        # 217 — default
+        assert steps[1]["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        # 1071 — both overridden
+        assert steps[2]["targetFilter"]["simulators"]["values"] == ["sim-b"]
+        assert steps[2]["attackerFilter"]["simulators"]["values"] == ["sim-c"]
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_override_nonexistent_attack_raises(self, mock_playbook):
+        """Override for attack ID not in attack_ids raises ValueError."""
+        overrides = json.dumps({
+            "99999": {"target": ["sim-x"]},
+        })
+        with pytest.raises(ValueError, match="99999"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849", console="test",
+                simulator_overrides=overrides,
+            )
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_invalid_json_raises(self, mock_playbook):
+        """Invalid JSON string raises ValueError."""
+        with pytest.raises(ValueError, match="[Ii]nvalid.*JSON"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849", console="test",
+                simulator_overrides="not-valid-json{",
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_filter_structure_has_simulators_key(self, mock_playbook, mock_stats):
+        """Override filter uses simulators key with operator/values/name."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({"8849": {"target": ["uuid-1"]}})
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        tf = result["steps"][0]["targetFilter"]
+        assert "simulators" in tf
+        assert tf["simulators"]["operator"] == "is"
+        assert tf["simulators"]["name"] == "simulators"
+        assert tf["simulators"]["values"] == ["uuid-1"]
+
+
+class TestAdhocScenarioAllConnected:
+    """Test all_connected override for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_keeps_default_filters(self, mock_playbook, mock_stats):
+        """all_connected=True — steps already have connection filter (no change)."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(2)]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test",
+            all_connected=True,
+        )
+        for step in result["steps"]:
+            assert step["targetFilter"] == DEFAULT_CONNECTION_FILTER
+            assert step["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_overrides_simulator_overrides(
+        self, mock_playbook, mock_stats
+    ):
+        """all_connected=True takes precedence — simulator_overrides ignored."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-uuid-1"], "attacker": ["sim-uuid-2"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            all_connected=True,
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        # Should be connection filter, NOT simulator filter
+        assert step["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        assert step["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+        assert "simulators" not in step["targetFilter"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_false_allows_overrides(
+        self, mock_playbook, mock_stats
+    ):
+        """all_connected=False (default) allows simulator_overrides to apply."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({"8849": {"target": ["sim-uuid-1"]}})
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            all_connected=False,
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        assert step["targetFilter"]["simulators"]["values"] == ["sim-uuid-1"]

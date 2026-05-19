@@ -2526,6 +2526,66 @@ def _build_adhoc_steps(parsed_ids, name_map):
     return steps
 
 
+def _apply_adhoc_overrides(steps, overrides, parsed_ids):
+    """
+    Apply per-attack simulator overrides to constructed steps.
+
+    Each override maps an attack ID (string) to a dict with 'target' and
+    optionally 'attacker' simulator UUID lists. If only 'target' is provided,
+    attackerFilter is set to the same as targetFilter (host attack assumption).
+
+    Args:
+        steps: List of step dicts (modified in place)
+        overrides: Dict mapping attack ID strings to override dicts
+        parsed_ids: List of valid attack IDs (for validation)
+
+    Raises:
+        ValueError: If an override references an attack ID not in parsed_ids
+    """
+    parsed_ids_set = set(parsed_ids)
+    # Build attack_id → step index mapping
+    step_by_attack = {}
+    for i, step in enumerate(steps):
+        attack_id = step["attacksFilter"]["playbook"]["values"][0]
+        step_by_attack[attack_id] = i
+
+    for attack_id_str, override in overrides.items():
+        attack_id = int(attack_id_str)
+        if attack_id not in parsed_ids_set:
+            raise ValueError(
+                f"simulator_overrides references attack ID {attack_id} "
+                f"which is not in attack_ids"
+            )
+
+        step_idx = step_by_attack[attack_id]
+        step = steps[step_idx]
+
+        target_uuids = override.get("target", [])
+        attacker_uuids = override.get("attacker")
+
+        # Build target filter
+        target_filter = {
+            "simulators": {
+                "operator": "is",
+                "values": target_uuids,
+                "name": "simulators",
+            }
+        }
+        step["targetFilter"] = target_filter
+
+        # Build attacker filter — infer from target if not provided
+        if attacker_uuids is not None:
+            step["attackerFilter"] = {
+                "simulators": {
+                    "operator": "is",
+                    "values": attacker_uuids,
+                    "name": "simulators",
+                }
+            }
+        else:
+            step["attackerFilter"] = target_filter
+
+
 def sb_run_adhoc_scenario(
     attack_ids: str,
     console: str = "default",
@@ -2559,7 +2619,17 @@ def sb_run_adhoc_scenario(
     parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
     steps = _build_adhoc_steps(parsed_ids, name_map)
 
-    # Phase 3: Simulator overrides (to be implemented)
+    # Phase 3: Simulator overrides
+    parsed_overrides = None
+    if simulator_overrides is not None:
+        try:
+            parsed_overrides = json.loads(simulator_overrides)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise ValueError(f"Invalid simulator_overrides JSON: {e}")
+
+    if parsed_overrides and not all_connected:
+        _apply_adhoc_overrides(steps, parsed_overrides, parsed_ids)
+
     # Phase 4: Statistics, dry-run, and execution (to be implemented)
 
     # Temporary: return dry_run preview with constructed steps
