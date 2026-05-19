@@ -2415,6 +2415,168 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     return result
 
 
+# ---------------------------------------------------------------------------
+# run_adhoc_scenario — SAF-31295: Ad-hoc attack execution
+# ---------------------------------------------------------------------------
+
+
+def _validate_and_resolve_attack_ids(attack_ids_str, console):
+    """
+    Parse, validate, and resolve attack IDs against the playbook cache.
+
+    Args:
+        attack_ids_str: Comma-separated attack IDs string
+        console: SafeBreach console identifier
+
+    Returns:
+        Tuple of (parsed_ids: list[int], name_map: dict[int, str])
+        name_map maps attack ID → attack name (empty on cache failure)
+
+    Raises:
+        ValueError: If input is empty, contains non-integers, or IDs not in playbook
+    """
+    if not attack_ids_str or (isinstance(attack_ids_str, str)
+                              and not attack_ids_str.strip()):
+        raise ValueError("attack_ids is required and cannot be empty")
+
+    # Parse comma-separated IDs
+    raw_parts = attack_ids_str.split(",")
+    parsed_ids = []
+    for part in raw_parts:
+        part = part.strip()
+        if not part:
+            continue  # Skip empty segments (e.g., "8849,,217")
+        try:
+            parsed_ids.append(int(part))
+        except ValueError:
+            raise ValueError(
+                f"invalid attack ID '{part}' — all IDs must be integers"
+            )
+
+    if not parsed_ids:
+        raise ValueError("attack_ids is required and cannot be empty")
+
+    # Validate against playbook cache
+    name_map = {}
+    try:
+        from safebreach_mcp_playbook.playbook_functions import (
+            _get_all_attacks_from_cache_or_api,
+        )
+        all_attacks = _get_all_attacks_from_cache_or_api(console)
+        valid_ids = {a['id'] for a in all_attacks if 'id' in a}
+        name_map = {
+            a['id']: a.get('name', '') for a in all_attacks if 'id' in a
+        }
+
+        invalid_ids = [aid for aid in parsed_ids if aid not in valid_ids]
+        if invalid_ids:
+            raise ValueError(
+                f"Attack IDs not found in playbook: {invalid_ids}"
+            )
+    except ValueError:
+        raise  # Re-raise our own validation errors
+    except Exception as e:
+        # Playbook cache failure — degrade gracefully (no name resolution)
+        logger.warning(f"Playbook cache unavailable: {e}")
+
+    return parsed_ids, name_map
+
+
+def _build_adhoc_steps(parsed_ids, name_map):
+    """
+    Construct one step per attack with default connection filters.
+
+    Args:
+        parsed_ids: List of validated attack IDs
+        name_map: Dict mapping attack ID → name (may be empty)
+
+    Returns:
+        List of step dicts ready for the statistics/queue APIs
+    """
+    import uuid as uuid_module
+
+    steps = []
+    for attack_id in parsed_ids:
+        attack_name = name_map.get(attack_id, f"Attack {attack_id}")
+        steps.append({
+            "uuid": str(uuid_module.uuid4()),
+            "name": attack_name,
+            "attacksFilter": {
+                "playbook": {
+                    "operator": "is",
+                    "values": [attack_id],
+                    "name": "playbook",
+                }
+            },
+            "targetFilter": {
+                "connection": {
+                    "operator": "is",
+                    "values": [True],
+                    "name": "connection",
+                }
+            },
+            "attackerFilter": {
+                "connection": {
+                    "operator": "is",
+                    "values": [True],
+                    "name": "connection",
+                }
+            },
+            "systemFilter": {},
+        })
+    return steps
+
+
+def sb_run_adhoc_scenario(
+    attack_ids: str,
+    console: str = "default",
+    test_name: str = None,
+    all_connected: bool = False,
+    simulator_overrides: str = None,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """
+    Construct and execute an ad-hoc scenario from explicit playbook attack IDs.
+
+    Creates one step per attack with default all-connected simulator filters.
+    Supports per-attack simulator overrides and a global all_connected toggle.
+    Defaults to dry_run=True — returns a preview without queuing.
+
+    Args:
+        attack_ids: Comma-separated playbook attack IDs (integers)
+        console: SafeBreach console identifier (default: "default")
+        test_name: Custom test name (optional, auto-generated if not provided)
+        all_connected: Global override — all connected simulators (default: False)
+        simulator_overrides: JSON string for per-attack simulator targeting
+        dry_run: If True (default), preview without queuing
+
+    Returns:
+        Dict with status='dry_run' (preview) or status='queued' (execution)
+
+    Raises:
+        ValueError: If attack_ids invalid, not found, or overrides malformed
+    """
+    # Phase 2: Input validation and step construction
+    parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
+    steps = _build_adhoc_steps(parsed_ids, name_map)
+
+    # Phase 3: Simulator overrides (to be implemented)
+    # Phase 4: Statistics, dry-run, and execution (to be implemented)
+
+    # Temporary: return dry_run preview with constructed steps
+    step_stats = _get_scenario_statistics(steps, console)
+    step_counts = [s.get('simulationCount', 0) for s in step_stats]
+
+    return {
+        'status': 'dry_run',
+        'attack_ids': parsed_ids,
+        'steps': steps,
+        'predicted_simulations': sum(step_counts),
+        'predicted_per_step': step_counts,
+        'step_stats': step_stats,
+    }
+
+
 def sb_run_scenario(
     scenario_id: str,
     console: str = "default",
