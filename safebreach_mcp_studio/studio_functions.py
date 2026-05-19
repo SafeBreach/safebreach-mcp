@@ -185,10 +185,9 @@ def _submit_to_queue(payload, console, query_params=None):
             api_url, headers=headers, params=query_params,
             json=payload, timeout=120,
         )
-        status = getattr(response, 'status_code', None)
-        if isinstance(status, int) and status >= 400:
+        if response.status_code >= 400:
             logger.error(
-                f"Queue API error {status}: {response.text}"
+                f"Queue API error {response.status_code}: {response.text}"
             )
         check_rbac_response(response)
         api_response = response.json()

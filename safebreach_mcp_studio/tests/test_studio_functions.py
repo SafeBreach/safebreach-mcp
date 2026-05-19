@@ -1419,6 +1419,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1462,6 +1463,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1502,6 +1504,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1552,6 +1555,8 @@ class TestRunStudioAttack:
 
         # Mock API error
         mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
         mock_response.raise_for_status.side_effect = Exception("API Error: 500 Internal Server Error")
         mock_post.return_value = mock_response
 
@@ -3805,6 +3810,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3831,6 +3837,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3858,6 +3865,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3884,6 +3892,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3910,6 +3919,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3949,6 +3959,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3973,6 +3984,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3994,6 +4006,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -4039,6 +4052,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
