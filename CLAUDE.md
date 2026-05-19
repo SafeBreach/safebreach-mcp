@@ -418,6 +418,8 @@ Rate limiting environment variables:
   Hard-refuses if ALL attacks produce 0. Parameters: `attack_ids` (required, comma-separated
   integers), `console`, `test_name`, `all_connected` (bool), `simulator_overrides` (JSON string),
   `dry_run` (bool, default True). Uses the same queue API as `run_scenario`.
+  **Simulator UUID discovery**: For rerun workflows, get UUIDs from `get_simulation_details`
+  (`attacker_node_id`, `target_node_id`). For discovery workflows, use `get_console_simulators`.
 23. `get_studio_attack_latest_result` ✨ **Enhanced** - Retrieves latest execution results for a Studio
   attack by playbook ID. Now includes **Test Overview** section with test-level context fetched from
   `GET /testsummaries/{test_id}`: test status (running/completed/canceled/failed), test-level

@@ -1433,8 +1433,11 @@ Parameters:
 - all_connected (optional, bool, default False): Use all connected simulators.
   Overrides simulator_overrides when True.
 - simulator_overrides (optional, str): JSON mapping attack IDs to simulator UUIDs
-  for exact targeting. Example: '{"8849": {"target": ["sim-uuid"], "attacker": ["sim-uuid"]}}'
+  for exact targeting. Format: '{"<attack_id>": {"target": ["<uuid>"], "attacker": ["<uuid>"]}}'
   If only "target" is provided, attacker is inferred as same (host attack assumption).
+  **How to get simulator UUIDs:**
+  - From get_simulation_details: use attacker_node_id and target_node_id fields (rerun workflow)
+  - From get_console_simulators: use the simulator id field (discovery workflow)
 - dry_run (optional, bool, default True): Preview without queuing. The agent MUST
   present the preview to the user and get confirmation before calling with dry_run=False.
 
@@ -1443,7 +1446,9 @@ Returns: Markdown summary with predicted simulation counts (dry_run) or test_id 
 Example (preview):
   run_adhoc_scenario(attack_ids="8849,217", console="demo")
 Example (execute after preview):
-  run_adhoc_scenario(attack_ids="8849,217", console="demo", dry_run=False)"""
+  run_adhoc_scenario(attack_ids="8849,217", console="demo", dry_run=False)
+Example (rerun with exact simulators from a previous simulation):
+  run_adhoc_scenario(attack_ids="8849", simulator_overrides='{"8849": {"target": ["target-node-id"], "attacker": ["attacker-node-id"]}}', console="demo")"""
         )
         def run_adhoc_scenario(
             attack_ids: str,

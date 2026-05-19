@@ -666,3 +666,5 @@ execution, and rate limiting.
 | 2026-05-19 14:30 | PRD created — initial draft |
 | 2026-05-19 14:45 | Restructured implementation phases to TDD approach (Red-Green-Refactor) |
 | 2026-05-19 15:00 | Added verified E2E attack IDs: 11653, 11662, 7207, 11663, 11622 |
+| 2026-05-19 17:30 | All 7 phases implemented. Added tool disambiguation hints, hint_to_agent responses |
+| 2026-05-19 17:45 | Improved simulator_overrides discoverability based on agent session feedback |
