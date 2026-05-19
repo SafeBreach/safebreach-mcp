@@ -6,6 +6,7 @@ This module tests the core business logic functions for Studio operations.
 
 import pytest
 import json
+import requests
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_studio.studio_functions import (
     sb_validate_studio_code,
@@ -31,6 +32,8 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_test_summary,
     _fetch_test_storage_info,
     _fetch_storage_stats,
+    _build_linear_dag,
+    _submit_to_queue,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -8623,3 +8626,249 @@ class TestManageTest:
                 test_id="test123", action="delete", console="test",
                 reason=None
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (SAF-31295): Shared helpers — _build_linear_dag, _submit_to_queue
+# ---------------------------------------------------------------------------
+
+
+class TestBuildLinearDag:
+    """Tests for _build_linear_dag — pure function, no mocks needed."""
+
+    def test_single_step_returns_one_action_one_edge(self):
+        """1 step → 1 multiAttack action, 1 entry edge, no waits."""
+        steps = [{"name": "Step 1", "uuid": "aaaa-bbbb-cccc-dddd"}]
+        actions, edges = _build_linear_dag(steps)
+        assert len(actions) == 1
+        assert actions[0] == {
+            "id": 1, "type": "multiAttack",
+            "data": {"uuid": "aaaa-bbbb-cccc-dddd"},
+        }
+        assert edges == [{"to": 1}]
+        # No wait actions for single step
+        assert all(a["type"] != "wait" for a in actions)
+
+    def test_two_steps_returns_correct_actions_and_edges(self):
+        """2 steps → 2 multiAttack + 1 wait, edges chain step1 → wait → step2."""
+        steps = [
+            {"name": "Step 1", "uuid": "uuid-1"},
+            {"name": "Step 2", "uuid": "uuid-2"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert len(multi) == 2
+        assert len(waits) == 1
+        assert waits[0] == {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        assert edges == [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2},
+        ]
+
+    def test_three_steps_returns_correct_chain(self):
+        """3 steps → 3 multiAttack + 2 waits, full sequential chain."""
+        steps = [
+            {"name": "S1", "uuid": "u1"},
+            {"name": "S2", "uuid": "u2"},
+            {"name": "S3", "uuid": "u3"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert len(multi) == 3
+        assert len(waits) == 2
+        assert waits[0]["id"] == 1001
+        assert waits[1]["id"] == 1002
+        assert edges == [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2},
+            {"from": 2, "to": 1002},
+            {"from": 1002, "to": 3},
+        ]
+
+    def test_step_without_uuid_gets_auto_generated(self):
+        """Steps missing uuid get one auto-generated (mutated in place)."""
+        steps = [{"name": "No UUID step"}]
+        actions, edges = _build_linear_dag(steps)
+        assert "uuid" in steps[0]
+        assert isinstance(steps[0]["uuid"], str)
+        assert len(steps[0]["uuid"]) == 36  # UUID4 format
+        assert actions[0]["data"]["uuid"] == steps[0]["uuid"]
+
+    def test_step_with_existing_uuid_preserved(self):
+        """Steps with existing uuid keep their original value."""
+        steps = [{"name": "Has UUID", "uuid": "my-custom-uuid-value-here"}]
+        actions, edges = _build_linear_dag(steps)
+        assert steps[0]["uuid"] == "my-custom-uuid-value-here"
+        assert actions[0]["data"]["uuid"] == "my-custom-uuid-value-here"
+
+    def test_action_ids_are_one_indexed(self):
+        """multiAttack action IDs are 1-indexed."""
+        steps = [{"name": f"S{i}", "uuid": f"u{i}"} for i in range(3)]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        assert [a["id"] for a in multi] == [1, 2, 3]
+
+    def test_wait_action_ids_start_at_1001(self):
+        """Wait action IDs follow pattern 1001, 1002, etc."""
+        steps = [{"name": f"S{i}", "uuid": f"u{i}"} for i in range(3)]
+        actions, edges = _build_linear_dag(steps)
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert [a["id"] for a in waits] == [1001, 1002]
+
+    def test_multiattack_references_step_uuid(self):
+        """Each multiAttack action references the correct step UUID."""
+        steps = [
+            {"name": "A", "uuid": "uuid-alpha"},
+            {"name": "B", "uuid": "uuid-beta"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        assert multi[0]["data"]["uuid"] == "uuid-alpha"
+        assert multi[1]["data"]["uuid"] == "uuid-beta"
+
+    def test_empty_steps_returns_empty(self):
+        """Empty list input returns empty actions and edges."""
+        actions, edges = _build_linear_dag([])
+        assert actions == []
+        assert edges == []
+
+
+class TestSubmitToQueue:
+    """Tests for _submit_to_queue — mocked HTTP calls."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_success_returns_parsed_json(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Successful POST returns parsed JSON response body."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        expected = {"data": {"planRunId": "123.45", "name": "Test"}}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = expected
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _submit_to_queue({"plan": {"name": "test"}}, "test-console")
+
+        assert result == expected
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert "/api/orch/v4/accounts/1234567890/queue" in call_args[0][0]
+        assert call_args[1]["timeout"] == 120
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_http_error_logs_body_and_raises(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """HTTP 400+ logs error body and raises via check_rbac_response."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad Request body"
+        mock_response.raise_for_status.side_effect = (
+            requests.exceptions.HTTPError("400 Bad Request")
+        )
+        mock_post.return_value = mock_response
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            _submit_to_queue({"plan": {}}, "test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_network_error_propagates(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """RequestException from requests.post propagates to caller."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_post.side_effect = requests.exceptions.ConnectionError(
+            "Connection refused"
+        )
+
+        with pytest.raises(requests.exceptions.RequestException):
+            _submit_to_queue({"plan": {}}, "test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_default_query_params(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Default query_params are enableFeedbackLoop=true, retrySimulations=true."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _submit_to_queue({"plan": {}}, "test-console")
+
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["params"] == {
+            "enableFeedbackLoop": "true",
+            "retrySimulations": "true",
+        }
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_custom_query_params_override(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Custom query_params replace defaults."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _submit_to_queue(
+            {"plan": {}}, "test-console",
+            query_params={"retrySimulations": "false"},
+        )
+
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["params"] == {"retrySimulations": "false"}
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_permission_error_on_403(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """403 response raises PermissionError via check_rbac_response."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.url = (
+            "https://test.safebreach.com/api/orch/v4/accounts/1234567890/queue"
+        )
+        mock_response.text = "Forbidden"
+        mock_post.return_value = mock_response
+
+        with pytest.raises(PermissionError):
+            _submit_to_queue({"plan": {}}, "test-console")

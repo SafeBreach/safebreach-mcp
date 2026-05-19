@@ -83,6 +83,122 @@ VALID_PROTOCOLS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers — queue submission and DAG generation (SAF-31295)
+# ---------------------------------------------------------------------------
+
+
+def _build_linear_dag(steps):
+    """
+    Build a linear sequential DAG from a list of steps.
+
+    Generates actions (multiAttack + wait) and edges for sequential execution:
+    step1 → wait(0s) → step2 → wait(0s) → step3 → ...
+
+    Steps missing a 'uuid' field get one auto-generated (mutated in place).
+
+    Args:
+        steps: List of step dicts (each should have a 'uuid' field)
+
+    Returns:
+        Tuple of (actions, edges) lists for the queue API payload
+    """
+    import uuid as uuid_module
+
+    if not steps:
+        return [], []
+
+    # Auto-generate UUIDs for steps missing them
+    for step in steps:
+        if not step.get('uuid'):
+            step['uuid'] = str(uuid_module.uuid4())
+
+    actions = []
+    edges = []
+
+    # Create multiAttack actions (1-indexed)
+    for i, step in enumerate(steps):
+        actions.append({
+            "id": i + 1,
+            "type": "multiAttack",
+            "data": {"uuid": step['uuid']},
+        })
+
+    # Create wait actions between consecutive steps
+    for i in range(len(steps) - 1):
+        actions.append({
+            "id": 1001 + i,
+            "type": "wait",
+            "data": {"seconds": 0},
+        })
+
+    # Entry edge
+    edges.append({"to": 1})
+
+    # Chain edges: step_i → wait_i → step_{i+1}
+    for i in range(len(steps) - 1):
+        edges.append({"from": i + 1, "to": 1001 + i})
+        edges.append({"from": 1001 + i, "to": i + 2})
+
+    return actions, edges
+
+
+def _submit_to_queue(payload, console, query_params=None):
+    """
+    Submit a plan payload to the orchestrator queue API.
+
+    Handles URL construction, authentication, error logging, and RBAC checks.
+    Callers are responsible for their own rate limiting gates.
+
+    Args:
+        payload: Complete JSON payload for the queue API
+        console: SafeBreach console identifier
+        query_params: Optional dict of query parameters. Defaults to
+            {"enableFeedbackLoop": "true", "retrySimulations": "true"}
+
+    Returns:
+        Parsed JSON response from the queue API
+
+    Raises:
+        requests.exceptions.HTTPError: On HTTP 4xx/5xx responses
+        requests.exceptions.RequestException: On network errors
+        PermissionError: On 403 RBAC failures
+    """
+    if query_params is None:
+        query_params = {
+            "enableFeedbackLoop": "true",
+            "retrySimulations": "true",
+        }
+
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console),
+    }
+
+    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
+    logger.info(f"Calling queue API: {api_url}")
+
+    try:
+        response = requests.post(
+            api_url, headers=headers, params=query_params,
+            json=payload, timeout=120,
+        )
+        status = getattr(response, 'status_code', None)
+        if isinstance(status, int) and status >= 400:
+            logger.error(
+                f"Queue API error {status}: {response.text}"
+            )
+        check_rbac_response(response)
+        api_response = response.json()
+        logger.info("Queue API call successful")
+        return api_response
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Queue API call failed: {e}")
+        raise
+
+
 def _normalize_attack_type(attack_type: str) -> str:
     """
     Normalize attack_type to canonical lowercase key, accepting aliases.
@@ -1116,14 +1232,6 @@ def sb_run_studio_attack(
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_studio_attack")
 
-    # Get authentication and base URL
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {
-        "Content-Type": "application/json",
-        **get_auth_headers_for_console(console)
-    }
-
     # Build attacker and target filters
     if all_connected:
         connection_filter = {
@@ -1175,22 +1283,11 @@ def sb_run_studio_attack(
         }
     }
 
-    # Call run attack API
-    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
-    params = {
-        "enableFeedbackLoop": "true",
-        "retrySimulations": "false"
-    }
-    logger.info(f"Calling run attack API: {api_url}")
-
-    try:
-        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
-        check_rbac_response(response)
-        api_response = response.json()
-        logger.info("Run attack API call successful")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Run attack API call failed: {e}")
-        raise
+    # Submit to queue API (studio attacks use retrySimulations=false)
+    api_response = _submit_to_queue(
+        payload, console,
+        query_params={"enableFeedbackLoop": "true", "retrySimulations": "false"},
+    )
 
     # Extract data from response
     data = api_response.get('data', {})
@@ -2467,14 +2564,6 @@ def sb_run_scenario(
         f"(predicted: {total_predicted} simulations, empty steps: {empty_steps})"
     )
 
-    # Get authentication and base URL for orchestrator
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {
-        "Content-Type": "application/json",
-        **get_auth_headers_for_console(console)
-    }
-
     # Build payload for queue API — different structure for OOB vs custom plans
     if is_custom_plan and not parsed_overrides:
         # Ready custom plans without overrides: just send planId
@@ -2489,45 +2578,19 @@ def sb_run_scenario(
         # OOB scenarios: relay full payload with steps + DAG
         # Content-manager API returns None for actions, edges, systemTags, and step
         # UUIDs. Queue API requires all of these — generate when missing.
-        import uuid as uuid_module
-
         steps = scenario['steps']
-        for step in steps:
-            if not step.get('uuid'):
-                step['uuid'] = str(uuid_module.uuid4())
 
         actions = scenario.get('actions')
         edges = scenario.get('edges')
 
         if not actions or not edges:
-            actions = []
-            edges = []
-
-            for i, step in enumerate(steps):
-                action_id = i + 1
-                actions.append({
-                    "id": action_id,
-                    "type": "multiAttack",
-                    "data": {"uuid": step['uuid']}
-                })
-
-            for i in range(len(steps) - 1):
-                wait_id = 1001 + i
-                actions.append({
-                    "id": wait_id,
-                    "type": "wait",
-                    "data": {"seconds": 0}
-                })
-
-            if steps:
-                edges.append({"to": 1})
-
-            for i in range(len(steps) - 1):
-                step_id = i + 1
-                wait_id = 1001 + i
-                next_step_id = i + 2
-                edges.append({"from": step_id, "to": wait_id})
-                edges.append({"from": wait_id, "to": next_step_id})
+            actions, edges = _build_linear_dag(steps)
+        else:
+            # Ensure UUIDs exist even when actions/edges are provided
+            import uuid as uuid_module
+            for step in steps:
+                if not step.get('uuid'):
+                    step['uuid'] = str(uuid_module.uuid4())
 
         plan_body = {
             "name": effective_test_name,
@@ -2543,28 +2606,11 @@ def sb_run_scenario(
 
         payload = {"plan": plan_body}
 
-    # POST to queue API
-    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
-    params = {
-        "enableFeedbackLoop": "true",
-        "retrySimulations": "true"
-    }
-    logger.info(f"Calling queue API: {api_url}")
-
     # Rate limiting gate — check before queuing (after dry_run/not_ready early returns)
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_scenario")
 
-    try:
-        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
-        if response.status_code >= 400:
-            logger.error(f"Queue API error {response.status_code}: {response.text}")
-        check_rbac_response(response)
-        api_response = response.json()
-        logger.info("Queue API call successful")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Queue API call failed: {e}")
-        raise
+    api_response = _submit_to_queue(payload, console)
 
     # Extract data from response
     data = api_response.get('data', {})
