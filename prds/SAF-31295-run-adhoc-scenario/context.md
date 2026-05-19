@@ -1,6 +1,6 @@
 # SAF-31295: Context
 
-## Status: Investigation Complete
+## Status: Phase 6: PRD Created
 
 ## Ticket
 - **ID**: SAF-31295
@@ -103,3 +103,29 @@ Creating a separate `run_adhoc_scenario` rather than extending `run_scenario` be
 - **Cross-server dependency**: Attack phase classification requires playbook cache data
 - **Statistics API latency**: Pre-flight adds ~2-5s per call
 - **Step splitting complexity**: Per-attack simulator overrides can fragment steps significantly
+
+## Brainstorming Decisions
+
+### Step Grouping: One Attack Per Step (Simplified)
+**Decision:** Use one attack per step instead of phase-based grouping.
+- Eliminates attack classification logic entirely
+- Each attack gets its own targetFilter/attackerFilter — trivial simulator_overrides mapping
+- Parallel fan-out DAG ensures concurrent execution (no sequential bottleneck)
+
+### DAG Topology: Linear Sequential (proven pattern)
+**Decision:** Use linear sequential DAG (same as `run_scenario`) for now.
+- Proven pattern already in production
+- Parallel fan-out DAG validated at API level (accepted, RUNNING, cancellable)
+  but completion not verified due to console load during experiments
+- Sequential execution may be slower for many attacks but is reliable
+- **Future optimization:** Switch to parallel fan-out DAG once completion is verified
+
+### Step Ordering: Arbitrary (insertion order)
+Steps execute in the order attacks are provided. No fixed semantic ordering.
+
+### Cross-Server Dependency: Direct Python Import
+Same pattern as `_build_attack_name_map()` — import from playbook module, reuse cache.
+
+### Helper Extraction: Extract as Part of This Task
+Create `_submit_to_queue()` and `_build_parallel_dag()` / `_build_linear_dag()` shared helpers.
+Refactor `sb_run_scenario` and `sb_run_studio_attack` to use them.
