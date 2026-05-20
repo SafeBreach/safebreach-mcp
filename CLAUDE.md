@@ -299,6 +299,7 @@ Caller identity (`get_caller_identity()`): auth token SHA256[:16] for external c
 | `run_studio_attack` | After input validation | After POST queue response | — |
 | `set_studio_attack_status` | After pre-check GET | After PUT + cache invalidate | Allow read first |
 | `run_scenario` | Before queue POST | After POST queue response | Skip on dry_run/not_ready |
+| `run_adhoc_scenario` | Before queue POST | After POST queue response | Skip on dry_run |
 | `manage_test` | After input validation | After state change | Note append is best-effort |
 
 Rate limiting environment variables:
@@ -407,7 +408,19 @@ Rate limiting environment variables:
   Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
   best-effort — failure does not block the lifecycle operation. Response includes
   `hint_to_agent` with contextual next-step guidance per action.
-22. `get_studio_attack_latest_result` ✨ **Enhanced** - Retrieves latest execution results for a Studio
+22. `run_adhoc_scenario` ✨ **NEW** 🔒 **Rate-limited** - Execute an ad-hoc scenario from explicit
+  playbook attack IDs. Constructs one step per attack with default all-connected simulator
+  filters. Supports `simulator_overrides` (JSON string mapping attack IDs to specific target/attacker
+  simulator UUIDs) for exact targeting, and `all_connected` global override. Defaults to
+  `dry_run=True` — returns a preview with per-step simulation counts without queuing. The agent
+  MUST present the preview to the user and get confirmation before calling with `dry_run=False`.
+  Partial execution: if some attacks produce 0 simulations, they are skipped (user saw the preview).
+  Hard-refuses if ALL attacks produce 0. Parameters: `attack_ids` (required, comma-separated
+  integers), `console`, `test_name`, `all_connected` (bool), `simulator_overrides` (JSON string),
+  `dry_run` (bool, default True). Uses the same queue API as `run_scenario`.
+  **Simulator UUID discovery**: For rerun workflows, get UUIDs from `get_simulation_details`
+  (`attacker_node_id`, `target_node_id`). For discovery workflows, use `get_console_simulators`.
+23. `get_studio_attack_latest_result` ✨ **Enhanced** - Retrieves latest execution results for a Studio
   attack by playbook ID. Now includes **Test Overview** section with test-level context fetched from
   `GET /testsummaries/{test_id}`: test status (running/completed/canceled/failed), test-level
   start/end times and duration, simulation status breakdown (missed/stopped/prevented/detected/

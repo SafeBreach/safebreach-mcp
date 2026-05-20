@@ -83,6 +83,121 @@ VALID_PROTOCOLS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers — queue submission and DAG generation (SAF-31295)
+# ---------------------------------------------------------------------------
+
+
+def _build_linear_dag(steps):
+    """
+    Build a linear sequential DAG from a list of steps.
+
+    Generates actions (multiAttack + wait) and edges for sequential execution:
+    step1 → wait(0s) → step2 → wait(0s) → step3 → ...
+
+    Steps missing a 'uuid' field get one auto-generated (mutated in place).
+
+    Args:
+        steps: List of step dicts (each should have a 'uuid' field)
+
+    Returns:
+        Tuple of (actions, edges) lists for the queue API payload
+    """
+    import uuid as uuid_module
+
+    if not steps:
+        return [], []
+
+    # Auto-generate UUIDs for steps missing them
+    for step in steps:
+        if not step.get('uuid'):
+            step['uuid'] = str(uuid_module.uuid4())
+
+    actions = []
+    edges = []
+
+    # Create multiAttack actions (1-indexed)
+    for i, step in enumerate(steps):
+        actions.append({
+            "id": i + 1,
+            "type": "multiAttack",
+            "data": {"uuid": step['uuid']},
+        })
+
+    # Create wait actions between consecutive steps
+    for i in range(len(steps) - 1):
+        actions.append({
+            "id": 1001 + i,
+            "type": "wait",
+            "data": {"seconds": 0},
+        })
+
+    # Entry edge
+    edges.append({"to": 1})
+
+    # Chain edges: step_i → wait_i → step_{i+1}
+    for i in range(len(steps) - 1):
+        edges.append({"from": i + 1, "to": 1001 + i})
+        edges.append({"from": 1001 + i, "to": i + 2})
+
+    return actions, edges
+
+
+def _submit_to_queue(payload, console, query_params=None):
+    """
+    Submit a plan payload to the orchestrator queue API.
+
+    Handles URL construction, authentication, error logging, and RBAC checks.
+    Callers are responsible for their own rate limiting gates.
+
+    Args:
+        payload: Complete JSON payload for the queue API
+        console: SafeBreach console identifier
+        query_params: Optional dict of query parameters. Defaults to
+            {"enableFeedbackLoop": "true", "retrySimulations": "true"}
+
+    Returns:
+        Parsed JSON response from the queue API
+
+    Raises:
+        requests.exceptions.HTTPError: On HTTP 4xx/5xx responses
+        requests.exceptions.RequestException: On network errors
+        PermissionError: On 403 RBAC failures
+    """
+    if query_params is None:
+        query_params = {
+            "enableFeedbackLoop": "true",
+            "retrySimulations": "true",
+        }
+
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console),
+    }
+
+    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
+    logger.info(f"Calling queue API: {api_url}")
+
+    try:
+        response = requests.post(
+            api_url, headers=headers, params=query_params,
+            json=payload, timeout=120,
+        )
+        if response.status_code >= 400:
+            logger.error(
+                f"Queue API error {response.status_code}: {response.text}"
+            )
+        check_rbac_response(response)
+        api_response = response.json()
+        logger.info("Queue API call successful")
+        return api_response
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Queue API call failed: {e}")
+        raise
+
+
 def _normalize_attack_type(attack_type: str) -> str:
     """
     Normalize attack_type to canonical lowercase key, accepting aliases.
@@ -1116,14 +1231,6 @@ def sb_run_studio_attack(
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_studio_attack")
 
-    # Get authentication and base URL
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {
-        "Content-Type": "application/json",
-        **get_auth_headers_for_console(console)
-    }
-
     # Build attacker and target filters
     if all_connected:
         connection_filter = {
@@ -1175,22 +1282,11 @@ def sb_run_studio_attack(
         }
     }
 
-    # Call run attack API
-    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
-    params = {
-        "enableFeedbackLoop": "true",
-        "retrySimulations": "false"
-    }
-    logger.info(f"Calling run attack API: {api_url}")
-
-    try:
-        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
-        check_rbac_response(response)
-        api_response = response.json()
-        logger.info("Run attack API call successful")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Run attack API call failed: {e}")
-        raise
+    # Submit to queue API (studio attacks use retrySimulations=false)
+    api_response = _submit_to_queue(
+        payload, console,
+        query_params={"enableFeedbackLoop": "true", "retrySimulations": "false"},
+    )
 
     # Extract data from response
     data = api_response.get('data', {})
@@ -2318,6 +2414,352 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     return result
 
 
+# ---------------------------------------------------------------------------
+# run_adhoc_scenario — SAF-31295: Ad-hoc attack execution
+# ---------------------------------------------------------------------------
+
+
+def _validate_and_resolve_attack_ids(attack_ids_str, console):
+    """
+    Parse, validate, and resolve attack IDs against the playbook cache.
+
+    Args:
+        attack_ids_str: Comma-separated attack IDs string
+        console: SafeBreach console identifier
+
+    Returns:
+        Tuple of (parsed_ids: list[int], name_map: dict[int, str])
+        name_map maps attack ID → attack name (empty on cache failure)
+
+    Raises:
+        ValueError: If input is empty, contains non-integers, or IDs not in playbook
+    """
+    if not attack_ids_str or (isinstance(attack_ids_str, str)
+                              and not attack_ids_str.strip()):
+        raise ValueError("attack_ids is required and cannot be empty")
+
+    # Parse comma-separated IDs
+    raw_parts = attack_ids_str.split(",")
+    parsed_ids = []
+    for part in raw_parts:
+        part = part.strip()
+        if not part:
+            continue  # Skip empty segments (e.g., "8849,,217")
+        try:
+            parsed_ids.append(int(part))
+        except ValueError:
+            raise ValueError(
+                f"invalid attack ID '{part}' — all IDs must be integers"
+            )
+
+    if not parsed_ids:
+        raise ValueError("attack_ids is required and cannot be empty")
+
+    # Validate against playbook cache
+    name_map = {}
+    try:
+        from safebreach_mcp_playbook.playbook_functions import (
+            _get_all_attacks_from_cache_or_api,
+        )
+        all_attacks = _get_all_attacks_from_cache_or_api(console)
+        valid_ids = {a['id'] for a in all_attacks if 'id' in a}
+        name_map = {
+            a['id']: a.get('name', '') for a in all_attacks if 'id' in a
+        }
+
+        invalid_ids = [aid for aid in parsed_ids if aid not in valid_ids]
+        if invalid_ids:
+            raise ValueError(
+                f"Attack IDs not found in playbook: {invalid_ids}"
+            )
+    except ValueError:
+        raise  # Re-raise our own validation errors
+    except Exception as e:
+        # Playbook cache failure — degrade gracefully (no name resolution)
+        logger.warning(f"Playbook cache unavailable: {e}")
+
+    return parsed_ids, name_map
+
+
+def _build_adhoc_steps(parsed_ids, name_map):
+    """
+    Construct one step per attack with default connection filters.
+
+    Args:
+        parsed_ids: List of validated attack IDs
+        name_map: Dict mapping attack ID → name (may be empty)
+
+    Returns:
+        List of step dicts ready for the statistics/queue APIs
+    """
+    import uuid as uuid_module
+
+    steps = []
+    for attack_id in parsed_ids:
+        attack_name = name_map.get(attack_id, f"Attack {attack_id}")
+        steps.append({
+            "uuid": str(uuid_module.uuid4()),
+            "name": attack_name,
+            "attacksFilter": {
+                "playbook": {
+                    "operator": "is",
+                    "values": [attack_id],
+                    "name": "playbook",
+                }
+            },
+            "targetFilter": {
+                "connection": {
+                    "operator": "is",
+                    "values": [True],
+                    "name": "connection",
+                }
+            },
+            "attackerFilter": {
+                "connection": {
+                    "operator": "is",
+                    "values": [True],
+                    "name": "connection",
+                }
+            },
+            "systemFilter": {},
+        })
+    return steps
+
+
+def _apply_adhoc_overrides(steps, overrides, parsed_ids):
+    """
+    Apply per-attack simulator overrides to constructed steps.
+
+    Each override maps an attack ID (string) to a dict with 'target' and
+    optionally 'attacker' simulator UUID lists. If only 'target' is provided,
+    attackerFilter is set to the same as targetFilter (host attack assumption).
+
+    Args:
+        steps: List of step dicts (modified in place)
+        overrides: Dict mapping attack ID strings to override dicts
+        parsed_ids: List of valid attack IDs (for validation)
+
+    Raises:
+        ValueError: If an override references an attack ID not in parsed_ids
+    """
+    parsed_ids_set = set(parsed_ids)
+    # Build attack_id → step index mapping
+    step_by_attack = {}
+    for i, step in enumerate(steps):
+        attack_id = step["attacksFilter"]["playbook"]["values"][0]
+        step_by_attack[attack_id] = i
+
+    for attack_id_str, override in overrides.items():
+        attack_id = int(attack_id_str)
+        if attack_id not in parsed_ids_set:
+            raise ValueError(
+                f"simulator_overrides references attack ID {attack_id} "
+                f"which is not in attack_ids"
+            )
+
+        step_idx = step_by_attack[attack_id]
+        step = steps[step_idx]
+
+        target_uuids = override.get("target", [])
+        attacker_uuids = override.get("attacker")
+
+        # Build target filter
+        target_filter = {
+            "simulators": {
+                "operator": "is",
+                "values": target_uuids,
+                "name": "simulators",
+            }
+        }
+        step["targetFilter"] = target_filter
+
+        # Build attacker filter — infer from target if not provided
+        if attacker_uuids is not None:
+            step["attackerFilter"] = {
+                "simulators": {
+                    "operator": "is",
+                    "values": attacker_uuids,
+                    "name": "simulators",
+                }
+            }
+        else:
+            step["attackerFilter"] = target_filter
+
+
+def sb_run_adhoc_scenario(
+    attack_ids: str,
+    console: str = "default",
+    test_name: str = None,
+    all_connected: bool = False,
+    simulator_overrides: str = None,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """
+    Construct and execute an ad-hoc scenario from explicit playbook attack IDs.
+
+    Creates one step per attack with default all-connected simulator filters.
+    Supports per-attack simulator overrides and a global all_connected toggle.
+    Defaults to dry_run=True — returns a preview without queuing.
+
+    Args:
+        attack_ids: Comma-separated playbook attack IDs (integers)
+        console: SafeBreach console identifier (default: "default")
+        test_name: Custom test name (optional, auto-generated if not provided)
+        all_connected: Global override — all connected simulators (default: False)
+        simulator_overrides: JSON string for per-attack simulator targeting
+        dry_run: If True (default), preview without queuing
+
+    Returns:
+        Dict with status='dry_run' (preview) or status='queued' (execution)
+
+    Raises:
+        ValueError: If attack_ids invalid, not found, or overrides malformed
+    """
+    # Fail-fast: parse JSON inputs before any API calls
+    parsed_overrides = None
+    if simulator_overrides is not None:
+        try:
+            parsed_overrides = json.loads(simulator_overrides)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise ValueError(f"Invalid simulator_overrides JSON: {e}")
+
+    # Phase 2: Input validation and step construction
+    parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
+    steps = _build_adhoc_steps(parsed_ids, name_map)
+
+    # Phase 3: Simulator overrides
+
+    if parsed_overrides and not all_connected:
+        _apply_adhoc_overrides(steps, parsed_overrides, parsed_ids)
+
+    # Phase 4: Statistics pre-flight
+    step_stats = _get_scenario_statistics(
+        steps, console, include_constraints=dry_run
+    )
+    step_counts = [s.get('simulationCount', 0) for s in step_stats]
+    total_predicted = sum(step_counts)
+    empty_steps = [i + 1 for i, c in enumerate(step_counts) if c == 0]
+
+    # Dry-run: return preview without queuing
+    if dry_run:
+        # Build contextual hint based on results
+        if total_predicted == 0:
+            hint = (
+                "All attacks produce 0 simulations. Check simulator availability "
+                "with get_console_simulators, or try simulator_overrides with "
+                "specific simulator UUIDs."
+            )
+        elif empty_steps:
+            hint = (
+                f"{len(empty_steps)} attack(s) will produce 0 simulations. "
+                "You can proceed (they will be skipped), provide "
+                "simulator_overrides for those attacks, or remove them. "
+                "To execute, call again with dry_run=False."
+            )
+        elif total_predicted > 1000:
+            hint = (
+                f"High simulation count ({total_predicted:,}). Consider using "
+                "simulator_overrides to target specific simulators and reduce "
+                "the count. To execute as-is, call again with dry_run=False."
+            )
+        else:
+            hint = "To execute, call again with dry_run=False."
+
+        return {
+            'status': 'dry_run',
+            'attack_ids': parsed_ids,
+            'steps': steps,
+            'predicted_simulations': total_predicted,
+            'predicted_per_step': step_counts,
+            'step_stats': step_stats,
+            'empty_steps': empty_steps,
+            'step_count': len(steps),
+            'hint_to_agent': hint,
+        }
+
+    # Execution validation
+    if total_predicted == 0:
+        raise ValueError(
+            f"Ad-hoc scenario would produce 0 simulations across all "
+            f"{len(steps)} attacks. No matching simulators found."
+        )
+
+    # Filter out 0-sim steps for partial execution
+    skipped_attacks = []
+    if empty_steps:
+        exec_steps = []
+        for i, step in enumerate(steps):
+            if step_counts[i] > 0:
+                exec_steps.append(step)
+            else:
+                attack_id = step["attacksFilter"]["playbook"]["values"][0]
+                skipped_attacks.append(attack_id)
+        steps = exec_steps
+
+    # Build DAG for remaining steps
+    actions, edges = _build_linear_dag(steps)
+
+    # Build queue payload
+    effective_test_name = test_name or f"Ad-hoc Test ({len(steps)} attacks)"
+    payload = {
+        "plan": {
+            "name": effective_test_name,
+            "steps": steps,
+            "systemTags": [],
+            "actions": actions,
+            "edges": edges,
+        }
+    }
+
+    # Rate limiting gates
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "run_adhoc_scenario")
+
+    # Submit to queue
+    api_response = _submit_to_queue(payload, console)
+
+    # Record successful action
+    rate_limiter.record_action(caller_id, "run_adhoc_scenario")
+
+    # Extract response data
+    data = api_response.get('data', {})
+    resp_steps = data.get('steps', [])
+
+    queued_hint = (
+        f"Test queued. Use get_test_details with test_id "
+        f"'{data.get('planRunId', '')}' to track execution progress. "
+        f"Use manage_test to pause, resume, or cancel."
+    )
+    if skipped_attacks:
+        queued_hint += (
+            f" Note: {len(skipped_attacks)} attack(s) were skipped "
+            f"(0 simulations): {skipped_attacks}."
+        )
+
+    result = {
+        'status': 'queued',
+        'test_id': data.get('planRunId', ''),
+        'test_name': data.get('name', effective_test_name),
+        'attack_ids': parsed_ids,
+        'step_count': len(resp_steps),
+        'step_run_ids': [s.get('stepRunId', '') for s in resp_steps],
+        'predicted_simulations': total_predicted,
+        'predicted_per_step': step_counts,
+        'step_stats': step_stats,
+        'empty_steps': empty_steps,
+        'skipped_attacks': skipped_attacks,
+        'hint_to_agent': queued_hint,
+    }
+
+    logger.info(
+        f"Successfully queued ad-hoc scenario "
+        f"(test_id: {result['test_id']}, attacks: {len(parsed_ids)}, "
+        f"steps queued: {result['step_count']})"
+    )
+
+    return result
+
+
 def sb_run_scenario(
     scenario_id: str,
     console: str = "default",
@@ -2467,14 +2909,6 @@ def sb_run_scenario(
         f"(predicted: {total_predicted} simulations, empty steps: {empty_steps})"
     )
 
-    # Get authentication and base URL for orchestrator
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {
-        "Content-Type": "application/json",
-        **get_auth_headers_for_console(console)
-    }
-
     # Build payload for queue API — different structure for OOB vs custom plans
     if is_custom_plan and not parsed_overrides:
         # Ready custom plans without overrides: just send planId
@@ -2489,45 +2923,19 @@ def sb_run_scenario(
         # OOB scenarios: relay full payload with steps + DAG
         # Content-manager API returns None for actions, edges, systemTags, and step
         # UUIDs. Queue API requires all of these — generate when missing.
-        import uuid as uuid_module
-
         steps = scenario['steps']
-        for step in steps:
-            if not step.get('uuid'):
-                step['uuid'] = str(uuid_module.uuid4())
 
         actions = scenario.get('actions')
         edges = scenario.get('edges')
 
         if not actions or not edges:
-            actions = []
-            edges = []
-
-            for i, step in enumerate(steps):
-                action_id = i + 1
-                actions.append({
-                    "id": action_id,
-                    "type": "multiAttack",
-                    "data": {"uuid": step['uuid']}
-                })
-
-            for i in range(len(steps) - 1):
-                wait_id = 1001 + i
-                actions.append({
-                    "id": wait_id,
-                    "type": "wait",
-                    "data": {"seconds": 0}
-                })
-
-            if steps:
-                edges.append({"to": 1})
-
-            for i in range(len(steps) - 1):
-                step_id = i + 1
-                wait_id = 1001 + i
-                next_step_id = i + 2
-                edges.append({"from": step_id, "to": wait_id})
-                edges.append({"from": wait_id, "to": next_step_id})
+            actions, edges = _build_linear_dag(steps)
+        else:
+            # Ensure UUIDs exist even when actions/edges are provided
+            import uuid as uuid_module
+            for step in steps:
+                if not step.get('uuid'):
+                    step['uuid'] = str(uuid_module.uuid4())
 
         plan_body = {
             "name": effective_test_name,
@@ -2543,28 +2951,11 @@ def sb_run_scenario(
 
         payload = {"plan": plan_body}
 
-    # POST to queue API
-    api_url = f"{base_url}/api/orch/v4/accounts/{account_id}/queue"
-    params = {
-        "enableFeedbackLoop": "true",
-        "retrySimulations": "true"
-    }
-    logger.info(f"Calling queue API: {api_url}")
-
     # Rate limiting gate — check before queuing (after dry_run/not_ready early returns)
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_scenario")
 
-    try:
-        response = requests.post(api_url, headers=headers, params=params, json=payload, timeout=120)
-        if response.status_code >= 400:
-            logger.error(f"Queue API error {response.status_code}: {response.text}")
-        check_rbac_response(response)
-        api_response = response.json()
-        logger.info("Queue API call successful")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Queue API call failed: {e}")
-        raise
+    api_response = _submit_to_queue(payload, console)
 
     # Extract data from response
     data = api_response.get('data', {})

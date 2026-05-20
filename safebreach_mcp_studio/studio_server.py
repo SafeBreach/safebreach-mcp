@@ -26,6 +26,7 @@ from .studio_functions import (
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
     sb_run_scenario,
+    sb_run_adhoc_scenario,
     sb_manage_test,
 )
 
@@ -1027,6 +1028,9 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Executes a ready-to-run SafeBreach scenario on the platform.
 
+Use this when you have an EXISTING scenario ID from get_scenarios. For running specific
+playbook attack IDs without a pre-existing scenario, use run_adhoc_scenario instead.
+
 IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
 scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
 and verify is_ready_to_run=True.
@@ -1406,6 +1410,145 @@ Example (3-turn workflow for non-ready scenarios):
             except Exception as e:
                 logger.error(f"Error in run_scenario: {e}")
                 return f"Error running scenario: {str(e)}"
+
+        # ----- run_adhoc_scenario (SAF-31295) -----
+
+        @self.mcp.tool(
+            name="run_adhoc_scenario",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+            description="""Execute an ad-hoc scenario from explicit playbook attack IDs.
+
+Use this when you have SPECIFIC playbook attack IDs to run without a pre-existing scenario.
+For running an existing OOB or custom scenario by ID, use run_scenario instead.
+
+Constructs one step per attack, predicts simulation counts via the statistics API,
+and presents a dry-run preview before execution. Use get_playbook_attacks to discover
+attack IDs beforehand.
+
+Parameters:
+- attack_ids (required, str): Comma-separated playbook attack IDs (integers).
+  Example: "8849,217,1071"
+- console (required, str): SafeBreach console name.
+- test_name (optional, str): Custom test name. Defaults to auto-generated.
+- all_connected (optional, bool, default False): Use all connected simulators.
+  Overrides simulator_overrides when True.
+- simulator_overrides (optional, str): JSON mapping attack IDs to simulator UUIDs
+  for exact targeting. Format: '{"<attack_id>": {"target": ["<uuid>"], "attacker": ["<uuid>"]}}'
+  If only "target" is provided, attacker is inferred as same (host attack assumption).
+  **How to get simulator UUIDs:**
+  - From get_simulation_details: use attacker_node_id and target_node_id fields (rerun workflow)
+  - From get_console_simulators: use the simulator id field (discovery workflow)
+- dry_run (optional, bool, default True): Preview without queuing. The agent MUST
+  present the preview to the user and get confirmation before calling with dry_run=False.
+
+Returns: Markdown summary with predicted simulation counts (dry_run) or test_id (queued).
+
+Example (preview):
+  run_adhoc_scenario(attack_ids="8849,217", console="demo")
+Example (execute after preview):
+  run_adhoc_scenario(attack_ids="8849,217", console="demo", dry_run=False)
+Example (rerun with exact simulators from a previous simulation):
+  run_adhoc_scenario(attack_ids="8849", simulator_overrides='{"8849": {"target": ["target-node-id"], "attacker": ["attacker-node-id"]}}', console="demo")"""
+        )
+        def run_adhoc_scenario(
+            attack_ids: str,
+            console: str = "default",
+            test_name: str = None,
+            all_connected: bool = False,
+            simulator_overrides: str = None,
+            dry_run: bool = True,
+        ) -> str:
+            """Execute an ad-hoc scenario from playbook attack IDs."""
+            try:
+                # Single-tenant console auto-resolve
+                from safebreach_mcp_core.environments_metadata import (
+                    get_console_name, safebreach_envs,
+                )
+                if not safebreach_envs:
+                    console_name = get_console_name()
+                    if console_name != 'default' and console not in safebreach_envs:
+                        console = console_name
+
+                result = sb_run_adhoc_scenario(
+                    attack_ids=attack_ids,
+                    console=console,
+                    test_name=test_name,
+                    all_connected=all_connected,
+                    simulator_overrides=simulator_overrides,
+                    dry_run=dry_run,
+                )
+
+                # Format dry_run response
+                if result.get('status') == 'dry_run':
+                    predicted_per_step = result.get('predicted_per_step', [])
+                    steps = result.get('steps', [])
+                    empty_steps = result.get('empty_steps', [])
+
+                    parts = [
+                        "## Ad-hoc Scenario — Dry Run Preview",
+                        "",
+                        f"**Attacks:** {len(steps)} attacks, "
+                        f"{result.get('predicted_simulations', 0):,} predicted simulations",
+                        "",
+                    ]
+
+                    for i, step in enumerate(steps):
+                        count = predicted_per_step[i] if i < len(predicted_per_step) else 0
+                        attack_name = step.get('name', f'Attack {i+1}')
+                        attack_id = step['attacksFilter']['playbook']['values'][0]
+                        marker = f" — **0 simulations**" if count == 0 else ""
+                        parts.append(
+                            f"- **{attack_name}** (#{attack_id}): "
+                            f"{count:,} sims{marker}"
+                        )
+
+                    if empty_steps:
+                        parts.extend([
+                            "",
+                            f"**Warning:** {len(empty_steps)} attack(s) will produce "
+                            f"0 simulations.",
+                        ])
+
+                    parts.extend([
+                        "",
+                        "**No test was queued.** "
+                        + result.get('hint_to_agent', 'To execute, call again with dry_run=False.'),
+                    ])
+
+                    return "\n".join(parts)
+
+                # Format queued response
+                skipped = result.get('skipped_attacks', [])
+
+                parts = [
+                    "## Ad-hoc Scenario Queued",
+                    "",
+                    f"**Test ID:** `{result.get('test_id')}`",
+                    f"**Test Name:** {result.get('test_name')}",
+                    f"**Steps Queued:** {result.get('step_count')}",
+                    f"**Predicted Simulations:** "
+                    f"{result.get('predicted_simulations', 0):,}",
+                    f"**Status:** {result.get('status')}",
+                ]
+
+                if skipped:
+                    parts.extend([
+                        "",
+                        f"**Skipped attacks (0 simulations):** "
+                        f"{', '.join(str(a) for a in skipped)}",
+                    ])
+
+                if result.get('hint_to_agent'):
+                    parts.extend(["", f"**Hint:** {result['hint_to_agent']}"])
+
+                return "\n".join(parts)
+
+            except ValueError as e:
+                logger.error(f"Ad-hoc scenario error: {e}")
+                return f"Ad-hoc Scenario Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in run_adhoc_scenario: {e}")
+                return f"Error running ad-hoc scenario: {str(e)}"
 
         # ----- manage_test (SAF-29969) -----
 

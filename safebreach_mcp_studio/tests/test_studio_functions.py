@@ -6,6 +6,7 @@ This module tests the core business logic functions for Studio operations.
 
 import pytest
 import json
+import requests
 from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_studio.studio_functions import (
     sb_validate_studio_code,
@@ -31,6 +32,9 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_test_summary,
     _fetch_test_storage_info,
     _fetch_storage_stats,
+    _build_linear_dag,
+    _submit_to_queue,
+    sb_run_adhoc_scenario,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -1415,6 +1419,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1458,6 +1463,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1498,6 +1504,7 @@ class TestRunStudioAttack:
         mock_get_account_id.return_value = "1234567890"
 
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -1548,6 +1555,8 @@ class TestRunStudioAttack:
 
         # Mock API error
         mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
         mock_response.raise_for_status.side_effect = Exception("API Error: 500 Internal Server Error")
         mock_post.return_value = mock_response
 
@@ -3801,6 +3810,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3827,6 +3837,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3854,6 +3865,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3880,6 +3892,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3906,6 +3919,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3945,6 +3959,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3969,6 +3984,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -3990,6 +4006,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -4035,6 +4052,7 @@ class TestExplicitSimulatorSelection:
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_run_response
         mock_post.return_value = mock_response
 
@@ -8623,3 +8641,1305 @@ class TestManageTest:
                 test_id="test123", action="delete", console="test",
                 reason=None
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (SAF-31295): Shared helpers — _build_linear_dag, _submit_to_queue
+# ---------------------------------------------------------------------------
+
+
+class TestBuildLinearDag:
+    """Tests for _build_linear_dag — pure function, no mocks needed."""
+
+    def test_single_step_returns_one_action_one_edge(self):
+        """1 step → 1 multiAttack action, 1 entry edge, no waits."""
+        steps = [{"name": "Step 1", "uuid": "aaaa-bbbb-cccc-dddd"}]
+        actions, edges = _build_linear_dag(steps)
+        assert len(actions) == 1
+        assert actions[0] == {
+            "id": 1, "type": "multiAttack",
+            "data": {"uuid": "aaaa-bbbb-cccc-dddd"},
+        }
+        assert edges == [{"to": 1}]
+        # No wait actions for single step
+        assert all(a["type"] != "wait" for a in actions)
+
+    def test_two_steps_returns_correct_actions_and_edges(self):
+        """2 steps → 2 multiAttack + 1 wait, edges chain step1 → wait → step2."""
+        steps = [
+            {"name": "Step 1", "uuid": "uuid-1"},
+            {"name": "Step 2", "uuid": "uuid-2"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert len(multi) == 2
+        assert len(waits) == 1
+        assert waits[0] == {"id": 1001, "type": "wait", "data": {"seconds": 0}}
+        assert edges == [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2},
+        ]
+
+    def test_three_steps_returns_correct_chain(self):
+        """3 steps → 3 multiAttack + 2 waits, full sequential chain."""
+        steps = [
+            {"name": "S1", "uuid": "u1"},
+            {"name": "S2", "uuid": "u2"},
+            {"name": "S3", "uuid": "u3"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert len(multi) == 3
+        assert len(waits) == 2
+        assert waits[0]["id"] == 1001
+        assert waits[1]["id"] == 1002
+        assert edges == [
+            {"to": 1},
+            {"from": 1, "to": 1001},
+            {"from": 1001, "to": 2},
+            {"from": 2, "to": 1002},
+            {"from": 1002, "to": 3},
+        ]
+
+    def test_step_without_uuid_gets_auto_generated(self):
+        """Steps missing uuid get one auto-generated (mutated in place)."""
+        steps = [{"name": "No UUID step"}]
+        actions, edges = _build_linear_dag(steps)
+        assert "uuid" in steps[0]
+        assert isinstance(steps[0]["uuid"], str)
+        assert len(steps[0]["uuid"]) == 36  # UUID4 format
+        assert actions[0]["data"]["uuid"] == steps[0]["uuid"]
+
+    def test_step_with_existing_uuid_preserved(self):
+        """Steps with existing uuid keep their original value."""
+        steps = [{"name": "Has UUID", "uuid": "my-custom-uuid-value-here"}]
+        actions, edges = _build_linear_dag(steps)
+        assert steps[0]["uuid"] == "my-custom-uuid-value-here"
+        assert actions[0]["data"]["uuid"] == "my-custom-uuid-value-here"
+
+    def test_action_ids_are_one_indexed(self):
+        """multiAttack action IDs are 1-indexed."""
+        steps = [{"name": f"S{i}", "uuid": f"u{i}"} for i in range(3)]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        assert [a["id"] for a in multi] == [1, 2, 3]
+
+    def test_wait_action_ids_start_at_1001(self):
+        """Wait action IDs follow pattern 1001, 1002, etc."""
+        steps = [{"name": f"S{i}", "uuid": f"u{i}"} for i in range(3)]
+        actions, edges = _build_linear_dag(steps)
+        waits = [a for a in actions if a["type"] == "wait"]
+        assert [a["id"] for a in waits] == [1001, 1002]
+
+    def test_multiattack_references_step_uuid(self):
+        """Each multiAttack action references the correct step UUID."""
+        steps = [
+            {"name": "A", "uuid": "uuid-alpha"},
+            {"name": "B", "uuid": "uuid-beta"},
+        ]
+        actions, edges = _build_linear_dag(steps)
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        assert multi[0]["data"]["uuid"] == "uuid-alpha"
+        assert multi[1]["data"]["uuid"] == "uuid-beta"
+
+    def test_empty_steps_returns_empty(self):
+        """Empty list input returns empty actions and edges."""
+        actions, edges = _build_linear_dag([])
+        assert actions == []
+        assert edges == []
+
+
+class TestSubmitToQueue:
+    """Tests for _submit_to_queue — mocked HTTP calls."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_success_returns_parsed_json(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Successful POST returns parsed JSON response body."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        expected = {"data": {"planRunId": "123.45", "name": "Test"}}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = expected
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _submit_to_queue({"plan": {"name": "test"}}, "test-console")
+
+        assert result == expected
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert "/api/orch/v4/accounts/1234567890/queue" in call_args[0][0]
+        assert call_args[1]["timeout"] == 120
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_http_error_logs_body_and_raises(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """HTTP 400+ logs error body and raises via check_rbac_response."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad Request body"
+        mock_response.raise_for_status.side_effect = (
+            requests.exceptions.HTTPError("400 Bad Request")
+        )
+        mock_post.return_value = mock_response
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            _submit_to_queue({"plan": {}}, "test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_network_error_propagates(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """RequestException from requests.post propagates to caller."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_post.side_effect = requests.exceptions.ConnectionError(
+            "Connection refused"
+        )
+
+        with pytest.raises(requests.exceptions.RequestException):
+            _submit_to_queue({"plan": {}}, "test-console")
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_default_query_params(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Default query_params are enableFeedbackLoop=true, retrySimulations=true."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _submit_to_queue({"plan": {}}, "test-console")
+
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["params"] == {
+            "enableFeedbackLoop": "true",
+            "retrySimulations": "true",
+        }
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_custom_query_params_override(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """Custom query_params replace defaults."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": {}}
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        _submit_to_queue(
+            {"plan": {}}, "test-console",
+            query_params={"retrySimulations": "false"},
+        )
+
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["params"] == {"retrySimulations": "false"}
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_permission_error_on_403(
+        self, mock_base_url, mock_account_id, mock_post
+    ):
+        """403 response raises PermissionError via check_rbac_response."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.url = (
+            "https://test.safebreach.com/api/orch/v4/accounts/1234567890/queue"
+        )
+        mock_response.text = "Forbidden"
+        mock_post.return_value = mock_response
+
+        with pytest.raises(PermissionError):
+            _submit_to_queue({"plan": {}}, "test-console")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (SAF-31295): Input validation & step construction
+# ---------------------------------------------------------------------------
+
+# Mock playbook data for attack validation
+MOCK_PLAYBOOK_ATTACKS = [
+    {"id": 8849, "name": "Transfer of LAPSUS infostealer over HTTP/S"},
+    {"id": 217, "name": "Transfer of the RIG exploit kit landing page over HTTP/S"},
+    {"id": 1071, "name": "Communication with Andromeda/GAMARUE C&C Server"},
+    {"id": 11653, "name": "GCP IAM Policy Enumeration"},
+    {"id": 11662, "name": "Azure AD User Enumeration"},
+]
+
+# Default connection filter used for all steps
+DEFAULT_CONNECTION_FILTER = {
+    "connection": {
+        "operator": "is",
+        "values": [True],
+        "name": "connection",
+    }
+}
+
+
+class TestAdhocScenarioInputParsing:
+    """Test input parsing for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_parse_comma_separated_ids(self, mock_playbook, mock_stats):
+        """'8849,217,1071' is parsed into 3 attack IDs."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(3)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test"
+        )
+        assert result["status"] == "dry_run"
+        assert len(result["steps"]) == 3
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_parse_with_whitespace(self, mock_playbook, mock_stats):
+        """' 8849 , 217 ' is parsed correctly with whitespace stripped."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(2)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids=" 8849 , 217 ", console="test"
+        )
+        assert result["status"] == "dry_run"
+        assert len(result["steps"]) == 2
+
+    def test_empty_string_raises_valueerror(self):
+        """Empty string raises ValueError."""
+        with pytest.raises(ValueError, match="attack_ids.*required"):
+            sb_run_adhoc_scenario(attack_ids="", console="test")
+
+    def test_none_raises_valueerror(self):
+        """None raises ValueError."""
+        with pytest.raises(ValueError, match="attack_ids.*required"):
+            sb_run_adhoc_scenario(attack_ids=None, console="test")
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_non_integer_raises_valueerror(self, mock_playbook):
+        """'8849,abc,217' raises ValueError for non-integer."""
+        with pytest.raises(ValueError, match="invalid"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849,abc,217", console="test"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_empty_segments_skipped(self, mock_playbook, mock_stats):
+        """'8849,,217' handles empty segments gracefully."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(2)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,,217", console="test"
+        )
+        assert len(result["steps"]) == 2
+
+
+class TestAdhocScenarioAttackValidation:
+    """Test attack ID validation against playbook cache."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_valid_ids_proceed(self, mock_playbook, mock_stats):
+        """All valid IDs proceed without error."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(2)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test"
+        )
+        assert result["status"] == "dry_run"
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_some_invalid_ids_raises_valueerror(self, mock_playbook):
+        """Some invalid IDs raises ValueError listing the invalid ones."""
+        with pytest.raises(ValueError, match="99999"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849,99999,88888", console="test"
+            )
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_invalid_ids_raises_valueerror(self, mock_playbook):
+        """All invalid IDs raises ValueError listing all."""
+        with pytest.raises(ValueError, match="not found"):
+            sb_run_adhoc_scenario(
+                attack_ids="99999,88888", console="test"
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        side_effect=Exception("Playbook cache unavailable"),
+    )
+    def test_playbook_cache_failure_graceful(self, mock_playbook, mock_stats):
+        """Playbook cache failure degrades gracefully — names unavailable."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        # Should still work — just without attack name resolution
+        assert result["status"] == "dry_run"
+        assert len(result["steps"]) == 1
+
+
+class TestAdhocScenarioStepConstruction:
+    """Test one-step-per-attack construction."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_three_attacks_produce_three_steps(self, mock_playbook, mock_stats):
+        """3 attacks → 3 steps, each with correct attacksFilter."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(3)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test"
+        )
+        steps = result["steps"]
+        assert len(steps) == 3
+        # Each step's attacksFilter has exactly one attack ID
+        assert steps[0]["attacksFilter"]["playbook"]["values"] == [8849]
+        assert steps[1]["attacksFilter"]["playbook"]["values"] == [217]
+        assert steps[2]["attacksFilter"]["playbook"]["values"] == [1071]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_step_names_from_playbook(self, mock_playbook, mock_stats):
+        """Step names come from playbook attack names."""
+        mock_stats.return_value = [
+            {"simulationCount": 10} for _ in range(2)
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test"
+        )
+        steps = result["steps"]
+        assert "LAPSUS" in steps[0]["name"]
+        assert "RIG" in steps[1]["name"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        side_effect=Exception("cache error"),
+    )
+    def test_step_names_fallback_without_cache(self, mock_playbook, mock_stats):
+        """Step names fall back to 'Attack {id}' when cache unavailable."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        steps = result["steps"]
+        assert "8849" in steps[0]["name"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_steps_have_uuid(self, mock_playbook, mock_stats):
+        """Each step has a non-empty uuid."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        step = result["steps"][0]
+        assert "uuid" in step
+        assert isinstance(step["uuid"], str)
+        assert len(step["uuid"]) == 36
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_default_target_filter_is_all_connected(
+        self, mock_playbook, mock_stats
+    ):
+        """Default targetFilter is connection: all_connected."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        step = result["steps"][0]
+        assert step["targetFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_default_attacker_filter_is_all_connected(
+        self, mock_playbook, mock_stats
+    ):
+        """Default attackerFilter is connection: all_connected."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        step = result["steps"][0]
+        assert step["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_steps_have_empty_system_filter(self, mock_playbook, mock_stats):
+        """Each step has systemFilter: {}."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        assert result["steps"][0]["systemFilter"] == {}
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_attacks_filter_structure(self, mock_playbook, mock_stats):
+        """attacksFilter has correct playbook filter structure."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test"
+        )
+        af = result["steps"][0]["attacksFilter"]["playbook"]
+        assert af["operator"] == "is"
+        assert af["values"] == [8849]
+        assert af["name"] == "playbook"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (SAF-31295): Simulator overrides & all_connected
+# ---------------------------------------------------------------------------
+
+
+class TestAdhocScenarioSimulatorOverrides:
+    """Test simulator_overrides for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_single_override_replaces_filters(self, mock_playbook, mock_stats):
+        """Override for one attack replaces its filters, others keep defaults."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(2)]
+        overrides = json.dumps({
+            "8849": {
+                "target": ["sim-uuid-1", "sim-uuid-2"],
+                "attacker": ["sim-uuid-3"],
+            }
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test",
+            simulator_overrides=overrides,
+        )
+        steps = result["steps"]
+        # Attack 8849 — overridden
+        assert steps[0]["targetFilter"] == {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-1", "sim-uuid-2"],
+                "name": "simulators",
+            }
+        }
+        assert steps[0]["attackerFilter"] == {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-3"],
+                "name": "simulators",
+            }
+        }
+        # Attack 217 — default connection filter
+        assert steps[1]["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        assert steps[1]["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_target_only_infers_attacker(self, mock_playbook, mock_stats):
+        """Override with target only → attackerFilter inferred as same."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-uuid-1"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        expected_filter = {
+            "simulators": {
+                "operator": "is",
+                "values": ["sim-uuid-1"],
+                "name": "simulators",
+            }
+        }
+        assert step["targetFilter"] == expected_filter
+        assert step["attackerFilter"] == expected_filter
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_both_target_and_attacker(self, mock_playbook, mock_stats):
+        """Override with both target and attacker replaces both filters."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {
+                "target": ["sim-target"],
+                "attacker": ["sim-attacker"],
+            },
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        assert step["targetFilter"]["simulators"]["values"] == ["sim-target"]
+        assert step["attackerFilter"]["simulators"]["values"] == ["sim-attacker"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_multiple_overrides(self, mock_playbook, mock_stats):
+        """Multiple overrides: each attack gets its own filters."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(3)]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-a"]},
+            "1071": {"target": ["sim-b"], "attacker": ["sim-c"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test",
+            simulator_overrides=overrides,
+        )
+        steps = result["steps"]
+        # 8849 — target override, attacker inferred
+        assert steps[0]["targetFilter"]["simulators"]["values"] == ["sim-a"]
+        assert steps[0]["attackerFilter"]["simulators"]["values"] == ["sim-a"]
+        # 217 — default
+        assert steps[1]["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        # 1071 — both overridden
+        assert steps[2]["targetFilter"]["simulators"]["values"] == ["sim-b"]
+        assert steps[2]["attackerFilter"]["simulators"]["values"] == ["sim-c"]
+
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_override_nonexistent_attack_raises(self, mock_playbook):
+        """Override for attack ID not in attack_ids raises ValueError."""
+        overrides = json.dumps({
+            "99999": {"target": ["sim-x"]},
+        })
+        with pytest.raises(ValueError, match="99999"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849", console="test",
+                simulator_overrides=overrides,
+            )
+
+    def test_invalid_json_raises(self):
+        """Invalid JSON string raises ValueError (fail-fast, before attack validation)."""
+        with pytest.raises(ValueError, match="[Ii]nvalid.*JSON"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849", console="test",
+                simulator_overrides="not-valid-json{",
+            )
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_filter_structure_has_simulators_key(self, mock_playbook, mock_stats):
+        """Override filter uses simulators key with operator/values/name."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({"8849": {"target": ["uuid-1"]}})
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            simulator_overrides=overrides,
+        )
+        tf = result["steps"][0]["targetFilter"]
+        assert "simulators" in tf
+        assert tf["simulators"]["operator"] == "is"
+        assert tf["simulators"]["name"] == "simulators"
+        assert tf["simulators"]["values"] == ["uuid-1"]
+
+
+class TestAdhocScenarioAllConnected:
+    """Test all_connected override for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_keeps_default_filters(self, mock_playbook, mock_stats):
+        """all_connected=True — steps already have connection filter (no change)."""
+        mock_stats.return_value = [{"simulationCount": 10} for _ in range(2)]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test",
+            all_connected=True,
+        )
+        for step in result["steps"]:
+            assert step["targetFilter"] == DEFAULT_CONNECTION_FILTER
+            assert step["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_overrides_simulator_overrides(
+        self, mock_playbook, mock_stats
+    ):
+        """all_connected=True takes precedence — simulator_overrides ignored."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({
+            "8849": {"target": ["sim-uuid-1"], "attacker": ["sim-uuid-2"]},
+        })
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            all_connected=True,
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        # Should be connection filter, NOT simulator filter
+        assert step["targetFilter"] == DEFAULT_CONNECTION_FILTER
+        assert step["attackerFilter"] == DEFAULT_CONNECTION_FILTER
+        assert "simulators" not in step["targetFilter"]
+
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_all_connected_false_allows_overrides(
+        self, mock_playbook, mock_stats
+    ):
+        """all_connected=False (default) allows simulator_overrides to apply."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        overrides = json.dumps({"8849": {"target": ["sim-uuid-1"]}})
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            all_connected=False,
+            simulator_overrides=overrides,
+        )
+        step = result["steps"][0]
+        assert step["targetFilter"]["simulators"]["values"] == ["sim-uuid-1"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (SAF-31295): Statistics, dry-run & execution
+# ---------------------------------------------------------------------------
+
+# Standard mock for queue API response
+MOCK_QUEUE_RESPONSE_ADHOC = {
+    "data": {
+        "planRunId": "1779200000000.1",
+        "name": "Ad-hoc Test",
+        "steps": [
+            {"stepRunId": "1779200000000.2"},
+            {"stepRunId": "1779200000000.3"},
+        ],
+    }
+}
+
+
+class TestAdhocScenarioDryRun:
+    """Test dry_run=True (default) behavior."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_dry_run_calls_statistics_not_queue(
+        self, mock_playbook, mock_stats, mock_queue
+    ):
+        """dry_run=True: statistics called, queue NOT called."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 5},
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test", dry_run=True,
+        )
+        assert result["status"] == "dry_run"
+        mock_stats.assert_called_once()
+        # dry_run should pass include_constraints=True for diagnostic detail
+        assert mock_stats.call_args[1].get("include_constraints") is True
+        mock_queue.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_dry_run_response_structure(
+        self, mock_playbook, mock_stats, mock_queue
+    ):
+        """dry_run response has status, steps, predicted counts, empty_steps."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 0},
+        ]
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test",
+        )
+        assert result["status"] == "dry_run"
+        assert result["predicted_simulations"] == 10
+        assert result["predicted_per_step"] == [10, 0]
+        assert 2 in result["empty_steps"]  # step 2 (1-indexed) has 0 sims
+        assert len(result["steps"]) == 2
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_dry_run_does_not_trigger_rate_limiting(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """dry_run=True: rate limiter NOT called."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        sb_run_adhoc_scenario(
+            attack_ids="8849", console="test", dry_run=True,
+        )
+        mock_limiter.check_limit.assert_not_called()
+        mock_limiter.record_action.assert_not_called()
+
+
+class TestAdhocScenarioExecution:
+    """Test dry_run=False (execution) behavior."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_execution_calls_queue(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """dry_run=False: statistics + queue both called, returns queued status."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 5},
+        ]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test", dry_run=False,
+        )
+        assert result["status"] == "queued"
+        assert result["test_id"] == "1779200000000.1"
+        mock_stats.assert_called_once()
+        # execution should pass include_constraints=False (just need counts)
+        assert mock_stats.call_args[1].get("include_constraints") is False
+        mock_queue.assert_called_once()
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_execution_returns_step_run_ids(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """Execution response contains step_run_ids from queue API."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 5},
+        ]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217", console="test", dry_run=False,
+        )
+        assert result["step_run_ids"] == [
+            "1779200000000.2", "1779200000000.3"
+        ]
+
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_total_zero_raises_valueerror(
+        self, mock_playbook, mock_stats, mock_queue
+    ):
+        """All attacks produce 0 sims → ValueError, queue NOT called."""
+        mock_stats.return_value = [
+            {"simulationCount": 0},
+            {"simulationCount": 0},
+        ]
+        with pytest.raises(ValueError, match="0 simulations"):
+            sb_run_adhoc_scenario(
+                attack_ids="8849,217", console="test", dry_run=False,
+            )
+        mock_queue.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_partial_execution_skips_zero_sim_steps(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """Partial: 3 attacks, 1 has 0 sims → queue payload has only 2 steps."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 0},
+            {"simulationCount": 5},
+        ]
+        mock_queue.return_value = {
+            "data": {
+                "planRunId": "test.1",
+                "name": "Ad-hoc Test",
+                "steps": [
+                    {"stepRunId": "test.2"},
+                    {"stepRunId": "test.3"},
+                ],
+            }
+        }
+        result = sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test", dry_run=False,
+        )
+        assert result["status"] == "queued"
+        # Verify the queue payload has only 2 steps (0-sim step removed)
+        queue_call_payload = mock_queue.call_args[0][0]
+        queued_steps = queue_call_payload["plan"]["steps"]
+        assert len(queued_steps) == 2
+        # Verify skipped attacks are reported
+        assert 217 in result["skipped_attacks"]
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_partial_execution_rebuilds_dag(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """Partial execution rebuilds DAG for remaining steps."""
+        mock_stats.return_value = [
+            {"simulationCount": 10},
+            {"simulationCount": 0},
+            {"simulationCount": 5},
+        ]
+        mock_queue.return_value = {
+            "data": {
+                "planRunId": "test.1", "name": "Test",
+                "steps": [{"stepRunId": "t.2"}, {"stepRunId": "t.3"}],
+            }
+        }
+        sb_run_adhoc_scenario(
+            attack_ids="8849,217,1071", console="test", dry_run=False,
+        )
+        queue_payload = mock_queue.call_args[0][0]
+        # DAG should have actions and edges for 2 steps
+        assert "actions" in queue_payload["plan"]
+        assert "edges" in queue_payload["plan"]
+        actions = queue_payload["plan"]["actions"]
+        multi = [a for a in actions if a["type"] == "multiAttack"]
+        assert len(multi) == 2
+
+
+class TestAdhocScenarioRateLimiting:
+    """Test rate limiting gates for sb_run_adhoc_scenario."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_check_limit_before_queue(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """check_limit called BEFORE queue POST."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        sb_run_adhoc_scenario(
+            attack_ids="8849", console="test", dry_run=False,
+        )
+        mock_limiter.check_limit.assert_called_once()
+        # check_limit must be called with caller_id and tool name
+        call_args = mock_limiter.check_limit.call_args
+        assert call_args[0][1] == "run_adhoc_scenario"
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_record_action_after_queue(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """record_action called AFTER successful queue POST."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        sb_run_adhoc_scenario(
+            attack_ids="8849", console="test", dry_run=False,
+        )
+        mock_limiter.record_action.assert_called_once()
+        call_args = mock_limiter.record_action.call_args
+        assert call_args[0][1] == "run_adhoc_scenario"
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_queue_failure_no_record_action(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """Queue POST fails → record_action NOT called."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        mock_queue.side_effect = requests.exceptions.ConnectionError("fail")
+        with pytest.raises(requests.exceptions.RequestException):
+            sb_run_adhoc_scenario(
+                attack_ids="8849", console="test", dry_run=False,
+            )
+        mock_limiter.check_limit.assert_called_once()
+        mock_limiter.record_action.assert_not_called()
+
+
+class TestAdhocScenarioTestName:
+    """Test test_name parameter handling."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_custom_test_name_in_payload(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """Custom test_name appears in queue payload."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        sb_run_adhoc_scenario(
+            attack_ids="8849", console="test",
+            test_name="My Custom Test", dry_run=False,
+        )
+        payload = mock_queue.call_args[0][0]
+        assert payload["plan"]["name"] == "My Custom Test"
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
+    @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
+    @patch(
+        'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
+        return_value=MOCK_PLAYBOOK_ATTACKS,
+    )
+    def test_default_test_name_auto_generated(
+        self, mock_playbook, mock_stats, mock_queue, mock_limiter
+    ):
+        """No test_name → auto-generated default containing 'Ad-hoc'."""
+        mock_stats.return_value = [{"simulationCount": 10}]
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
+        sb_run_adhoc_scenario(
+            attack_ids="8849", console="test", dry_run=False,
+        )
+        payload = mock_queue.call_args[0][0]
+        assert "Ad-hoc" in payload["plan"]["name"] or "ad-hoc" in payload["plan"]["name"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (SAF-31295): MCP tool wrapper — run_adhoc_scenario
+# ---------------------------------------------------------------------------
+
+
+class TestAdhocScenarioMCPWrapper:
+    """Test the run_adhoc_scenario MCP tool wrapper (Markdown formatting)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _get_wrapper(self):
+        """Get the run_adhoc_scenario wrapper function from the server."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        server = SafeBreachStudioServer()
+        # Find the registered tool by name
+        for tool in server.mcp._tool_manager._tools.values():
+            if tool.name == "run_adhoc_scenario":
+                return tool.fn
+        raise AssertionError("run_adhoc_scenario tool not registered")
+
+    def test_tool_is_registered(self):
+        """Tool is registered with name run_adhoc_scenario."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        server = SafeBreachStudioServer()
+        tool_names = [
+            t.name for t in server.mcp._tool_manager._tools.values()
+        ]
+        assert "run_adhoc_scenario" in tool_names
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_dry_run_markdown_contains_preview_header(self, mock_fn):
+        """Dry-run Markdown contains 'Dry Run Preview'."""
+        mock_fn.return_value = {
+            'status': 'dry_run',
+            'attack_ids': [8849, 217],
+            'steps': [
+                {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
+                {"name": "Attack 217", "attacksFilter": {"playbook": {"values": [217]}}},
+            ],
+            'predicted_simulations': 15,
+            'predicted_per_step': [10, 5],
+            'step_stats': [{"simulationCount": 10}, {"simulationCount": 5}],
+            'empty_steps': [],
+            'step_count': 2,
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849,217", console="test")
+        assert "Dry Run" in result
+        assert "Preview" in result
+        assert "15" in result  # total predicted
+        assert "No test was queued" in result or "no test" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_dry_run_markdown_flags_zero_sim(self, mock_fn):
+        """Dry-run Markdown flags 0-sim attacks."""
+        mock_fn.return_value = {
+            'status': 'dry_run',
+            'attack_ids': [8849, 217],
+            'steps': [
+                {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
+                {"name": "Attack 217", "attacksFilter": {"playbook": {"values": [217]}}},
+            ],
+            'predicted_simulations': 10,
+            'predicted_per_step': [10, 0],
+            'step_stats': [{"simulationCount": 10}, {"simulationCount": 0}],
+            'empty_steps': [2],
+            'step_count': 2,
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849,217", console="test")
+        assert "0" in result
+        # Should mention the 0-sim attack
+        assert "217" in result or "0 sim" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_queued_markdown_contains_test_id(self, mock_fn):
+        """Queued Markdown contains test_id and queued header."""
+        mock_fn.return_value = {
+            'status': 'queued',
+            'test_id': '1779200000000.1',
+            'test_name': 'Ad-hoc Test',
+            'attack_ids': [8849],
+            'step_count': 1,
+            'step_run_ids': ['1779200000000.2'],
+            'predicted_simulations': 10,
+            'predicted_per_step': [10],
+            'step_stats': [{"simulationCount": 10}],
+            'empty_steps': [],
+            'skipped_attacks': [],
+            'hint_to_agent': (
+                "Test queued. Use get_test_details with test_id '1779200000000.1' "
+                "to track execution progress. Use manage_test to pause, resume, or cancel."
+            ),
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849", console="test", dry_run=False)
+        assert "Queued" in result or "queued" in result
+        assert "1779200000000.1" in result
+        assert "get_test_details" in result
+        assert "manage_test" in result
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_queued_markdown_shows_skipped_attacks(self, mock_fn):
+        """Partial execution Markdown lists skipped attacks."""
+        mock_fn.return_value = {
+            'status': 'queued',
+            'test_id': 'test.1',
+            'test_name': 'Test',
+            'attack_ids': [8849, 217, 1071],
+            'step_count': 2,
+            'step_run_ids': ['t.2', 't.3'],
+            'predicted_simulations': 15,
+            'predicted_per_step': [10, 0, 5],
+            'step_stats': [],
+            'empty_steps': [2],
+            'skipped_attacks': [217],
+        }
+        wrapper = self._get_wrapper()
+        result = wrapper(
+            attack_ids="8849,217,1071", console="test", dry_run=False,
+        )
+        assert "217" in result
+        assert "skipped" in result.lower() or "0 sim" in result.lower()
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_valueerror_returns_error_message(self, mock_fn):
+        """ValueError returns error-prefixed message."""
+        mock_fn.side_effect = ValueError("attack_ids is required")
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="", console="test")
+        assert "Error" in result
+        assert "attack_ids is required" in result
+
+    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    def test_exception_returns_error_message(self, mock_fn):
+        """Generic exception returns error message."""
+        mock_fn.side_effect = RuntimeError("unexpected failure")
+        wrapper = self._get_wrapper()
+        result = wrapper(attack_ids="8849", console="test")
+        assert "Error" in result or "error" in result
+        assert "unexpected failure" in result

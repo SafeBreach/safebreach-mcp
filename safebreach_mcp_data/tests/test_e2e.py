@@ -41,12 +41,16 @@ def e2e_console():
 
 @pytest.fixture(scope="class")
 def sample_test_id(e2e_console):
-    """Get a real test ID from the console for E2E testing.
+    """Get a real completed test ID from the console for E2E testing.
 
     Scoped to class to avoid repeated API calls for each test.
+    Filters for completed tests to ensure simulations have final results.
     """
-    # Get the first test from history to use for detailed testing
-    tests_response = sb_get_tests(console=e2e_console, page_number=0, test_type="propagate")
+    # Get the first completed test from history to use for detailed testing
+    tests_response = sb_get_tests(
+        console=e2e_console, page_number=0,
+        test_type="propagate", status_filter="completed",
+    )
 
     if 'tests_in_page' not in tests_response or not tests_response['tests_in_page']:
         pytest.skip(f"No tests found in console {e2e_console} for E2E testing")
@@ -58,19 +62,23 @@ def sample_test_id(e2e_console):
 
 @pytest.fixture(scope="class")
 def sample_simulation_id(e2e_console, sample_test_id):
-    """Get a real simulation ID from the console for E2E testing.
+    """Get a real simulation ID with a definitive status from the console for E2E testing.
 
     Scoped to class to avoid repeated API calls for each test.
+    Prefers simulations with stopped/prevented status that are most likely to have
+    execution logs and target data.
     """
-    # Get simulations from the sample test
-    simulations_response = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
+    # Try statuses most likely to have execution logs first
+    for status in ["stopped", "prevented", "detected", "missed", None]:
+        simulations_response = sb_get_test_simulations(
+            sample_test_id, console=e2e_console, page_number=0,
+            status_filter=status,
+        )
+        sims = simulations_response.get('simulations_in_page', [])
+        if sims:
+            return sims[0]['simulation_id']
 
-    if 'simulations_in_page' not in simulations_response or not simulations_response['simulations_in_page']:
-        pytest.skip(f"No simulations found in test {sample_test_id} for E2E testing")
-
-    # Get the first simulation ID
-    simulation_id = simulations_response['simulations_in_page'][0]['simulation_id']
-    return simulation_id
+    pytest.skip(f"No simulations found in test {sample_test_id} for E2E testing")
 
 
 class TestDataServerE2E:
