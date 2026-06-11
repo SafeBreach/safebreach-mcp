@@ -16,6 +16,7 @@ from safebreach_mcp_data.data_types import (
     reduced_security_control_events_mapping,
     full_security_control_events_mapping,
     get_full_simulation_logs_mapping,
+    get_simulation_logs_mapping,
     get_reduced_test_summary_mapping,
     _build_node_data,
     get_reduced_peer_benchmark_response,
@@ -1089,3 +1090,79 @@ class TestPeerBenchmarkTransform:
         # Customer order matches peer order (this is the comparison-friendliness property
         # the agent relies on).
         assert customer_names == peer_names == industry_names
+
+
+class TestGetSimulationLogsMapping:
+    """Test suite for get_simulation_logs_mapping (paginated /simulationLogs envelope)."""
+
+    @pytest.fixture
+    def api_response(self):
+        """A representative /simulationLogs API response with two log lines."""
+        return {
+            "logs": [
+                {
+                    "timestamp": "2026-06-10T09:15:03.120Z", "level": "ERROR", "logType": "LOGS",
+                    "logger": "simulator", "sourceFile": "runner.py", "line": "212",
+                    "message": "connection refused", "pid": "8123", "jobId": "4915971", "planRunId": "pr-77",
+                },
+                {
+                    "timestamp": "2026-06-10T09:15:04.000Z", "level": "WARNING", "logType": "LOGS",
+                    "logger": "simulator", "sourceFile": "runner.py", "line": "9",
+                    "message": "retrying", "pid": "8123", "jobId": "4915971", "planRunId": "pr-77",
+                },
+            ],
+            "total": 1234,
+            "page": 1,
+            "pageSize": 500,
+            "hasMore": True,
+        }
+
+    def test_full_envelope_snake_cased(self, api_response):
+        """Envelope keys are snake_cased; pageSize->page_size, hasMore->has_more."""
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 1234
+        assert result["page"] == 1
+        assert result["page_size"] == 500
+        assert result["has_more"] is True
+        assert "pageSize" not in result
+        assert "hasMore" not in result
+        assert len(result["logs"]) == 2
+
+    def test_per_line_fields_preserved_verbatim(self, api_response):
+        """Per-line fields are passed through unchanged (incl. camelCase jobId/planRunId)."""
+        first = get_simulation_logs_mapping(api_response)["logs"][0]
+        assert first["timestamp"] == "2026-06-10T09:15:03.120Z"
+        assert first["level"] == "ERROR"
+        assert first["logType"] == "LOGS"
+        assert first["jobId"] == "4915971"
+        assert first["planRunId"] == "pr-77"
+        assert first["message"] == "connection refused"
+        assert first["sourceFile"] == "runner.py"
+
+    def test_empty_logs_returns_zero_and_hint(self):
+        """Empty logs -> logs:[], total:0, has_more:False, plus a hint_to_agent."""
+        result = get_simulation_logs_mapping({
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        })
+        assert result["logs"] == []
+        assert result["total"] == 0
+        assert result["has_more"] is False
+        assert result.get("hint_to_agent")
+
+    def test_missing_keys_use_safe_defaults(self):
+        """A response missing keys does not crash and yields safe defaults."""
+        result = get_simulation_logs_mapping({})
+        assert result["logs"] == []
+        assert result["total"] == 0
+        assert result["page"] == 1
+        assert result["has_more"] is False
+        # empty -> hint present
+        assert result.get("hint_to_agent")
+
+    def test_has_more_false_passthrough(self, api_response):
+        """hasMore False is preserved when present with non-empty logs."""
+        api_response["hasMore"] = False
+        result = get_simulation_logs_mapping(api_response)
+        assert result["has_more"] is False
+        # non-empty logs -> no hint
+        assert not result.get("hint_to_agent")
