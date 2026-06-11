@@ -2055,6 +2055,160 @@ def _get_simulation_logs_from_cache_or_api(
     return transformed
 
 
+_VALID_MIN_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+_VALID_LOG_TYPES = {"LOGS", "OUTPUT", "ALL"}
+_VALID_SORT_ORDERS = {"asc", "desc"}
+_SIM_LOGS_MAX_PAGE_SIZE = 1000
+_SIM_LOGS_MAX_RESULT_WINDOW = 10000  # Elasticsearch offset ceiling (from + size)
+
+
+def _validate_simulation_logs_params(page, page_size, min_level, levels, log_type, sort_order):
+    """Validate/normalize pagination + filter params client-side for fast, friendly errors.
+
+    Mirrors the data API's server-side enum + pageSize validation, and additionally guards the
+    Elasticsearch ~10k offset ceiling (`page * page_size`) since deep paging fails server-side.
+
+    Returns the coerced (page, page_size) ints. Raises ValueError on any violation.
+    """
+    try:
+        page = int(page)
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        raise ValueError("page and page_size must be integers")
+
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if page_size < 1 or page_size > _SIM_LOGS_MAX_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {_SIM_LOGS_MAX_PAGE_SIZE}")
+    if page * page_size > _SIM_LOGS_MAX_RESULT_WINDOW:
+        raise ValueError(
+            f"Requested page exceeds the ~{_SIM_LOGS_MAX_RESULT_WINDOW} offset ceiling "
+            f"(page * page_size = {page * page_size}). Narrow the search with a time window "
+            "(start_time/end_time), levels, or message_contains instead of paging deeper."
+        )
+    if min_level and str(min_level).upper() not in _VALID_MIN_LEVELS:
+        raise ValueError(f"min_level must be one of {sorted(_VALID_MIN_LEVELS)}")
+    if log_type and str(log_type).upper() not in _VALID_LOG_TYPES:
+        raise ValueError(f"log_type must be one of {sorted(_VALID_LOG_TYPES)}")
+    if sort_order and str(sort_order).lower() not in _VALID_SORT_ORDERS:
+        raise ValueError(f"sort_order must be one of {sorted(_VALID_SORT_ORDERS)}")
+    if levels:
+        bad = [
+            seg.strip() for seg in str(levels).split("|")
+            if seg.strip() and seg.strip().upper() not in _VALID_MIN_LEVELS
+        ]
+        if bad:
+            raise ValueError(
+                f"levels contains invalid level(s) {bad}; valid levels: {sorted(_VALID_MIN_LEVELS)}"
+            )
+    return page, page_size
+
+
+def sb_get_paginated_simulation_logs(
+    simulation_id,
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Fetch one simulation's execution logs, paginated and filtered (v3 /simulationLogs).
+
+    Investigation last-resort: prefer `get_simulation_details` (the raw simulation object + steps)
+    first; use this only when those are insufficient. Pull smartly by severity (FAILED sims:
+    `min_level=ERROR` first; SUCCESS sims: INFO), and page rather than dump.
+
+    Args:
+        simulation_id: The simulation id (jobId), required. Sent as `jobIds=<simulation_id>`.
+        page/page_size: 1-based pagination; page_size 1-1000 (default 500). `page*page_size` ≤ 10000.
+        min_level: severity threshold (DEBUG<INFO<WARNING<ERROR), default INFO. Ignored if `levels` set.
+        levels: explicit pipe-delimited level set (e.g. "ERROR|WARNING"); overrides min_level.
+        message_contains: case-insensitive substring filter on the message.
+        start_time/end_time: inclusive timestamp bounds (ISO-8601 or epoch ms).
+        log_type: LOGS (default) | OUTPUT | ALL. sort_order: asc (default) | desc.
+        console: SafeBreach console name.
+
+    Returns:
+        Dict { logs, total, page, page_size, has_more } (+ hint_to_agent when empty).
+    """
+    if not simulation_id or not str(simulation_id).strip():
+        raise ValueError("simulation_id parameter is required and cannot be empty")
+
+    page, page_size = _validate_simulation_logs_params(
+        page, page_size, min_level, levels, log_type, sort_order
+    )
+
+    try:
+        return _get_simulation_logs_from_cache_or_api(
+            job_ids=str(simulation_id).strip(), page=page, page_size=page_size,
+            min_level=min_level, levels=levels, message_contains=message_contains,
+            start_time=start_time, end_time=end_time, log_type=log_type,
+            sort_order=sort_order, console=console,
+        )
+    except Exception as e:
+        logger.error(
+            "Error getting paginated simulation logs for simulation '%s' on console '%s': %s",
+            simulation_id, console, str(e)
+        )
+        raise
+
+
+def sb_search_simulation_logs(
+    simulation_ids="",
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Search execution logs across many or all simulations (v3 /simulationLogs).
+
+    Built for cross-simulation / fleet-wide investigation (e.g. "every ERROR containing X in the last
+    day"). Pass `simulation_ids` as a pipe-delimited list (e.g. "a|b") to scope, or omit it to search
+    across all simulations. Lead with the tightest filter (levels + message_contains + time window).
+
+    Note: the response returns log *lines* and `total` counts lines, not simulations — to count
+    distinct simulations, dedupe the returned `jobId`s (exact only within the ~10k offset ceiling).
+
+    Args:
+        simulation_ids: optional pipe-delimited simulation ids; omit/empty = all simulations.
+        (other args identical to sb_get_paginated_simulation_logs)
+
+    Returns:
+        Dict { logs, total, page, page_size, has_more } (+ hint_to_agent when empty).
+    """
+    page, page_size = _validate_simulation_logs_params(
+        page, page_size, min_level, levels, log_type, sort_order
+    )
+
+    job_ids = None
+    if simulation_ids and str(simulation_ids).strip():
+        job_ids = "|".join(
+            seg.strip() for seg in str(simulation_ids).split("|") if seg.strip()
+        ) or None
+
+    try:
+        return _get_simulation_logs_from_cache_or_api(
+            job_ids=job_ids, page=page, page_size=page_size,
+            min_level=min_level, levels=levels, message_contains=message_contains,
+            start_time=start_time, end_time=end_time, log_type=log_type,
+            sort_order=sort_order, console=console,
+        )
+    except Exception as e:
+        logger.error("Error searching simulation logs on console '%s': %s", console, str(e))
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Simulation drift functions (SAF-28330)
 # ---------------------------------------------------------------------------

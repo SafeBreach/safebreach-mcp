@@ -26,6 +26,8 @@ from .data_functions import (
     sb_get_test_findings_details,
     sb_get_test_drifts,
     sb_get_full_simulation_logs,
+    sb_get_paginated_simulation_logs,
+    sb_search_simulation_logs,
     sb_get_simulation_result_drifts,
     sb_get_simulation_status_drifts,
     sb_get_security_control_drifts,
@@ -322,6 +324,105 @@ Note: Results are cached for 5 minutes. Use get_simulation_details with include_
             return sb_get_full_simulation_logs(
                 simulation_id=simulation_id,
                 test_id=test_id,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="get_paginated_simulation_logs",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/message), page by page.
+
+LOGS ARE USUALLY NOT NEEDED. First inspect the raw simulation object and its simulation steps via get_simulation_details \
+(optionally include_basic_attack_logs / include_mitre_techniques / include_drift_info). Reach for these logs ONLY when the \
+simulation object + steps are insufficient to understand the flow (root cause still unclear, or an explicit deep dive into \
+execution traces is required).
+
+When you do pull logs, do it smartly by severity, keyed on the simulation's status:
+- FAILED / errored / unexpected simulation: start with levels=ERROR; if insufficient widen to min_level=INFO, then DEBUG.
+- SUCCESSFUL simulation: start at min_level=INFO (default); escalate to DEBUG only if a deeper trace is genuinely needed.
+Read one page, then request the next only if has_more=true and the answer isn't there yet. Prefer a start_time/end_time \
+window and message_contains to narrow.
+
+For the full embedded ~40KB blob, or old-format simulations whose logs are embedded (not indexed), use get_full_simulation_logs.
+
+Parameters: simulation_id (required, e.g. '4915971'), page (default 1), page_size (default 500, max 1000; page*page_size \
+must be <= 10000), min_level (DEBUG|INFO|WARNING|ERROR, default INFO — threshold, returns that level and above; DEBUG hidden \
+by default), levels (pipe-delimited explicit set e.g. 'ERROR|WARNING', overrides min_level), message_contains (case-insensitive \
+substring), start_time / end_time (ISO-8601 or epoch ms), log_type (LOGS|OUTPUT|ALL, default LOGS), sort_order (asc|desc, \
+default asc), console. Returns { logs, total, page, page_size, has_more }. Results cached ~10 minutes."""
+        )
+        async def get_paginated_simulation_logs_tool(
+            simulation_id: str,
+            page: int = 1,
+            page_size: int = 500,
+            min_level: str = "INFO",
+            levels: str = "",
+            message_contains: str = "",
+            start_time: str = "",
+            end_time: str = "",
+            log_type: str = "LOGS",
+            sort_order: str = "asc",
+            console: str = "default"
+        ) -> dict:
+            return sb_get_paginated_simulation_logs(
+                simulation_id=simulation_id,
+                page=page,
+                page_size=page_size,
+                min_level=min_level,
+                levels=levels,
+                message_contains=message_contains,
+                start_time=start_time,
+                end_time=end_time,
+                log_type=log_type,
+                sort_order=sort_order,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="search_simulation_logs",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Search execution logs across MANY or ALL simulations (v3 /simulationLogs). Cross-simulation / fleet-wide investigation.
+
+Use for questions that span simulations, e.g. 'find every ERROR containing "<X>" in the last day', 'which sims logged a \
+timeout this week', or as the first step of 'how many simulations hit error X'. Pass simulation_ids as a pipe-delimited list \
+(e.g. 'id1|id2') to scope to specific simulations, or OMIT it to search across all simulations.
+
+Like get_paginated_simulation_logs, logs are a last resort — prefer result-level tools first. Lead with the tightest filter: \
+typically levels=ERROR + message_contains + a start_time/end_time window, then page. Deep paging is bounded (page*page_size \
+must be <= 10000) — narrow filters rather than paging far.
+
+IMPORTANT counting note: the response returns log LINES and `total` counts lines, NOT simulations. To count distinct \
+simulations (e.g. 'how many sims ended with error X'), dedupe the `jobId` field across the returned lines (each line includes \
+jobId and planRunId). This is exact only while the result set fits under the ~10k ceiling; there is no server-side aggregation.
+
+Parameters: simulation_ids (optional pipe-delimited list; omit = all sims), page, page_size (default 500, max 1000), min_level \
+(default INFO), levels (pipe-delimited, overrides min_level), message_contains, start_time / end_time (ISO-8601 or epoch ms), \
+log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), console. Returns { logs, total, page, page_size, has_more }. Cached ~10 min."""
+        )
+        async def search_simulation_logs_tool(
+            simulation_ids: str = "",
+            page: int = 1,
+            page_size: int = 500,
+            min_level: str = "INFO",
+            levels: str = "",
+            message_contains: str = "",
+            start_time: str = "",
+            end_time: str = "",
+            log_type: str = "LOGS",
+            sort_order: str = "asc",
+            console: str = "default"
+        ) -> dict:
+            return sb_search_simulation_logs(
+                simulation_ids=simulation_ids,
+                page=page,
+                page_size=page_size,
+                min_level=min_level,
+                levels=levels,
+                message_contains=message_contains,
+                start_time=start_time,
+                end_time=end_time,
+                log_type=log_type,
+                sort_order=sort_order,
                 console=console
             )
 
