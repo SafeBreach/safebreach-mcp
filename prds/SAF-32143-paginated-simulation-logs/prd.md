@@ -28,7 +28,8 @@ incrementally and filtered (token-bounded), while `get_full_simulation_logs` rem
 ### Success criteria
 - An AI consumer can fetch a single simulation's logs page-by-page, filtered to e.g. `ERROR`/`WARNING` only, with each
   response comfortably under the token limit.
-- An AI consumer can run a cross-simulation log search (e.g. "all ERRORs in this window") without naming every sim id.
+- An AI consumer can run a cross-simulation log search (e.g. "all ERRORs containing X in the last day", or "how many
+  simulations hit error X" via `jobId` dedup) without naming every sim id.
 - No change to existing tools; no breaking change to any consumer.
 
 ## 2. Scope
@@ -166,9 +167,19 @@ converges on the relevant lines (usually a handful of ERRORs) instead of pulling
   the next (`has_more`). For the full embedded ~40KB blob or old-format sims (`logsEmbedded=true`), use
   `get_full_simulation_logs`. Results cached ~10 min."
 - `search_simulation_logs`: "Search execution logs across many or all simulations (omit `simulation_ids` for all; or pass
-  a pipe-delimited list like `id1|id2`). Best for cross-sim/forensic queries like 'all ERRORs in a time window'. Use after
-  result-level analysis, and lead with the tightest filter — typically `levels=ERROR` plus a `start_time`/`end_time`
-  window — widening severity only if needed. Same pagination contract (`has_more`)."
+  a pipe-delimited list like `id1|id2`). Built for **cross-simulation / fleet-wide investigation** — e.g. 'find every
+  ERROR containing "<X>" in the last day', 'how many simulations hit error X', 'which sims logged a timeout this week'.
+  Lead with the tightest filter — typically `levels=ERROR` + `message_contains=<X>` + a `start_time`/`end_time` window —
+  then page. Each log line carries its `jobId` (and `planRunId`), so the consumer can **group/dedupe by `jobId` to count
+  distinct simulations** (see the line-vs-simulation note below). Same pagination contract (`has_more`)."
+
+> **Cross-investigation: counting *simulations* vs *log lines*.** The endpoint returns log **lines**, and `total` is the
+> number of matching **lines**, not simulations. For a question like *"how many simulations ended with error X in the last
+> day"*, the consumer must page through the matching `ERROR` lines (filtered by `message_contains` + time window) and
+> **count distinct `jobId`s**. Each line includes `jobId`, so this works — but it's exact only while the result set fits
+> within pagination and the ~10k offset ceiling (§3.7). The data API has **no server-side aggregation / distinct-`jobId`
+> count / group-by**, so large-scale exact counts aren't available in one call. See open question #4 on whether a
+> data-side aggregation (e.g. a `distinctJobIds`/terms-agg mode) is worth requesting on SAF-32099 for this use case.
 
 ### 3.7 Verified data-side behavior & limits (read from SAF-32099 code)
 
@@ -245,3 +256,8 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
    control; token-bounding comes from the §3.6 strategy + consumer-chosen `page_size`, not a crippled default.
 3. Should `search_simulation_logs` *require* a time window when `simulation_ids` is omitted, to prevent accidental
    all-sim scans? Current stance: keep it optional (full control) and steer via description + the ~10k ceiling hint.
+4. **Cross-investigation counts** (e.g. "how many simulations ended with error X in the last day"): the API returns log
+   *lines* and `total` counts lines, so distinct-simulation counts need client-side `jobId` dedup, exact only under the
+   ~10k ceiling. Is a **data-side aggregation** worth requesting on SAF-32099 — a `distinctJobIds`/terms-agg or
+   "count mode" that returns matching simulation count (and optionally per-`jobId` line counts) in one call? Would make
+   fleet-wide "how many sims hit X" exact and cheap; out of scope for this MCP ticket but the natural follow-up.
