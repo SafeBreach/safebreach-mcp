@@ -1905,6 +1905,157 @@ def _fetch_full_simulation_logs_from_api(
 
 
 # ---------------------------------------------------------------------------
+# Paginated / filterable simulation logs (v3 /simulationLogs) — SAF-32143
+# ---------------------------------------------------------------------------
+
+# Bounded cache for paginated simulation logs
+simulation_logs_cache = SafeBreachCache(name="simulation_logs", maxsize=3, ttl=600)
+
+
+def _fetch_simulation_logs_from_api(
+    job_ids=None,
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Fetch paginated simulation logs from the v3 /simulationLogs endpoint.
+
+    Builds the query params with the API's casing/format contract: ``jobIds`` and ``levels`` are
+    pipe-delimited strings (omitted when empty), ``minLevel``/``logType`` upper-cased, ``sortOrder``
+    lower-cased, ``page``/``pageSize`` ints. Empty optional filters are omitted entirely.
+
+    Returns the raw API JSON ``{ logs, total, page, pageSize, hasMore }``.
+
+    Raises:
+        ValueError: 404 (endpoint unavailable / no logs), 401 (auth), 400 (bad request — surfaces
+            the server message), or invalid JSON.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        api_url = f"{base_url}/api/data/v3/accounts/{account_id}/simulationLogs"
+
+        params: Dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
+
+        if job_ids:
+            ids = "|".join(seg.strip() for seg in str(job_ids).split("|") if seg.strip())
+            if ids:
+                params["jobIds"] = ids
+        if levels:
+            normalized_levels = "|".join(
+                seg.strip().upper() for seg in str(levels).split("|") if seg.strip()
+            )
+            if normalized_levels:
+                params["levels"] = normalized_levels
+        if min_level:
+            params["minLevel"] = str(min_level).upper()
+        if message_contains:
+            params["messageContains"] = message_contains
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
+        if log_type:
+            params["logType"] = str(log_type).upper()
+        if sort_order:
+            params["sortOrder"] = str(sort_order).lower()
+
+        headers = {
+            "Content-Type": "application/json",
+            **get_auth_headers_for_console(console),
+        }
+
+        logger.info("GET request to: %s params=%s", api_url, params)
+        response = requests.get(api_url, headers=headers, params=params, timeout=120)
+
+        if response.status_code == 404:
+            raise ValueError(
+                f"Simulation logs endpoint not available or no logs found on console '{console}'. "
+                "The target console's data service may predate the /simulationLogs (v3) endpoint."
+            )
+        elif response.status_code == 401:
+            raise ValueError(f"Authentication failed for console '{console}'")
+        elif response.status_code == 400:
+            server_message = None
+            try:
+                body = response.json()
+                server_message = (body.get("error", {}) or {}).get("message") or body.get("message")
+            except (ValueError, AttributeError):
+                server_message = getattr(response, "text", None)
+            raise ValueError(
+                f"Bad request to simulation logs API: {server_message or 'invalid parameters'}"
+            )
+
+        check_rbac_response(response)
+
+        try:
+            return response.json()
+        except ValueError as e:
+            logger.error("Failed to parse simulation logs response: %s", str(e))
+            raise ValueError(f"Invalid JSON response from API: {str(e)}")
+
+    except requests.exceptions.Timeout:
+        logger.error("Timeout fetching simulation logs from console '%s'", console)
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error("Request error fetching simulation logs from console '%s': %s", console, str(e))
+        raise
+
+
+def _get_simulation_logs_from_cache_or_api(
+    job_ids=None,
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Get paginated simulation logs from cache or API (validate-then-cache).
+
+    The cache key includes the console, jobIds, every filter, and the page, scoped per user, so two
+    different filter combinations never collide.
+    """
+    cache_key = (
+        f"simulation_logs_{console}_{job_ids or 'ALL'}_{page}_{page_size}_{min_level}_"
+        f"{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}"
+        f"{get_cache_user_suffix()}"
+    )
+
+    if is_caching_enabled("data"):
+        cached = simulation_logs_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Retrieved simulation logs from cache: %s", cache_key)
+            return cached
+
+    raw_data = _fetch_simulation_logs_from_api(
+        job_ids=job_ids, page=page, page_size=page_size, min_level=min_level, levels=levels,
+        message_contains=message_contains, start_time=start_time, end_time=end_time,
+        log_type=log_type, sort_order=sort_order, console=console,
+    )
+
+    from .data_types import get_simulation_logs_mapping
+    transformed = get_simulation_logs_mapping(raw_data)
+
+    if is_caching_enabled("data"):
+        simulation_logs_cache.set(cache_key, transformed)
+        logger.info("Cached transformed simulation logs: %s", cache_key)
+
+    return transformed
+
+
+# ---------------------------------------------------------------------------
 # Simulation drift functions (SAF-28330)
 # ---------------------------------------------------------------------------
 

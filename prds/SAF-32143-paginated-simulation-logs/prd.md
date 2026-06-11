@@ -267,22 +267,23 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
    fleet-wide "how many sims hit X" exact and cheap; out of scope for this MCP ticket but the natural follow-up.
 
 ## 8. Definition of Done
-- [ ] `get_simulation_logs_mapping()` added in `data_types.py` (envelope → snake_case, empty-logs hint).
-- [ ] Shared `_fetch_simulation_logs_from_api()` + `simulation_logs_cache` + cache wrapper in `data_functions.py`.
+- [x] `get_simulation_logs_mapping()` added in `data_types.py` (envelope → snake_case, empty-logs hint).
+- [x] Shared `_fetch_simulation_logs_from_api()` + `simulation_logs_cache` + cache wrapper in `data_functions.py`.
 - [ ] `sb_get_paginated_simulation_logs()` + `sb_search_simulation_logs()` with input validation.
 - [ ] Both tools registered in `data_server.py` (`readOnlyHint=True`) with the §3.6 steering descriptions.
-- [ ] Pipe-joining + casing normalization + omitted-param handling verified by tests.
-- [ ] Error handling: 400 (enum/pageSize), 401, 404 (endpoint-missing), deep-page ~10k ceiling — each with clear message.
-- [ ] Caching: key includes console + jobIds + every filter + page; gated on `is_caching_enabled("data")`.
-- [ ] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"`.
-- [ ] All existing tests pass; lint passes.
+- [x] Pipe-joining + casing normalization + omitted-param handling verified by tests *(in the fetch core; sb_* layer in Phase 2)*.
+- [ ] Error handling: 400 (enum/pageSize), 401, 404 (endpoint-missing), deep-page ~10k ceiling — each with clear message
+  *(400/401/404 done in fetch core; deep-page guard is Phase 2)*.
+- [x] Caching: key includes console + jobIds + every filter + page; gated on `is_caching_enabled("data")`.
+- [ ] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` *(unit ✅; integration in Phase 3)*.
+- [x] All existing tests pass (429 data tests green).
 - [ ] `CHANGELOG.md` + `CLAUDE.md` updated.
 
 ## 9. Phase Status Tracking
 
 | Phase | Name | Status | Completed | Commit | Notes |
 |-------|------|--------|-----------|--------|-------|
-| 1 | Shared fetch core + mapping | ⏳ Pending | — | — | `data_types.py` mapping + `data_functions.py` fetch/cache + unit tests |
+| 1 | Shared fetch core + mapping | ✅ Complete | 2026-06-11 | (this branch) | `get_simulation_logs_mapping` + `_fetch_simulation_logs_from_api` + `_get_..._from_cache_or_api` + `simulation_logs_cache`; 15 new tests, 429 data tests green |
 | 2 | Public entry points + tool registration | ⏳ Pending | — | — | `sb_*` entry points + two `@mcp.tool` regs + server/unit tests |
 | 3 | Integration + docs | ⏳ Pending | — | — | `test_integration.py` both tools + CHANGELOG/CLAUDE.md |
 | 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code |

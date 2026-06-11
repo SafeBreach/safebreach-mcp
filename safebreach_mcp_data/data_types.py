@@ -598,6 +598,50 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     return result
 
 
+def get_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform the v3 /simulationLogs envelope to the MCP tool format.
+
+    The data API returns ``{ logs, total, page, pageSize, hasMore }`` where each ``logs`` entry is a
+    structured per-line record (timestamp, level, logType, logger, sourceFile, line, message, pid,
+    jobId, planRunId). This mapping snake-cases the envelope keys (``pageSize`` -> ``page_size``,
+    ``hasMore`` -> ``has_more``) and passes the per-line records through verbatim.
+
+    When no logs match, returns an empty page with a ``hint_to_agent`` pointing at likely causes
+    (filters too narrow, or an old-format simulation whose logs are embedded — use
+    ``get_full_simulation_logs`` for those).
+
+    Args:
+        api_response: Raw JSON dict from GET /api/data/v3/accounts/{accountId}/simulationLogs.
+
+    Returns:
+        Dict with keys: logs, total, page, page_size, has_more (+ hint_to_agent when empty).
+    """
+    api_response = api_response or {}
+    logs = api_response.get("logs") or []
+    total = api_response.get("total") or 0
+    page = api_response.get("page", 1)
+    page_size = api_response.get("pageSize", api_response.get("page_size", 0))
+    has_more = bool(api_response.get("hasMore", api_response.get("has_more", False)))
+
+    result: Dict[str, Any] = {
+        "logs": logs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+    }
+
+    if not logs:
+        result["hint_to_agent"] = (
+            "No log lines matched. Either the filters are too narrow (try widening the time window, "
+            "lowering min_level, or clearing message_contains), or this is an old-format simulation "
+            "whose logs are embedded in the result rather than indexed — in that case use "
+            "get_full_simulation_logs."
+        )
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Drift API helpers (SAF-28330)
 # ---------------------------------------------------------------------------
