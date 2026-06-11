@@ -44,6 +44,8 @@ from safebreach_mcp_data.data_functions import (
     peer_benchmark_cache,
     _fetch_simulation_logs_from_api,
     _get_simulation_logs_from_cache_or_api,
+    sb_get_paginated_simulation_logs,
+    sb_search_simulation_logs,
     simulation_logs_cache,
     PAGE_SIZE
 )
@@ -3943,3 +3945,79 @@ class TestSimulationLogsFetchCore:
         _get_simulation_logs_from_cache_or_api(min_level='INFO', **base)
         assert mock_fetch.call_count == 2
         assert len(simulation_logs_cache) == 2
+
+
+class TestSimulationLogsEntryPoints:
+    """Phase 2: public sb_* entry points + input validation."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # --- single-sim tool: job_ids construction ------------------------------
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_single_sim_sets_jobids(self, mock_core):
+        mock_core.return_value = {"logs": [], "total": 0, "page": 1, "page_size": 500, "has_more": False}
+        sb_get_paginated_simulation_logs(simulation_id='555', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] == '555'
+
+    def test_paginated_empty_simulation_id_raises(self):
+        with pytest.raises(ValueError, match="simulation_id"):
+            sb_get_paginated_simulation_logs(simulation_id='', console='c')
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_return_passthrough(self, mock_core):
+        sentinel = {"_sentinel": True, "logs": []}
+        mock_core.return_value = sentinel
+        assert sb_get_paginated_simulation_logs(simulation_id='555', console='c') is sentinel
+
+    # --- cross-sim tool: job_ids construction -------------------------------
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_multi_sim_pipe_joined(self, mock_core):
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='a|b', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] == 'a|b'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_empty_ids_means_all(self, mock_core):
+        """Omitting simulation_ids -> job_ids None (search across all sims)."""
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] in (None, '')
+
+    # --- shared validation (both tools) -------------------------------------
+
+    def test_page_size_over_max_raises(self):
+        with pytest.raises(ValueError, match="page_size|1000"):
+            sb_get_paginated_simulation_logs(simulation_id='555', page_size=5000, console='c')
+
+    def test_deep_page_over_ceiling_raises(self):
+        """page * page_size > 10000 -> clear ceiling error before any API call."""
+        with pytest.raises(ValueError, match="10000|10,000|narrow|ceiling"):
+            sb_get_paginated_simulation_logs(
+                simulation_id='555', page=11, page_size=1000, console='c'
+            )
+
+    def test_invalid_min_level_raises(self):
+        with pytest.raises(ValueError, match="min_level"):
+            sb_get_paginated_simulation_logs(simulation_id='555', min_level='TRACE', console='c')
+
+    def test_invalid_log_type_raises(self):
+        with pytest.raises(ValueError, match="log_type"):
+            sb_get_paginated_simulation_logs(simulation_id='555', log_type='STDERR', console='c')
+
+    def test_invalid_sort_order_raises(self):
+        with pytest.raises(ValueError, match="sort_order"):
+            sb_get_paginated_simulation_logs(simulation_id='555', sort_order='up', console='c')
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_validation_applies(self, mock_core):
+        """Cross-sim tool enforces the same page_size ceiling."""
+        with pytest.raises(ValueError, match="page_size|1000"):
+            sb_search_simulation_logs(simulation_ids='a', page_size=5000, console='c')
+        mock_core.assert_not_called()

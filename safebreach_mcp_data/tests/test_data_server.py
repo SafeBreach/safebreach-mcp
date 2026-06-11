@@ -181,3 +181,50 @@ class TestPeerBenchmarkToolWrapper:
                 include_test_ids_filter="a",
                 exclude_test_ids_filter="b",
             ))
+
+
+class TestSimulationLogsToolWrappers:
+    """Wrapper-contract tests for the paginated/search simulation-logs MCP tools (SAF-32143)."""
+
+    def test_paginated_tool_registered(self):
+        from safebreach_mcp_data.data_server import data_server
+        names = [t.name for t in asyncio.run(data_server.mcp.list_tools())]
+        assert "get_paginated_simulation_logs" in names
+
+    def test_search_tool_registered(self):
+        from safebreach_mcp_data.data_server import data_server
+        names = [t.name for t in asyncio.run(data_server.mcp.list_tools())]
+        assert "search_simulation_logs" in names
+
+    def test_both_tools_read_only(self):
+        from safebreach_mcp_data.data_server import data_server
+        tools = {t.name: t for t in asyncio.run(data_server.mcp.list_tools())}
+        for name in ("get_paginated_simulation_logs", "search_simulation_logs"):
+            ann = tools[name].annotations
+            assert ann is not None and ann.readOnlyHint is True
+
+    @patch('safebreach_mcp_data.data_server.sb_get_paginated_simulation_logs')
+    def test_paginated_wrapper_delegates(self, mock_fn):
+        mock_fn.return_value = {"logs": []}
+        fn = _get_tool_fn("get_paginated_simulation_logs")
+        asyncio.run(fn(simulation_id="555", console="c", min_level="ERROR"))
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["simulation_id"] == "555"
+        assert kwargs["min_level"] == "ERROR"
+        assert kwargs["console"] == "c"
+
+    @patch('safebreach_mcp_data.data_server.sb_search_simulation_logs')
+    def test_search_wrapper_delegates(self, mock_fn):
+        mock_fn.return_value = {"logs": []}
+        fn = _get_tool_fn("search_simulation_logs")
+        asyncio.run(fn(simulation_ids="a|b", console="c"))
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["simulation_ids"] == "a|b"
+        assert kwargs["console"] == "c"
+
+    @patch('safebreach_mcp_data.data_server.sb_get_paginated_simulation_logs')
+    def test_paginated_console_default(self, mock_fn):
+        mock_fn.return_value = {}
+        fn = _get_tool_fn("get_paginated_simulation_logs")
+        asyncio.run(fn(simulation_id="555"))
+        assert mock_fn.call_args.kwargs["console"] == "default"
