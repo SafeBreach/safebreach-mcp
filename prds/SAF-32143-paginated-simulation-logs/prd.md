@@ -265,3 +265,31 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
    ~10k ceiling. Is a **data-side aggregation** worth requesting on SAF-32099 — a `distinctJobIds`/terms-agg or
    "count mode" that returns matching simulation count (and optionally per-`jobId` line counts) in one call? Would make
    fleet-wide "how many sims hit X" exact and cheap; out of scope for this MCP ticket but the natural follow-up.
+
+## 8. Definition of Done
+- [ ] `get_simulation_logs_mapping()` added in `data_types.py` (envelope → snake_case, empty-logs hint).
+- [ ] Shared `_fetch_simulation_logs_from_api()` + `simulation_logs_cache` + cache wrapper in `data_functions.py`.
+- [ ] `sb_get_paginated_simulation_logs()` + `sb_search_simulation_logs()` with input validation.
+- [ ] Both tools registered in `data_server.py` (`readOnlyHint=True`) with the §3.6 steering descriptions.
+- [ ] Pipe-joining + casing normalization + omitted-param handling verified by tests.
+- [ ] Error handling: 400 (enum/pageSize), 401, 404 (endpoint-missing), deep-page ~10k ceiling — each with clear message.
+- [ ] Caching: key includes console + jobIds + every filter + page; gated on `is_caching_enabled("data")`.
+- [ ] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"`.
+- [ ] All existing tests pass; lint passes.
+- [ ] `CHANGELOG.md` + `CLAUDE.md` updated.
+
+## 9. Phase Status Tracking
+
+| Phase | Name | Status | Completed | Commit | Notes |
+|-------|------|--------|-----------|--------|-------|
+| 1 | Shared fetch core + mapping | ⏳ Pending | — | — | `data_types.py` mapping + `data_functions.py` fetch/cache + unit tests |
+| 2 | Public entry points + tool registration | ⏳ Pending | — | — | `sb_*` entry points + two `@mcp.tool` regs + server/unit tests |
+| 3 | Integration + docs | ⏳ Pending | — | — | `test_integration.py` both tools + CHANGELOG/CLAUDE.md |
+| 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code |
+
+Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
+
+## 10. Document Status
+- **Last Updated:** 2026-06-11
+- **Author:** Amir Rossert (planning via planning-dev-task)
+- **Branch:** `feature/SAF-32143-paginated-simulation-logs`
