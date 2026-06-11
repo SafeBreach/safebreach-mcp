@@ -121,6 +121,9 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 - 404 → `ValueError` explaining the data service may predate SAF-32099 (`/simulationLogs` not available) — distinct from
   "no logs" (which is a 200 with empty list).
 - 403 → `check_rbac_response` raises `PermissionError` with RBAC hint.
+- **Deep-page window error** (ES "result window too large" when `page*page_size > 10000`) → arrives as a 400/500/`default`
+  error; catch and re-raise as a `ValueError` with the §3.7 hint (narrow filters / time window; ~10k offset ceiling).
+  Optionally pre-guard client-side when `page * page_size > 10000`.
 - Timeout / RequestException → caught, logged, re-raised as `ValueError`.
 
 ### 3.6 Investigation strategy (the core model-steering goal)
@@ -156,6 +159,33 @@ converges on the relevant lines (usually a handful of ERRORs) instead of pulling
   result-level analysis, and lead with the tightest filter — typically `levels=ERROR` plus a `start_time`/`end_time`
   window — widening severity only if needed. Same pagination contract (`has_more`)."
 
+### 3.7 Verified data-side behavior & limits (read from SAF-32099 code)
+
+Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2218-2341`, normalization
+`executionsHistoryApi.js:35-69`, ES query `simulationLogsDao.js:60-106`, filter helpers `sbBodyBuilder.js:64-76`.
+
+- **`accountId` is an int32 path param**; `jobIds` + `levels` are real `collectionFormat: pipes` arrays (swagger-tools
+  splits on `|`). Confirms pipe-delimited end-to-end.
+- **Spec-level validation → HTTP 400** for: `pageSize > 1000`, and out-of-enum `minLevel` / `logType` / `sortOrder`
+  (`minLevel` enum is `DEBUG|INFO|WARNING|ERROR`). So a bad `min_level` is a clean 400, *not* a silent all-levels return.
+  ⇒ **MCP should validate the same enums + `page_size ≤ 1000` client-side** for fast, friendly errors before the call.
+- **`levels` has NO enum** (free string array). An invalid level (e.g. `FOO`) is uppercased and `inFilter`'d →
+  matches nothing → **empty result**, not an error and not "all". Worth a doc note / optional client-side validation.
+- **Empty filters are no-ops** (`sbBodyBuilder` guards: `inFilter` skips empty arrays, `wildcardFilter` skips empty
+  string). So omitting `message_contains` / `levels` / time bounds is safe.
+- **⚠️ Offset-pagination ceiling (~10,000).** The DAO uses `from=(page-1)*pageSize` + `size=pageSize` with **no
+  `track_total_hits` and no `max_result_window` override** (`simulationLogsDao.js:86-87,98`). Consequences for the consumer:
+  1. Once `(page-1)*pageSize + pageSize > 10000` (e.g. `pageSize=1000`, `page=11`), Elasticsearch rejects the query →
+     surfaces to MCP as a non-200 ("result window too large"). The MCP layer **must catch this and return a clear hint**:
+     *"deep pagination is limited to ~10k matches — narrow with a time window / `levels` / `message_contains`."*
+  2. `total` is read as `hits.total.value`, which ES **caps at 10,000** (relation `gte`) unless `track_total_hits` is set.
+     For large/unfiltered `search_simulation_logs` queries, `total` is therefore a **lower bound**, and
+     `has_more = page*page_size < total` can under-report past the cap. Document this; don't present `total` as exact.
+  3. This is exactly why the §3.6 *filter-first, severity-first* strategy matters — it keeps result sets well under 10k.
+- **Sort key is `timestamp` only** — no secondary tie-breaker. Lines sharing a timestamp may shift across page
+  boundaries. Acceptable for triage; note it for strict forensic ordering.
+- **Index**: `executions_simulations_logs` (alias `…-rollover-*`); per-line fields `_source` passed through verbatim.
+
 ## 4. Implementation Phases (TDD)
 
 ### Phase 1 — Shared fetch core + mapping (red→green)
@@ -186,14 +216,16 @@ converges on the relevant lines (usually a handful of ERRORs) instead of pulling
 - **Unit**: mapping (`test_data_types.py`), fetch/cache/param-build + `sb_*` validation (`test_data_functions.py`).
 - **Integration**: HTTP-mocked both tools (`test_integration.py`).
 - **Coverage must include**: pipe-joining of `jobIds`/`levels`, casing (UPPER levels/logType, lower sortOrder), omitted
-  optional params, `page_size` clamp, empty-logs hint, 400/401/404 messages, cache key uniqueness per filter combination.
+  optional params, `page_size` clamp + enum validation (`min_level`/`log_type`/`sort_order`), empty-logs hint,
+  400/401/404 messages, deep-page (`page*page_size > 10000`) ceiling error + hint, cache key uniqueness per filter combination.
 - Run: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"`.
 
 ## 6. Risks
 - **Console data version**: target console must have the SAF-32099 endpoint, else 404 — surfaced clearly.
 - **Old-format sims**: logs embedded, not in the index → `/simulationLogs` empty; hint points to `get_full_simulation_logs`.
 - **Unbounded cross-sim search**: omitting `jobIds` searches all sims; mitigated by description steering + server-side
-  pageSize cap (max 1000) and `total`/`has_more` so the consumer sees the scale.
+  pageSize cap (max 1000) and `total`/`has_more` so the consumer sees the scale. Bounded further by the ~10k offset
+  ceiling (§3.7) — beyond that the consumer must narrow filters; `total` may be a lower bound for huge result sets.
 - **Param casing/format drift**: server also normalizes, but the tool normalizes client-side to keep cache keys stable.
 
 ## 7. Open questions for review
