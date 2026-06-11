@@ -139,12 +139,15 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 
 ### 3.6 Investigation strategy (the core model-steering goal)
 
-These tools are a **last resort, not a first step.** The intended investigation flow — and what the tool descriptions
-must steer the model toward — is:
+These tools are a **last resort, not a first step. In most investigations the logs are not needed at all.** The intended
+flow — and what the tool descriptions must steer the model toward — is:
 
-1. **Investigate the result *without* logs first.** Use the lightweight simulation result and existing tools
-   (`get_simulation_details`, `get_test_simulations`, drift tools, etc.). Logs are large and token-heavy; only reach for
-   them when the result alone leaves a real gap — missing root cause, or an explicit deep-dive is required.
+1. **Start with the raw simulation object and its simulation steps.** `get_simulation_details` (the result object +
+   `simulation_steps`, optionally `include_mitre_techniques` / `include_basic_attack_logs` / `include_drift_info`), plus
+   `get_test_simulations` / drift tools, explain the flow for the large majority of cases. **Only when the simulation
+   object and steps are genuinely insufficient to understand the flow** — root cause still unclear, or an explicit deep
+   dive into execution traces is required — should you reach for these log tools. Logs are large and token-heavy; treat
+   pulling them as the exception, not the routine.
 2. **When logs are needed, pull them *smartly* — severity-first, keyed on the simulation's status**, escalating only if
    the current level doesn't answer the question:
    - **Failed / not-blocked-as-expected / errored simulation** → start with **`levels=ERROR`** (errors only). If that's
@@ -160,8 +163,9 @@ converges on the relevant lines (usually a handful of ERRORs) instead of pulling
 
 #### Tool descriptions (embed the strategy above)
 - `get_paginated_simulation_logs`: "Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/
-  message), page by page. **Use only after inspecting the simulation result (`get_simulation_details`) — pull logs solely
-  when the result leaves a gap or a deep dive is required.** Pull smartly by severity: for a FAILED/errored simulation
+  message), page by page. **Logs are usually NOT needed — first inspect the raw simulation object and its simulation
+  steps via `get_simulation_details`; reach for logs ONLY when that object + steps are insufficient to understand the
+  flow (root cause unclear / explicit deep dive).** Pull smartly by severity: for a FAILED/errored simulation
   start with `levels=ERROR`, then widen to `min_level=INFO`, then `DEBUG` only if still unanswered; for a SUCCESSFUL
   simulation start at `min_level=INFO` (default) and escalate to `DEBUG` only if needed. Read one page before requesting
   the next (`has_more`). For the full embedded ~40KB blob or old-format sims (`logsEmbedded=true`), use

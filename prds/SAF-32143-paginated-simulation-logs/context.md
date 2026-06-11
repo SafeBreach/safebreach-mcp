@@ -85,8 +85,9 @@ Both are read-only (`readOnlyHint=True`), share one fetch/cache/mapping core, an
 
 ### Investigation strategy (Amir, 2026-06-11) — the steering goal
 
-Logs are a **last resort, not a first step**. Tool descriptions must steer the model to: (1) investigate the simulation
-*result* first (`get_simulation_details` etc.) and pull logs only when the result leaves a gap / a deep dive is needed;
+Logs are a **last resort, not a first step — mostly not needed at all**. Tool descriptions must steer the model to:
+(1) start with the raw simulation object + simulation steps (`get_simulation_details`); pull logs ONLY when the object +
+steps are insufficient to understand the flow (root cause unclear / explicit deep dive);
 (2) when logs are needed, pull **severity-first, keyed on status** — FAILED sim → start `levels=ERROR`, escalate to INFO
 then DEBUG only if unanswered; SUCCESSFUL sim → start `min_level=INFO`, escalate to DEBUG only if needed; (3) page,
 don't dump. This escalation ladder is what actually prevents the SAF-32058 token overflow from recurring. See `prd.md` §3.6.
