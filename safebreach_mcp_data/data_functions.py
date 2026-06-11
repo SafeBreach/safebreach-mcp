@@ -949,15 +949,8 @@ def sb_get_simulation_details(
                                simulation_id, str(e))
 
         if raw_result is not None:
+            # includeLogs=false guarantees details.LOGS/OUTPUT are excluded server-side (ES _source excludes)
             return_details = raw_result
-            # Defensive: guarantee the no-logs contract even if the server didn't strip
-            data_groups = (return_details.get('dataObj') or {}).get('data') or []
-            for group in data_groups:
-                for node in group or []:
-                    details = node.get('details') if isinstance(node, dict) else None
-                    if isinstance(details, dict):
-                        details.pop('LOGS', None)
-                        details.pop('OUTPUT', None)
             if return_details.get('logsEmbedded'):
                 return_details['hint_to_agent'] = (
                     "Raw simulation result (logs excluded); simulation steps are in dataObj.data[..].details."

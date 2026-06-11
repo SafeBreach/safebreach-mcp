@@ -765,8 +765,8 @@ class TestDataFunctions:
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_strips_stray_logs(self, mock_post, mock_get, mock_base_url, mock_account_id):
-        """Defensive: any LOGS/OUTPUT that slip through are stripped client-side."""
+    def test_sb_get_simulation_details_old_format_hint(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """logsEmbedded=true (old-format sim) -> hint routes to get_full_simulation_logs."""
         list_response = Mock()
         list_response.status_code = 200
         list_response.json.return_value = {"simulations": [{"id": "sim1", "planRunId": "pr1"}]}
@@ -775,19 +775,15 @@ class TestDataFunctions:
         v3_response.status_code = 200
         v3_response.json.return_value = {
             "id": "sim1", "logsEmbedded": True,
-            "dataObj": {"data": [[{"id": "n1", "details": {
-                "LOGS": "huge blob", "OUTPUT": "raw output", "SIMULATION_STEPS": []
-            }}]]},
+            "dataObj": {"data": [[{"id": "n1", "details": {"SIMULATION_STEPS": []}}]]},
         }
         mock_get.return_value = v3_response
 
         result = sb_get_simulation_details("sim1", "test-console")
-        details = result["dataObj"]["data"][0][0]["details"]
-        assert "LOGS" not in details
-        assert "OUTPUT" not in details
-        assert "SIMULATION_STEPS" in details
-        # old-format sim -> hint routes to get_full_simulation_logs
+        assert result["logsEmbedded"] is True
         assert "get_full_simulation_logs" in result.get("hint_to_agent", "")
+        # and explicitly steers AWAY from the index-backed tools
+        assert "NOT" in result["hint_to_agent"]
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
