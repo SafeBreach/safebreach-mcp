@@ -274,9 +274,9 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 - [x] Pipe-joining + casing normalization + omitted-param handling verified by tests.
 - [x] Error handling: 400 (enum/pageSize), 401, 404 (endpoint-missing), deep-page ~10k ceiling — each with clear message.
 - [x] Caching: key includes console + jobIds + every filter + page; gated on `is_caching_enabled("data")`.
-- [ ] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` *(unit ✅; integration in Phase 3)*.
-- [x] All existing tests pass (446 data tests green).
-- [ ] `CHANGELOG.md` + `CLAUDE.md` updated.
+- [x] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` (453 data tests green).
+- [x] All existing tests pass (453 data tests green). *(No linter configured in this repo — tests are the gate.)*
+- [x] `CHANGELOG.md` + `CLAUDE.md` updated.
 
 ## 9. Phase Status Tracking
 
@@ -284,8 +284,8 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 |-------|------|--------|-----------|--------|-------|
 | 1 | Shared fetch core + mapping | ✅ Complete | 2026-06-11 | (this branch) | `get_simulation_logs_mapping` + `_fetch_simulation_logs_from_api` + `_get_..._from_cache_or_api` + `simulation_logs_cache`; 15 new tests, 429 data tests green |
 | 2 | Public entry points + tool registration | ✅ Complete | 2026-06-11 | (this branch) | `sb_get_paginated_simulation_logs` + `sb_search_simulation_logs` (validation: required id, page_size≤1000, deep-page ~10k guard, enum checks) + two `@mcp.tool` regs; 17 new tests, 446 data tests green |
-| 3 | Integration + docs | ⏳ Pending | — | — | `test_integration.py` both tools + CHANGELOG/CLAUDE.md |
-| 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code |
+| 3 | Integration + docs | ✅ Complete | 2026-06-11 | (this branch) | `TestSimulationLogsIntegration` (7 HTTP-mocked e2e tests) + CHANGELOG Unreleased + CLAUDE.md 12a/12b; 453 data tests green |
+| 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code — needs a console with the SAF-32099 endpoint |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 
