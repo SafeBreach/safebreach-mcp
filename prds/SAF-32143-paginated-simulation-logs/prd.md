@@ -123,14 +123,38 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 - 403 → `check_rbac_response` raises `PermissionError` with RBAC hint.
 - Timeout / RequestException → caught, logged, re-raised as `ValueError`.
 
-### 3.6 Tool descriptions (model steering)
-- `get_paginated_simulation_logs`: "Fetch one simulation's execution logs incrementally and filtered (level/type/time/
-  message), page by page. Use this for targeted log investigation of a known simulation. For the full embedded ~40KB
-  blob or old-format simulations (where the result reports `logsEmbedded=true`), use `get_full_simulation_logs`. Default
-  `min_level=INFO` hides DEBUG; pass `levels=DEBUG|...` (pipe-delimited) to include it. Results cached ~10 min."
+### 3.6 Investigation strategy (the core model-steering goal)
+
+These tools are a **last resort, not a first step.** The intended investigation flow — and what the tool descriptions
+must steer the model toward — is:
+
+1. **Investigate the result *without* logs first.** Use the lightweight simulation result and existing tools
+   (`get_simulation_details`, `get_test_simulations`, drift tools, etc.). Logs are large and token-heavy; only reach for
+   them when the result alone leaves a real gap — missing root cause, or an explicit deep-dive is required.
+2. **When logs are needed, pull them *smartly* — severity-first, keyed on the simulation's status**, escalating only if
+   the current level doesn't answer the question:
+   - **Failed / not-blocked-as-expected / errored simulation** → start with **`levels=ERROR`** (errors only). If that's
+     insufficient, widen to **`WARNING`/`INFO`** (`min_level=INFO`), and only then to **`DEBUG`** (`levels=DEBUG|INFO|...`).
+   - **Successful simulation** → start at **`min_level=INFO`** (the default); escalate to `DEBUG` only if a deeper trace
+     is genuinely needed.
+3. **Page, don't dump.** Fetch one page (default `page_size=100`), read, and only request the next page (`has_more=true`)
+   if the answer isn't there yet. Always prefer a `start_time`/`end_time` window and `message_contains` to narrow.
+
+This severity-escalation ladder is the mechanism that keeps the SAF-32058 token overflow from recurring: the agent
+converges on the relevant lines (usually a handful of ERRORs) instead of pulling the whole log.
+
+#### Tool descriptions (embed the strategy above)
+- `get_paginated_simulation_logs`: "Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/
+  message), page by page. **Use only after inspecting the simulation result (`get_simulation_details`) — pull logs solely
+  when the result leaves a gap or a deep dive is required.** Pull smartly by severity: for a FAILED/errored simulation
+  start with `levels=ERROR`, then widen to `min_level=INFO`, then `DEBUG` only if still unanswered; for a SUCCESSFUL
+  simulation start at `min_level=INFO` (default) and escalate to `DEBUG` only if needed. Read one page before requesting
+  the next (`has_more`). For the full embedded ~40KB blob or old-format sims (`logsEmbedded=true`), use
+  `get_full_simulation_logs`. Results cached ~10 min."
 - `search_simulation_logs`: "Search execution logs across many or all simulations (omit `simulation_ids` for all; or pass
-  a pipe-delimited list like `id1|id2`). Best for cross-sim/forensic queries like 'all ERRORs in a time window'. Strongly prefer a
-  `start_time`/`end_time` window and `min_level`/`levels` filter to bound results. Same pagination contract (`has_more`)."
+  a pipe-delimited list like `id1|id2`). Best for cross-sim/forensic queries like 'all ERRORs in a time window'. Use after
+  result-level analysis, and lead with the tightest filter — typically `levels=ERROR` plus a `start_time`/`end_time`
+  window — widening severity only if needed. Same pagination contract (`has_more`)."
 
 ## 4. Implementation Phases (TDD)
 
