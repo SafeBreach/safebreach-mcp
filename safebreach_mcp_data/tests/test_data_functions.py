@@ -673,26 +673,40 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_success(self, mock_post, mock_base_url, mock_account_id):
-        """Test successful simulation details retrieval."""
-        # Setup mocks
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "simulations": [{
-                "id": "sim1",
-                "moveName": "Test Move",
-                "MITRE_Technique": [{"value": "T1234", "displayName": "Test Technique", "url": "https://attack.mitre.org/techniques/T1234/"}],
-                "simulationEvents": [
-                    {"nodeId": "node1", "type": "PROCESS", "action": "START", "timestamp": "2025-01-01T10:00:00Z"},
-                    {"nodeId": "node1", "type": "FILE", "action": "CREATE", "timestamp": "2025-01-01T10:01:00Z"},
-                    {"nodeId": "node2", "type": "DIRECTORY", "action": "CREATE", "timestamp": "2025-01-01T10:02:00Z"}
-                ]
-            }]
+    def test_sb_get_simulation_details_success(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """Raw v3 result (without logs) is the response; enrichments merged on top."""
+        # v1 list lookup resolves the row (and planRunId for the v3 call)
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {
+            "simulations": [{"id": "sim1", "planRunId": "pr1", "moveName": "Test Move"}]
         }
-        mock_response.status_code = 200
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+        mock_post.return_value = list_response
+
+        # v3 raw result: full doc incl. steps, logs stripped server-side, logsEmbedded hint
+        raw_doc = {
+            "id": "sim1",
+            "planRunId": "pr1",
+            "moveName": "Test Move",
+            "finalStatus": "missed",
+            "logsEmbedded": False,
+            "MITRE_Technique": [{"value": "T1234", "displayName": "Test Technique", "url": "https://attack.mitre.org/techniques/T1234/"}],
+            "simulationEvents": [
+                {"nodeId": "node1", "type": "PROCESS", "action": "START", "timestamp": "2025-01-01T10:00:00Z"},
+                {"nodeId": "node1", "type": "FILE", "action": "CREATE", "timestamp": "2025-01-01T10:01:00Z"},
+                {"nodeId": "node2", "type": "DIRECTORY", "action": "CREATE", "timestamp": "2025-01-01T10:02:00Z"}
+            ],
+            "dataObj": {"data": [[{"id": "node1", "details": {
+                "SIMULATION_STEPS": [{"level": "INFO", "message": "step 1"}],
+                "ERROR": "", "STATUS": "DONE"
+            }}]]},
+        }
+        v3_response = Mock()
+        v3_response.status_code = 200
+        v3_response.json.return_value = raw_doc
+        mock_get.return_value = v3_response
 
         result = sb_get_simulation_details(
             "sim1",
@@ -701,39 +715,79 @@ class TestDataFunctions:
             include_basic_attack_logs=True
         )
 
-        assert "simulation_id" in result
+        # Raw passthrough: original camelCase fields + simulation steps, no logs
+        assert result["id"] == "sim1"
+        assert result["finalStatus"] == "missed"
+        assert result["logsEmbedded"] is False
+        steps = result["dataObj"]["data"][0][0]["details"]["SIMULATION_STEPS"]
+        assert steps[0]["message"] == "step 1"
+        assert "LOGS" not in result["dataObj"]["data"][0][0]["details"]
+        # Steering hint to the paginated logs tool
+        assert "get_paginated_simulation_logs" in result.get("hint_to_agent", "")
+
+        # v3 URL was used with runId from the list row and includeLogs=false
+        v3_url = mock_get.call_args.args[0]
+        assert "/api/data/v3/accounts/123/executionsHistoryResults/sim1" in v3_url
+        assert "runId=pr1" in v3_url
+        assert "includeLogs=false" in v3_url
+
+        # Enrichments merged on top of the raw doc
         assert "mitre_techniques" in result
-        assert "basic_attack_logs_by_hosts" in result
-
-        # Verify attack logs structure
+        assert result["mitre_techniques"][0]["id"] == "T1234"
         attack_logs = result["basic_attack_logs_by_hosts"]
-        assert isinstance(attack_logs, list)
-        assert len(attack_logs) == 2  # Two hosts (node1 and node2)
-
-        # Check each host log structure
-        for host_log in attack_logs:
-            assert "host_info" in host_log
-            assert "host_logs" in host_log
-            assert "node_id" in host_log["host_info"]
-            assert "event_count" in host_log["host_info"]
-            assert isinstance(host_log["host_logs"], list)
-
-        # Verify specific host data
-        host_nodes = [log["host_info"]["node_id"] for log in attack_logs]
-        assert "node1" in host_nodes
-        assert "node2" in host_nodes
-
-        # Find node1 and verify it has 2 events
+        assert len(attack_logs) == 2
         node1_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node1")
         assert node1_log["host_info"]["event_count"] == 2
-        assert len(node1_log["host_logs"]) == 2
 
-        # Find node2 and verify it has 1 event
-        node2_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node2")
-        assert node2_log["host_info"]["event_count"] == 1
-        assert len(node2_log["host_logs"]) == 1
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_v3_404_falls_back_to_row(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """Older console (v3 404): the raw list row is returned with an explanatory hint."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {
+            "simulations": [{"id": "sim1", "planRunId": "pr1", "finalStatus": "missed"}]
+        }
+        mock_post.return_value = list_response
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.return_value = not_found
 
-        mock_post.assert_called_once()
+        result = sb_get_simulation_details("sim1", "test-console")
+
+        assert result["id"] == "sim1"
+        assert result["finalStatus"] == "missed"
+        assert "hint_to_agent" in result  # explains steps unavailable / v3 missing
+
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_strips_stray_logs(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """Defensive: any LOGS/OUTPUT that slip through are stripped client-side."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {"simulations": [{"id": "sim1", "planRunId": "pr1"}]}
+        mock_post.return_value = list_response
+        v3_response = Mock()
+        v3_response.status_code = 200
+        v3_response.json.return_value = {
+            "id": "sim1", "logsEmbedded": True,
+            "dataObj": {"data": [[{"id": "n1", "details": {
+                "LOGS": "huge blob", "OUTPUT": "raw output", "SIMULATION_STEPS": []
+            }}]]},
+        }
+        mock_get.return_value = v3_response
+
+        result = sb_get_simulation_details("sim1", "test-console")
+        details = result["dataObj"]["data"][0][0]["details"]
+        assert "LOGS" not in details
+        assert "OUTPUT" not in details
+        assert "SIMULATION_STEPS" in details
+        # old-format sim -> hint routes to get_full_simulation_logs
+        assert "get_full_simulation_logs" in result.get("hint_to_agent", "")
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')

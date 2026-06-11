@@ -181,8 +181,9 @@ class TestSecurityControlEventsIntegration:
             "test-console"
         )
         
-        # Assertions
-        assert "simulation_id" in simulation_details
+        # Assertions — raw v3/list shape (camelCase passthrough)
+        assert simulation_details.get("id") or simulation_details.get("jobId")
+        assert "hint_to_agent" in simulation_details
         assert security_events["total_events"] == 2
         assert len(security_events["events_in_page"]) == 2
         assert event_details["event_id"] == "event-001"
@@ -190,8 +191,8 @@ class TestSecurityControlEventsIntegration:
         assert event_details["product"] == "CrowdStrike FDR"
         
         # Verify API calls
-        assert mock_post.call_count == 1  # One for simulation details
-        assert mock_get.call_count == 1  # One for security events (event details uses cache)
+        assert mock_post.call_count == 1  # One for simulation details (list lookup)
+        assert mock_get.call_count == 2  # v3 raw-result attempt + security events (event details uses cache)
         # Check that test-console was called (but might not be the last call due to caching)
         secret_calls = [call[0][0] for call in mock_secret.call_args_list]
         assert "test-console" in secret_calls, f"Expected 'test-console' in calls but got: {secret_calls}"

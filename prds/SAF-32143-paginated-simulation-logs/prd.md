@@ -290,6 +290,7 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 | 3 | Integration + docs | ✅ Complete | 2026-06-11 | (this branch) | `TestSimulationLogsIntegration` (7 HTTP-mocked e2e tests) + CHANGELOG Unreleased + CLAUDE.md 12a/12b; 453 data tests green |
 | 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code — needs a console with the SAF-32099 endpoint |
 | 5 | v3 migration of `get_full_simulation_logs` (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | v3 result endpoint `includeLogs=true` + v1 fallback; `logs_embedded` exposed; logsEmbedded routing rule in all 3 logs-tool descriptions; 7 new tests, 460 green |
+| 6 | `get_test_simulation_details` → raw v3 result without logs (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | Replace curated entity with raw v3 result (`includeLogs=false`): full doc + SIMULATION_STEPS + logsEmbedded, LOGS/OUTPUT stripped (server+client); enrichments merged on top; list-row fallback for old consoles; hint routes to paginated logs / full logs by logsEmbedded; 462 tests green |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 

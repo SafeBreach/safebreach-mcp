@@ -910,7 +910,7 @@ def sb_get_simulation_details(
 
         headers = {"Content-Type": "application/json",
                     **get_auth_headers_for_console(console)}
-        
+
         data = {
             "runId": "*",
             "query": f"id:{simulation_id}",
@@ -919,21 +919,81 @@ def sb_get_simulation_details(
             "orderBy": "desc",
             "sortBy": "executionTime"
         }
-        
+
         logger.info("Fetching simulation '%s' from console '%s'", simulation_id, console)
         response = requests.post(api_url, headers=headers, json=data, timeout=120)
         if response.status_code != 200:
             logger.error("Failed to fetch simulation details for simulation ID %s: %s", simulation_id, response.text)
             return {"error": "Failed to fetch simulation details", "status_code": response.status_code}
-        
-        simulation_result = response.json()
-        return_details = get_full_simulation_result_entity(
-            simulation_result['simulations'][0],
+
+        list_row = response.json()['simulations'][0]
+        plan_run_id = list_row.get('planRunId')
+
+        # Fetch the raw v3 result without logs: full document (incl. dataObj simulation steps)
+        # with details.LOGS/OUTPUT stripped server-side, plus the logsEmbedded hint.
+        raw_result = None
+        if plan_run_id:
+            v3_url = (
+                f"{base_url}/api/data/v3/accounts/{account_id}/executionsHistoryResults/{simulation_id}"
+                f"?runId={plan_run_id}&includeLogs=false"
+            )
+            try:
+                v3_response = requests.get(v3_url, headers=headers, timeout=120)
+                if v3_response.status_code == 200:
+                    raw_result = v3_response.json()
+                else:
+                    logger.info("v3 result endpoint returned %s for simulation '%s'; falling back to list row",
+                                v3_response.status_code, simulation_id)
+            except (requests.exceptions.RequestException, ValueError) as e:
+                logger.warning("v3 result fetch failed for simulation '%s': %s; falling back to list row",
+                               simulation_id, str(e))
+
+        if raw_result is not None:
+            return_details = raw_result
+            # Defensive: guarantee the no-logs contract even if the server didn't strip
+            data_groups = (return_details.get('dataObj') or {}).get('data') or []
+            for group in data_groups:
+                for node in group or []:
+                    details = node.get('details') if isinstance(node, dict) else None
+                    if isinstance(details, dict):
+                        details.pop('LOGS', None)
+                        details.pop('OUTPUT', None)
+            if return_details.get('logsEmbedded'):
+                return_details['hint_to_agent'] = (
+                    "Raw simulation result (logs excluded); simulation steps are in dataObj.data[..].details."
+                    "SIMULATION_STEPS. logsEmbedded=true: this is an old-format simulation — its logs are NOT in "
+                    "the logs index, so do NOT use get_paginated_simulation_logs/search_simulation_logs; use "
+                    "get_full_simulation_logs to retrieve the embedded logs if deeper investigation is needed."
+                )
+            else:
+                return_details['hint_to_agent'] = (
+                    "Raw simulation result (logs excluded); simulation steps are in dataObj.data[..].details."
+                    "SIMULATION_STEPS. If the result and steps are not enough to understand the flow, pull logs "
+                    "incrementally with get_paginated_simulation_logs (severity-first: levels=ERROR for failed "
+                    "simulations, min_level=INFO for successful ones)."
+                )
+        else:
+            # Older console (no v3 result endpoint) or fetch failure — fall back to the raw list
+            # row (no dataObj/simulation steps; the v1 list API strips them server-side).
+            return_details = list_row
+            return_details['hint_to_agent'] = (
+                "Raw simulation summary from the list API (the v3 result endpoint is unavailable on this "
+                "console, so simulation steps are not included). For execution logs use "
+                "get_paginated_simulation_logs, or get_full_simulation_logs for the full embedded blob."
+            )
+
+        # Merge optional enrichments on top of the raw result (computed from the same raw fields)
+        source_entity = raw_result if raw_result is not None else list_row
+        enriched = get_full_simulation_result_entity(
+            source_entity,
             include_mitre_techniques=include_mitre_techniques,
             include_basic_attack_logs=include_basic_attack_logs,
             include_drift_info=include_drift_info
         )
-        
+        for key in ('is_drifted', 'drift_info', 'mitre_techniques', 'basic_attack_logs_by_hosts'):
+            if key in enriched:
+                return_details[key] = enriched[key]
+
         if include_drift_info and return_details.get('is_drifted', False):
             # Get the previous run ID of the most recent simulation with the same parameters such attack_playbook_id, simulators etc
             drift_code = return_details['drift_info']['drift_tracking_code']
@@ -953,8 +1013,9 @@ def sb_get_simulation_details(
             else:
                 previous_simulations = response.json().get('simulations', [])
                 if previous_simulations:
+                    current_execution_time = source_entity.get('executionTime', '')
                     for sim in previous_simulations:
-                        if sim['executionTime'] < return_details['end_time']:
+                        if sim['executionTime'] < current_execution_time:
                             # We found the most recent previous simulation with the same drift_tracking_code
                             logger.info("Found previous simulation with ID %s for drift_tracking_code %s", sim.get('id', 'Unknown'), drift_code)
                             return_details['drift_info']['previous_simulation_id'] = sim.get('id', 'Unknown')
@@ -964,7 +1025,7 @@ def sb_get_simulation_details(
                     return_details['drift_info']['previous_simulation_id'] = "No previous simulation found with same drift_tracking_code"
 
         return return_details
-        
+
     except Exception as e:
         logger.error("Error getting simulation details for ID '%s': %s", simulation_id, str(e))
         raise

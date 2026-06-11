@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `get_test_simulation_details` now returns the **raw simulation result** from the data v3 result
+  endpoint (logs excluded): the full document including per-node simulation steps
+  (`dataObj.data[..].details.SIMULATION_STEPS`) and the `logsEmbedded` hint, with the heavy
+  LOGS/OUTPUT blobs stripped. This makes it the primary investigation entry point — inspect the
+  result + steps first, and only escalate to `get_paginated_simulation_logs` when they aren't
+  enough (or `get_full_simulation_logs` when `logsEmbedded=true`). Optional enrichments
+  (MITRE techniques, basic attack logs, drift info) are merged on top of the raw result.
+  Falls back to the list-API summary on older consoles without the v3 endpoint.
+  **Breaking shape change:** the response is now the raw camelCase API document instead of the
+  previous curated snake_case entity.
 - `get_full_simulation_logs` now fetches via the data v3 result endpoint with `includeLogs=true`
   (falling back to v1 on older consoles) and exposes a new `logs_embedded` field: `true` means an
   old-format simulation whose logs exist only in the embedded blob (not in the logs index) — for

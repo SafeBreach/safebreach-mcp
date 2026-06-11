@@ -151,13 +151,25 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
         @self.mcp.tool(
             name="get_test_simulation_details",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
-Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
+            description="""Returns the RAW simulation result (v3 result endpoint, logs excluded) for a specific simulation id — \
+the PRIMARY investigation entry point for a simulation.
+
+The response is the full raw result document including the per-node simulation steps \
+(dataObj.data[..].details.SIMULATION_STEPS, plus ERROR/STATUS per node) with the heavy LOGS/OUTPUT blobs stripped. \
+It also includes 'logsEmbedded':
+- logsEmbedded=false: if the result + steps are not enough to understand the flow, pull logs incrementally with \
+get_paginated_simulation_logs (severity-first: levels=ERROR for failed simulations, min_level=INFO for successful ones).
+- logsEmbedded=true: OLD-format simulation — its logs are NOT in the logs index; use get_full_simulation_logs instead \
+(get_paginated_simulation_logs/search_simulation_logs would return empty).
+In most investigations the result + steps are sufficient and no logs call is needed.
+
+Supports optional extensions merged on top of the raw result: MITRE ATT&CK techniques, basic attack logs by host from \
+simulation events, and drift analysis information.
 When include_drift_info=True, returns drift_tracking_code for drifted simulations. Pass this code to \
 get_simulation_lineage to see the full execution timeline across all test runs.
 Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False),
 include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
-Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead.
+On older consoles without the v3 result endpoint, falls back to the list-API summary (no simulation steps).
 For time-window-based drift trends, see get_simulation_result_drifts and get_simulation_status_drifts."""
         )
         async def get_test_simulation_details_tool(
@@ -301,7 +313,7 @@ use get_simulation_result_drifts or get_simulation_status_drifts instead."""
             description="""Retrieves comprehensive low-level execution logs for a specific simulation (~40KB detailed traces per node).
 
 IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, returned no-result, or produced unexpected results.
-The logs contain granular execution traces NOT available in get_simulation_details or get_studio_attack_latest_result.
+The logs contain granular execution traces NOT available in get_test_simulation_details or get_studio_attack_latest_result.
 When a simulation status is "stopped" or "no-result", always retrieve these logs before concluding root cause.
 
 Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation. \
@@ -318,7 +330,7 @@ source. False = logs are also in the index (prefer the paginated tools for filte
 - Also includes: simulation_id, test_id, run_id, execution_times, status, attack_info (always present regardless of logs_available).
 Each role section contains: node_name, node_id, os_type, os_version, state, logs, simulation_steps, details_summary, error, output, task_status, task_code.
 Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (required).
-Note: Results are cached for 5 minutes. Use get_simulation_details with include_basic_attack_logs for summary-level logs only."""
+Note: Results are cached for 5 minutes. Use get_test_simulation_details with include_basic_attack_logs for summary-level logs only."""
         )
         async def get_full_simulation_logs_tool(
             simulation_id: str,
@@ -336,7 +348,7 @@ Note: Results are cached for 5 minutes. Use get_simulation_details with include_
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/message), page by page.
 
-LOGS ARE USUALLY NOT NEEDED. First inspect the raw simulation object and its simulation steps via get_simulation_details \
+LOGS ARE USUALLY NOT NEEDED. First inspect the raw simulation object and its simulation steps via get_test_simulation_details \
 (optionally include_basic_attack_logs / include_mitre_techniques / include_drift_info). Reach for these logs ONLY when the \
 simulation object + steps are insufficient to understand the flow (root cause still unclear, or an explicit deep dive into \
 execution traces is required).
