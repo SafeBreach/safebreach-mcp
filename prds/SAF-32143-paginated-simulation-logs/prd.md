@@ -64,33 +64,43 @@ Shared internals in `data_functions.py`:
 - Public `sb_get_paginated_simulation_logs(...)` / `sb_search_simulation_logs(...)` — validate inputs, build `job_ids`,
   delegate to the cache layer.
 
-### 3.2 Parameter mapping (MCP → API)
+### 3.2 Full parameter capability (MCP → API) — expose the API's complete power
 
-MCP tool params are snake_case scalars (MCP-friendly); the API uses camelCase with `collectionFormat: pipes`. Multi-value
-params use **pipe-delimited** strings at the MCP layer too (`a|b`), matching the API's query-param style — no CSV.
+**Design principle:** the tools expose the API's *full* filtering + pagination surface with no hidden simplifications and
+**defaults identical to the API**, so the consumer (and the model) has complete control. MCP params are snake_case
+scalars; multi-value params are **pipe-delimited** strings (`a|b`), matching the API's `collectionFormat: pipes`.
 
-| MCP param | Type / default | → API param | Build rule |
-|-----------|----------------|-------------|------------|
-| `simulation_id` (tool 1) | str, **required** | `jobIds` | `jobIds = simulation_id` |
-| `simulation_ids` (tool 2) | str, **pipe-delimited**, optional | `jobIds` | trim segments, drop empties, re-join with `\|`; omit param entirely if empty |
-| `page` | int = 1 | `page` | pass-through |
-| `page_size` | int = **100** | `pageSize` | clamp/validate ≤ 1000 client-side (clear error, avoid server 400) |
-| `min_level` | str = `"INFO"` | `minLevel` | `.upper()` |
-| `levels` | str, **pipe-delimited**, optional | `levels` | uppercase + trim each segment, re-join with `\|`; overrides `min_level` server-side |
-| `message_contains` | str, optional | `messageContains` | pass-through |
-| `start_time` / `end_time` | str, optional | `startTime` / `endTime` | pass-through (ISO-8601 or epoch ms) |
-| `log_type` | str = `"LOGS"` | `logType` | `.upper()` (enum `LOGS\|OUTPUT\|ALL`) |
-| `sort_order` | str = `"asc"` | `sortOrder` | `.lower()` (enum `asc\|desc`) |
-| `console` | str = `"default"` | — | selects base URL / account / auth |
+| MCP param | Type / default (= API) | → API param | Capability & build rule |
+|-----------|------------------------|-------------|-------------------------|
+| `simulation_id` (tool 1) | str, **required** | `jobIds` | Scope to exactly one simulation: `jobIds=<simulation_id>`. |
+| `simulation_ids` (tool 2) | str, pipe-delimited, optional | `jobIds` | Scope to one/several sims (`a\|b`) or **all** when omitted. Trim segments, drop empties, re-join with `\|`; omit param entirely if empty. |
+| `page` | int = `1` | `page` | 1-based page number. Offset = `(page-1)*page_size`. Subject to the ~10k ceiling (§3.7). |
+| `page_size` | int = `500` | `pageSize` | Entries per page, **1–1000**. Validate `≤ 1000` client-side (clear error, avoid server 400). |
+| `min_level` | str = `"INFO"` | `minLevel` | Severity **threshold** (inclusive), returns that level **and above**: `DEBUG<INFO<WARNING<ERROR`. `.upper()`. Ignored when `levels` given. |
+| `levels` | str, pipe-delimited, optional | `levels` | **Explicit** level set, **overrides** `min_level`. e.g. `ERROR\|WARNING`. Uppercase + trim each segment, re-join with `\|`. |
+| `message_contains` | str, optional | `messageContains` | Case-insensitive substring grep over `message` (ES `*term*`). |
+| `start_time` | str, optional | `startTime` | Inclusive lower bound on `timestamp`. ISO-8601 **or** epoch millis. |
+| `end_time` | str, optional | `endTime` | Inclusive upper bound on `timestamp`. ISO-8601 **or** epoch millis. |
+| `log_type` | str = `"LOGS"` | `logType` | `LOGS` = trace lines, `OUTPUT` = raw command output, `ALL` = both. `.upper()`. |
+| `sort_order` | str = `"asc"` | `sortOrder` | `asc` (oldest first) / `desc` (newest first); sort key = `timestamp`. `.lower()`. |
+| `console` | str = `"default"` | — (path/auth) | selects base URL / account / auth; not sent as a query param. |
 
-> **`page_size` default = 100 (MCP) vs 500 (API).** Intentional. The MCP tools exist to bound tokens; a smaller default
-> keeps the first call safe for the LLM. Consumers can raise it up to 1000. *(Open for review — raise to 200/500 if too
-> chatty.)*
+**Combining filters (all AND-ed server-side):** `jobIds` (scope) × level (`levels` *or* `min_level`) × `message_contains`
+× `[start_time, end_time]` × `log_type`, then sorted by `sort_order` and paged by `page`/`page_size`. Every combination
+is valid; omitted filters are no-ops. This is the full control surface — the tool must surface **all** of it.
+
+> **Defaults = API parity (`page_size=500`, `min_level=INFO`, `log_type=LOGS`, `sort_order=asc`).** Token-bounding is
+> achieved by the §3.6 *filter-first / severity-first / page-by-page* strategy and by the consumer lowering `page_size`
+> when desired — **not** by crippling the default. The tool faithfully mirrors the API. *(Resolves prior open question #2.)*
 
 > **Pipe style end-to-end.** `simulation_ids` and `levels` are pipe-delimited at the MCP-param level (matching the API's
 > `collectionFormat: pipes`), so the tool passes them straight into the single `jobIds` / `levels` query string after
 > trim/case-normalization. Do **not** pass a Python list to `requests` (it serializes as repeated `levels=A&levels=B`,
 > which the server's pipe parser will not read) — always send one pipe-joined string.
+
+> **Validate enums client-side** (`min_level`/`log_type`/`sort_order`) and `page_size ≤ 1000` for fast, friendly errors
+> (the server also enforces these as 400 — §3.7). `levels` has no server enum, so an unknown level yields an empty
+> result; optionally warn client-side.
 
 ### 3.3 Response mapping — `get_simulation_logs_mapping(api_response)` (`data_types.py`)
 
@@ -140,8 +150,9 @@ must steer the model toward — is:
      insufficient, widen to **`WARNING`/`INFO`** (`min_level=INFO`), and only then to **`DEBUG`** (`levels=DEBUG|INFO|...`).
    - **Successful simulation** → start at **`min_level=INFO`** (the default); escalate to `DEBUG` only if a deeper trace
      is genuinely needed.
-3. **Page, don't dump.** Fetch one page (default `page_size=100`), read, and only request the next page (`has_more=true`)
-   if the answer isn't there yet. Always prefer a `start_time`/`end_time` window and `message_contains` to narrow.
+3. **Page, don't dump.** Fetch one page (default `page_size=500`; lower it for tighter token control), read, and only
+   request the next page (`has_more=true`) if the answer isn't there yet. Always prefer a `start_time`/`end_time` window
+   and `message_contains` to narrow before paging deeper.
 
 This severity-escalation ladder is the mechanism that keeps the SAF-32058 token overflow from recurring: the agent
 converges on the relevant lines (usually a handful of ERRORs) instead of pulling the whole log.
@@ -230,6 +241,7 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 
 ## 7. Open questions for review
 1. Cross-sim tool name: `search_simulation_logs` (chosen) vs `get_cross_simulation_logs`?
-2. MCP `page_size` default: 100 (chosen, token-safe) vs 200/500?
+2. ~~MCP `page_size` default~~ — **resolved**: defaults mirror the API exactly (`page_size=500`, max 1000) for full
+   control; token-bounding comes from the §3.6 strategy + consumer-chosen `page_size`, not a crippled default.
 3. Should `search_simulation_logs` *require* a time window when `simulation_ids` is omitted, to prevent accidental
-   all-sim scans? (Currently optional + steered by description.)
+   all-sim scans? Current stance: keep it optional (full control) and steer via description + the ~10k ceiling hint.
