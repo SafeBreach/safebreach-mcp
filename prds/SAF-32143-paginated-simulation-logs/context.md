@@ -1,71 +1,130 @@
-# Context — MCP paginated simulation-logs tool (SAF-32099 companion)
+# Context — MCP paginated/filterable simulation-logs tools (SAF-32099 companion)
 
 | Item | Value |
 |------|-------|
-| Mode | Create new ticket |
-| Project / Type | SAF / Task (relates to SAF-32099) |
-| Repo | `safebreach-mcp` (`github.com/SafeBreach/safebreach-mcp`) |
-| Related (data side) | SAF-32099 — new `GET /data/v3/.../executionsHistoryResults/{id}/logs` (merged/PR'd in `data`) |
-| Solves (context) | SAF-32058 — HELM AI agent overflows LLM token limit on heavy embedded logs |
-| Status | Phase 5: Problem Analysis Complete |
+| Ticket | SAF-32143 — `safebreach-mcp` \| Add MCP tool(s) for paginated/filterable simulation logs |
+| Project / Type | SAF / Task (companion to SAF-32099, context: SAF-32058 / SB-36091) |
+| Repo / branch | `safebreach-mcp` / `feature/SAF-32143-paginated-simulation-logs` |
+| Related (data side) | SAF-32099 — new `GET /data/v3/accounts/{accountId}/simulationLogs` (branch `feature/SAF-32099-paginate-simulation-logs-api`) |
+| Solves (context) | SAF-32058 — HELM AI agent overflows the LLM token limit on the heavy embedded-logs blob |
+| Status | Phase 5: Brainstorm |
 
-## Task Scope
-Add a new MCP **data** tool that consumes the new paginated, filterable simulation-logs endpoint
-`GET /data/v3/accounts/{accountId}/executionsHistoryResults/{id}/logs` (keyed by simulation id alone — no
-runId / ownership check). Params: `page`(1), `pageSize`(300, max 1000), `minLevel`, `levels`(CSV),
-`messageContains`, `startTime`, `endTime`, `logType`(LOGS|OUTPUT|ALL, default LOGS), `sortOrder`(asc|desc).
-Response: `{ logs, total, page, pageSize, hasMore }`. This gives MCP/AI consumers an incremental, size-bounded
-way to read logs instead of the current full-blob fetch.
+## ⚠️ Contract correction (ground truth from the data branch)
+
+The SAF-32143 description **and** the earlier `preparing-ticket` notes describe a per-simulation endpoint
+`GET /data/v3/.../executionsHistoryResults/{id}/logs` keyed by a single `simulation_id` in the path. **That endpoint
+does not exist.** The data branch (`feature/SAF-32099-paginate-simulation-logs-api`) consolidated to a single
+collection endpoint (commit `ea2f0cb5d` "consolidate to a single /simulationLogs endpoint with optional jobIds").
+The real contract — verified in code, not docs — is below and is the source of truth for this PRD.
+
+## Real data API contract — `GET /data/v3/accounts/{accountId}/simulationLogs`
+
+Source: `data` repo branch `feature/SAF-32099-paginate-simulation-logs-api`
+- OpenAPI: `src/api/dashboardapi.json:2218-2341` (params), `:3687-3702` (response schema)
+- Param normalization: `src/dashboardApi/api/executionsHistoryApi.js:34-69` (`buildSimulationLogOptions`)
+- Handler: `executionsHistoryApi.js:71-78` → controller `executionsHistoryController.js:266-275`
+- ES query / DAO: `src/common/dal/simulationLogsDao.js:24-106` (index `executions_simulations_logs`)
+- PRD §5 (consumer contract): `data` repo `prds/feature-SAF-32099-paginate-simulation-logs-api/prd.md`
+
+### Query parameters
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `jobIds` | string[] (`collectionFormat: pipes`, e.g. `a\|b`) | omitted = **all** sims | The simulation id(s). Single sim = `jobIds=<id>`. Trimmed, **no** case change. **No `runId`/ownership check** — `jobId` is globally unique. |
+| `page` | int | `1` | 1-based. `from = (page-1)*pageSize`. Coerced via `Number()`. |
+| `pageSize` | int | `500` | **max 1000** (OpenAPI validator → HTTP 400 if exceeded; no app-side clamp). |
+| `minLevel` | string | `INFO` | enum `DEBUG\|INFO\|WARNING\|ERROR`. Returns that level **and above** → DEBUG excluded by default. UPPERCASED server-side. |
+| `levels` | string[] (pipes) | — | Explicit set; **overrides `minLevel`** when present. Each element trimmed + UPPERCASED. |
+| `messageContains` | string | — | Case-insensitive substring (ES `*term*`). |
+| `startTime` / `endTime` | string | — | ISO-8601 or epoch ms; inclusive range on `timestamp`. |
+| `logType` | string | `LOGS` | enum `LOGS\|OUTPUT\|ALL`. UPPERCASED. `ALL` = no logType filter. |
+| `sortOrder` | string | `asc` | enum `asc\|desc`. lowercased. Sort key = `timestamp`. |
+
+### Response shape (200)
+
+```jsonc
+{
+  "logs": [
+    { "timestamp": "...", "level": "ERROR", "logType": "LOGS", "logger": "simulator",
+      "sourceFile": "runner.py", "line": "212", "message": "...", "pid": "8123",
+      "jobId": "4915971", "planRunId": "pr-77" }
+  ],
+  "total": 1234,        // total matches across all pages
+  "page": 1,            // echoes request
+  "pageSize": 500,      // echoes effective size
+  "hasMore": true       // page*pageSize < total
+}
+```
+
+### Errors
+- **400** — bad enum or `pageSize > 1000` (OpenAPI validator, before app code).
+- **401** — missing/invalid auth.
+- **404** — endpoint not present on the target console's data version (old data build) → must surface a clear "endpoint
+  not available / upgrade data service" message.
+- No logs found (endpoint present) → **200** with `logs: []`, `total: 0`, `hasMore: false` (not a 404).
+
+## Design decision — TWO tools (per Amir, 2026-06-11)
+
+Split the single-sim "investigation" use case from the cross-sim "search" use case so each tool's signature and
+description steer the model cleanly:
+
+1. **`get_paginated_simulation_logs`** — single-simulation investigation.
+   - Required `simulation_id` (str) → sent as `jobIds=<simulation_id>`.
+   - Plus all filters: `page`, `page_size`, `min_level`, `levels`, `message_contains`, `start_time`, `end_time`,
+     `log_type`, `sort_order`, `console`.
+   - Closest to the ticket's AC#2 (single id, no `test_id`/`runId`). The primary SAF-32058 fix path.
+
+2. **`search_simulation_logs`** — cross-/multi-simulation search (name TBD; alt: `get_cross_simulation_logs`).
+   - Optional `simulation_ids` (comma-separated str → pipe-joined `jobIds=a|b`); **omit = search all sims**.
+   - Same filter set. Description steers the model to investigative/forensic cross-sim queries (e.g. "all ERRORs in
+     the last hour across every simulation").
+
+Both are read-only (`readOnlyHint=True`), share one fetch/cache/mapping core, and differ only in how `jobIds` is built.
+`get_full_simulation_logs` stays untouched as the full-blob / old-format (`logsEmbedded=true`) fallback.
 
 ## Investigation Findings (safebreach-mcp)
 
 ### Tool registration pattern
-- Tools registered in `SafeBreachDataServer._register_tools()` — `safebreach_mcp_data/data_server.py:50-327`.
-- Pattern: `@self.mcp.tool(name=..., annotations=ToolAnnotations(readOnlyHint=True), description="""...""")`
-  on an async wrapper `..._tool(...) -> dict` that calls a `sb_*` impl in `data_functions.py`.
+- Tools registered in `SafeBreachDataServer._register_tools()` — `safebreach_mcp_data/data_server.py` (logs tool at `:296-326`).
+- Pattern: `@self.mcp.tool(name=..., annotations=ToolAnnotations(readOnlyHint=True), description="""...""")` on an async
+  `..._tool(...) -> dict` wrapper that calls a `sb_*` impl in `data_functions.py`. Import the impl at top of `data_server.py`.
 
-### Existing executionsHistoryResults usage (all **v1** today)
-- `data_functions.py:1866` — GET `…/v1/…/executionsHistoryResults/{id}?runId={test_id}` → the existing
-  **`get_full_simulation_logs`** tool (`data_server.py:296`, impl `data_functions.py:1731`). Returns the full
-  ~40KB embedded per-node logs (role-based mapping in `data_types.py:502`). **This is the heavy path** that the
-  new endpoint relieves.
-- `data_functions.py:571 / 738 / 909 / 2755` — POST `…/v1/…/executionsHistoryResults` (list, for drift/paginated
-  simulations).
+### Existing logs tool (the heavy path to relieve)
+- `get_full_simulation_logs` → `sb_get_full_simulation_logs` (`data_functions.py:1731`), three-layer:
+  `sb_*` → `_get_*_from_cache_or_api` (`:1795`) → `_fetch_*_from_api` (`:1841`).
+- URL (v1): `f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"`
+  (`:1866`). `requests.get(url, headers, timeout=120)`. 404/401 → `ValueError`; else `check_rbac_response`.
+- Cache: `full_simulation_logs_cache = SafeBreachCache(name="full_simulation_logs", maxsize=2, ttl=300)` (`:1728`).
+  Cache key: `f"full_simulation_logs_{console}_{simulation_id}_{test_id}{get_cache_user_suffix()}"`. **Transform-then-cache.**
+- Mapping `get_full_simulation_logs_mapping()` (`data_types.py:502`) — role-based (target/attacker) blob; not reused here.
 
 ### HTTP plumbing (reuse as-is)
-- `base_url = get_api_base_url(console, 'data')`; `account_id = get_api_account_id(console)`
-  (`safebreach_mcp_core/environments_metadata.py:91,143`).
-- Auth: `**get_auth_headers_for_console(console)` (`safebreach_mcp_core/secret_utils.py:92`); `check_rbac_response(response)`.
-- `requests.get(url, headers=headers, timeout=120)`; 404/401 → `ValueError`.
+- `get_api_base_url(console, 'data')`, `get_api_account_id(console)` — `safebreach_mcp_core/environments_metadata.py:91,143`.
+- `get_auth_headers_for_console(console)` — `safebreach_mcp_core/secret_utils.py:92`; `check_rbac_response(response)` — `:77`.
+- `is_caching_enabled("data")` + `get_cache_user_suffix()` (`safebreach_mcp_core/token_context.py`) gate/scope the cache.
+- `SafeBreachCache(name, maxsize, ttl)` wraps `cachetools.TTLCache`, thread-safe (`safebreach_mcp_core/safebreach_cache.py:22`).
 
-### Existing logs handling
-- `get_full_simulation_logs` (full blob, v1) and `get_test_simulation_details(include_basic_attack_logs=True)`
-  (summary-level). No paginated/level-filterable logs tool exists today.
-
-### Where the new tool lives
-- `data_functions.py`: `sb_get_simulation_logs()` + `_get_…_from_cache_or_api()` + `_fetch_…_from_api()`.
-- `data_types.py`: `get_simulation_logs_mapping()` for `{ logs, total, page, pageSize, hasMore }`.
-- `data_server.py`: import + `@self.mcp.tool()` registration (after `get_full_simulation_logs_tool`).
-- `tests/test_integration.py`: mock `requests.get` + utils; assert shape/counts/filters (pattern at ~:125-150).
-- Cache: `SafeBreachCache(name="simulation_logs", maxsize=…, ttl=600)` (existing logs cache ttl 300).
-
-### Version / config constraints
-- No explicit version gating; the tool just builds the `…/v3/…` URL. Console URL via `DATA_URL` /
-  `SAFEBREACH_LOCAL_ENV`. Consistent 120s timeout.
+### Where the new code lives
+- `data_functions.py`: shared `_fetch_simulation_logs_from_api(job_ids_csv, filters…, console)` + `_..._from_cache_or_api`
+  + two thin public `sb_get_paginated_simulation_logs(...)` / `sb_search_simulation_logs(...)` entry points that build `jobIds`.
+- `data_types.py`: `get_simulation_logs_mapping(api_response)` → passthrough/normalized `{logs, total, page, pageSize, hasMore}`
+  (snake_case the envelope keys to match repo style; keep per-line fields as the API returns them).
+- `data_server.py`: import + two `@self.mcp.tool()` registrations after `get_full_simulation_logs_tool`.
+- Tests: `safebreach_mcp_data/tests/test_data_functions.py` (unit), `test_data_types.py` (mapping),
+  `tests/test_integration.py` (HTTP-mocked end-to-end). Patterns: `@patch('...requests.get')`, `Mock(status_code=…, json=…)`.
+- Cache: `simulation_logs_cache = SafeBreachCache(name="simulation_logs", maxsize=3, ttl=600)` — cache key must include
+  console + jobIds + every filter + page + user suffix.
+- `CHANGELOG.md` (Keep-a-Changelog, "Added") and `CLAUDE.md` MCP-tools list updated.
 
 ## Problem Analysis
-- **Problem scope:** MCP can only fetch simulation logs as one large embedded blob (`get_full_simulation_logs`,
-  v1). There is no way to page through logs or filter by level/type/time/message — so size-sensitive consumers
-  (the HELM agent) pull far more than they need, contributing to the SAF-32058 token overflow.
-- **Affected areas:** `safebreach_mcp_data` (new tool + mapping + registration + tests). No change to existing
-  tools; `get_full_simulation_logs` stays for full-blob use cases.
-- **Dependencies:** the data-side v3 `/logs` endpoint (SAF-32099) must be deployed to the target console for the
-  tool to work. The endpoint is keyed by simulation id only (no runId), so the new tool is simpler than
-  `get_full_simulation_logs` (which requires test_id).
-- **Risks / edge cases:** (1) consoles on a data version without the v3 `/logs` endpoint → 404; tool should give a
-  clear error. (2) Old-format simulations whose logs are embedded (not in the logs index) return empty from
-  `/logs` — the data result endpoint flags these via `logsEmbedded=true`; document that the full-blob tool is the
-  fallback for those. (3) `pageSize` max 1000 enforced server-side → surface 400 cleanly. (4) levels/logType
-  casing normalization should match the API contract (UPPER for levels/logType, lower for sortOrder).
-- **Not in scope:** the data endpoint itself (SAF-32099, done); modifying `get_full_simulation_logs`; the
-  MCP-side migration of other tools off v1.
+- **Problem:** MCP can only fetch simulation logs as one ~40KB embedded blob (`get_full_simulation_logs`, v1). No way to
+  page or filter by level/type/time/message — size-sensitive consumers (HELM agent) pull far more than needed,
+  contributing to the SAF-32058 token overflow (`1773108 tokens > 1000000 maximum`).
+- **Affected:** `safebreach_mcp_data` only (two new tools + shared fetch/mapping + registration + tests + docs). No change
+  to existing tools.
+- **Dependency:** target console's data service must include the SAF-32099 `/simulationLogs` endpoint, else 404.
+- **Edge cases:** (1) old data build → 404, clear message; (2) old-format sims (embedded logs, not in the index) → `/logs`
+  empty, point to `get_full_simulation_logs`; (3) `pageSize > 1000` → surface 400 cleanly (optional client-side guard);
+  (4) casing normalization (levels/logType UPPER, sortOrder lower) — mirror server, but server also normalizes;
+  (5) `min_level` default INFO means DEBUG hidden unless asked — document in tool description.
+- **Out of scope:** the data endpoint (SAF-32099, done); modifying `get_full_simulation_logs`; migrating other tools off v1.

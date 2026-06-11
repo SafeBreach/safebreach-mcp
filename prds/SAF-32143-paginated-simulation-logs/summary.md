@@ -1,5 +1,10 @@
 # Ticket Summary (proposed) — MCP paginated simulation-logs tool
 
+> ⚠️ **Superseded by `prd.md` and `context.md`.** This file's endpoint
+> (`…/executionsHistoryResults/{id}/logs`) is the stale ticket text. The real data endpoint is
+> `GET /data/v3/accounts/{accountId}/simulationLogs?jobIds=…`, and the design is now **two tools**
+> (`get_paginated_simulation_logs` + `search_simulation_logs`). See `prd.md` for the authoritative plan.
+
 - **Project / Type:** SAF / Task
 - **Links:** relates to **SAF-32099** (data-side v3 `/logs` endpoint); context: SAF-32058
 - **Repo / branch (on create):** `safebreach-mcp` / `feature/SAF-XXXXX-mcp-paginated-simulation-logs`
