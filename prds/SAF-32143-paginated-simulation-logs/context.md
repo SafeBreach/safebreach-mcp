@@ -106,7 +106,7 @@ Both are read-only (`readOnlyHint=True`), share one fetch/cache/mapping core, an
 - `SafeBreachCache(name, maxsize, ttl)` wraps `cachetools.TTLCache`, thread-safe (`safebreach_mcp_core/safebreach_cache.py:22`).
 
 ### Where the new code lives
-- `data_functions.py`: shared `_fetch_simulation_logs_from_api(job_ids_csv, filters…, console)` + `_..._from_cache_or_api`
+- `data_functions.py`: shared `_fetch_simulation_logs_from_api(job_ids, filters…, console)` (`job_ids` = pipe-joined string or None) + `_..._from_cache_or_api`
   + two thin public `sb_get_paginated_simulation_logs(...)` / `sb_search_simulation_logs(...)` entry points that build `jobIds`.
 - `data_types.py`: `get_simulation_logs_mapping(api_response)` → passthrough/normalized `{logs, total, page, pageSize, hasMore}`
   (snake_case the envelope keys to match repo style; keep per-line fields as the API returns them).
