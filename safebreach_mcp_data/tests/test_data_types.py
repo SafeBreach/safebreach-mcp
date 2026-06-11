@@ -1166,3 +1166,35 @@ class TestGetSimulationLogsMapping:
         assert result["has_more"] is False
         # non-empty logs -> no hint
         assert not result.get("hint_to_agent")
+
+
+class TestFullSimulationLogsEmbeddedFlag:
+    """logs_embedded passthrough from the v3 result endpoint (logsEmbedded hint)."""
+
+    def _minimal_response(self, **extra):
+        resp = {
+            'id': 'sim1', 'runId': 'r1', 'planRunId': 'r1', 'status': 'SUCCESS',
+            'dataObj': {'data': [[{'id': 'n1', 'nodeNameInMove': 'x', 'state': 'finished',
+                                   'details': {'LOGS': 'log', 'SIMULATION_STEPS': []}}]]},
+        }
+        resp.update(extra)
+        return resp
+
+    def test_logs_embedded_true_passthrough(self):
+        result = get_full_simulation_logs_mapping(self._minimal_response(logsEmbedded=True))
+        assert result["logs_embedded"] is True
+
+    def test_logs_embedded_false_passthrough(self):
+        result = get_full_simulation_logs_mapping(self._minimal_response(logsEmbedded=False))
+        assert result["logs_embedded"] is False
+
+    def test_logs_embedded_missing_is_none(self):
+        """v1 responses (no logsEmbedded field) -> None, not a crash."""
+        result = get_full_simulation_logs_mapping(self._minimal_response())
+        assert result["logs_embedded"] is None
+
+    def test_logs_embedded_on_empty_data_path(self):
+        """The graceful empty-data response also carries logs_embedded."""
+        result = get_full_simulation_logs_mapping({'id': 's', 'logsEmbedded': True, 'dataObj': {'data': [[]]}})
+        assert result["logs_available"] is False
+        assert result["logs_embedded"] is True

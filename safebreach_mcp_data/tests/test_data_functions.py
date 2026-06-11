@@ -3947,6 +3947,63 @@ class TestSimulationLogsFetchCore:
         assert len(simulation_logs_cache) == 2
 
 
+class TestFullSimulationLogsV3Migration:
+    """get_full_simulation_logs fetches via the v3 result endpoint (includeLogs=true)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @staticmethod
+    def _ok(payload):
+        r = Mock()
+        r.status_code = 200
+        r.json.return_value = payload
+        r.raise_for_status.return_value = None
+        return r
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_uses_v3_with_includelogs(self, _acc, _base, mock_get):
+        """Primary fetch hits the v3 result endpoint with runId + includeLogs=true."""
+        mock_get.return_value = self._ok({'id': 's1', 'logsEmbedded': True})
+        _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+        url = mock_get.call_args_list[0].args[0]
+        assert '/api/data/v3/accounts/123/executionsHistoryResults/s1' in url
+        assert 'runId=t1' in url
+        assert 'includeLogs=true' in url
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_falls_back_to_v1_on_404(self, _acc, _base, mock_get):
+        """v3 404 (endpoint missing on older console) -> retry on the v1 legacy URL."""
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.side_effect = [not_found, self._ok({'id': 's1'})]
+        result = _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+        assert result == {'id': 's1'}
+        assert mock_get.call_count == 2
+        v1_url = mock_get.call_args_list[1].args[0]
+        assert '/api/data/v1/accounts/123/executionsHistoryResults/s1' in v1_url
+        assert 'runId=t1' in v1_url
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_404_on_both_raises(self, _acc, _base, mock_get):
+        """404 from v3 AND v1 -> not-found ValueError."""
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.side_effect = [not_found, not_found]
+        with pytest.raises(ValueError, match="not found"):
+            _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+
+
 class TestSimulationLogsEntryPoints:
     """Phase 2: public sb_* entry points + input validation."""
 
