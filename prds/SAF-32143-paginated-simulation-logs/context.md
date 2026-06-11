@@ -75,7 +75,8 @@ description steer the model cleanly:
    - Closest to the ticket's AC#2 (single id, no `test_id`/`runId`). The primary SAF-32058 fix path.
 
 2. **`search_simulation_logs`** — cross-/multi-simulation search (name TBD; alt: `get_cross_simulation_logs`).
-   - Optional `simulation_ids` (comma-separated str → pipe-joined `jobIds=a|b`); **omit = search all sims**.
+   - Optional `simulation_ids` (**pipe-delimited** str `a|b`, matching the query-param style) → `jobIds=a|b`;
+     **omit = search all sims**. `levels` is pipe-delimited too. No CSV at the MCP layer.
    - Same filter set. Description steers the model to investigative/forensic cross-sim queries (e.g. "all ERRORs in
      the last hour across every simulation").
 

@@ -54,7 +54,7 @@ Both tools call the same endpoint and differ only in how the `jobIds` query para
 | Tool | `jobIds` built from | Intended use |
 |------|---------------------|--------------|
 | `get_paginated_simulation_logs` | required `simulation_id` → `jobIds=<id>` | Drill into one simulation's logs |
-| `search_simulation_logs` | optional `simulation_ids` (CSV) → `jobIds=a\|b`; omitted → param dropped → **all sims** | Cross-sim / fleet-wide log search |
+| `search_simulation_logs` | optional `simulation_ids` (**pipe-delimited**, e.g. `a\|b`) → `jobIds=a\|b`; omitted → param dropped → **all sims** | Cross-sim / fleet-wide log search |
 
 Shared internals in `data_functions.py`:
 - `_fetch_simulation_logs_from_api(*, job_ids, page, page_size, min_level, levels, message_contains, start_time, end_time, log_type, sort_order, console)`
@@ -66,16 +66,17 @@ Shared internals in `data_functions.py`:
 
 ### 3.2 Parameter mapping (MCP → API)
 
-MCP tool params are snake_case scalars (MCP-friendly); the API uses camelCase with `collectionFormat: pipes`.
+MCP tool params are snake_case scalars (MCP-friendly); the API uses camelCase with `collectionFormat: pipes`. Multi-value
+params use **pipe-delimited** strings at the MCP layer too (`a|b`), matching the API's query-param style — no CSV.
 
 | MCP param | Type / default | → API param | Build rule |
 |-----------|----------------|-------------|------------|
 | `simulation_id` (tool 1) | str, **required** | `jobIds` | `jobIds = simulation_id` |
-| `simulation_ids` (tool 2) | str CSV, optional | `jobIds` | `"|".join(s.strip() for s in csv.split(",") if s.strip())`; omit param if empty |
+| `simulation_ids` (tool 2) | str, **pipe-delimited**, optional | `jobIds` | trim segments, drop empties, re-join with `\|`; omit param entirely if empty |
 | `page` | int = 1 | `page` | pass-through |
 | `page_size` | int = **100** | `pageSize` | clamp/validate ≤ 1000 client-side (clear error, avoid server 400) |
 | `min_level` | str = `"INFO"` | `minLevel` | `.upper()` |
-| `levels` | str CSV, optional | `levels` | `"|".join(l.strip().upper() ... )`; overrides `min_level` server-side |
+| `levels` | str, **pipe-delimited**, optional | `levels` | uppercase + trim each segment, re-join with `\|`; overrides `min_level` server-side |
 | `message_contains` | str, optional | `messageContains` | pass-through |
 | `start_time` / `end_time` | str, optional | `startTime` / `endTime` | pass-through (ISO-8601 or epoch ms) |
 | `log_type` | str = `"LOGS"` | `logType` | `.upper()` (enum `LOGS\|OUTPUT\|ALL`) |
@@ -86,8 +87,10 @@ MCP tool params are snake_case scalars (MCP-friendly); the API uses camelCase wi
 > keeps the first call safe for the LLM. Consumers can raise it up to 1000. *(Open for review — raise to 200/500 if too
 > chatty.)*
 
-> **Pipe joining is mandatory.** Passing a Python list to `requests` would serialize as repeated `levels=A&levels=B`,
-> which the server's `collectionFormat: pipes` parser will not read correctly. Always join with `|` into a single string.
+> **Pipe style end-to-end.** `simulation_ids` and `levels` are pipe-delimited at the MCP-param level (matching the API's
+> `collectionFormat: pipes`), so the tool passes them straight into the single `jobIds` / `levels` query string after
+> trim/case-normalization. Do **not** pass a Python list to `requests` (it serializes as repeated `levels=A&levels=B`,
+> which the server's pipe parser will not read) — always send one pipe-joined string.
 
 ### 3.3 Response mapping — `get_simulation_logs_mapping(api_response)` (`data_types.py`)
 
@@ -124,9 +127,9 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 - `get_paginated_simulation_logs`: "Fetch one simulation's execution logs incrementally and filtered (level/type/time/
   message), page by page. Use this for targeted log investigation of a known simulation. For the full embedded ~40KB
   blob or old-format simulations (where the result reports `logsEmbedded=true`), use `get_full_simulation_logs`. Default
-  `min_level=INFO` hides DEBUG; pass `levels=DEBUG,...` to include it. Results cached ~10 min."
+  `min_level=INFO` hides DEBUG; pass `levels=DEBUG|...` (pipe-delimited) to include it. Results cached ~10 min."
 - `search_simulation_logs`: "Search execution logs across many or all simulations (omit `simulation_ids` for all; or pass
-  a comma-separated list). Best for cross-sim/forensic queries like 'all ERRORs in a time window'. Strongly prefer a
+  a pipe-delimited list like `id1|id2`). Best for cross-sim/forensic queries like 'all ERRORs in a time window'. Strongly prefer a
   `start_time`/`end_time` window and `min_level`/`levels` filter to bound results. Same pagination contract (`has_more`)."
 
 ## 4. Implementation Phases (TDD)
@@ -140,11 +143,11 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 
 ### Phase 2 — Public entry points + tool registration
 - `data_functions.py`: `sb_get_paginated_simulation_logs(...)`, `sb_search_simulation_logs(...)` (input validation:
-  required `simulation_id`; `page_size ≤ 1000`; CSV→pipe for `simulation_ids`/`levels`).
+  required `simulation_id`; `page_size ≤ 1000`; trim/normalize pipe-delimited `simulation_ids`/`levels`).
 - `data_server.py`: import both + register two `@self.mcp.tool(... readOnlyHint=True ...)` wrappers after
   `get_full_simulation_logs_tool`, with the steering descriptions from §3.6.
 - Tests in `tests/test_data_server.py` (tool registered, read-only) + `sb_*` unit tests (single-sim → `jobIds=<id>`;
-  multi-sim CSV → `a|b`; empty `simulation_ids` → param omitted).
+  multi-sim piped `a|b` → `jobIds=a|b`; empty `simulation_ids` → param omitted).
 
 ### Phase 3 — Integration + docs
 - `tests/test_integration.py`: HTTP-mocked end-to-end for both tools — pagination (`has_more` across pages), each filter
