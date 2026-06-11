@@ -528,6 +528,7 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
         metadata["attacker"] = None
         metadata["logs_available"] = False
         metadata["logs_status"] = "No execution logs available for this simulation"
+        metadata["logs_embedded"] = api_response.get('logsEmbedded')
         return metadata
 
     entries = data_array[0]
@@ -595,6 +596,10 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     result["attacker"] = attacker_data
     result["logs_available"] = True
     result["logs_status"] = None
+    # v3 result endpoint hint: True = old-format sim, logs live only in this embedded blob
+    # (NOT in the logs index, so the paginated /simulationLogs tools return empty for it).
+    # None when the response came from the v1 fallback (no logsEmbedded field).
+    result["logs_embedded"] = api_response.get('logsEmbedded')
     return result
 
 

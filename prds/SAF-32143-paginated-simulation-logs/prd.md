@@ -43,7 +43,10 @@ incrementally and filtered (token-bounded), while `get_full_simulation_logs` rem
 
 **Out of scope**
 - The data endpoint itself (SAF-32099 — done).
-- Modifying `get_full_simulation_logs` or migrating other MCP tools off v1.
+- ~~Modifying `get_full_simulation_logs` or migrating other MCP tools off v1.~~ **Scope addition (Amir, 2026-06-11,
+  Phase 5):** `get_full_simulation_logs` migrated to the v3 result endpoint (`includeLogs=true`, v1 fallback) to surface
+  `logsEmbedded`. Verified in the data repo that no other MCP-consumed endpoint embeds logs (the v1 list endpoint
+  whitelists `_source` fields and excludes `dataObj`), so no other migration is needed.
 - Auto-paging / streaming aggregation across pages inside the tool (consumer drives pagination via `hasMore`).
 
 ## 3. Design
@@ -286,6 +289,7 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 | 2 | Public entry points + tool registration | ✅ Complete | 2026-06-11 | (this branch) | `sb_get_paginated_simulation_logs` + `sb_search_simulation_logs` (validation: required id, page_size≤1000, deep-page ~10k guard, enum checks) + two `@mcp.tool` regs; 17 new tests, 446 data tests green |
 | 3 | Integration + docs | ✅ Complete | 2026-06-11 | (this branch) | `TestSimulationLogsIntegration` (7 HTTP-mocked e2e tests) + CHANGELOG Unreleased + CLAUDE.md 12a/12b; 453 data tests green |
 | 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code — needs a console with the SAF-32099 endpoint |
+| 5 | v3 migration of `get_full_simulation_logs` (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | v3 result endpoint `includeLogs=true` + v1 fallback; `logs_embedded` exposed; logsEmbedded routing rule in all 3 logs-tool descriptions; 7 new tests, 460 green |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 

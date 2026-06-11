@@ -306,11 +306,15 @@ When a simulation status is "stopped" or "no-result", always retrieve these logs
 
 Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation. \
 Use drift_tracking_code from the parent simulation to correlate logs across test runs via get_simulation_lineage.
+Fetches via the data v3 result endpoint with includeLogs=true (falls back to v1 on older consoles).
 Returns a role-based structure:
 - 'target': Contains the target node's full execution data. Null when logs_available is False.
 - 'attacker': Present for dual-script attacks (exfil, infil, lateral movement). Null for host-only attacks or when logs_available is False.
 - 'logs_available' (bool): True when execution logs are present, False when the API returned empty data (e.g., INTERNAL_FAIL simulations).
 - 'logs_status' (str or null): Null when logs are available. Contains an explanatory message when logs_available is False.
+- 'logs_embedded' (bool or null): True = OLD-format simulation — its logs exist ONLY in this embedded blob and are NOT in \
+the logs index, so get_paginated_simulation_logs / search_simulation_logs return empty for it; this tool is the correct \
+source. False = logs are also in the index (prefer the paginated tools for filtered access). Null = v1 fallback (no hint).
 - Also includes: simulation_id, test_id, run_id, execution_times, status, attack_info (always present regardless of logs_available).
 Each role section contains: node_name, node_id, os_type, os_version, state, logs, simulation_steps, details_summary, error, output, task_status, task_code.
 Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (required).
@@ -343,7 +347,10 @@ When you do pull logs, do it smartly by severity, keyed on the simulation's stat
 Read one page, then request the next only if has_more=true and the answer isn't there yet. Prefer a start_time/end_time \
 window and message_contains to narrow.
 
-For the full embedded ~40KB blob, or old-format simulations whose logs are embedded (not indexed), use get_full_simulation_logs.
+IMPORTANT — old-format simulations: if the simulation result reports logsEmbedded=true, do NOT use this tool — the logs \
+of that simulation are NOT in the new logs index (this tool will return empty). Use get_full_simulation_logs instead, \
+which fetches the v3 result with includeLogs=true and returns the embedded blob. Also use get_full_simulation_logs when \
+you need the full ~40KB blob at once.
 
 Parameters: simulation_id (required, e.g. '4915971'), page (default 1), page_size (default 500, max 1000; page*page_size \
 must be <= 10000), min_level (DEBUG|INFO|WARNING|ERROR, default INFO — threshold, returns that level and above; DEBUG hidden \
@@ -390,6 +397,9 @@ timeout this week', or as the first step of 'how many simulations hit error X'. 
 Like get_paginated_simulation_logs, logs are a last resort — prefer result-level tools first. Lead with the tightest filter: \
 typically levels=ERROR + message_contains + a start_time/end_time window, then page. Deep paging is bounded (page*page_size \
 must be <= 10000) — narrow filters rather than paging far.
+
+Old-format simulations (result reports logsEmbedded=true) are NOT in the logs index, so this search will NOT see them — \
+their logs are only available via get_full_simulation_logs (v3 result with includeLogs=true).
 
 IMPORTANT counting note: the response returns log LINES and `total` counts lines, NOT simulations. To count distinct \
 simulations (e.g. 'how many sims ended with error X'), dedupe the `jobId` field across the returned lines (each line includes \

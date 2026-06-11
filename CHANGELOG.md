@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `end_time`, `log_type` (LOGS/OUTPUT/ALL), `sort_order`; offset pagination via `page`/`page_size`
     (max 1000) returning `{ logs, total, page, page_size, has_more }`. Results cached ~10 minutes.
 
+### Changed
+
+- `get_full_simulation_logs` now fetches via the data v3 result endpoint with `includeLogs=true`
+  (falling back to v1 on older consoles) and exposes a new `logs_embedded` field: `true` means an
+  old-format simulation whose logs exist only in the embedded blob (not in the logs index) — for
+  those, use this tool rather than the paginated/search logs tools, which will return empty.
+
 ## 1.3.0 — 2026-05-21
 
 ### Added

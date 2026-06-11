@@ -1862,8 +1862,12 @@ def _fetch_full_simulation_logs_from_api(
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
-        # Build API URL with simulation_id as path parameter and runId as query parameter
-        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+        # Prefer the v3 result endpoint: includeLogs=true returns the embedded blob AND the
+        # logsEmbedded hint (True = old-format sim whose logs are NOT in the logs index).
+        api_url = (
+            f"{base_url}/api/data/v3/accounts/{account_id}/executionsHistoryResults/{simulation_id}"
+            f"?runId={test_id}&includeLogs=true"
+        )
 
         headers = {
             "Content-Type": "application/json",
@@ -1872,6 +1876,13 @@ def _fetch_full_simulation_logs_from_api(
 
         logger.info("GET request to: %s", api_url)
         response = requests.get(api_url, headers=headers, timeout=120)
+
+        if response.status_code == 404:
+            # Older consoles predate the v3 result endpoint — fall back to the v1 legacy URL
+            # (which embeds logs unconditionally but has no logsEmbedded hint).
+            api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+            logger.info("v3 result endpoint returned 404; falling back to v1: %s", api_url)
+            response = requests.get(api_url, headers=headers, timeout=120)
 
         # Handle HTTP errors
         if response.status_code == 404:
