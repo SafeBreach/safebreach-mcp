@@ -57,6 +57,7 @@ class TestRateLimitingE2E:
         yield
         _rate_limit_store.clear()
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 3)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
     def test_total_action_limit_enforced(self):
@@ -112,6 +113,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
@@ -155,6 +157,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
@@ -189,6 +192,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 5)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
