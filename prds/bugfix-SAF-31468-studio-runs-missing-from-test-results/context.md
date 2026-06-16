@@ -1,6 +1,6 @@
 # Context: SAF-31468
 
-**Status:** Phase 5: Brainstorm (planning-dev-task) — awaiting confirmation to write PRD
+**Status:** Phase 6: PRD Created (planning-dev-task)
 **Mode:** Improve existing ticket
 **Branch:** `bugfix/SAF-31468-studio-runs-missing-from-test-results`
 **Repo:** `/Users/yossiattas/Public/safebreach-mcp`
@@ -196,6 +196,10 @@ Cited SAF-10419 and support cases SB-16951 / SB-34202.
 - **Draft-flag mechanism:** AUTO-RESOLVE the attack's current publication status before queuing and set
   `plan.draft` accordingly. NO change to `run_studio_attack`'s public signature.
 - **SAF-10419 (backend "sticky draft"):** Resolved long ago — NOT a concern. Dropped as a caveat/task.
+- **Status-lookup failure handling:** Distinguish two cases. **Attack not found** → raise a clear `ValueError`
+  (mirrors `set_studio_attack_status`). **GET itself fails** (RequestException / RBAC / parse) → proceed as
+  PUBLISHED (`draft:false`) and add a warning `hint_to_agent` that publication status could not be confirmed
+  (prioritizes Test-Results visibility over reproducing the bug on flaky reads).
 
 ## Implementation Map (file:line, verified)
 
