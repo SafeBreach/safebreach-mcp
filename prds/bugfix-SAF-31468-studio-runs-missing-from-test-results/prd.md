@@ -26,8 +26,8 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Review |
-| **Last Updated** | 2026-06-16 09:53 |
+| **PRD Status** | Approved |
+| **Last Updated** | 2026-06-16 10:00 |
 | **Owner** | Yossi Attas |
 | **Current Phase** | N/A (not yet in implementation) |
 
@@ -209,9 +209,9 @@ flowchart TD
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Add `_get_attack_status_by_id` helper | ⏳ Pending | - | - | |
-| Phase 2: Make `run_studio_attack` draft conditional + warnings | ⏳ Pending | - | - | includes updating/adding tests |
-| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ⏳ Pending | - | - | dedup only; no behavior change |
+| Phase 1: Add `_get_attack_status_by_id` helper | ⏳ Pending | - | - | sign-off: `TestGetAttackStatusById` (4 unit) + lint |
+| Phase 2: Make `run_studio_attack` draft conditional + warnings | ⏳ Pending | - | - | sign-off: updated+new `TestRunStudioAttack` unit, cross-server suite, lint, **E2E** `test_run_published_studio_attack_visible_in_test_results_e2e` |
+| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ⏳ Pending | - | - | sign-off: `TestSetStudioAttackStatus` regression green + lint |
 
 ### Phase 1: Add `_get_attack_status_by_id` helper
 - **Semantic Change:** Introduce a reusable internal helper that returns one attack's current status by ID.
@@ -228,7 +228,17 @@ flowchart TD
   | File | Change |
   |------|--------|
   | `safebreach_mcp_studio/studio_functions.py` | Add `_get_attack_status_by_id` helper |
-  | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add helper unit tests (match / not-found / request error) |
+  | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add helper unit tests (new `TestGetAttackStatusById` class) |
+- **Test Automation (sign-off):** New unit class `TestGetAttackStatusById` in
+  `tests/test_studio_functions.py`, each patching `safebreach_mcp_studio.studio_functions.requests.get`,
+  `get_api_base_url`, `get_api_account_id` (reuse the `mock_getall_response` shape, `152-197`):
+  - `test_get_attack_status_by_id_published` → list contains the id with `status: "published"` → returns
+    `("published", <name>)`.
+  - `test_get_attack_status_by_id_draft` → `status: "draft"` → returns `("draft", <name>)`.
+  - `test_get_attack_status_by_id_not_found` → id absent → raises `ValueError`.
+  - `test_get_attack_status_by_id_request_error` → `requests.get` raises `RequestException` → propagates.
+  - Phase passes only when these 4 tests are green and `ruff`/lint is clean. No E2E for this phase (the helper
+    is exercised end-to-end by Phase 2's E2E).
 - **Git Commit:** `refactor: add _get_attack_status_by_id helper for studio attack status lookup`
 
 ### Phase 2: Make `run_studio_attack` draft conditional + warnings
@@ -251,6 +261,32 @@ flowchart TD
   | `safebreach_mcp_studio/studio_functions.py` | Conditional draft, status resolution, warnings in `sb_run_studio_attack` |
   | `safebreach_mcp_studio/tests/test_studio_functions.py` | Add `requests.get` mocks to existing `TestRunStudioAttack`; flip `:1445` assertion; add 4 new cases |
   | `CLAUDE.md` | Document status-aware draft behavior for `run_studio_attack` |
+- **Test Automation (sign-off):**
+  - **Update existing `TestRunStudioAttack` (`tests/test_studio_functions.py:1396-1574`):** add a
+    `@patch('safebreach_mcp_studio.studio_functions.requests.get')` to every test (returning a list whose attack
+    `status` is `"published"` unless the test targets draft), and change `test_run_simulation_all_connected`'s
+    assertion at **line 1445** from `payload['plan']['draft'] is True` to `is False`. The unchanged-behavior tests
+    (`test_run_simulation_specific_simulators`, `test_run_simulation_custom_test_name`,
+    `test_run_simulation_invalid_simulation_id`, `test_run_simulation_empty_simulator_list`,
+    `test_run_simulation_api_error`, `test_run_no_simulators_no_all_connected`) must stay green.
+  - **New unit tests in `TestRunStudioAttack`:**
+    - `test_run_published_attack_queues_draft_false` → status published → `payload['plan']['draft'] is False`,
+      `result['draft'] is False`, no Studio-only `hint_to_agent`.
+    - `test_run_draft_attack_queues_draft_true_with_hint` → status draft → `payload['plan']['draft'] is True`,
+      `result['draft'] is True`, `result['hint_to_agent']` mentions Breach Studio / Test Results / publish.
+    - `test_run_attack_not_found_raises` → id absent from list → `ValueError`; assert `requests.post` (queue)
+      not called.
+    - `test_run_status_lookup_failure_proceeds_published` → `requests.get` raises `RequestException` →
+      `payload['plan']['draft'] is False`, `result['hint_to_agent']` notes status could not be confirmed, and the
+      queue POST still occurs.
+  - **E2E (sign-off gate) in `tests/test_e2e.py`** (`@pytest.mark.e2e` + `@skip_e2e`, alongside the existing
+    `test_run_studio_attack_e2e:396`): `test_run_published_studio_attack_visible_in_test_results_e2e` — on
+    `E2E_CONSOLE`, save+publish a brand-new attack (never run as draft) via `sb_set_studio_attack_status`, call
+    `sb_run_studio_attack`, then assert the returned `planRunId` is discoverable via the Data Server
+    (`get_tests` / `get_test_details`). This E2E is the authoritative phase sign-off for the user-visible fix.
+  - Phase passes only when: updated + new unit tests green, the studio + cross-server unit suites green
+    (`uv run pytest safebreach_mcp_studio/tests/ -m "not e2e"`), lint clean, and the new E2E passes on a real
+    console (`source .vscode/set_env.sh && uv run pytest safebreach_mcp_studio/tests/test_e2e.py -m e2e`).
 - **Git Commit:** `fix: queue studio attacks with draft matching publication status (SAF-31468)`
 
 ### Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper
@@ -263,6 +299,12 @@ flowchart TD
   | File | Change |
   |------|--------|
   | `safebreach_mcp_studio/studio_functions.py` | Use helper in `sb_set_studio_attack_status` |
+- **Test Automation (sign-off):** No new behavior, so the gate is pure regression — the existing
+  `TestSetStudioAttackStatus` suite (`tests/test_studio_functions.py:4989`) must pass unchanged. If the inline
+  GET mock there targets `requests.get` directly, confirm it still triggers through the helper (adjust the patch
+  target only if the call site moves). Optionally add `test_set_status_uses_status_helper` asserting
+  `_get_attack_status_by_id` is invoked. Phase passes when `TestSetStudioAttackStatus` is green and lint is clean;
+  no new E2E required (publish/unpublish E2E coverage in `test_e2e.py` remains the safety net).
 - **Git Commit:** `refactor: reuse _get_attack_status_by_id in set_studio_attack_status`
 
 ## 10. Risks and Assumptions
@@ -306,3 +348,4 @@ before closing.
 | Date | Change Description |
 |------|-------------------|
 | 2026-06-16 09:53 | PRD created — initial draft |
+| 2026-06-16 10:00 | Added per-phase Test Automation (sign-off) incl. exact unit test names and E2E gate; status → Approved |
