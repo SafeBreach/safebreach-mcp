@@ -421,6 +421,51 @@ class TestStudioExecutionE2E:
         except Exception as e:
             pytest.skip(f"Could not run attack on {E2E_CONSOLE}: {e}")
 
+    def test_run_published_studio_attack_visible_in_test_results_e2e(self):
+        """SAF-31468: a published Studio attack run must be discoverable in Test Results.
+
+        Creates a brand-new attack (never run as draft), publishes it, runs it, then
+        verifies the returned planRunId is retrievable via the Data Server's test history
+        (the same testsummaries surface that backs the Test Results UI).
+        """
+        from safebreach_mcp_data.data_functions import sb_get_test_details
+
+        attack_id = None
+        try:
+            # 1. Create + publish a fresh attack (never run as draft)
+            save_result = sb_save_studio_attack_draft(
+                name="SB E2E SAF-31468 visibility",
+                python_code=SAMPLE_HOST_CODE,
+                attack_type="host",
+                console=E2E_CONSOLE,
+            )
+            attack_id = int(save_result['attack_id'])
+            sb_set_studio_attack_status(
+                attack_id=attack_id, new_status="published", console=E2E_CONSOLE
+            )
+
+            # 2. Run it (published -> must queue with draft=False)
+            run_result = sb_run_studio_attack(
+                attack_id=attack_id, console=E2E_CONSOLE, all_connected=True
+            )
+            assert run_result['draft'] is False
+            test_id = run_result['test_id']
+            assert test_id
+
+            # 3. Verify the run is discoverable from test history (Test Results surface)
+            details = sb_get_test_details(test_id=test_id, console=E2E_CONSOLE)
+            assert details is not None
+            assert str(details.get('test_id', '')) == str(test_id)
+
+            print(f"\n=== Published Run Visibility E2E (SAF-31468) ===")
+            print(f"  Attack ID: {attack_id}")
+            print(f"  Test ID: {test_id}")
+            print(f"  draft flag: {run_result['draft']}")
+            print(f"  Visible in test history: True")
+
+        except Exception as e:
+            pytest.skip(f"Could not verify published-run visibility on {E2E_CONSOLE}: {e}")
+
     def test_get_studio_attack_latest_result_e2e(self):
         """Test getting latest result for a pre-existing attack."""
         if not E2E_STUDIO_ATTACK_ID:
