@@ -26,10 +26,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Approved |
-| **Last Updated** | 2026-06-16 10:00 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-06-16 13:33 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | N/A (not yet in implementation) |
+| **Current Phase** | Phase 2 of 3 (Phase 1 complete) |
 
 ## 2. Solution Description
 
@@ -209,7 +209,7 @@ flowchart TD
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Add `_get_attack_status_by_id` helper | ⏳ Pending | - | - | sign-off: `TestGetAttackStatusById` (4 unit) + lint |
+| Phase 1: Add `_get_attack_status_by_id` helper | ✅ Complete | 2026-06-16 | _pending commit_ | `TestGetAttackStatusById` (4 unit) green; full studio suite 465 passed |
 | Phase 2: Make `run_studio_attack` draft conditional + warnings | ⏳ Pending | - | - | sign-off: updated+new `TestRunStudioAttack` unit, cross-server suite, lint, **E2E** `test_run_published_studio_attack_visible_in_test_results_e2e` |
 | Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ⏳ Pending | - | - | sign-off: `TestSetStudioAttackStatus` regression green + lint |
 
@@ -349,3 +349,4 @@ before closing.
 |------|-------------------|
 | 2026-06-16 09:53 | PRD created — initial draft |
 | 2026-06-16 10:00 | Added per-phase Test Automation (sign-off) incl. exact unit test names and E2E gate; status → Approved |
+| 2026-06-16 13:33 | Phase 1 implemented (TDD): `_get_attack_status_by_id` helper + `TestGetAttackStatusById` (4 tests green); status → In Progress |

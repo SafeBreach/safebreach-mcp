@@ -1177,6 +1177,45 @@ def sb_get_studio_attack_source(
     return result
 
 
+def _get_attack_status_by_id(attack_id: int, console: str = "default") -> tuple:
+    """
+    Fetch a single Studio attack's current publication status by ID.
+
+    Reads the content-manager custom-methods list and finds the matching attack,
+    mirroring the pre-check pattern used by sb_set_studio_attack_status.
+
+    Args:
+        attack_id: The playbook/custom-method ID of the attack.
+        console: SafeBreach console identifier.
+
+    Returns:
+        Tuple (status, name) where status is lowercase ("draft" | "published").
+
+    Raises:
+        ValueError: If no attack with the given ID is found on the console.
+        requests.exceptions.RequestException: Propagated if the list API call fails.
+    """
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+    headers = {**get_auth_headers_for_console(console)}
+
+    list_url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all"
+    logger.info(f"Resolving attack {attack_id} status via: {list_url}")
+
+    response = requests.get(list_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+    api_response = response.json()
+    # API may return {"data": [...]} wrapper or a raw list
+    all_attacks = api_response.get("data", api_response) if isinstance(api_response, dict) else api_response
+
+    for attack in all_attacks:
+        if attack.get("id") == attack_id:
+            status = attack.get("status", "").lower()
+            return status, attack.get("name", "Unknown")
+
+    raise ValueError(f"Attack with ID {attack_id} not found on console '{console}'")
+
+
 def sb_run_studio_attack(
     attack_id: int,
     console: str = "default",
