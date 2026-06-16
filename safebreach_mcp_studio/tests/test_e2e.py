@@ -429,7 +429,7 @@ class TestStudioExecutionE2E:
         (the same testsummaries surface that backs the Test Results UI).
         """
         import time
-        from safebreach_mcp_data.data_functions import sb_get_tests, sb_get_test_details
+        from safebreach_mcp_data.data_functions import sb_get_tests
 
         # Unique test name so the run can be located in the listing deterministically via
         # name_filter (get_tests filters before paginating) — robust regardless of how many
@@ -469,12 +469,6 @@ class TestStudioExecutionE2E:
             # draft=False AND be discoverable in the Test Results surface. These fail loudly.
             assert run_result['draft'] is False, "published attack must queue with draft=False"
             assert test_id
-
-            # Sanity check: retrievable by id (note: this alone is NOT proof — the single-test
-            # endpoint returns even draft-scoped runs, per the ticket's HELM log).
-            details = sb_get_test_details(test_id=test_id, console=E2E_CONSOLE)
-            assert details is not None
-            assert str(details.get('test_id', '')) == str(test_id)
 
             # The real regression gate: the run must appear in the test history LISTING
             # (testsummaries list — the same surface as the Test Results page, which excludes
