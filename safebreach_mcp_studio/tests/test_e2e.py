@@ -430,71 +430,94 @@ class TestStudioExecutionE2E:
         """
         from safebreach_mcp_data.data_functions import sb_get_tests, sb_get_test_details
 
-        # --- Setup (environment-dependent): create + publish + run a fresh attack.
-        # Genuine environment/precondition failures here skip; the visibility assertions
-        # below run OUTSIDE the try so a real regression fails loudly (not skipped).
+        attack_id = None
         try:
-            save_result = sb_save_studio_attack_draft(
-                name="SB E2E SAF-31468 visibility",
-                python_code=SAMPLE_HOST_CODE,
-                attack_type="host",
-                console=E2E_CONSOLE,
-            )
-            attack_id = int(save_result['draft_id'])
-            sb_set_studio_attack_status(
-                attack_id=attack_id, new_status="published", console=E2E_CONSOLE
-            )
-            run_result = sb_run_studio_attack(
-                attack_id=attack_id, console=E2E_CONSOLE, all_connected=True
-            )
-        except Exception as e:
-            pytest.skip(f"Setup failed on {E2E_CONSOLE} (cannot exercise visibility): {e}")
-
-        test_id = run_result['test_id']
-        print(f"\n=== Published Run Visibility E2E (SAF-31468) ===")
-        print(f"  Attack ID: {attack_id}")
-        print(f"  Test ID: {test_id}")
-        print(f"  draft flag: {run_result['draft']}")
-
-        # --- Assertions (the regression gate): a PUBLISHED attack must queue with
-        # draft=False AND be discoverable in the Test Results surface. These fail loudly.
-        assert run_result['draft'] is False, "published attack must queue with draft=False"
-        assert test_id
-
-        # Sanity check: retrievable by id (note: this alone is NOT proof — the single-test
-        # endpoint returns even draft-scoped runs, per the ticket's HELM log).
-        details = sb_get_test_details(test_id=test_id, console=E2E_CONSOLE)
-        assert details is not None
-        assert str(details.get('test_id', '')) == str(test_id)
-
-        # The real regression gate: the run must appear in the test history LISTING
-        # (testsummaries list — the same surface as the Test Results page, which excludes
-        # draft-scoped runs). Poll to absorb backend list-indexing lag for a freshly queued test.
-        import time
-        found_in_listing = False
-        attempt = 0
-        deadline_polls = 18  # ~180s at 10s intervals
-        for attempt in range(deadline_polls):
-            for page in range(2):
-                listing = sb_get_tests(
-                    console=E2E_CONSOLE, page_number=page,
-                    order_by="start_time", order_direction="desc",
+            # --- Setup (environment-dependent): create + publish + run a fresh attack.
+            # Genuine environment/precondition failures here skip; the visibility assertions
+            # below run OUTSIDE this inner try so a real regression fails loudly (not skipped).
+            try:
+                save_result = sb_save_studio_attack_draft(
+                    name="SB E2E SAF-31468 visibility",
+                    python_code=SAMPLE_HOST_CODE,
+                    attack_type="host",
+                    console=E2E_CONSOLE,
                 )
-                page_ids = {str(t.get('test_id', '')) for t in listing.get('tests_in_page', [])}
-                if str(test_id) in page_ids:
-                    found_in_listing = True
-                    break
-                if page + 1 >= listing.get('total_pages', 1):
-                    break
-            if found_in_listing:
-                break
-            time.sleep(10)
+                attack_id = int(save_result['draft_id'])
+                sb_set_studio_attack_status(
+                    attack_id=attack_id, new_status="published", console=E2E_CONSOLE
+                )
+                run_result = sb_run_studio_attack(
+                    attack_id=attack_id, console=E2E_CONSOLE, all_connected=True
+                )
+            except Exception as e:
+                pytest.skip(f"Setup failed on {E2E_CONSOLE} (cannot exercise visibility): {e}")
 
-        assert found_in_listing, (
-            f"planRunId {test_id} not found in get_tests listing after polling — "
-            f"published run is not visible in Test Results history (regression)"
-        )
-        print(f"  Visible in get_tests listing: True (after {attempt + 1} poll attempt(s))")
+            test_id = run_result['test_id']
+            print(f"\n=== Published Run Visibility E2E (SAF-31468) ===")
+            print(f"  Attack ID: {attack_id}")
+            print(f"  Test ID: {test_id}")
+            print(f"  draft flag: {run_result['draft']}")
+
+            # --- Assertions (the regression gate): a PUBLISHED attack must queue with
+            # draft=False AND be discoverable in the Test Results surface. These fail loudly.
+            assert run_result['draft'] is False, "published attack must queue with draft=False"
+            assert test_id
+
+            # Sanity check: retrievable by id (note: this alone is NOT proof — the single-test
+            # endpoint returns even draft-scoped runs, per the ticket's HELM log).
+            details = sb_get_test_details(test_id=test_id, console=E2E_CONSOLE)
+            assert details is not None
+            assert str(details.get('test_id', '')) == str(test_id)
+
+            # The real regression gate: the run must appear in the test history LISTING
+            # (testsummaries list — the same surface as the Test Results page, which excludes
+            # draft-scoped runs). Poll to absorb backend list-indexing lag for a freshly queued test.
+            import time
+            found_in_listing = False
+            attempt = 0
+            deadline_polls = 18  # ~180s at 10s intervals
+            for attempt in range(deadline_polls):
+                for page in range(2):
+                    listing = sb_get_tests(
+                        console=E2E_CONSOLE, page_number=page,
+                        order_by="start_time", order_direction="desc",
+                    )
+                    page_ids = {str(t.get('test_id', '')) for t in listing.get('tests_in_page', [])}
+                    if str(test_id) in page_ids:
+                        found_in_listing = True
+                        break
+                    if page + 1 >= listing.get('total_pages', 1):
+                        break
+                if found_in_listing:
+                    break
+                time.sleep(10)
+
+            assert found_in_listing, (
+                f"planRunId {test_id} not found in get_tests listing after polling — "
+                f"published run is not visible in Test Results history (regression)"
+            )
+            print(f"  Visible in get_tests listing: True (after {attempt + 1} poll attempt(s))")
+        finally:
+            # Best-effort cleanup: delete the attack created by this test via the direct
+            # content API so the test does not leave artifacts on the console.
+            if attack_id is not None:
+                self._delete_studio_attack(attack_id, E2E_CONSOLE)
+
+    @staticmethod
+    def _delete_studio_attack(attack_id, console):
+        """Delete a custom method via the direct content API (test cleanup; best-effort)."""
+        import requests
+        from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+        from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
+        try:
+            base_url = get_api_base_url(console, 'config')
+            account_id = get_api_account_id(console)
+            headers = {**get_auth_headers_for_console(console)}
+            url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}"
+            resp = requests.delete(url, headers=headers, timeout=120)
+            print(f"  Cleanup: DELETE attack {attack_id} -> HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"  Cleanup: failed to delete attack {attack_id}: {e}")
 
     def test_get_studio_attack_latest_result_e2e(self):
         """Test getting latest result for a pre-existing attack."""
