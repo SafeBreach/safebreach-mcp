@@ -3495,13 +3495,20 @@ def sb_manage_test(
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "manage_test")
 
+    # Append the note BEFORE performing the action. Appending after a cancel races
+    # backend persistence (the test summary is mid-transition) and the comment PUT can
+    # return 500; while the test is still in its pre-action state the summary is stable
+    # and the PUT succeeds. Note append remains best-effort.
+    note_result = None
+    if reason and reason.strip():
+        note_result = _append_test_note(test_id, action, reason, console)
+
     result = _set_test_state(test_id, action, console)
 
     # Rate limiting gate — record after successful state change
     rate_limiter.record_action(caller_id, "manage_test")
 
-    if reason and reason.strip():
-        note_result = _append_test_note(test_id, action, reason, console)
+    if note_result is not None:
         result.update(note_result)
 
     hints = {
