@@ -3915,6 +3915,16 @@ class TestExplicitSimulatorSelection:
         yield
         _user_auth_artifacts.reset(token)
 
+    @pytest.fixture(autouse=True)
+    def stub_status_lookup(self):
+        """Status pre-check (SAF-31468) returns a published attack so runs queue with draft=False."""
+        status_resp = MagicMock()
+        status_resp.json.return_value = [
+            {"id": 10000298, "name": "Test Attack", "status": "published"}
+        ]
+        with patch('safebreach_mcp_studio.studio_functions.requests.get', return_value=status_resp):
+            yield
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -4138,7 +4148,8 @@ class TestExplicitSimulatorSelection:
         assert 'name' in payload['plan']
         assert 'steps' in payload['plan']
         assert 'draft' in payload['plan']
-        assert payload['plan']['draft'] is True
+        # Published attack -> draft False so the run is visible in Test Results (SAF-31468)
+        assert payload['plan']['draft'] is False
         assert payload['plan']['name'] == "Test Run"
 
         # Verify step structure

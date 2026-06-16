@@ -1270,6 +1270,25 @@ def sb_run_studio_attack(
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_studio_attack")
 
+    # Resolve the attack's publication status so the queued test's draft flag matches it.
+    # PUBLISHED -> draft=False so the run is discoverable in Test Results (SAF-31468);
+    # DRAFT -> draft=True (Studio-only) with a warning. A failed lookup (not a "not found")
+    # degrades to published so a transient read error does not hide a legitimate run.
+    status_unconfirmed = False
+    try:
+        attack_status, _attack_name = _get_attack_status_by_id(attack_id, console)
+        is_draft = (attack_status == "draft")
+    except ValueError:
+        # Attack genuinely not found — surface a clear error and do not queue.
+        raise
+    except Exception as e:
+        logger.warning(
+            f"Could not resolve publication status for attack {attack_id} "
+            f"({e}); proceeding as published (draft=False)."
+        )
+        is_draft = False
+        status_unconfirmed = True
+
     # Build attacker and target filters
     if all_connected:
         connection_filter = {
@@ -1317,7 +1336,7 @@ def sb_run_studio_attack(
                 "targetFilter": target_filter,
                 "systemFilter": {}
             }],
-            "draft": True
+            "draft": is_draft
         }
     }
 
@@ -1338,7 +1357,23 @@ def sb_run_studio_attack(
         'test_name': data.get('name', test_name),
         'attack_id': attack_id,
         'status': 'queued',
+        'draft': is_draft,
     }
+
+    # Surface visibility guidance to the agent.
+    if is_draft:
+        result['hint_to_agent'] = (
+            "This attack is in DRAFT, so the run was queued as a draft and is visible "
+            "only in Breach Studio — it will NOT appear in the Test Results page. "
+            "Publish the attack (set_studio_attack_status) before running to make the "
+            "run discoverable in Test Results."
+        )
+    elif status_unconfirmed:
+        result['hint_to_agent'] = (
+            "The attack's publication status could not be confirmed, so the run was "
+            "queued as published (draft=False). If the attack is actually a draft, its "
+            "results may not appear as expected."
+        )
 
     # Rate limiting gate — record after successful queue
     rate_limiter.record_action(caller_id, "run_studio_attack")

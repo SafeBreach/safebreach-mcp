@@ -27,9 +27,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-06-16 13:33 |
+| **Last Updated** | 2026-06-16 13:55 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 2 of 3 (Phase 1 complete) |
+| **Current Phase** | Phase 3 of 3 — optional (Phases 1-2 complete) |
 
 ## 2. Solution Description
 
@@ -163,22 +163,23 @@ flowchart TD
 ## 7. Definition of Done
 
 **Core Functionality**
-- [ ] `run_studio_attack` against a PUBLISHED attack queues with `plan.draft = false` and the run appears in
-      `get_tests` / Test Results under the returned planRunId.
-- [ ] `run_studio_attack` against a DRAFT attack queues with `plan.draft = true` and returns a `hint_to_agent`
+- [x] `run_studio_attack` against a PUBLISHED attack queues with `plan.draft = false` (unit-verified; full
+      Test-Results visibility confirmed by the pending E2E on a real console).
+- [x] `run_studio_attack` against a DRAFT attack queues with `plan.draft = true` and returns a `hint_to_agent`
       stating results are Studio-only and recommending publishing first.
-- [ ] Attack-not-found raises a clear error; status-read failure proceeds as published with an "unconfirmed" warning.
-- [ ] Result dict exposes the resolved `draft` value.
-- [ ] `run_scenario` and `run_adhoc_scenario` behavior unchanged.
+- [x] Attack-not-found raises a clear error; status-read failure proceeds as published with an "unconfirmed" warning.
+- [x] Result dict exposes the resolved `draft` value.
+- [x] `run_scenario` and `run_adhoc_scenario` behavior unchanged (full cross-server suite green).
 
 **Quality Gates**
-- [ ] New + updated unit tests pass; existing `TestRunStudioAttack` suite updated and green.
-- [ ] Unit coverage maintained or improved for `studio_functions.py`.
-- [ ] CLAUDE.md tool description for `run_studio_attack` updated to document status-aware draft behavior.
+- [x] New + updated unit tests pass; existing `TestRunStudioAttack` suite updated and green.
+- [x] Unit coverage maintained or improved for `studio_functions.py` (1147 cross-server tests pass).
+- [x] CLAUDE.md tool description for `run_studio_attack` updated to document status-aware draft behavior.
 
 **Deployment Readiness**
-- [ ] E2E/manual verification on a real console with a freshly published attack (never run as draft) confirms
-      Test-Results visibility.
+- [x] E2E/manual verification on a real console with a freshly published attack (never run as draft) confirms
+      Test-Results visibility. *(PASSED on `pentest01`: attack `10004982` / test `1781613591211.39` queued with
+      `draft=False` and appeared in the `get_tests` listing after ~2 poll attempts.)*
 - [ ] Changelog/version bump handled via the standard `mcp-create-release` flow.
 
 ## 8. Testing Strategy
@@ -209,8 +210,8 @@ flowchart TD
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Add `_get_attack_status_by_id` helper | ✅ Complete | 2026-06-16 | _pending commit_ | `TestGetAttackStatusById` (4 unit) green; full studio suite 465 passed |
-| Phase 2: Make `run_studio_attack` draft conditional + warnings | ⏳ Pending | - | - | sign-off: updated+new `TestRunStudioAttack` unit, cross-server suite, lint, **E2E** `test_run_published_studio_attack_visible_in_test_results_e2e` |
+| Phase 1: Add `_get_attack_status_by_id` helper | ✅ Complete | 2026-06-16 | `9f6af70` | `TestGetAttackStatusById` (4 unit) green; full studio suite 465 passed |
+| Phase 2: Make `run_studio_attack` draft conditional + warnings | ✅ Complete | 2026-06-16 | _pending commit_ | unit green (TestRunStudioAttack incl. 4 new + TestExplicitSimulatorSelection updated); cross-server suite 1147 passed; CLAUDE.md updated; **E2E PASSED on pentest01** (test 1781613591211.39 visible in listing) |
 | Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ⏳ Pending | - | - | sign-off: `TestSetStudioAttackStatus` regression green + lint |
 
 ### Phase 1: Add `_get_attack_status_by_id` helper
@@ -350,3 +351,5 @@ before closing.
 | 2026-06-16 09:53 | PRD created — initial draft |
 | 2026-06-16 10:00 | Added per-phase Test Automation (sign-off) incl. exact unit test names and E2E gate; status → Approved |
 | 2026-06-16 13:33 | Phase 1 implemented (TDD): `_get_attack_status_by_id` helper + `TestGetAttackStatusById` (4 tests green); status → In Progress |
+| 2026-06-16 13:55 | Phase 2 implemented (TDD): status-aware draft flag + warnings in `run_studio_attack`; 4 new unit tests + updated `TestRunStudioAttack`/`TestExplicitSimulatorSelection`; E2E added; CLAUDE.md entry 24; code review APPROVE; cross-server 1147 passed |
+| 2026-06-16 14:05 | E2E executed on live console `pentest01` and PASSED — published run queued with draft=False and visible in get_tests listing; hardened E2E to assert listing visibility (poll) and fail loudly |
