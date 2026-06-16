@@ -1,6 +1,6 @@
 # Context: SAF-31468
 
-**Status:** Phase 6: Summary Created
+**Status:** Phase 5: Brainstorm (planning-dev-task) — awaiting confirmation to write PRD
 **Mode:** Improve existing ticket
 **Branch:** `bugfix/SAF-31468-studio-runs-missing-from-test-results`
 **Repo:** `/Users/yossiattas/Public/safebreach-mcp`
@@ -185,3 +185,85 @@ hidden from Test Results by design (visible only in Breach Studio); the `draft` 
 attack's publication status; a PUBLISHED attack should never be queued with `draft:true`; canonical
 one-off run = publish first, queue with `draft:false`/no flag via the standard plan/orchestration endpoint.
 Cited SAF-10419 and support cases SB-16951 / SB-34202.
+
+---
+
+# Planning (planning-dev-task)
+
+## Decisions (confirmed with user)
+- **DRAFT-attack behavior at run time:** WARN ONLY — run as draft (Studio-only), but return a clear
+  `hint_to_agent` that results won't appear in Test Results and recommend publishing first. No status change.
+- **Draft-flag mechanism:** AUTO-RESOLVE the attack's current publication status before queuing and set
+  `plan.draft` accordingly. NO change to `run_studio_attack`'s public signature.
+- **SAF-10419 (backend "sticky draft"):** Resolved long ago — NOT a concern. Dropped as a caveat/task.
+
+## Implementation Map (file:line, verified)
+
+### Function to fix
+- `safebreach_mcp_studio/studio_functions.py:1180-1310` — `sb_run_studio_attack(attack_id, console="default",
+  target_simulator_ids=None, attacker_simulator_ids=None, all_connected=False, test_name=None)`.
+  - Input validation: `1206-1219`.
+  - Rate-limiter `check_limit`: `1232` (after validation, before filter/payload build).
+  - Filter build: `1234-1263`.
+  - Payload build: `1265-1283`; **hardcoded `"draft": True` at `1281`** → make conditional.
+  - Queue submit: `1286-1289` via `_submit_to_queue(payload, console, query_params={"enableFeedbackLoop":"true","retrySimulations":"false"})`.
+  - Result dict: `1296-1302` (`test_id`, `step_run_id`, `test_name`, `attack_id`, `status`).
+  - Rate-limiter `record_action`: `1305` (after successful queue).
+
+### Status-read path to reuse
+- Existing pattern in `sb_set_studio_attack_status` (`studio_functions.py:1632-1661`):
+  - `base_url = get_api_base_url(console, 'config')`, `account_id = get_api_account_id(console)`,
+    `headers = {**get_auth_headers_for_console(console)}`.
+  - `GET {base_url}/api/content/v1/accounts/{account_id}/customMethods?status=all`, `check_rbac_response`,
+    `api_response.get("data", ...)`, loop to find `attack.get("id") == attack_id`.
+  - Status field: lowercase `status` ("draft" | "published"); name via `attack.get("name")`.
+- **Plan:** extract a small helper `_get_attack_status_by_id(attack_id, console) -> (status, name)` (raises
+  `ValueError` if not found) to avoid duplicating the GET/filter logic; call it from both
+  `sb_run_studio_attack` and (optionally, as a refactor) `sb_set_studio_attack_status`.
+- `_submit_to_queue` signature: `studio_functions.py:146-199` — `(payload, console, query_params=None)`,
+  POSTs `{base_url}/api/orch/v4/accounts/{account_id}/queue`.
+
+### Hint/warning convention to follow
+- `hint_to_agent` field on the result dict. Examples: `studio_functions.py:1466-1472` (poll hint),
+  `2728-2751` (ad-hoc queued hint incl. skipped-attacks note); `studio_types.py:49-53` (pagination hint).
+
+### Tests
+- `safebreach_mcp_studio/tests/test_studio_functions.py` → class `TestRunStudioAttack` (`1396-1574`).
+  - Tests currently mock ONLY `requests.post`; fixture `mock_run_response` at `242-257`.
+  - `test_run_simulation_all_connected` asserts `payload['plan']['draft'] is True` at **line 1445** — must update.
+  - Status-read GET is mocked elsewhere via `@patch('...studio_functions.requests.get')`
+    (e.g. `TestGetAllStudioAttacks`, `665-694`); `mock_getall_response` fixture at `152-197` shows
+    `status: "draft"`/`"published"`.
+
+## Solution Approach (chosen)
+Resolve the attack's status via `_get_attack_status_by_id` after `check_limit` (line ~1232) and before payload
+build. Set `is_draft = (status == "draft")` and use `"draft": is_draft` at line 1281 (PUBLISHED → False).
+When `is_draft`, append a `hint_to_agent` to the result explaining the run is visible only in Breach Studio
+(not Test Results) and recommending `set_studio_attack_status` to publish first; also expose `draft: is_draft`
+in the result dict. On status-lookup failure, degrade gracefully (log + warn) without blocking the run.
+
+### Alternatives considered (and rejected)
+- **Auto-publish DRAFT before running** — rejected: publishing has production impact and requires explicit
+  confirmation (saf-28235:267); silent publish is unsafe. (User chose warn-only.)
+- **New `draft`/run-mode parameter on the tool** — rejected: adds API surface; auto-resolve covers the real
+  cases. (User chose auto-resolve, no signature change.)
+- **Refuse to run DRAFT attacks** — rejected: too strict; draft testing in Studio is a legitimate flow.
+- **Always omit `draft`** — rejected: DRAFT attacks genuinely require `draft:true` to execute (saf-28235:253).
+
+## Risks / Edge Cases
+- **Existing test breakage (certain):** all `TestRunStudioAttack` tests now trigger a `requests.get`; each needs
+  a `requests.get` mock returning the attack with the intended status, and the `draft is True` assertion at
+  `:1445` must flip to `False` (published) — update as part of the change.
+- **Extra API read per run:** one additional GET before queue; handle failure gracefully (warn + proceed or
+  surface a clear error) so a transient read error doesn't block execution. Decide default-on-failure behavior
+  in the PRD (recommend: surface error if attack genuinely not found; warn-and-proceed-as-draft only if the
+  read itself fails).
+- **Attack not found:** raise a clear `ValueError` (mirrors `set_studio_attack_status` behavior).
+- **Rate limiting unaffected:** `check_limit`/`record_action` placement unchanged.
+
+## Verification
+- Unit: published → payload `draft` False/omitted, no draft hint; draft → payload `draft` True + `hint_to_agent`
+  present; attack-not-found → ValueError; status-GET failure → graceful path. Update existing TestRunStudioAttack
+  mocks/assertions.
+- E2E/manual: publish a brand-new attack (never run as draft), run via `run_studio_attack`, confirm it appears in
+  `get_tests` / Test Results under the returned planRunId.
