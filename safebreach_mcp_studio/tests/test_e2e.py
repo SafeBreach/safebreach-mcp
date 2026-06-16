@@ -428,7 +428,13 @@ class TestStudioExecutionE2E:
         verifies the returned planRunId is retrievable via the Data Server's test history
         (the same testsummaries surface that backs the Test Results UI).
         """
+        import time
         from safebreach_mcp_data.data_functions import sb_get_tests, sb_get_test_details
+
+        # Unique test name so the run can be located in the listing deterministically via
+        # name_filter (get_tests filters before paginating) — robust regardless of how many
+        # other tests exist on the console or their ordering/indexing.
+        unique_test_name = f"SB E2E SAF-31468 visibility {int(time.time())}"
 
         attack_id = None
         try:
@@ -447,7 +453,8 @@ class TestStudioExecutionE2E:
                     attack_id=attack_id, new_status="published", console=E2E_CONSOLE
                 )
                 run_result = sb_run_studio_attack(
-                    attack_id=attack_id, console=E2E_CONSOLE, all_connected=True
+                    attack_id=attack_id, console=E2E_CONSOLE, all_connected=True,
+                    test_name=unique_test_name,
                 )
             except Exception as e:
                 pytest.skip(f"Setup failed on {E2E_CONSOLE} (cannot exercise visibility): {e}")
@@ -471,30 +478,26 @@ class TestStudioExecutionE2E:
 
             # The real regression gate: the run must appear in the test history LISTING
             # (testsummaries list — the same surface as the Test Results page, which excludes
-            # draft-scoped runs). Poll to absorb backend list-indexing lag for a freshly queued test.
-            import time
+            # draft-scoped runs). Locate it by its unique name (get_tests filters before
+            # paginating, so a unique name lands on page 0). Poll to absorb list-indexing lag.
             found_in_listing = False
             attempt = 0
             deadline_polls = 18  # ~180s at 10s intervals
             for attempt in range(deadline_polls):
-                for page in range(2):
-                    listing = sb_get_tests(
-                        console=E2E_CONSOLE, page_number=page,
-                        order_by="start_time", order_direction="desc",
-                    )
-                    page_ids = {str(t.get('test_id', '')) for t in listing.get('tests_in_page', [])}
-                    if str(test_id) in page_ids:
-                        found_in_listing = True
-                        break
-                    if page + 1 >= listing.get('total_pages', 1):
-                        break
-                if found_in_listing:
+                listing = sb_get_tests(
+                    console=E2E_CONSOLE, page_number=0,
+                    name_filter=unique_test_name,
+                    order_by="start_time", order_direction="desc",
+                )
+                page_ids = {str(t.get('test_id', '')) for t in listing.get('tests_in_page', [])}
+                if str(test_id) in page_ids:
+                    found_in_listing = True
                     break
                 time.sleep(10)
 
             assert found_in_listing, (
-                f"planRunId {test_id} not found in get_tests listing after polling — "
-                f"published run is not visible in Test Results history (regression)"
+                f"planRunId {test_id} (name '{unique_test_name}') not found in get_tests listing "
+                f"after polling — published run is not visible in Test Results history (regression)"
             )
             print(f"  Visible in get_tests listing: True (after {attempt + 1} poll attempt(s))")
         finally:
