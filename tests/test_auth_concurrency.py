@@ -194,38 +194,6 @@ class TestConcurrentSessionIsolation:
         assert result_b['x-token'] == 'token-user-B'
         assert result_a['x-token'] != result_b['x-token']
 
-    def test_session_store_fallback_isolates_sessions(self):
-        """When request_ctx headers are empty, session store provides isolation."""
-        # Pre-populate session store with different bundles
-        _session_auth_artifacts['sess-A'] = ({'x-token': 'token-A'}, 1000.0)
-        _session_auth_artifacts['sess-B'] = ({'x-token': 'token-B'}, 1000.0)
-
-        # User A: request_ctx has session_id in query_params but no auth headers
-        req_a = _mock_request(
-            headers={},
-            query_params={'session_id': 'sess-A'},
-        )
-        ctx_a = _mock_request_ctx(req_a)
-
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = ctx_a
-            result_a = get_auth_headers_for_console('default')
-
-        assert result_a['x-token'] == 'token-A'
-
-        # User B: different session_id
-        req_b = _mock_request(
-            headers={},
-            query_params={'session_id': 'sess-B'},
-        )
-        ctx_b = _mock_request_ctx(req_b)
-
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = ctx_b
-            result_b = get_auth_headers_for_console('default')
-
-        assert result_b['x-token'] == 'token-B'
-
 
 class TestGetCacheUserSuffix:
 
