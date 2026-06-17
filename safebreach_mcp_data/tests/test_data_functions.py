@@ -3833,6 +3833,39 @@ class TestSimulationLogsFetchCore:
     @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url')
     @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_includes_nodeid_when_given(self, mock_account, mock_base_url, mock_get):
+        """node_id is sent as the nodeId query param (trimmed, no case change)."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='555', node_id=' abc-NODE-1 ', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        params = mock_get.call_args.kwargs['params']
+        assert params['nodeId'] == 'abc-NODE-1'
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_omits_nodeid_when_empty(self, mock_account, mock_base_url, mock_get):
+        """nodeId is omitted entirely when node_id is empty/None."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='555', node_id='', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        assert 'nodeId' not in mock_get.call_args.kwargs['params']
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
     def test_fetch_omits_jobids_when_empty(self, mock_account, mock_base_url, mock_get):
         """jobIds is omitted entirely when job_ids is empty/None (search-all-sims)."""
         mock_base_url.return_value = 'https://test.safebreach.com'
@@ -3996,6 +4029,23 @@ class TestSimulationLogsFetchCore:
         assert mock_fetch.call_count == 2
         assert len(simulation_logs_cache) == 2
 
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_simulation_logs_from_api')
+    def test_cache_key_unique_per_node(self, mock_fetch, _cache_enabled):
+        """Different node_id values produce distinct cache entries."""
+        mock_fetch.return_value = {
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        base = dict(
+            job_ids='9', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        _get_simulation_logs_from_cache_or_api(node_id='node-a', **base)
+        _get_simulation_logs_from_cache_or_api(node_id='node-b', **base)
+        assert mock_fetch.call_count == 2
+        assert len(simulation_logs_cache) == 2
+
 
 class TestFullSimulationLogsV3Migration:
     """get_full_simulation_logs fetches via the v3 result endpoint (includeLogs=true)."""
@@ -4085,10 +4135,23 @@ class TestSimulationLogsEntryPoints:
     # --- cross-sim tool: job_ids construction -------------------------------
 
     @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_passes_node_id(self, mock_core):
+        """node_id is forwarded to the core fetch for single-node investigation."""
+        mock_core.return_value = {"logs": []}
+        sb_get_paginated_simulation_logs(simulation_id='555', node_id='node-x', console='c')
+        assert mock_core.call_args.kwargs['node_id'] == 'node-x'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
     def test_search_multi_sim_pipe_joined(self, mock_core):
         mock_core.return_value = {"logs": []}
         sb_search_simulation_logs(simulation_ids='a|b', console='c')
         assert mock_core.call_args.kwargs['job_ids'] == 'a|b'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_passes_node_id(self, mock_core):
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='a|b', node_id='node-y', console='c')
+        assert mock_core.call_args.kwargs['node_id'] == 'node-y'
 
     @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
     def test_search_empty_ids_means_all(self, mock_core):
