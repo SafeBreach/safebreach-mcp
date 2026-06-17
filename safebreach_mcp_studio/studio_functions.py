@@ -3495,20 +3495,22 @@ def sb_manage_test(
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "manage_test")
 
-    # Append the note BEFORE performing the action. Appending after a cancel races
-    # backend persistence (the test summary is mid-transition) and the comment PUT can
-    # return 500; while the test is still in its pre-action state the summary is stable
-    # and the PUT succeeds. Note append remains best-effort.
-    note_result = None
-    if reason and reason.strip():
-        note_result = _append_test_note(test_id, action, reason, console)
-
     result = _set_test_state(test_id, action, console)
 
     # Rate limiting gate — record after successful state change
     rate_limiter.record_action(caller_id, "manage_test")
 
-    if note_result is not None:
+    # Append a best-effort timestamped note. Failure does not block the lifecycle
+    # action above (which already succeeded).
+    #
+    # KNOWN BACKEND ISSUE (TODO: investigate + fix server-side): the data API
+    # `PUT /testsummaries/{id}` intermittently returns HTTP 500 when the note is
+    # appended to a test whose summary was freshly created (right after queue) or is
+    # mid-transition (e.g. just-canceled), most visibly under concurrent load. This is
+    # a SafeBreach backend API bug — it must be root-caused and fixed in the API, and
+    # deliberately should NOT be papered over with retries here or in the MCP E2E tests.
+    if reason and reason.strip():
+        note_result = _append_test_note(test_id, action, reason, console)
         result.update(note_result)
 
     hints = {
