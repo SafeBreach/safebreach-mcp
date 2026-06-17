@@ -7,7 +7,7 @@
 | Repo / branch | `safebreach-mcp` / `feature/SAF-32143-paginated-simulation-logs` |
 | Companion | [SAF-32099](https://safebreach.atlassian.net/browse/SAF-32099) (data v3 `/simulationLogs`, branch `feature/SAF-32099-paginate-simulation-logs-api`) |
 | Context bug | [SAF-32058](https://safebreach.atlassian.net/browse/SAF-32058) / support SB-36091 (HELM LLM token overflow) |
-| Status | Draft for review |
+| Status | Implemented (Phases 1–3 + scope additions 5–7); in Code Review. Phase 4 real-env verification optional/pending. |
 
 > **Authoritative contract note.** The SAF-32143 ticket text describes a per-sim path
 > `…/executionsHistoryResults/{id}/logs`. That endpoint was **not** what shipped. The data side consolidated to a single
@@ -26,28 +26,34 @@ The data service (SAF-32099) now exposes a structured, paginated, filterable log
 incrementally and filtered (token-bounded), while `get_full_simulation_logs` remains the full-blob / old-format fallback.
 
 ### Success criteria
-- An AI consumer can fetch a single simulation's logs page-by-page, filtered to e.g. `ERROR`/`WARNING` only, with each
-  response comfortably under the token limit.
+- An AI consumer can fetch a single simulation's logs page-by-page, filtered to e.g. `ERROR`/`WARNING` only (and scoped to
+  a single attack node), with each response comfortably under the token limit.
 - An AI consumer can run a cross-simulation log search (e.g. "all ERRORs containing X in the last day", or "how many
   simulations hit error X" via `jobId` dedup) without naming every sim id.
-- No change to existing tools; no breaking change to any consumer.
+- The agent investigates **result-first**: `get_test_simulation_details` returns the raw simulation result + steps (no
+  logs), and the agent only pulls logs when those are insufficient.
+- Backward-compatible at the data layer (v3 with v1 fallback). Two existing tools change deliberately (see §2): the
+  `get_test_simulation_details` response shape change is the one intended breaking change for MCP consumers.
 
 ## 2. Scope
 
-**In scope**
+**In scope** (final, including scope additions made during implementation)
 - Two new read-only MCP tools in the **data** server (`safebreach_mcp_data`):
-  1. `get_paginated_simulation_logs` — single-simulation investigation.
-  2. `search_simulation_logs` — cross-/multi-simulation search.
+  1. `get_paginated_simulation_logs` — single-simulation investigation (incl. `node_id` per-node scoping — Phase 7).
+  2. `search_simulation_logs` — cross-/multi-simulation search (incl. `node_id`).
 - Shared fetch + cache + response-mapping core.
+- **`get_full_simulation_logs` migrated to the v3 result endpoint** (`includeLogs=true`, v1 fallback) and now exposes
+  `logs_embedded` (Phase 5).
+- **`get_test_simulation_details` returns the raw v3 result without logs** (result + `SIMULATION_STEPS` + `logsEmbedded`),
+  making it the result-first investigation entry point (Phase 6). **Intended breaking response-shape change.**
 - Unit + integration tests; `CHANGELOG.md` + `CLAUDE.md` docs.
 
 **Out of scope**
 - The data endpoint itself (SAF-32099 — done).
-- ~~Modifying `get_full_simulation_logs` or migrating other MCP tools off v1.~~ **Scope addition (Amir, 2026-06-11,
-  Phase 5):** `get_full_simulation_logs` migrated to the v3 result endpoint (`includeLogs=true`, v1 fallback) to surface
-  `logsEmbedded`. Verified in the data repo that no other MCP-consumed endpoint embeds logs (the v1 list endpoint
-  whitelists `_source` fields and excludes `dataObj`), so no other migration is needed.
+- Migrating other MCP tools off v1. Verified in the data repo that no other MCP-consumed endpoint embeds logs (the v1
+  list endpoint behind `get_test_simulations` whitelists `_source` and excludes `dataObj`), so no other migration is needed.
 - Auto-paging / streaming aggregation across pages inside the tool (consumer drives pagination via `hasMore`).
+- Server-side distinct-`jobId` aggregation for exact fleet-wide counts (data-side follow-up — see §7 Q4).
 
 ## 3. Design
 
@@ -61,7 +67,7 @@ Both tools call the same endpoint and differ only in how the `jobIds` query para
 | `search_simulation_logs` | optional `simulation_ids` (**pipe-delimited**, e.g. `a\|b`) → `jobIds=a\|b`; omitted → param dropped → **all sims** | Cross-sim / fleet-wide log search |
 
 Shared internals in `data_functions.py`:
-- `_fetch_simulation_logs_from_api(*, job_ids, page, page_size, min_level, levels, message_contains, start_time, end_time, log_type, sort_order, console)`
+- `_fetch_simulation_logs_from_api(*, job_ids, node_id, page, page_size, min_level, levels, message_contains, start_time, end_time, log_type, sort_order, console)`
   — builds URL `f"{base_url}/api/data/v3/accounts/{account_id}/simulationLogs"`, assembles the `params` dict, GETs with
   `timeout=120`, handles 400/401/404, returns `response.json()`.
 - `_get_simulation_logs_from_cache_or_api(...)` — cache wrapper (transform-then-cache).
@@ -78,6 +84,7 @@ scalars; multi-value params are **pipe-delimited** strings (`a|b`), matching the
 |-----------|------------------------|-------------|-------------------------|
 | `simulation_id` (tool 1) | str, **required** | `jobIds` | Scope to exactly one simulation: `jobIds=<simulation_id>`. |
 | `simulation_ids` (tool 2) | str, pipe-delimited, optional | `jobIds` | Scope to one/several sims (`a\|b`) or **all** when omitted. Trim segments, drop empties, re-join with `\|`; omit param entirely if empty. |
+| `node_id` (both tools) | str, optional | `nodeId` | Scope to a single simulator node of the attack (e.g. attacker vs target). Exact match, trimmed, no casing. Id comes from `get_test_simulation_details` (`attackerNodeId`/`targetNodeId` or `dataObj.data[..].id`). Omit = all nodes. |
 | `page` | int = `1` | `page` | 1-based page number. Offset = `(page-1)*page_size`. Subject to the ~10k ceiling (§3.7). |
 | `page_size` | int = `500` | `pageSize` | Entries per page, **1–1000**. Validate `≤ 1000` client-side (clear error, avoid server 400). |
 | `min_level` | str = `"INFO"` | `minLevel` | Severity **threshold** (inclusive), returns that level **and above**: `DEBUG<INFO<WARNING<ERROR`. `.upper()`. Ignored when `levels` given. |
@@ -125,8 +132,8 @@ Empty/missing `logs` → return `{"logs": [], "total": 0, "page": <req>, "page_s
 ### 3.4 Caching
 
 `simulation_logs_cache = SafeBreachCache(name="simulation_logs", maxsize=3, ttl=600)` (data-server cache TTL convention).
-Cache key must include **every** input that changes the result:
-`f"simulation_logs_{console}_{job_ids or 'ALL'}_{page}_{page_size}_{min_level}_{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}{get_cache_user_suffix()}"`.
+Cache key must include **every** input that changes the result (incl. `node_id`):
+`f"simulation_logs_{console}_{job_ids or 'ALL'}_{node_id or 'ALLNODES'}_{page}_{page_size}_{min_level}_{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}{get_cache_user_suffix()}"`.
 Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped result), mirroring `get_full_simulation_logs`.
 
 ### 3.5 Errors
@@ -145,8 +152,9 @@ Gate on `is_caching_enabled("data")`. Transform-then-cache (cache the mapped res
 These tools are a **last resort, not a first step. In most investigations the logs are not needed at all.** The intended
 flow — and what the tool descriptions must steer the model toward — is:
 
-1. **Start with the raw simulation object and its simulation steps.** `get_simulation_details` (the result object +
-   `simulation_steps`, optionally `include_mitre_techniques` / `include_basic_attack_logs` / `include_drift_info`), plus
+1. **Start with the raw simulation object and its simulation steps.** `get_test_simulation_details` returns the raw v3
+   result (logs excluded) including per-node `dataObj.data[..].details.SIMULATION_STEPS` and the `logsEmbedded` hint
+   (optionally `include_mitre_techniques` / `include_basic_attack_logs` / `include_drift_info`), plus
    `get_test_simulations` / drift tools, explain the flow for the large majority of cases. **Only when the simulation
    object and steps are genuinely insufficient to understand the flow** — root cause still unclear, or an explicit deep
    dive into execution traces is required — should you reach for these log tools. Logs are large and token-heavy; treat
@@ -167,7 +175,7 @@ converges on the relevant lines (usually a handful of ERRORs) instead of pulling
 #### Tool descriptions (embed the strategy above)
 - `get_paginated_simulation_logs`: "Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/
   message), page by page. **Logs are usually NOT needed — first inspect the raw simulation object and its simulation
-  steps via `get_simulation_details`; reach for logs ONLY when that object + steps are insufficient to understand the
+  steps via `get_test_simulation_details`; reach for logs ONLY when that object + steps are insufficient to understand the
   flow (root cause unclear / explicit deep dive).** Pull smartly by severity: for a FAILED/errored simulation
   start with `levels=ERROR`, then widen to `min_level=INFO`, then `DEBUG` only if still unanswered; for a SUCCESSFUL
   simulation start at `min_level=INFO` (default) and escalate to `DEBUG` only if needed. Read one page before requesting
@@ -240,14 +248,31 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 
 ### Phase 4 — Manual / E2E verification (optional, real env)
 - Against a console whose data service includes SAF-32099: single-sim paging, cross-sim search, 404 on an old console.
+- See `manual-tests.md` (API-level) and `agent-test-plan.md` (behavioral — prompts → expected tool calls).
+
+### Phase 5 — `get_full_simulation_logs` → v3 result endpoint (scope addition)
+- Fetch via `GET …/v3/…/executionsHistoryResults/{id}?runId=&includeLogs=true`; fall back to v1 on 404 (older consoles).
+- Expose `logs_embedded` in the mapped response; add the `logsEmbedded` routing rule to all three logs-tool descriptions.
+
+### Phase 6 — `get_test_simulation_details` → raw v3 result without logs (scope addition)
+- Replace the curated entity with the raw v3 result (`includeLogs=false`): full doc + `SIMULATION_STEPS` + `logsEmbedded`,
+  LOGS/OUTPUT excluded server-side. Merge optional enrichments (mitre/basic logs/drift) on top; list-row fallback on old
+  consoles. `hint_to_agent` routes to paginated logs (`logsEmbedded=false`) or full logs (`true`). **Breaking shape change.**
+
+### Phase 7 — `node_id` per-node filter (scope addition)
+- data added a `nodeId` filter to `/simulationLogs` (merged to develop). Thread `node_id` through the fetch core, cache
+  key, and both `sb_*` entry points + tool wrappers; descriptions explain scoping to the attacker vs target node.
 
 ## 5. Testing strategy
 - **Unit**: mapping (`test_data_types.py`), fetch/cache/param-build + `sb_*` validation (`test_data_functions.py`).
 - **Integration**: HTTP-mocked both tools (`test_integration.py`).
 - **Coverage must include**: pipe-joining of `jobIds`/`levels`, casing (UPPER levels/logType, lower sortOrder), omitted
-  optional params, `page_size` clamp + enum validation (`min_level`/`log_type`/`sort_order`), empty-logs hint,
-  400/401/404 messages, deep-page (`page*page_size > 10000`) ceiling error + hint, cache key uniqueness per filter combination.
-- Run: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"`.
+  optional params, `node_id` present-when-given / omitted-when-empty + per-node cache-key uniqueness, `page_size` clamp +
+  enum validation (`min_level`/`log_type`/`sort_order`), empty-logs hint, 400/401/404 messages, deep-page
+  (`page*page_size > 10000`) ceiling error + hint, cache key uniqueness per filter combination.
+- **Existing-tool changes**: `get_full_simulation_logs` v3 URL + v1 fallback + `logs_embedded`; `get_test_simulation_details`
+  raw-v3 result (steps present, logs absent), v3-404 list-row fallback, `logsEmbedded` routing hint.
+- Run: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` — **467 data tests green**.
 
 ## 6. Risks
 - **Console data version**: target console must have the SAF-32099 endpoint, else 404 — surfaced clearly.
@@ -258,7 +283,7 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 - **Param casing/format drift**: server also normalizes, but the tool normalizes client-side to keep cache keys stable.
 
 ## 7. Open questions for review
-1. Cross-sim tool name: `search_simulation_logs` (chosen) vs `get_cross_simulation_logs`?
+1. ~~Cross-sim tool name~~ — **resolved**: shipped as `search_simulation_logs`.
 2. ~~MCP `page_size` default~~ — **resolved**: defaults mirror the API exactly (`page_size=500`, max 1000) for full
    control; token-bounding comes from the §3.6 strategy + consumer-chosen `page_size`, not a crippled default.
 3. Should `search_simulation_logs` *require* a time window when `simulation_ids` is omitted, to prevent accidental
@@ -276,10 +301,15 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 - [x] Both tools registered in `data_server.py` (`readOnlyHint=True`) with the §3.6 steering descriptions.
 - [x] Pipe-joining + casing normalization + omitted-param handling verified by tests.
 - [x] Error handling: 400 (enum/pageSize), 401, 404 (endpoint-missing), deep-page ~10k ceiling — each with clear message.
-- [x] Caching: key includes console + jobIds + every filter + page; gated on `is_caching_enabled("data")`.
-- [x] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` (453 data tests green).
-- [x] All existing tests pass (453 data tests green). *(No linter configured in this repo — tests are the gate.)*
+- [x] Caching: key includes console + jobIds + `node_id` + every filter + page; gated on `is_caching_enabled("data")`.
+- [x] `node_id` per-node filter threaded through both tools (Phase 7).
+- [x] `get_full_simulation_logs` on v3 result endpoint (`includeLogs=true`, v1 fallback) exposing `logs_embedded` (Phase 5).
+- [x] `get_test_simulation_details` returns the raw v3 result without logs (steps + `logsEmbedded`, enrichments on top,
+  list-row fallback); CHANGELOG flags the breaking shape change (Phase 6).
+- [x] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` (467 data tests green).
+- [x] All existing tests pass (467 data tests green). *(No linter configured in this repo — tests are the gate.)*
 - [x] `CHANGELOG.md` + `CLAUDE.md` updated.
+- [ ] Phase 4 real-env/agent verification (optional) — `manual-tests.md` + `agent-test-plan.md`.
 
 ## 9. Phase Status Tracking
 
@@ -296,6 +326,7 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 
 ## 10. Document Status
-- **Last Updated:** 2026-06-11
+- **Last Updated:** 2026-06-17
 - **Author:** Amir Rossert (planning via planning-dev-task)
 - **Branch:** `feature/SAF-32143-paginated-simulation-logs`
+- **Related test docs:** `manual-tests.md` (API-level), `agent-test-plan.md` (agent-behavioral), `context.md` (investigation notes).
