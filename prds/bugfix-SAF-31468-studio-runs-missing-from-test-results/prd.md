@@ -212,7 +212,7 @@ flowchart TD
 |-------|--------|-----------|------------|-------|
 | Phase 1: Add `_get_attack_status_by_id` helper | ✅ Complete | 2026-06-16 | `9f6af70` | `TestGetAttackStatusById` (4 unit) green; full studio suite 465 passed |
 | Phase 2: Make `run_studio_attack` draft conditional + warnings | ✅ Complete | 2026-06-16 | `faf10d1` | unit green (TestRunStudioAttack incl. 4 new + TestExplicitSimulatorSelection updated); cross-server suite 1147 passed; CLAUDE.md updated; **E2E PASSED on pentest01** (test 1781613591211.39 visible in listing) |
-| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ✅ Complete | 2026-06-17 | _pending commit_ | extracted `_find_attack_by_id`; `TestSetStudioAttackStatus` 23 green; cross-server 1147 pass; status-transition E2E pass on pentest01 |
+| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ✅ Complete | 2026-06-17 | `5742402` | extracted `_find_attack_by_id`; `TestSetStudioAttackStatus` 23 green; cross-server 1147 pass; status-transition E2E pass on pentest01 |
 
 ### Phase 1: Add `_get_attack_status_by_id` helper
 - **Semantic Change:** Introduce a reusable internal helper that returns one attack's current status by ID.
