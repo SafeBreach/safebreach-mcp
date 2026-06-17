@@ -364,11 +364,17 @@ of that simulation are NOT in the new logs index (this tool will return empty). 
 which fetches the v3 result with includeLogs=true and returns the embedded blob. Also use get_full_simulation_logs when \
 you need the full ~40KB blob at once.
 
+Investigating a specific node of the attack: a dual-script attack (exfil/infil/lateral movement) runs on two simulators — \
+an attacker node and a target node. Pass node_id to read only ONE node's logs (e.g. only the attacker's side, or only the \
+target's). Get the node ids from get_test_simulation_details — attackerNodeId / targetNodeId, or the per-node id under \
+dataObj.data[..].id. Omit node_id to see all nodes.
+
 Parameters: simulation_id (required, e.g. '4915971'), page (default 1), page_size (default 500, max 1000; page*page_size \
 must be <= 10000), min_level (DEBUG|INFO|WARNING|ERROR, default INFO — threshold, returns that level and above; DEBUG hidden \
 by default), levels (pipe-delimited explicit set e.g. 'ERROR|WARNING', overrides min_level), message_contains (case-insensitive \
 substring), start_time / end_time (ISO-8601 or epoch ms), log_type (LOGS|OUTPUT|ALL, default LOGS), sort_order (asc|desc, \
-default asc), console. Returns { logs, total, page, page_size, has_more }. Results cached ~10 minutes."""
+default asc), node_id (optional simulator-node id to scope to one node of the attack), console. \
+Returns { logs, total, page, page_size, has_more }. Results cached ~10 minutes."""
         )
         async def get_paginated_simulation_logs_tool(
             simulation_id: str,
@@ -381,6 +387,7 @@ default asc), console. Returns { logs, total, page, page_size, has_more }. Resul
             end_time: str = "",
             log_type: str = "LOGS",
             sort_order: str = "asc",
+            node_id: str = "",
             console: str = "default"
         ) -> dict:
             return sb_get_paginated_simulation_logs(
@@ -394,6 +401,7 @@ default asc), console. Returns { logs, total, page, page_size, has_more }. Resul
                 end_time=end_time,
                 log_type=log_type,
                 sort_order=sort_order,
+                node_id=node_id,
                 console=console
             )
 
@@ -419,7 +427,8 @@ jobId and planRunId). This is exact only while the result set fits under the ~10
 
 Parameters: simulation_ids (optional pipe-delimited list; omit = all sims), page, page_size (default 500, max 1000), min_level \
 (default INFO), levels (pipe-delimited, overrides min_level), message_contains, start_time / end_time (ISO-8601 or epoch ms), \
-log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), console. Returns { logs, total, page, page_size, has_more }. Cached ~10 min."""
+log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), node_id (optional simulator-node id to scope every match to a single node — \
+e.g. only the attacker or only the target node), console. Returns { logs, total, page, page_size, has_more }. Cached ~10 min."""
         )
         async def search_simulation_logs_tool(
             simulation_ids: str = "",
@@ -432,6 +441,7 @@ log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), console. Returns { logs, tota
             end_time: str = "",
             log_type: str = "LOGS",
             sort_order: str = "asc",
+            node_id: str = "",
             console: str = "default"
         ) -> dict:
             return sb_search_simulation_logs(
@@ -445,6 +455,7 @@ log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), console. Returns { logs, tota
                 end_time=end_time,
                 log_type=log_type,
                 sort_order=sort_order,
+                node_id=node_id,
                 console=console
             )
 

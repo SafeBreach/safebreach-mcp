@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     containing X in the last day"); pass a pipe-delimited `simulation_ids` list or omit it to
     search all simulations.
   - Filters: `min_level` (threshold) or explicit `levels`, `message_contains`, `start_time`/
-    `end_time`, `log_type` (LOGS/OUTPUT/ALL), `sort_order`; offset pagination via `page`/`page_size`
-    (max 1000) returning `{ logs, total, page, page_size, has_more }`. Results cached ~10 minutes.
+    `end_time`, `log_type` (LOGS/OUTPUT/ALL), `sort_order`, and `node_id` (scope to a single
+    simulator node — e.g. only the attacker or only the target node of a dual-script attack);
+    offset pagination via `page`/`page_size` (max 1000) returning
+    `{ logs, total, page, page_size, has_more }`. Results cached ~10 minutes.
 
 ### Changed
 

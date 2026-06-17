@@ -1979,6 +1979,7 @@ simulation_logs_cache = SafeBreachCache(name="simulation_logs", maxsize=3, ttl=6
 
 def _fetch_simulation_logs_from_api(
     job_ids=None,
+    node_id="",
     page=1,
     page_size=500,
     min_level="INFO",
@@ -1994,7 +1995,8 @@ def _fetch_simulation_logs_from_api(
 
     Builds the query params with the API's casing/format contract: ``jobIds`` and ``levels`` are
     pipe-delimited strings (omitted when empty), ``minLevel``/``logType`` upper-cased, ``sortOrder``
-    lower-cased, ``page``/``pageSize`` ints. Empty optional filters are omitted entirely.
+    lower-cased, ``page``/``pageSize`` ints, ``nodeId`` an exact simulator-node id (omitted when
+    empty). Empty optional filters are omitted entirely.
 
     Returns the raw API JSON ``{ logs, total, page, pageSize, hasMore }``.
 
@@ -2013,6 +2015,8 @@ def _fetch_simulation_logs_from_api(
             ids = "|".join(seg.strip() for seg in str(job_ids).split("|") if seg.strip())
             if ids:
                 params["jobIds"] = ids
+        if node_id and str(node_id).strip():
+            params["nodeId"] = str(node_id).strip()
         if levels:
             normalized_levels = "|".join(
                 seg.strip().upper() for seg in str(levels).split("|") if seg.strip()
@@ -2076,6 +2080,7 @@ def _fetch_simulation_logs_from_api(
 
 def _get_simulation_logs_from_cache_or_api(
     job_ids=None,
+    node_id="",
     page=1,
     page_size=500,
     min_level="INFO",
@@ -2089,12 +2094,12 @@ def _get_simulation_logs_from_cache_or_api(
 ) -> Dict[str, Any]:
     """Get paginated simulation logs from cache or API (validate-then-cache).
 
-    The cache key includes the console, jobIds, every filter, and the page, scoped per user, so two
-    different filter combinations never collide.
+    The cache key includes the console, jobIds, node_id, every filter, and the page, scoped per user,
+    so two different filter combinations never collide.
     """
     cache_key = (
-        f"simulation_logs_{console}_{job_ids or 'ALL'}_{page}_{page_size}_{min_level}_"
-        f"{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}"
+        f"simulation_logs_{console}_{job_ids or 'ALL'}_{node_id or 'ALLNODES'}_{page}_{page_size}_"
+        f"{min_level}_{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}"
         f"{get_cache_user_suffix()}"
     )
 
@@ -2105,7 +2110,7 @@ def _get_simulation_logs_from_cache_or_api(
             return cached
 
     raw_data = _fetch_simulation_logs_from_api(
-        job_ids=job_ids, page=page, page_size=page_size, min_level=min_level, levels=levels,
+        job_ids=job_ids, node_id=node_id, page=page, page_size=page_size, min_level=min_level, levels=levels,
         message_contains=message_contains, start_time=start_time, end_time=end_time,
         log_type=log_type, sort_order=sort_order, console=console,
     )
@@ -2180,11 +2185,12 @@ def sb_get_paginated_simulation_logs(
     end_time="",
     log_type="LOGS",
     sort_order="asc",
+    node_id="",
     console="default",
 ) -> Dict[str, Any]:
     """Fetch one simulation's execution logs, paginated and filtered (v3 /simulationLogs).
 
-    Investigation last-resort: prefer `get_simulation_details` (the raw simulation object + steps)
+    Investigation last-resort: prefer `get_test_simulation_details` (the raw simulation object + steps)
     first; use this only when those are insufficient. Pull smartly by severity (FAILED sims:
     `min_level=ERROR` first; SUCCESS sims: INFO), and page rather than dump.
 
@@ -2196,6 +2202,10 @@ def sb_get_paginated_simulation_logs(
         message_contains: case-insensitive substring filter on the message.
         start_time/end_time: inclusive timestamp bounds (ISO-8601 or epoch ms).
         log_type: LOGS (default) | OUTPUT | ALL. sort_order: asc (default) | desc.
+        node_id: optional simulator-node id (e.g. the attacker_node_id or target_node_id from
+            get_test_simulation_details). Scopes logs to a single node of the attack — use it to read
+            only the attacker's or only the target's side of a dual-script (exfil/infil/lateral) attack.
+            Omit to include all nodes.
         console: SafeBreach console name.
 
     Returns:
@@ -2210,7 +2220,7 @@ def sb_get_paginated_simulation_logs(
 
     try:
         return _get_simulation_logs_from_cache_or_api(
-            job_ids=str(simulation_id).strip(), page=page, page_size=page_size,
+            job_ids=str(simulation_id).strip(), node_id=node_id, page=page, page_size=page_size,
             min_level=min_level, levels=levels, message_contains=message_contains,
             start_time=start_time, end_time=end_time, log_type=log_type,
             sort_order=sort_order, console=console,
@@ -2234,6 +2244,7 @@ def sb_search_simulation_logs(
     end_time="",
     log_type="LOGS",
     sort_order="asc",
+    node_id="",
     console="default",
 ) -> Dict[str, Any]:
     """Search execution logs across many or all simulations (v3 /simulationLogs).
@@ -2247,6 +2258,8 @@ def sb_search_simulation_logs(
 
     Args:
         simulation_ids: optional pipe-delimited simulation ids; omit/empty = all simulations.
+        node_id: optional simulator-node id to scope every match to a single node (e.g. only the
+            attacker or only the target node).
         (other args identical to sb_get_paginated_simulation_logs)
 
     Returns:
@@ -2264,7 +2277,7 @@ def sb_search_simulation_logs(
 
     try:
         return _get_simulation_logs_from_cache_or_api(
-            job_ids=job_ids, page=page, page_size=page_size,
+            job_ids=job_ids, node_id=node_id, page=page, page_size=page_size,
             min_level=min_level, levels=levels, message_contains=message_contains,
             start_time=start_time, end_time=end_time, log_type=log_type,
             sort_order=sort_order, console=console,
