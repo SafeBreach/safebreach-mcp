@@ -344,6 +344,52 @@ before closing.
 - **Business Value:** Restores trust/observability for HELM-driven custom-attack execution (HELM Automation,
   SAF-31110) by making published runs discoverable exactly where users expect them.
 
+## 13. Extended Scope — E2E Suite Hardening & Test Hygiene
+
+Running the **full E2E suite** to validate the fix surfaced a set of pre-existing problems (unrelated to the
+`run_studio_attack` bug) that had to be resolved to get a trustworthy green run. These were fixed under this
+ticket as test-quality / reliability work:
+
+### Test-fixture rot (pre-existing failures)
+- **Rate-limiting E2E** (`tests/test_rate_limiting_e2e.py`): the tests patched the limit *values* but never
+  enabled rate limiting, so `check_limit`/`record_action` no-opped unless the env set the flag → "DID NOT RAISE".
+  Fix: patch `_rate_limit_enabled=True` per test (self-contained, mirrors the unit tests).
+- **Drift-tools E2E** (`safebreach_mcp_data/tests/test_drift_tools.py`): `test_status_drifts_summary` /
+  `_drilldown` asserted against a hardcoded Feb-2026 window with fixed counts/keys (incl. `logged-prevented`)
+  that aged out → 0 drifts. Fix: relative 30-day window, assert structure + presence (skip-if-empty), and derive
+  the drill-down `drift_key` from the live summary instead of hardcoding.
+- **Ad-hoc E2E** (`safebreach_mcp_studio/tests/test_e2e_run_adhoc_scenario.py`): attack `11663`'s hardcoded GMX
+  target simulator no longer exists on the console → 0 sims. Fix: dropped `11663` (no email-target simulator
+  available to repoint to); count assertions now derive from `len(E2E_ATTACK_IDS)`.
+
+### manage_test note ordering (reverted) + backend bug documented
+- An attempt to fix a cancel-time note `PUT /testsummaries/{id}` 500 by appending the note *before* the action
+  regressed pause/resume under load (the freshly-queued summary isn't writable yet). **Reverted** to
+  note-after-action. The underlying HTTP 500 is a **SafeBreach backend API bug** — documented as an in-code TODO,
+  deliberately NOT masked with MCP-layer retries.
+
+### Visibility E2E hardening (the SAF-31468 regression gate)
+- Made `test_run_published_studio_attack_visible_in_test_results_e2e` deterministic: queue with a unique
+  `test_name` and locate the run via `get_tests(name_filter=...)` (filters before paginating); dropped the racy
+  `get_test_details` sanity call; extended the poll to ~5 min and documented that test-history ingestion latency
+  is a variable backend property. The hard `draft=False` assertion is the controllable, deterministic fix proof.
+
+### E2E queue-leak prevention (root cause of pipeline congestion)
+- E2E tests queue **real** tests; leftovers that were never cancelled accumulated in the orchestrator queue and
+  clogged the console's test pipeline (freshly-queued tests then took many minutes/hours to start and ingest —
+  the actual amplifier behind the visibility/manage_test flakiness).
+- Fix: (1) per-test teardown cancels each queued run (paused-aware: resume→cancel); (2) a **session epilogue** in
+  the root `conftest.py` cancels any registered-but-still-running test at session end — scoped strictly to
+  test_ids **our** suite registered, never others'; (3) the rate-limit store is cleared before cleanup so a
+  cancel can't be blocked by an exhausted limit; (4) cleanup is paused-aware. Validated live on `pentest01`.
+
+### Known backend issues (to track separately — see follow-up bug)
+- `PUT /testsummaries/{id}` returns 500 for freshly-created / mid-transition test summaries (note append).
+- Orchestrator `cancel` (`/api/orch/v4/.../queue/{id}`) returns transient 500s.
+- Test-history (testsummaries) ingestion latency is highly variable (seconds → many minutes) when the console
+  pipeline is congested.
+These are SafeBreach backend/API issues, independent of the MCP fix; documented and filed as a follow-up bug.
+
 ## 14. Change Log
 
 | Date | Change Description |
@@ -354,3 +400,4 @@ before closing.
 | 2026-06-16 13:55 | Phase 2 implemented (TDD): status-aware draft flag + warnings in `run_studio_attack`; 4 new unit tests + updated `TestRunStudioAttack`/`TestExplicitSimulatorSelection`; E2E added; CLAUDE.md entry 24; code review APPROVE; cross-server 1147 passed |
 | 2026-06-16 14:05 | E2E executed on live console `pentest01` and PASSED — published run queued with draft=False and visible in get_tests listing; hardened E2E to assert listing visibility (poll) and fail loudly |
 | 2026-06-17 | Phase 3 (refactor): extracted `_find_attack_by_id`; `_get_attack_status_by_id` and `set_studio_attack_status` both reuse it. Behavior-preserving; status-transition E2E passed on pentest01. Status → Complete |
+| 2026-06-17 | Extended scope (full-suite E2E hardening): fixed pre-existing rate-limit/drift fixture rot; reverted manage_test note reorder + documented backend 500; dropped rotted adhoc attack 11663; hardened + self-cleaning visibility E2E; added per-test + session-epilogue E2E queue-leak cleanup (paused-aware). Documented known backend issues for a follow-up bug. See Section 13 |
