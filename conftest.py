@@ -129,8 +129,15 @@ def cancel_e2e_leftovers():
                 sb_manage_test(test_id=test_id, action="cancel", console=console)
                 cancelled += 1
             except Exception:
-                # Already terminal / not cancellable / API error — best-effort.
-                pass
+                # A PAUSED test cannot be cancelled directly ("resume first, then
+                # cancel") — resume then cancel. Other failures (already terminal,
+                # API error) are fine to ignore (best-effort).
+                try:
+                    sb_manage_test(test_id=test_id, action="resume", console=console)
+                    sb_manage_test(test_id=test_id, action="cancel", console=console)
+                    cancelled += 1
+                except Exception:
+                    pass
         print(f"\n[E2E epilogue] cancelled {cancelled} leftover test(s) of "
               f"{len(seen)} registered")
     finally:
