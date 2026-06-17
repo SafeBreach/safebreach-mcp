@@ -108,6 +108,11 @@ def _cleanup_test(test_id, console, test_name, passed, detail=""):
     """Cancel and comment a test. Called in finally blocks."""
     if not test_id:
         return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
     _cancel_test(test_id, console)
     status = "PASSED" if passed else "FAILED"
     comment = f"[MCP E2E] {test_name}: {status}. {detail}".strip()

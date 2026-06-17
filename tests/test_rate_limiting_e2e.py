@@ -26,7 +26,22 @@ skip_e2e = pytest.mark.skipif(
 
 
 def _cancel_test_best_effort(test_id: str, console: str) -> None:
-    """Best-effort cleanup — cancel a queued/running test."""
+    """Best-effort cleanup — cancel a queued/running test.
+
+    Registers the id with the session epilogue (conftest) as a backstop, and clears
+    the rate-limit store first so this cleanup cancel is not itself blocked by a limit
+    that was exhausted during the test (these tests run with rate limiting enabled)."""
+    if not test_id:
+        return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
+    try:
+        _rate_limit_store.clear()
+    except Exception:
+        pass
     try:
         sb_manage_test(test_id=test_id, action="cancel", console=console)
     except Exception:
