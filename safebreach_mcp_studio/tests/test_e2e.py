@@ -474,9 +474,17 @@ class TestStudioExecutionE2E:
             # (testsummaries list — the same surface as the Test Results page, which excludes
             # draft-scoped runs). Locate it by its unique name (get_tests filters before
             # paginating, so a unique name lands on page 0). Poll to absorb list-indexing lag.
+            #
+            # NOTE: this depends on the SafeBreach backend's test-ingestion latency, which is
+            # a *variable backend property* — typically a few seconds, but observed to stall
+            # for many minutes when the console's data pipeline is degraded. If this assertion
+            # fails, first confirm whether the console is ingesting NEW tests at all (compare
+            # the newest start_time in get_tests to "now"); a stalled pipeline is a backend
+            # health issue, not a regression in run_studio_attack (whose draft=False behavior
+            # is asserted deterministically above).
             found_in_listing = False
             attempt = 0
-            deadline_polls = 18  # ~180s at 10s intervals
+            deadline_polls = 30  # ~300s at 10s intervals
             for attempt in range(deadline_polls):
                 listing = sb_get_tests(
                     console=E2E_CONSOLE, page_number=0,
