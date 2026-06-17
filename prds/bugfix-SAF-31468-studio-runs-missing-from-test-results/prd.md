@@ -26,10 +26,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
-| **Last Updated** | 2026-06-16 13:55 |
+| **PRD Status** | Complete |
+| **Last Updated** | 2026-06-17 |
 | **Owner** | Yossi Attas |
-| **Current Phase** | Phase 3 of 3 — optional (Phases 1-2 complete) |
+| **Current Phase** | Complete (Phases 1-3 done) |
 
 ## 2. Solution Description
 
@@ -212,7 +212,7 @@ flowchart TD
 |-------|--------|-----------|------------|-------|
 | Phase 1: Add `_get_attack_status_by_id` helper | ✅ Complete | 2026-06-16 | `9f6af70` | `TestGetAttackStatusById` (4 unit) green; full studio suite 465 passed |
 | Phase 2: Make `run_studio_attack` draft conditional + warnings | ✅ Complete | 2026-06-16 | `faf10d1` | unit green (TestRunStudioAttack incl. 4 new + TestExplicitSimulatorSelection updated); cross-server suite 1147 passed; CLAUDE.md updated; **E2E PASSED on pentest01** (test 1781613591211.39 visible in listing) |
-| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ⏳ Pending | - | - | sign-off: `TestSetStudioAttackStatus` regression green + lint |
+| Phase 3 (optional): Refactor `set_studio_attack_status` to reuse helper | ✅ Complete | 2026-06-17 | _pending commit_ | extracted `_find_attack_by_id`; `TestSetStudioAttackStatus` 23 green; cross-server 1147 pass; status-transition E2E pass on pentest01 |
 
 ### Phase 1: Add `_get_attack_status_by_id` helper
 - **Semantic Change:** Introduce a reusable internal helper that returns one attack's current status by ID.
@@ -353,3 +353,4 @@ before closing.
 | 2026-06-16 13:33 | Phase 1 implemented (TDD): `_get_attack_status_by_id` helper + `TestGetAttackStatusById` (4 tests green); status → In Progress |
 | 2026-06-16 13:55 | Phase 2 implemented (TDD): status-aware draft flag + warnings in `run_studio_attack`; 4 new unit tests + updated `TestRunStudioAttack`/`TestExplicitSimulatorSelection`; E2E added; CLAUDE.md entry 24; code review APPROVE; cross-server 1147 passed |
 | 2026-06-16 14:05 | E2E executed on live console `pentest01` and PASSED — published run queued with draft=False and visible in get_tests listing; hardened E2E to assert listing visibility (poll) and fail loudly |
+| 2026-06-17 | Phase 3 (refactor): extracted `_find_attack_by_id`; `_get_attack_status_by_id` and `set_studio_attack_status` both reuse it. Behavior-preserving; status-transition E2E passed on pentest01. Status → Complete |
