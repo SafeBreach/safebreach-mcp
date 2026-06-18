@@ -30,16 +30,19 @@ E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'pentest01')
 SKIP_E2E_TESTS = os.environ.get('SKIP_E2E_TESTS', 'false').lower() == 'true'
 
 # Verified attacks on pentest01 with applicable simulators
-E2E_ATTACK_IDS = [11653, 11662, 7207, 11663, 11622]
+E2E_ATTACK_IDS = [11653, 11662, 7207, 11622]
 
 # Minimal simulator overrides — verified to produce non-zero, low simulation counts.
 # Discovered by probing the statistics API with single-simulator pairs per attack.
-# Total: ~101 sims (vs ~5,750 with all_connected = 57x reduction).
+# Total: ~103 sims (vs ~5,750 with all_connected).
+#
+# NOTE: attack 11663 (email → GMX target) was removed because the GMX target
+# simulator (dfb37a8f-...) is no longer present on the E2E console, so it produced
+# 0 sims; there is no email-target simulator currently available to repoint it to.
 #
 # 11653: host LINUX attack → rc-centos9 (attacker=target, 1 sim)
 # 11662: network HTTP transfer → rc-centos9 target + external attacker infil (54 sims)
 # 7207:  network Azure PS script → pz-crowdstrike target + external attacker (36 sims)
-# 11663: email attack → GMX target + passmgmt attacker (4 sims)
 # 11622: network HTTP transfer → pz-crowdstrike target + pz-noedr attacker (12 sims)
 E2E_SIMULATOR_OVERRIDES = {
     "11653": {
@@ -52,10 +55,6 @@ E2E_SIMULATOR_OVERRIDES = {
     "7207": {
         "target": ["6a3d5b57-4752-408c-9b29-1fb0233e49c0"],       # pz-crowdstrike
         "attacker": ["a3d8ea5a-3077-4607-9952-4e44a702d1fe"],     # external attacker
-    },
-    "11663": {
-        "target": ["dfb37a8f-b726-4d41-aa59-3b92c52fcb3c"],       # GMX
-        "attacker": ["52a6edc4-8b35-4bfb-8a0d-4538a0188354"],     # passmgmt
     },
     "11622": {
         "target": ["6a3d5b57-4752-408c-9b29-1fb0233e49c0"],       # pz-crowdstrike
@@ -109,6 +108,11 @@ def _cleanup_test(test_id, console, test_name, passed, detail=""):
     """Cancel and comment a test. Called in finally blocks."""
     if not test_id:
         return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
     _cancel_test(test_id, console)
     status = "PASSED" if passed else "FAILED"
     comment = f"[MCP E2E] {test_name}: {status}. {detail}".strip()
@@ -125,8 +129,8 @@ def _cleanup_test(test_id, console, test_name, passed, detail=""):
 class TestRunAdhocScenarioE2E:
     """E2E tests for sb_run_adhoc_scenario against a real console."""
 
-    def test_dry_run_all_five_attacks(self):
-        """Dry-run with all 5 verified attacks produces predicted_simulations > 0."""
+    def test_dry_run_all_attacks(self):
+        """Dry-run with all verified attacks produces predicted_simulations > 0."""
         attack_ids_str = ",".join(str(a) for a in E2E_ATTACK_IDS)
 
         result = sb_run_adhoc_scenario(
@@ -137,10 +141,10 @@ class TestRunAdhocScenarioE2E:
 
         assert result["status"] == "dry_run"
         assert result["predicted_simulations"] > 0
-        assert len(result["steps"]) == 5
-        assert len(result["predicted_per_step"]) == 5
+        assert len(result["steps"]) == len(E2E_ATTACK_IDS)
+        assert len(result["predicted_per_step"]) == len(E2E_ATTACK_IDS)
         logger.info(
-            f"Dry-run 5 attacks: {result['predicted_simulations']} predicted sims, "
+            f"Dry-run {len(E2E_ATTACK_IDS)} attacks: {result['predicted_simulations']} predicted sims, "
             f"per-step: {result['predicted_per_step']}"
         )
 

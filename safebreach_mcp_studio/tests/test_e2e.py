@@ -45,6 +45,26 @@ skip_e2e = pytest.mark.skipif(
     reason="E2E tests skipped (set SKIP_E2E_TESTS=false to enable)"
 )
 
+
+def _cancel_test_best_effort(test_id, console):
+    """Cancel a queued/running E2E test so it does not accumulate in the orchestrator
+    queue. Tests that queue real runs MUST call this in teardown — leftover runs pile
+    up and clog the console's test pipeline. Also registers the id with the session
+    epilogue (conftest) as a backstop in case this immediate cancel fails."""
+    if not test_id:
+        return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
+    try:
+        from safebreach_mcp_studio.studio_functions import sb_manage_test
+        sb_manage_test(test_id=test_id, action="cancel", console=console)
+    except Exception:
+        pass
+
+
 # Sample valid host attack code for E2E testing
 SAMPLE_HOST_CODE = '''
 def main(system_data, asset, proxy, *args, **kwargs):
@@ -398,6 +418,7 @@ class TestStudioExecutionE2E:
         if not E2E_STUDIO_ATTACK_ID:
             pytest.skip("E2E_STUDIO_ATTACK_ID not set")
 
+        test_id = None
         try:
             attack_id = int(E2E_STUDIO_ATTACK_ID)
             result = sb_run_studio_attack(
@@ -412,6 +433,7 @@ class TestStudioExecutionE2E:
             assert 'status' in result
             assert result['attack_id'] == attack_id
             assert result['status'] == 'queued'
+            test_id = result['test_id']
 
             print(f"\n=== Run Attack E2E ===")
             print(f"  Attack ID: {attack_id}")
@@ -420,6 +442,114 @@ class TestStudioExecutionE2E:
 
         except Exception as e:
             pytest.skip(f"Could not run attack on {E2E_CONSOLE}: {e}")
+        finally:
+            # Cancel the queued run so it does not clog the orchestrator queue.
+            _cancel_test_best_effort(test_id, E2E_CONSOLE)
+
+    def test_run_published_studio_attack_visible_in_test_results_e2e(self):
+        """SAF-31468: a published Studio attack run must be discoverable in Test Results.
+
+        Creates a brand-new attack (never run as draft), publishes it, runs it, then
+        verifies the returned planRunId is retrievable via the Data Server's test history
+        (the same testsummaries surface that backs the Test Results UI).
+        """
+        import time
+        from safebreach_mcp_data.data_functions import sb_get_tests
+
+        # Unique test name so the run can be located in the listing deterministically via
+        # name_filter (get_tests filters before paginating) — robust regardless of how many
+        # other tests exist on the console or their ordering/indexing.
+        unique_test_name = f"SB E2E SAF-31468 visibility {int(time.time())}"
+
+        attack_id = None
+        test_id = None
+        try:
+            # --- Setup (environment-dependent): create + publish + run a fresh attack.
+            # Genuine environment/precondition failures here skip; the visibility assertions
+            # below run OUTSIDE this inner try so a real regression fails loudly (not skipped).
+            try:
+                save_result = sb_save_studio_attack_draft(
+                    name="SB E2E SAF-31468 visibility",
+                    python_code=SAMPLE_HOST_CODE,
+                    attack_type="host",
+                    console=E2E_CONSOLE,
+                )
+                attack_id = int(save_result['draft_id'])
+                sb_set_studio_attack_status(
+                    attack_id=attack_id, new_status="published", console=E2E_CONSOLE
+                )
+                run_result = sb_run_studio_attack(
+                    attack_id=attack_id, console=E2E_CONSOLE, all_connected=True,
+                    test_name=unique_test_name,
+                )
+            except Exception as e:
+                pytest.skip(f"Setup failed on {E2E_CONSOLE} (cannot exercise visibility): {e}")
+
+            test_id = run_result['test_id']
+            print(f"\n=== Published Run Visibility E2E (SAF-31468) ===")
+            print(f"  Attack ID: {attack_id}")
+            print(f"  Test ID: {test_id}")
+            print(f"  draft flag: {run_result['draft']}")
+
+            # --- Assertions (the regression gate): a PUBLISHED attack must queue with
+            # draft=False AND be discoverable in the Test Results surface. These fail loudly.
+            assert run_result['draft'] is False, "published attack must queue with draft=False"
+            assert test_id
+
+            # The real regression gate: the run must appear in the test history LISTING
+            # (testsummaries list — the same surface as the Test Results page, which excludes
+            # draft-scoped runs). Locate it by its unique name (get_tests filters before
+            # paginating, so a unique name lands on page 0). Poll to absorb list-indexing lag.
+            #
+            # NOTE: this depends on the SafeBreach backend's test-ingestion latency, which is
+            # a *variable backend property* — typically a few seconds, but observed to stall
+            # for many minutes when the console's data pipeline is degraded. If this assertion
+            # fails, first confirm whether the console is ingesting NEW tests at all (compare
+            # the newest start_time in get_tests to "now"); a stalled pipeline is a backend
+            # health issue, not a regression in run_studio_attack (whose draft=False behavior
+            # is asserted deterministically above).
+            found_in_listing = False
+            attempt = 0
+            deadline_polls = 30  # ~300s at 10s intervals
+            for attempt in range(deadline_polls):
+                listing = sb_get_tests(
+                    console=E2E_CONSOLE, page_number=0,
+                    name_filter=unique_test_name,
+                    order_by="start_time", order_direction="desc",
+                )
+                page_ids = {str(t.get('test_id', '')) for t in listing.get('tests_in_page', [])}
+                if str(test_id) in page_ids:
+                    found_in_listing = True
+                    break
+                time.sleep(10)
+
+            assert found_in_listing, (
+                f"planRunId {test_id} (name '{unique_test_name}') not found in get_tests listing "
+                f"after polling — published run is not visible in Test Results history (regression)"
+            )
+            print(f"  Visible in get_tests listing: True (after {attempt + 1} poll attempt(s))")
+        finally:
+            # Best-effort cleanup: cancel the queued run so it does not clog the
+            # orchestrator queue, then delete the attack created by this test.
+            _cancel_test_best_effort(test_id, E2E_CONSOLE)
+            if attack_id is not None:
+                self._delete_studio_attack(attack_id, E2E_CONSOLE)
+
+    @staticmethod
+    def _delete_studio_attack(attack_id, console):
+        """Delete a custom method via the direct content API (test cleanup; best-effort)."""
+        import requests
+        from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+        from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
+        try:
+            base_url = get_api_base_url(console, 'config')
+            account_id = get_api_account_id(console)
+            headers = {**get_auth_headers_for_console(console)}
+            url = f"{base_url}/api/content/v1/accounts/{account_id}/customMethods/{attack_id}"
+            resp = requests.delete(url, headers=headers, timeout=120)
+            print(f"  Cleanup: DELETE attack {attack_id} -> HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"  Cleanup: failed to delete attack {attack_id}: {e}")
 
     def test_get_studio_attack_latest_result_e2e(self):
         """Test getting latest result for a pre-existing attack."""
@@ -502,6 +632,7 @@ class TestStudioDebugFlowE2E:
         if not E2E_STUDIO_ATTACK_ID:
             pytest.skip("E2E_STUDIO_ATTACK_ID not set")
 
+        test_id = None
         try:
             attack_id = int(E2E_STUDIO_ATTACK_ID)
 
@@ -549,6 +680,9 @@ class TestStudioDebugFlowE2E:
 
         except Exception as e:
             pytest.skip(f"Debug flow test failed on {E2E_CONSOLE}: {e}")
+        finally:
+            # Cancel the queued run so it does not clog the orchestrator queue.
+            _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
 
 @skip_e2e

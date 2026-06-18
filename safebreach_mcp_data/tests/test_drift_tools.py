@@ -3311,17 +3311,20 @@ skip_e2e = pytest.mark.skipif(
 # Window 3: Feb 26 14:00-20:00 UTC — 1 drift  (detected→stopped ×1)
 # Window 4: Mar 4 12:00-18:00 UTC — 1 drift  (inconsistent→prevented ×1)
 
-# Using Window 1 (most drifts, good for drill-down testing)
-_E2E_WINDOW_START = 1770278400000  # 2026-02-05T08:00:00Z
-_E2E_WINDOW_END = 1770300000000    # 2026-02-05T14:00:00Z
-_E2E_EXPECTED_MIN_DRIFTS = 6  # at least 6 known drifts in this window
-_E2E_EXPECTED_KEYS = {"logged-prevented", "logged-stopped", "missed-stopped"}
-
-# Dynamic window for attack filter E2E tests — last 30 days from now
-# (narrower than 90 days to avoid "simulation count exceeded maximum" API errors)
+# Data-dependent E2E tests use a window relative to "now" so they exercise whatever
+# real drift data the console currently has. The previously hardcoded Feb-2026 window
+# (6 curated drifts) aged out and started returning 0, so the asserts must derive
+# expectations from the live summary rather than hardcoded counts/keys.
+# 30 days mirrors the attack-filter window and avoids "simulation count exceeded
+# maximum" API errors on busy consoles.
 import time as _time
-_E2E_ATTACK_FILTER_WINDOW_END = int(_time.time() * 1000)
-_E2E_ATTACK_FILTER_WINDOW_START = _E2E_ATTACK_FILTER_WINDOW_END - (30 * 24 * 60 * 60 * 1000)
+_E2E_WINDOW_END = int(_time.time() * 1000)
+_E2E_WINDOW_START = _E2E_WINDOW_END - (30 * 24 * 60 * 60 * 1000)  # last 30 days
+_E2E_EXPECTED_MIN_DRIFTS = 1  # an active console should have at least one status drift in 30 days
+
+# Attack-filter E2E tests share the same relative 30-day window.
+_E2E_ATTACK_FILTER_WINDOW_END = _E2E_WINDOW_END
+_E2E_ATTACK_FILTER_WINDOW_START = _E2E_WINDOW_START
 
 
 @pytest.fixture(scope="class")
@@ -3348,14 +3351,18 @@ class TestDriftToolsE2E:
             window_end=_E2E_WINDOW_END,
         )
 
-        assert result["total_drifts"] >= _E2E_EXPECTED_MIN_DRIFTS
-        assert result["total_groups"] >= 3
-        assert isinstance(result["drift_groups"], list)
+        if result["total_drifts"] == 0:
+            pytest.skip("No status drifts on console in the last 30 days")
 
-        keys = {g["drift_key"] for g in result["drift_groups"]}
-        assert _E2E_EXPECTED_KEYS.issubset(keys), (
-            f"Expected keys {_E2E_EXPECTED_KEYS} not found in {keys}"
-        )
+        # Verify the summary structure against whatever real drifts exist in the window.
+        assert result["total_drifts"] >= _E2E_EXPECTED_MIN_DRIFTS
+        assert result["total_groups"] >= 1
+        assert isinstance(result["drift_groups"], list)
+        assert len(result["drift_groups"]) == result["total_groups"]
+        for group in result["drift_groups"]:
+            assert "drift_key" in group
+            assert "count" in group
+            assert group["count"] >= 1
 
     @skip_e2e
     @pytest.mark.e2e
@@ -3363,15 +3370,26 @@ class TestDriftToolsE2E:
         """Drill-down into a status drift group returns paginated records."""
         from safebreach_mcp_data.data_functions import sb_get_simulation_status_drifts
 
+        # Derive a real drift_key from the summary (largest group) instead of hardcoding
+        # one that may not exist in the current window.
+        summary = sb_get_simulation_status_drifts(
+            console=e2e_console,
+            window_start=_E2E_WINDOW_START,
+            window_end=_E2E_WINDOW_END,
+        )
+        if summary["total_drifts"] == 0:
+            pytest.skip("No status drifts to drill into in the last 30 days")
+        drift_key = max(summary["drift_groups"], key=lambda g: g["count"])["drift_key"]
+
         drilldown = sb_get_simulation_status_drifts(
             console=e2e_console,
             window_start=_E2E_WINDOW_START,
             window_end=_E2E_WINDOW_END,
-            drift_key="logged-prevented",
+            drift_key=drift_key,
             page_number=0,
         )
 
-        assert drilldown["drift_key"] == "logged-prevented"
+        assert drilldown["drift_key"] == drift_key
         assert drilldown["total_drifts_in_group"] >= 1
         assert drilldown["page_number"] == 0
         assert drilldown["total_pages"] >= 1
