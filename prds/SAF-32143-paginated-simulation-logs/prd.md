@@ -397,7 +397,78 @@ Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 - **`get_test_simulation_details`** low-priority shape polish — `drift_info: {last_drift_date: null}` when not drifted is
   redundant; `mitre_techniques: []` is ambiguous (no mapping vs not fetched). Candidate for a follow-up cleanup.
 
-## 10. Document Status
+## 10. Manual E2E verification record (Claude Desktop → live console)
+
+This section records the real-environment verification (Phase 4) — both the automated E2E suite and the
+agent-behavioral evaluation through Claude Desktop — and the reasoning behind what it changed.
+
+### 10.1 Endpoint-availability journey — why **staging** was the only viable target
+
+The SAF-32099 data API (`/simulationLogs` + the v3 `executionsHistoryResults` result endpoint) is merged to the data
+`develop` branch but is **not deployed to most consoles**. Direct HTTP probing established this conclusively:
+
+| Console | `/simulationLogs` probe | Meaning |
+|---------|-------------------------|---------|
+| pentest01, flat-carp, demo03 | **HTTP 404 "Cannot GET"** | route absent — data build predates SAF-32099 |
+| zircon-piculet | 500 | backend unavailable |
+| **staging** | **SAF-32099 JSON error / 200** | route **present** — build includes SAF-32099 |
+
+Two consequences worth recording:
+- **The automated E2E suite on pentest01 (112 passed) did NOT exercise the new v3 capability.** pentest01 has no v3
+  endpoint, so `get_test_simulation_details` and `get_full_simulation_logs` ran their **v1/list-row fallback** paths; the
+  tests are written to tolerate the fallback (present-key / list-type assertions), so they pass without proving the v3
+  behavior. This is exactly why a console with SAF-32099 was required — and why the earlier flat-carp "raw v3 doc"
+  observation was a red herring (the v1 list row carries the same Pascal-case fields, so it was also the fallback path).
+- **Staging was mid-upgrade during verification** (backend `169.254.254.120:8181` `EHOSTUNREACH`, then a maintenance
+  page). Verification proceeded once it stabilized; this is environment flakiness, not a tool issue.
+
+### 10.2 Demo target (verified ground truth)
+
+- Console `staging`, test `1781090503798.2` (*Step 1 – Fortify your Network Perimeter (Infiltration)*), simulation
+  **`3504301`** (*Communication with APT (US-CERT AA23-025A) using HTTP*, status `no-result`).
+- **Dual-script** infiltration: attacker node `3b6e04fb-…` (Linux CentOS7), target node `8d528fe8-…` (Ubuntu18).
+- **Root cause (ground truth):** proxy DNS resolution failure — `cURL perform error: Could not resolve proxy:
+  testproxy.sbops.com` (credentials masked `**********`). Having a known root cause let us verify the *result-first*
+  flow actually lands the answer.
+- **Log profile:** by level ERROR=4 / WARNING=4 / INFO=76 / DEBUG=118; by node attacker=68 / target=50; by type
+  LOGS=106 / OUTPUT=12. Across the 10-sim test, `proxy`+ERROR matched all 10 sims (env-wide misconfig).
+
+### 10.3 Flows exercised against the live SAF-32099 endpoint — all verified ✅
+
+| Flow | Tool calls | Verified result |
+|------|-----------|-----------------|
+| Result-first | `get_test_simulation_details(3504301)` | Curated envelope; `simulation_steps_by_node` role-tagged (target ERROR/14 steps, attacker ERROR/8 steps); `logs_embedded=false`; **`result_details` surfaced the proxy root cause with no log call needed**. Leak-check: `dataObj`/`finalStatus` absent → raw doc not relayed |
+| Severity-first | `get_paginated_simulation_logs(3504301, levels=ERROR)` | `total=4`, complete answer, zero noise — the SAF-32058 anti-overflow behavior in practice |
+| Pagination / type | `…(log_type=OUTPUT)` / `min_level=DEBUG` | OUTPUT=12 isolated; DEBUG walks 118 lines across pages (`has_more` flips) |
+| Per-node | `…(node_id=attacker)` / `…(node_id=target)` | attacker=68, target=50 (vs 118 all-nodes) — node scoping correct |
+| Cross-sim search | `search_simulation_logs(message_contains=proxy, min_level=ERROR)` | 40 ERROR lines across 10 distinct `jobId`s — confirmed env-wide; unscoped query hit the 10k cap |
+
+### 10.4 Findings → disposition (the reasoning)
+
+The Claude Desktop evaluation confirmed the **design intent works** (result-first + per-node steps + severity-first
+filtering replace the 40KB-dump pattern) and surfaced 8 issues. Disposition:
+
+**Fixed in-scope (Phase 9) — because they live in this PRD's tools and directly affect the steering goal:**
+- *High — `get_full_simulation_logs` "always retrieve" wording.* This is the most important finding: the description told
+  the agent to **always** pull full logs for `stopped`/`no-result` sims — the exact opposite of the PRD's thesis, and a
+  direct path back to the SAF-32058 token overflow. The whole value of the new tools is undone if the detail tool's
+  sibling steers the model to dump 40KB anyway. Rewrote to: call **only** when `logs_embedded=true`. *(Reasoning: steering
+  is the deliverable here, not just the endpoints.)*
+- *High — `IndexError` on a non-existent sim id.* Surfaced because the eval queried a staging sim id against pentest01.
+  Even though that's a console mismatch, a tool must not crash on "not found" — it returns a graceful `{error, hint}` now.
+- *Medium — `total_capped` flag.* The ES 10k cap made `total` a silent lower bound; an agent reporting "10,000 errors"
+  is wrong. Made it programmatically detectable rather than relying on the model to infer it from prose. *(Reasoning:
+  correctness of agent-reported counts; cheap to expose, expensive to get wrong.)*
+
+**Deferred — documented in §9; out of this PRD's surface:**
+- Drift-tool `window_start` schema (SAF-28330, different feature). • `planRunId` missing on attacker log lines — the MCP
+  relays `_source` verbatim, so this is a **data-side** SAF-32099 fix, not addressable in MCP. • `get_simulation_lineage`
+  `simulation_id` shortcut (separate tool). • `drift_info`/`mitre_techniques` shape polish (low-priority follow-up).
+
+**Net:** the report's verdict ("substantial improvement; core flow works as designed") matches the design intent, and the
+one actively-harmful item was a steering-description bug — now corrected and re-verifiable via `agent-test-plan.md`.
+
+## 11. Document Status
 - **Last Updated:** 2026-06-18
 - **Author:** Amir Rossert (planning via planning-dev-task); Phase 8 hybrid revision + E2E verification by Yossi Attas
 - **Branch:** `feature/SAF-32143-paginated-simulation-logs`

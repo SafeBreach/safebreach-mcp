@@ -1,5 +1,12 @@
 # Agent Test Plan — SAF-32143 simulation-logs tools (behavioral / via the AI agent)
 
+> **Execution record (2026-06-18, Claude Desktop → `staging`).** This plan was exercised through Claude Desktop against
+> the `staging` console (the only reachable console with the SAF-32099 endpoints), using dual-script sim `3504301` in test
+> `1781090503798.2`. The core result-first → severity-first → per-node → cross-sim flows all behaved as designed. The
+> evaluation also surfaced a steering bug (`get_full_simulation_logs` told agents to "always retrieve" logs for
+> stopped/no-result sims) plus an `IndexError` and a missing cap flag — all fixed in **Phase 9**. Full record, demo
+> profile, verified flows, and findings→disposition: see **`prd.md` §10**.
+
 Goal: verify the AI agent that consumes this MCP follows the intended **result-first, logs-last** investigation flow,
 picks the **right** log tool, and uses the filters smartly. This tests the *tool descriptions / steering*, not the API
 (API-level checks live in `manual-tests.md`).
