@@ -5,6 +5,20 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0 — 2026-06-18
+
+### Changed
+
+- `run_studio_attack` now queues a test with its `draft` flag matching the attack's publication status: PUBLISHED attacks are queued
+  with `draft=False` so the run is discoverable in Test Results (parity with a UI quick-run); DRAFT attacks are queued with
+  `draft=True` and the response includes a hint to publish first.
+
+### Fixed
+
+- Outbound backend authentication is now resolved solely from the live MCP request instead of a ContextVar. This prevents a
+  stale/expired token captured from an earlier request (under streamable-http transport) from being sent to the backend and causing
+  401 errors ~15 minutes after a (re)start.
+
 ## 1.3.0 — 2026-05-21
 
 ### Added
