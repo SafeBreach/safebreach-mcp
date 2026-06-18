@@ -311,13 +311,19 @@ use get_simulation_result_drifts or get_simulation_status_drifts instead."""
         @self.mcp.tool(
             name="get_full_simulation_logs",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Retrieves comprehensive low-level execution logs for a specific simulation (~40KB detailed traces per node).
+            description="""Retrieves the full embedded execution-log blob for ONE simulation (~40KB raw traces per node).
 
-IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, returned no-result, or produced unexpected results.
-The logs contain granular execution traces NOT available in get_test_simulation_details or get_studio_attack_latest_result.
-When a simulation status is "stopped" or "no-result", always retrieve these logs before concluding root cause.
-
-Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation. \
+Use this tool in EXACTLY ONE case: the simulation's logs_embedded=true. That flag (from get_test_simulation_details, or \
+from this tool) means the logs are an OLD-format embedded blob that is NOT in the logs index — \
+get_paginated_simulation_logs / search_simulation_logs return EMPTY for that simulation, so this tool is the only way to \
+read its logs.
+For EVERY other simulation (logs_embedded=false — the common case) use get_paginated_simulation_logs instead: it is \
+filtered, paginated, severity-scoped, and does NOT load ~40KB into context.
+Do NOT call this tool merely because a simulation is "stopped", "no-result", or failed — those statuses do NOT imply \
+logs_embedded=true. Investigate result-first via get_test_simulation_details (its per-node simulation_steps_by_node usually \
+explains the flow on its own), then, only if needed, pull filtered logs with get_paginated_simulation_logs (severity-first: \
+levels=ERROR for failures). When this tool IS the right source, prefer the structured simulation_steps over the raw 'logs' \
+string where both are present.
 Use drift_tracking_code from the parent simulation to correlate logs across test runs via get_simulation_lineage.
 Fetches via the data v3 result endpoint with includeLogs=true (falls back to v1 on older consoles).
 Returns a role-based structure:
@@ -375,7 +381,8 @@ must be <= 10000), min_level (DEBUG|INFO|WARNING|ERROR, default INFO — thresho
 by default), levels (pipe-delimited explicit set e.g. 'ERROR|WARNING', overrides min_level), message_contains (case-insensitive \
 substring), start_time / end_time (ISO-8601 or epoch ms), log_type (LOGS|OUTPUT|ALL, default LOGS), sort_order (asc|desc, \
 default asc), node_id (optional simulator-node id to scope to one node of the attack), console. \
-Returns { logs, total, page, page_size, has_more }. Results cached ~10 minutes."""
+Returns { logs, total, total_capped, page, page_size, has_more } (total_capped=true means total is the ES 10k lower \
+bound, not exact). Results cached ~10 minutes."""
         )
         async def get_paginated_simulation_logs_tool(
             simulation_id: str,
@@ -424,12 +431,17 @@ their logs are only available via get_full_simulation_logs (v3 result with inclu
 
 IMPORTANT counting note: the response returns log LINES and `total` counts lines, NOT simulations. To count distinct \
 simulations (e.g. 'how many sims ended with error X'), dedupe the `jobId` field across the returned lines (each line includes \
-jobId and planRunId). This is exact only while the result set fits under the ~10k ceiling; there is no server-side aggregation.
+jobId and planRunId). CRITICAL: `total` is capped by Elasticsearch at 10000 — when `total_capped=true` in the response, \
+`total` is a LOWER BOUND, not the exact count (the real number is larger and unknown). Never report a capped total as exact; \
+narrow filters (tighter time window, more specific message_contains, levels=ERROR) until total_capped=false, then dedupe \
+jobId. There is no server-side aggregation. Use the most SPECIFIC message_contains available (e.g. a hostname) — a broad \
+keyword can match unrelated failure modes.
 
 Parameters: simulation_ids (optional pipe-delimited list; omit = all sims), page, page_size (default 500, max 1000), min_level \
 (default INFO), levels (pipe-delimited, overrides min_level), message_contains, start_time / end_time (ISO-8601 or epoch ms), \
 log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), node_id (optional simulator-node id to scope every match to a single node — \
-e.g. only the attacker or only the target node), console. Returns { logs, total, page, page_size, has_more }. Cached ~10 min."""
+e.g. only the attacker or only the target node), console. Returns { logs, total, total_capped, page, page_size, has_more } \
+(total_capped=true => total is the ES 10k lower bound, not exact). Cached ~10 min."""
         )
         async def search_simulation_logs_tool(
             simulation_ids: str = "",

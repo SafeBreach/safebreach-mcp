@@ -664,22 +664,34 @@ def get_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
     (filters too narrow, or an old-format simulation whose logs are embedded — use
     ``get_full_simulation_logs`` for those).
 
+    Elasticsearch caps ``hits.total.value`` at 10,000 (no ``track_total_hits``), so for large
+    cross-simulation searches ``total`` is a **lower bound**, not the exact count. This is signalled
+    explicitly via ``total_capped`` so consumers can detect it programmatically rather than inferring
+    it from ``has_more``.
+
     Args:
         api_response: Raw JSON dict from GET /api/data/v3/accounts/{accountId}/simulationLogs.
 
     Returns:
-        Dict with keys: logs, total, page, page_size, has_more (+ hint_to_agent when empty).
+        Dict with keys: logs, total, total_capped, page, page_size, has_more (+ hint_to_agent when
+        empty or when the total is capped).
     """
+    # Elasticsearch's default max_result_window / hits.total cap.
+    ES_TOTAL_CAP = 10000
+
     api_response = api_response or {}
     logs = api_response.get("logs") or []
     total = api_response.get("total") or 0
     page = api_response.get("page", 1)
     page_size = api_response.get("pageSize", api_response.get("page_size", 0))
     has_more = bool(api_response.get("hasMore", api_response.get("has_more", False)))
+    total_capped = isinstance(total, int) and total >= ES_TOTAL_CAP
 
     result: Dict[str, Any] = {
         "logs": logs,
         "total": total,
+        # True => `total` is a lower bound (ES capped at 10k); the real count is larger and unknown.
+        "total_capped": total_capped,
         "page": page,
         "page_size": page_size,
         "has_more": has_more,
@@ -691,6 +703,13 @@ def get_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
             "lowering min_level, or clearing message_contains), or this is an old-format simulation "
             "whose logs are embedded in the result rather than indexed — in that case use "
             "get_full_simulation_logs."
+        )
+    elif total_capped:
+        result["hint_to_agent"] = (
+            f"total is capped at {ES_TOTAL_CAP} (Elasticsearch limit) and is a LOWER BOUND, not the exact "
+            "count — the real number of matching lines is larger and unknown. Do NOT report it as exact. "
+            "Narrow with a tighter time window / more specific message_contains / levels=ERROR to bring the "
+            "result set under the cap, and dedupe by jobId for distinct-simulation counts."
         )
 
     return result

@@ -382,8 +382,20 @@ The raw v3 document is **not** relayed; it remains reachable only through the de
 | 6 | `get_test_simulation_details` → raw v3 result without logs (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | Replace curated entity with raw v3 result (`includeLogs=false`): full doc + SIMULATION_STEPS + logsEmbedded, LOGS/OUTPUT excluded server-side (ES `_source` excludes — no client strip needed); enrichments merged on top; list-row fallback for old consoles; hint routes to paginated logs / full logs by logsEmbedded; 462 tests green |
 | 7 | `node_id` filter for per-node investigation (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | data added `nodeId` to /simulationLogs (merged to develop); MCP threads `node_id` through fetch/cache/both entry points + tool wrappers; descriptions explain scoping to attacker vs target node (id from get_test_simulation_details); 467 tests green |
 | 8 | `get_test_simulation_details` curated hybrid shape (scope addition; revises Phase 6) | ✅ Complete | 2026-06-18 | (this branch) | Reverted the Phase 6 raw-passthrough to a curated envelope + `simulation_steps_by_node` (role-tagged, heavy logs excluded) + snake_case `logs_embedded`; new `build_simulation_steps_by_node()` in data_types.py; restores the curated snake_case contract while keeping the forensic steps (see §3.8 for reasoning); 471 data / 1204 cross-server non-e2e green |
+| 9 | Field-evaluation fixes (Claude Desktop report, staging) | ✅ Complete | 2026-06-18 | (this branch) | From a live Claude Desktop eval against staging: (1) rewrote `get_full_simulation_logs` description — call it ONLY when `logs_embedded=true` (old wording's "always retrieve for stopped/no-result" caused over-calling + ~40KB context dumps); (2) `get_test_simulation_details` returns a graceful `{error, hint}` for a non-existent sim id instead of `IndexError`; (3) added `total_capped` to the logs envelope so the ES 10k `total` cap is detectable programmatically (lower-bound hint). 475 data / 1208 cross-server non-e2e green; fixes verified live on staging |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
+
+### Deferred field-evaluation items (other tools / data-side — not in SAF-32143 scope)
+- **`get_simulation_result_drifts` / `get_simulation_status_drifts`** — `window_start`/`window_end` are marked
+  `default: null` in the schema but are effectively required (clear error if omitted). Fix the schema (mark required) or
+  add a server-side default. *(SAF-28330 drift tools — separate ticket.)*
+- **`get_paginated_simulation_logs`** — attacker-node log lines lack `planRunId` (target lines have it). The MCP passes
+  `_source` through verbatim, so this is a **data-side** index/field issue on SAF-32099, not an MCP fix.
+- **`get_simulation_lineage`** — accepts only `tracking_code` (two-hop via `get_test_simulation_details`); consider a
+  `simulation_id` shortcut. *(Separate tool/enhancement.)*
+- **`get_test_simulation_details`** low-priority shape polish — `drift_info: {last_drift_date: null}` when not drifted is
+  redundant; `mitre_techniques: []` is ambiguous (no mapping vs not fetched). Candidate for a follow-up cleanup.
 
 ## 10. Document Status
 - **Last Updated:** 2026-06-18

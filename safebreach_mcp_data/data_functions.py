@@ -936,7 +936,20 @@ def sb_get_simulation_details(
             logger.error("Failed to fetch simulation details for simulation ID %s: %s", simulation_id, response.text)
             return {"error": "Failed to fetch simulation details", "status_code": response.status_code}
 
-        list_row = response.json()['simulations'][0]
+        simulations_list = response.json().get('simulations', [])
+        if not simulations_list:
+            # No simulation with this id on this console (e.g. a sim id from a different console).
+            # Return a clear, structured signal instead of crashing with an IndexError.
+            logger.info("No simulation found with id '%s' on console '%s'", simulation_id, console)
+            return {
+                "error": f"Simulation '{simulation_id}' not found on console '{console}'",
+                "simulation_id": simulation_id,
+                "hint_to_agent": (
+                    "No simulation with this id exists on this console. Verify the simulation_id and the console "
+                    "(simulation ids are console-specific) via get_test_simulations."
+                ),
+            }
+        list_row = simulations_list[0]
         plan_run_id = list_row.get('planRunId')
 
         # Fetch the raw v3 result without logs: full document (incl. dataObj simulation steps)

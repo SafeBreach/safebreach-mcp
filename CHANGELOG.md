@@ -22,7 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `end_time`, `log_type` (LOGS/OUTPUT/ALL), `sort_order`, and `node_id` (scope to a single
     simulator node — e.g. only the attacker or only the target node of a dual-script attack);
     offset pagination via `page`/`page_size` (max 1000) returning
-    `{ logs, total, page, page_size, has_more }`. Results cached ~10 minutes.
+    `{ logs, total, total_capped, page, page_size, has_more }`. Results cached ~10 minutes.
+  - `total_capped` (bool): Elasticsearch caps `total` at 10,000, so for large cross-simulation
+    searches `total` is a **lower bound**, not exact. `total_capped=true` signals this explicitly
+    (with a `hint_to_agent`) so consumers don't report a capped total as the real count.
 
 ### Changed
 
@@ -39,10 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without the v3 endpoint.
   **Shape change:** the curated snake_case fields (e.g. `simulation_id`, `status`) are preserved;
   `simulation_steps_by_node` and `logs_embedded` are added.
+  Also now returns a graceful `{error, simulation_id, hint_to_agent}` when the simulation id does
+  not exist on the console (e.g. an id from a different console) instead of raising an `IndexError`.
 - `get_full_simulation_logs` now fetches via the data v3 result endpoint with `includeLogs=true`
   (falling back to v1 on older consoles) and exposes a new `logs_embedded` field: `true` means an
   old-format simulation whose logs exist only in the embedded blob (not in the logs index) — for
   those, use this tool rather than the paginated/search logs tools, which will return empty.
+  Its description was rewritten to steer agents correctly: call it **only** when `logs_embedded=true`
+  (the previous wording told agents to "always retrieve" logs for `stopped`/`no-result` simulations,
+  causing them to over-call it and dump ~40KB into context when filtered `get_paginated_simulation_logs`
+  would answer in a few lines).
 
 ## 1.3.0 — 2026-05-21
 

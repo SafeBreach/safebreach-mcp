@@ -1168,6 +1168,27 @@ class TestGetSimulationLogsMapping:
         # non-empty logs -> no hint
         assert not result.get("hint_to_agent")
 
+    def test_total_not_capped_below_10k(self, api_response):
+        """A normal total (< 10000) -> total_capped False, no cap hint."""
+        api_response["total"] = 42
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 42
+        assert result["total_capped"] is False
+        assert "capped" not in str(result.get("hint_to_agent") or "")
+
+    def test_total_capped_at_10k_flags_and_hints(self, api_response):
+        """total at the ES 10k cap -> total_capped True + a lower-bound hint."""
+        api_response["total"] = 10000
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 10000
+        assert result["total_capped"] is True
+        assert "lower bound" in (result.get("hint_to_agent") or "").lower()
+
+    def test_total_capped_present_even_when_empty(self):
+        """total_capped is always present in the envelope (False for empty results)."""
+        result = get_simulation_logs_mapping({"logs": [], "total": 0})
+        assert result["total_capped"] is False
+
 
 class TestFullSimulationLogsEmbeddedFlag:
     """logs_embedded passthrough from the v3 result endpoint (logsEmbedded hint)."""

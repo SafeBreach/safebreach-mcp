@@ -806,9 +806,26 @@ class TestDataFunctions:
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
             sb_get_simulation_details("sim1", "test-console")
-        
+
         assert "API Error" in str(exc_info.value)
-    
+
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_not_found_returns_graceful(self, mock_post, mock_base_url, mock_account_id):
+        """Empty simulations list (e.g. a sim id from another console) -> graceful error, NOT IndexError."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {"simulations": []}
+        mock_post.return_value = list_response
+
+        # Must not raise IndexError ('list index out of range')
+        result = sb_get_simulation_details("3504301", "test-console")
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        assert result["simulation_id"] == "3504301"
+        assert "hint_to_agent" in result
+
     # Security Control Events Tests
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
