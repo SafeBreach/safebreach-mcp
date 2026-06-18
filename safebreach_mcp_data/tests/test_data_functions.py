@@ -715,13 +715,21 @@ class TestDataFunctions:
             include_basic_attack_logs=True
         )
 
-        # Raw passthrough: original camelCase fields + simulation steps, no logs
-        assert result["id"] == "sim1"
-        assert result["finalStatus"] == "missed"
-        assert result["logsEmbedded"] is False
-        steps = result["dataObj"]["data"][0][0]["details"]["SIMULATION_STEPS"]
-        assert steps[0]["message"] == "step 1"
-        assert "LOGS" not in result["dataObj"]["data"][0][0]["details"]
+        # Hybrid shape: curated flat fields (no raw camelCase / dataObj passthrough)
+        assert result["simulation_id"] == "sim1"
+        assert result["status"] == "missed"
+        assert result["playbook_attack_name"] == "Test Move"
+        assert result["logs_embedded"] is False
+        assert "dataObj" not in result  # raw document is NOT relayed
+        assert "finalStatus" not in result  # curated, not raw camelCase
+        # Per-node execution steps (the forensic middle tier), heavy logs excluded
+        nodes = result["simulation_steps_by_node"]
+        assert len(nodes) == 1
+        assert nodes[0]["node_id"] == "node1"
+        assert nodes[0]["role"] == "host"  # no attacker/target node ids -> host attack
+        assert nodes[0]["task_status"] == "DONE"
+        assert nodes[0]["simulation_steps"][0]["message"] == "step 1"
+        assert "logs" not in nodes[0]  # heavy LOGS/OUTPUT not included in steps
         # Steering hint to the paginated logs tool
         assert "get_paginated_simulation_logs" in result.get("hint_to_agent", "")
 
@@ -757,8 +765,11 @@ class TestDataFunctions:
 
         result = sb_get_simulation_details("sim1", "test-console")
 
-        assert result["id"] == "sim1"
-        assert result["finalStatus"] == "missed"
+        # Curated shape from the v1 list-row fallback (no v3 -> no per-node steps)
+        assert result["simulation_id"] == "sim1"
+        assert result["status"] == "missed"
+        assert result["logs_embedded"] is None  # unknown on v1 fallback
+        assert result["simulation_steps_by_node"] == []  # list API strips dataObj
         assert "hint_to_agent" in result  # explains steps unavailable / v3 missing
 
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
@@ -780,7 +791,7 @@ class TestDataFunctions:
         mock_get.return_value = v3_response
 
         result = sb_get_simulation_details("sim1", "test-console")
-        assert result["logsEmbedded"] is True
+        assert result["logs_embedded"] is True
         assert "get_full_simulation_logs" in result.get("hint_to_agent", "")
         # and explicitly steers AWAY from the index-backed tools
         assert "NOT" in result["hint_to_agent"]

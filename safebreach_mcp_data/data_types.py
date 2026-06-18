@@ -258,6 +258,55 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
     return full_simulation_result_entity
 
 
+def build_simulation_steps_by_node(api_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract the per-node execution steps from a raw v3 result document.
+
+    This is the forensic "middle tier" of the result-first investigation flow: the
+    step-by-step execution trace per simulator node, WITHOUT the heavy LOGS/OUTPUT blobs
+    (those stay in the dedicated logs tools). Each node is tagged with its role
+    (attacker / target / host) so the agent can reason about dual-script attacks.
+
+    Args:
+        api_response: Raw v3 result document (from executionsHistoryResults, includeLogs=false).
+
+    Returns:
+        List of per-node dicts: {node_id, node_name, role, state, task_status, error,
+        simulation_steps}. Empty list when the document has no dataObj execution data
+        (e.g. the v1 list-row fallback on older consoles).
+    """
+    data_array = api_response.get('dataObj', {}).get('data', [[]])
+    if not data_array or not data_array[0]:
+        return []
+
+    entries = data_array[0]
+    attacker_node_id = api_response.get('attackerNodeId', '')
+    target_node_id = api_response.get('targetNodeId', '')
+    is_host_attack = (attacker_node_id == target_node_id)
+
+    nodes = []
+    for entry in entries:
+        details = entry.get('details', {})
+        node_id = entry.get('id', '')
+        if is_host_attack:
+            role = 'host'
+        elif node_id == attacker_node_id:
+            role = 'attacker'
+        elif node_id == target_node_id:
+            role = 'target'
+        else:
+            role = 'unknown'
+        nodes.append({
+            'node_id': node_id,
+            'node_name': entry.get('nodeNameInMove', ''),
+            'role': role,
+            'state': entry.get('state', ''),
+            'task_status': details.get('STATUS', ''),
+            'error': details.get('ERROR', ''),
+            'simulation_steps': details.get('SIMULATION_STEPS', []),
+        })
+    return nodes
+
+
 # Security control events mappings
 reduced_security_control_events_mapping = {
     'event_id': 'id',

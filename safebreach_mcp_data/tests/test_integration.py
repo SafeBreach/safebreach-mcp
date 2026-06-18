@@ -181,8 +181,9 @@ class TestSecurityControlEventsIntegration:
             "test-console"
         )
         
-        # Assertions — raw v3/list shape (camelCase passthrough)
-        assert simulation_details.get("id") or simulation_details.get("jobId")
+        # Assertions — curated hybrid shape (flat snake_case envelope)
+        assert simulation_details.get("simulation_id")
+        assert "simulation_steps_by_node" in simulation_details
         assert "hint_to_agent" in simulation_details
         assert security_events["total_events"] == 2
         assert len(security_events["events_in_page"]) == 2

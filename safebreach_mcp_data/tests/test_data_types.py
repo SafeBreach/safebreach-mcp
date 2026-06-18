@@ -19,6 +19,7 @@ from safebreach_mcp_data.data_types import (
     get_simulation_logs_mapping,
     get_reduced_test_summary_mapping,
     _build_node_data,
+    build_simulation_steps_by_node,
     get_reduced_peer_benchmark_response,
 )
 
@@ -1198,3 +1199,76 @@ class TestFullSimulationLogsEmbeddedFlag:
         result = get_full_simulation_logs_mapping({'id': 's', 'logsEmbedded': True, 'dataObj': {'data': [[]]}})
         assert result["logs_available"] is False
         assert result["logs_embedded"] is True
+
+
+class TestBuildSimulationStepsByNode:
+    """Per-node execution-steps extraction for the hybrid get_test_simulation_details shape."""
+
+    def test_host_attack_single_node(self):
+        """No attacker/target node ids (or equal) -> single 'host' node, steps preserved, no heavy logs."""
+        raw = {
+            "id": "sim1",
+            "dataObj": {"data": [[{
+                "id": "n1",
+                "nodeNameInMove": "host-A",
+                "state": "DONE",
+                "details": {
+                    "SIMULATION_STEPS": [{"level": "INFO", "message": "step 1"}],
+                    "STATUS": "DONE",
+                    "ERROR": "",
+                    "LOGS": "x" * 1000,  # heavy blob must NOT leak into steps
+                    "OUTPUT": "y" * 1000,
+                },
+            }]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node["node_id"] == "n1"
+        assert node["node_name"] == "host-A"
+        assert node["role"] == "host"
+        assert node["state"] == "DONE"
+        assert node["task_status"] == "DONE"
+        assert node["error"] == ""
+        assert node["simulation_steps"] == [{"level": "INFO", "message": "step 1"}]
+        # heavy blobs excluded
+        assert "logs" not in node and "output" not in node and "LOGS" not in node
+
+    def test_dual_script_roles_assigned(self):
+        """Distinct attacker/target node ids -> each node tagged with its role."""
+        raw = {
+            "id": "sim2",
+            "attackerNodeId": "atk",
+            "targetNodeId": "tgt",
+            "dataObj": {"data": [[
+                {"id": "tgt", "nodeNameInMove": "victim", "state": "DONE",
+                 "details": {"SIMULATION_STEPS": [{"message": "t"}], "STATUS": "DONE", "ERROR": ""}},
+                {"id": "atk", "nodeNameInMove": "attacker", "state": "DONE",
+                 "details": {"SIMULATION_STEPS": [{"message": "a"}], "STATUS": "DONE", "ERROR": "boom"}},
+            ]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        by_role = {n["role"]: n for n in nodes}
+        assert set(by_role) == {"attacker", "target"}
+        assert by_role["attacker"]["node_id"] == "atk"
+        assert by_role["attacker"]["error"] == "boom"
+        assert by_role["target"]["node_id"] == "tgt"
+
+    def test_unknown_role_when_id_mismatch(self):
+        """A node whose id matches neither attacker nor target is tagged 'unknown'."""
+        raw = {
+            "id": "sim3",
+            "attackerNodeId": "atk",
+            "targetNodeId": "tgt",
+            "dataObj": {"data": [[
+                {"id": "other", "details": {"SIMULATION_STEPS": [], "STATUS": "DONE"}},
+            ]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        assert nodes[0]["role"] == "unknown"
+
+    def test_empty_or_missing_dataobj_returns_empty_list(self):
+        """v1 fallback / no execution data -> empty list, never raises."""
+        assert build_simulation_steps_by_node({}) == []
+        assert build_simulation_steps_by_node({"dataObj": {"data": [[]]}}) == []
+        assert build_simulation_steps_by_node({"dataObj": {"data": []}}) == []

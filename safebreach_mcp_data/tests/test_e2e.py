@@ -184,10 +184,16 @@ class TestDataServerE2E:
             console=e2e_console
         )
         
-        # Verify response structure
+        # Verify response structure — curated hybrid envelope
         assert isinstance(result, dict)
         assert 'simulation_id' in result
         assert result['simulation_id'] == sample_simulation_id
+        # Hybrid additions: per-node execution steps (forensic middle tier) + routing flag,
+        # and NO raw v3 document passthrough
+        assert 'simulation_steps_by_node' in result
+        assert isinstance(result['simulation_steps_by_node'], list)
+        assert 'logs_embedded' in result
+        assert 'dataObj' not in result  # raw document is not relayed
 
     @pytest.mark.e2e
     def test_get_test_simulation_details_with_mitre_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
@@ -298,6 +304,15 @@ class TestDataServerE2E:
         assert 'basic_attack_logs_by_hosts' in result
         assert isinstance(result['mitre_techniques'], list)
         assert isinstance(result['basic_attack_logs_by_hosts'], list)
+        # Hybrid additions present alongside the enrichments
+        assert 'simulation_steps_by_node' in result
+        assert isinstance(result['simulation_steps_by_node'], list)
+        assert 'logs_embedded' in result
+        # Per-node steps carry role tagging + steps, never the heavy LOGS/OUTPUT blobs
+        for node in result['simulation_steps_by_node']:
+            assert node['role'] in ('attacker', 'target', 'host', 'unknown')
+            assert 'simulation_steps' in node
+            assert 'logs' not in node and 'output' not in node
 
     @pytest.mark.e2e 
     def test_attack_logs_across_multiple_simulations_e2e(self, e2e_console, sample_test_id):

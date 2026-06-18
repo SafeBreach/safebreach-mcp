@@ -22,6 +22,7 @@ from .data_types import (
     get_reduced_test_summary_mapping,
     get_reduced_simulation_result_entity,
     get_full_simulation_result_entity,
+    build_simulation_steps_by_node,
     get_reduced_security_control_events_mapping,
     get_full_security_control_events_mapping,
     group_and_enrich_drift_records,
@@ -890,16 +891,25 @@ def sb_get_simulation_details(
 ) -> Dict[str, Any]:
     """
     Get detailed information for a specific simulation.
-    
+
+    Returns a curated, LLM-friendly hybrid envelope (NOT the raw v3 document): flat snake_case
+    result fields (simulation_id, status, attacker/target nodes, attack info, result_details),
+    plus `simulation_steps_by_node` — the per-node execution steps that form the forensic
+    "middle tier" of the result-first investigation flow — and `logs_embedded` for log-tool
+    routing. Heavy per-node LOGS/OUTPUT blobs are excluded; deep log retrieval goes through
+    get_paginated_simulation_logs / get_full_simulation_logs. On older consoles without the v3
+    result endpoint, falls back to the curated list row (no per-node steps).
+
     Args:
         console: SafeBreach console name
         simulation_id: Simulation ID
         include_mitre_techniques: Include MITRE ATT&CK techniques
         include_basic_attack_logs: Include basic attack logs from simulation events
         include_drift_info: Include drift analysis information
-        
+
     Returns:
-        Dict containing simulation details
+        Dict with the curated simulation result, simulation_steps_by_node, logs_embedded,
+        optional enrichments, and a hint_to_agent.
     """
     try:
         logger.info("Getting api key for console %s", console)
@@ -948,44 +958,47 @@ def sb_get_simulation_details(
                 logger.warning("v3 result fetch failed for simulation '%s': %s; falling back to list row",
                                simulation_id, str(e))
 
-        if raw_result is not None:
-            # includeLogs=false guarantees details.LOGS/OUTPUT are excluded server-side (ES _source excludes)
-            return_details = raw_result
-            if return_details.get('logsEmbedded'):
-                return_details['hint_to_agent'] = (
-                    "Raw simulation result (logs excluded); simulation steps are in dataObj.data[..].details."
-                    "SIMULATION_STEPS. logsEmbedded=true: this is an old-format simulation — its logs are NOT in "
-                    "the logs index, so do NOT use get_paginated_simulation_logs/search_simulation_logs; use "
-                    "get_full_simulation_logs to retrieve the embedded logs if deeper investigation is needed."
-                )
-            else:
-                return_details['hint_to_agent'] = (
-                    "Raw simulation result (logs excluded); simulation steps are in dataObj.data[..].details."
-                    "SIMULATION_STEPS. If the result and steps are not enough to understand the flow, pull logs "
-                    "incrementally with get_paginated_simulation_logs (severity-first: levels=ERROR for failed "
-                    "simulations, min_level=INFO for successful ones)."
-                )
-        else:
-            # Older console (no v3 result endpoint) or fetch failure — fall back to the raw list
-            # row (no dataObj/simulation steps; the v1 list API strips them server-side).
-            return_details = list_row
-            return_details['hint_to_agent'] = (
-                "Raw simulation summary from the list API (the v3 result endpoint is unavailable on this "
-                "console, so simulation steps are not included). For execution logs use "
-                "get_paginated_simulation_logs, or get_full_simulation_logs for the full embedded blob."
-            )
-
-        # Merge optional enrichments on top of the raw result (computed from the same raw fields)
+        # Hybrid shape: a curated, LLM-friendly envelope (flat snake_case fields + optional
+        # enrichments) PLUS the per-node execution steps — the forensic "middle tier" — without
+        # the heavy LOGS/OUTPUT blobs. The full raw v3 document is NOT relayed; deep log retrieval
+        # goes through the dedicated logs tools (get_paginated_simulation_logs / get_full_simulation_logs).
         source_entity = raw_result if raw_result is not None else list_row
-        enriched = get_full_simulation_result_entity(
+        return_details = get_full_simulation_result_entity(
             source_entity,
             include_mitre_techniques=include_mitre_techniques,
             include_basic_attack_logs=include_basic_attack_logs,
             include_drift_info=include_drift_info
         )
-        for key in ('is_drifted', 'drift_info', 'mitre_techniques', 'basic_attack_logs_by_hosts'):
-            if key in enriched:
-                return_details[key] = enriched[key]
+
+        if raw_result is not None:
+            # logsEmbedded only exists on the v3 result; None signals "unknown" (v1 fallback).
+            return_details['logs_embedded'] = raw_result.get('logsEmbedded')
+            return_details['simulation_steps_by_node'] = build_simulation_steps_by_node(raw_result)
+            if return_details['logs_embedded']:
+                return_details['hint_to_agent'] = (
+                    "Curated simulation result with per-node execution steps in simulation_steps_by_node "
+                    "(heavy logs excluded). logs_embedded=true: this is an old-format simulation — its logs "
+                    "are NOT in the logs index, so do NOT use get_paginated_simulation_logs/"
+                    "search_simulation_logs; use get_full_simulation_logs to retrieve the embedded logs if "
+                    "the result and steps are not enough."
+                )
+            else:
+                return_details['hint_to_agent'] = (
+                    "Curated simulation result with per-node execution steps in simulation_steps_by_node "
+                    "(heavy logs excluded). If the result and steps are not enough to understand the flow, "
+                    "pull logs incrementally with get_paginated_simulation_logs (severity-first: levels=ERROR "
+                    "for failed simulations, min_level=INFO for successful ones)."
+                )
+        else:
+            # Older console (no v3 result endpoint) or fetch failure — curated list row only; the
+            # v1 list API strips dataObj, so per-node steps are unavailable here.
+            return_details['logs_embedded'] = None
+            return_details['simulation_steps_by_node'] = []
+            return_details['hint_to_agent'] = (
+                "Curated simulation summary from the list API (the v3 result endpoint is unavailable on this "
+                "console, so per-node simulation steps are not included). For execution logs use "
+                "get_paginated_simulation_logs, or get_full_simulation_logs for the full embedded blob."
+            )
 
         if include_drift_info and return_details.get('is_drifted', False):
             # Get the previous run ID of the most recent simulation with the same parameters such attack_playbook_id, simulators etc

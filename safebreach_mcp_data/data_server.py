@@ -151,25 +151,26 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
         @self.mcp.tool(
             name="get_test_simulation_details",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns the RAW simulation result (v3 result endpoint, logs excluded) for a specific simulation id — \
+            description="""Returns a CURATED simulation result (logs excluded) for a specific simulation id — \
 the PRIMARY investigation entry point for a simulation.
 
-The response is the full raw result document including the per-node simulation steps \
-(dataObj.data[..].details.SIMULATION_STEPS, plus ERROR/STATUS per node) with the heavy LOGS/OUTPUT blobs stripped. \
-It also includes 'logsEmbedded':
-- logsEmbedded=false: if the result + steps are not enough to understand the flow, pull logs incrementally with \
+The response is a flat, LLM-friendly envelope (simulation_id, status, attacker/target nodes, attack info, \
+result_details) PLUS 'simulation_steps_by_node': the per-node execution steps (each tagged role=attacker/target/host, \
+with task_status and error) that form the forensic middle tier. The heavy per-node LOGS/OUTPUT blobs are NOT included. \
+It also includes 'logs_embedded':
+- logs_embedded=false: if the result + steps are not enough to understand the flow, pull logs incrementally with \
 get_paginated_simulation_logs (severity-first: levels=ERROR for failed simulations, min_level=INFO for successful ones).
-- logsEmbedded=true: OLD-format simulation — its logs are NOT in the logs index; use get_full_simulation_logs instead \
+- logs_embedded=true: OLD-format simulation — its logs are NOT in the logs index; use get_full_simulation_logs instead \
 (get_paginated_simulation_logs/search_simulation_logs would return empty).
 In most investigations the result + steps are sufficient and no logs call is needed.
 
-Supports optional extensions merged on top of the raw result: MITRE ATT&CK techniques, basic attack logs by host from \
+Supports optional extensions merged into the envelope: MITRE ATT&CK techniques, basic attack logs by host from \
 simulation events, and drift analysis information.
 When include_drift_info=True, returns drift_tracking_code for drifted simulations. Pass this code to \
 get_simulation_lineage to see the full execution timeline across all test runs.
 Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False),
 include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
-On older consoles without the v3 result endpoint, falls back to the list-API summary (no simulation steps).
+On older consoles without the v3 result endpoint, falls back to the curated list-API summary (simulation_steps_by_node empty).
 For time-window-based drift trends, see get_simulation_result_drifts and get_simulation_status_drifts."""
         )
         async def get_test_simulation_details_tool(
@@ -359,7 +360,7 @@ When you do pull logs, do it smartly by severity, keyed on the simulation's stat
 Read one page, then request the next only if has_more=true and the answer isn't there yet. Prefer a start_time/end_time \
 window and message_contains to narrow.
 
-IMPORTANT — old-format simulations: if the simulation result reports logsEmbedded=true, do NOT use this tool — the logs \
+IMPORTANT — old-format simulations: if the simulation result reports logs_embedded=true, do NOT use this tool — the logs \
 of that simulation are NOT in the new logs index (this tool will return empty). Use get_full_simulation_logs instead, \
 which fetches the v3 result with includeLogs=true and returns the embedded blob. Also use get_full_simulation_logs when \
 you need the full ~40KB blob at once.
@@ -418,7 +419,7 @@ Like get_paginated_simulation_logs, logs are a last resort — prefer result-lev
 typically levels=ERROR + message_contains + a start_time/end_time window, then page. Deep paging is bounded (page*page_size \
 must be <= 10000) — narrow filters rather than paging far.
 
-Old-format simulations (result reports logsEmbedded=true) are NOT in the logs index, so this search will NOT see them — \
+Old-format simulations (result reports logs_embedded=true) are NOT in the logs index, so this search will NOT see them — \
 their logs are only available via get_full_simulation_logs (v3 result with includeLogs=true).
 
 IMPORTANT counting note: the response returns log LINES and `total` counts lines, NOT simulations. To count distinct \
