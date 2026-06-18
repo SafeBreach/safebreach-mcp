@@ -429,6 +429,15 @@ Rate limiting environment variables:
   logged/no-result/inconsistent) with total count. When test is non-terminal, includes `hint_to_agent`
   with polling guidance. Test ID resolved from parameter or extracted from first simulation's planRunId.
   Graceful degradation: if test summary API fails, response is returned without test overview.
+24. `run_studio_attack` ✨ **Enhanced** 🔒 **Rate-limited** - Queue a test for a Studio attack with explicit
+  simulator selection (`target_simulator_ids` / `attacker_simulator_ids` or `all_connected`). The queued
+  plan's `draft` flag now follows the attack's **publication status** (SAF-31468): the tool resolves the
+  attack's status via the content-manager `customMethods` list before queuing. A **PUBLISHED** attack is
+  queued with `draft=False` so the run is discoverable in the Test Results page (parity with a UI quick-run);
+  a **DRAFT** attack is queued with `draft=True` and the response includes a `hint_to_agent` warning that the
+  run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
+  fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
+  raises a clear error before queuing. The response includes the resolved `draft` value.
 
 
 ## Filtering and Search Capabilities

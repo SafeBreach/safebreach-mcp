@@ -55,7 +55,15 @@ def _get_auth(console):
 
 
 def _cancel_test(test_id, console):
-    """Cancel a running/queued test. Best-effort."""
+    """Cancel a running/queued test. Best-effort. Also registers the id with the
+    session epilogue (conftest) as a backstop in case this immediate cancel fails."""
+    if not test_id:
+        return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
     try:
         apitoken, base_url_orch, _, account_id = _get_auth(console)
         url = f"{base_url_orch}/api/orch/v4/accounts/{account_id}/queue/{test_id}"

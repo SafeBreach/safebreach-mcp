@@ -26,11 +26,34 @@ skip_e2e = pytest.mark.skipif(
 
 
 def _cancel_test_best_effort(test_id: str, console: str) -> None:
-    """Best-effort cleanup — cancel a queued/running test."""
+    """Best-effort cleanup — cancel a queued/running test.
+
+    Registers the id with the session epilogue (conftest) as a backstop, and clears
+    the rate-limit store first so this cleanup cancel is not itself blocked by a limit
+    that was exhausted during the test (these tests run with rate limiting enabled)."""
+    if not test_id:
+        return
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
+    try:
+        _rate_limit_store.clear()
+    except Exception:
+        pass
     try:
         sb_manage_test(test_id=test_id, action="cancel", console=console)
     except Exception:
-        pass
+        # A PAUSED test cannot be cancelled directly — resume then cancel.
+        # (these tests can leave the run paused; clear the limit before each call.)
+        try:
+            _rate_limit_store.clear()
+            sb_manage_test(test_id=test_id, action="resume", console=console)
+            _rate_limit_store.clear()
+            sb_manage_test(test_id=test_id, action="cancel", console=console)
+        except Exception:
+            pass
 
 
 def _find_ready_scenario(console: str) -> dict:
@@ -57,6 +80,7 @@ class TestRateLimitingE2E:
         yield
         _rate_limit_store.clear()
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 3)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
     def test_total_action_limit_enforced(self):
@@ -112,6 +136,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
@@ -155,6 +180,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 1)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
@@ -189,6 +215,7 @@ class TestRateLimitingE2E:
             if test_id:
                 _cancel_test_best_effort(test_id, E2E_CONSOLE)
 
+    @patch("safebreach_mcp_core.rate_limiter._rate_limit_enabled", True)
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 5)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)

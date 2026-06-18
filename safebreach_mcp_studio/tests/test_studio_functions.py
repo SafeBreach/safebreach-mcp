@@ -18,6 +18,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_get_studio_attack_latest_result,
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
+    _get_attack_status_by_id,
     _has_real_filter_criteria,
     compute_scenario_readiness,
     diagnose_scenario_readiness,
@@ -1403,6 +1404,15 @@ class TestRunStudioAttack:
         yield
         _user_auth_artifacts.reset(token)
 
+    def _status_resp(self, attack_id=10000298, name="Test Attack", status="published"):
+        """Build a mock customMethods list response for the status pre-check (SAF-31468)."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [
+            {"id": attack_id, "name": name, "status": status}
+        ]
+        return mock_resp
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -1411,12 +1421,14 @@ class TestRunStudioAttack:
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
+        mock_get,
         mock_run_response
     ):
         """Test running simulation on all connected simulators."""
         # Setup mocks
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="published")
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -1440,13 +1452,15 @@ class TestRunStudioAttack:
         call_args = mock_post.call_args
         assert "/queue" in call_args[0][0]
 
-        # Verify payload structure for all connected
+        # Verify payload structure for all connected.
+        # Published attack -> draft must be False so the run appears in Test Results (SAF-31468).
         payload = call_args[1]['json']
-        assert payload['plan']['draft'] is True
+        assert payload['plan']['draft'] is False
         assert payload['plan']['steps'][0]['attacksFilter']['playbook']['values'] == [10000298]
         assert 'connection' in payload['plan']['steps'][0]['attackerFilter']
         assert 'connection' in payload['plan']['steps'][0]['targetFilter']
 
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -1455,12 +1469,14 @@ class TestRunStudioAttack:
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
+        mock_get,
         mock_run_response
     ):
         """Test running simulation on specific simulators."""
         # Setup mocks
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="published")
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -1488,6 +1504,7 @@ class TestRunStudioAttack:
         assert payload['plan']['steps'][0]['attackerFilter']['simulators']['values'] == target_ids
         assert payload['plan']['steps'][0]['targetFilter']['simulators']['values'] == target_ids
 
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -1496,12 +1513,14 @@ class TestRunStudioAttack:
         mock_get_base_url,
         mock_get_account_id,
         mock_post,
+        mock_get,
         mock_run_response
     ):
         """Test running simulation with custom test name."""
         # Setup mocks
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="published")
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -1539,6 +1558,7 @@ class TestRunStudioAttack:
 
         assert "target_simulator_ids cannot be an empty list" in str(exc_info.value)
 
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -1546,12 +1566,14 @@ class TestRunStudioAttack:
         self,
         mock_get_base_url,
         mock_get_account_id,
-        mock_post
+        mock_post,
+        mock_get
     ):
         """Test running simulation when API returns an error."""
         # Setup mocks
         mock_get_base_url.return_value = "https://demo.safebreach.com"
         mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="published")
 
         # Mock API error
         mock_response = MagicMock()
@@ -1571,6 +1593,100 @@ class TestRunStudioAttack:
         with pytest.raises(ValueError) as exc_info:
             sb_run_studio_attack(attack_id=10000298, console="demo")
         assert "target_simulator_ids must be provided or all_connected must be True" in str(exc_info.value)
+
+    # --- SAF-31468: draft flag follows the attack's publication status ---
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_run_published_attack_queues_draft_false(
+        self, mock_get_base_url, mock_get_account_id, mock_post, mock_get, mock_run_response
+    ):
+        """A PUBLISHED attack queues with draft=False and carries no Studio-only hint."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="published")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(attack_id=10000298, console="demo", all_connected=True)
+
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['draft'] is False
+        assert result['draft'] is False
+        # No Studio-only visibility warning for a published attack
+        assert 'Breach Studio' not in result.get('hint_to_agent', '')
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_run_draft_attack_queues_draft_true_with_hint(
+        self, mock_get_base_url, mock_get_account_id, mock_post, mock_get, mock_run_response
+    ):
+        """A DRAFT attack queues with draft=True and warns that results are Studio-only."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_get.return_value = self._status_resp(status="draft")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(attack_id=10000298, console="demo", all_connected=True)
+
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['draft'] is True
+        assert result['draft'] is True
+        assert 'Breach Studio' in result['hint_to_agent']
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_run_attack_not_found_raises(
+        self, mock_get_base_url, mock_get_account_id, mock_post, mock_get
+    ):
+        """An attack ID absent from the list raises ValueError and never queues a test."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        # List does not contain the requested attack id
+        mock_get.return_value = self._status_resp(attack_id=99999, name="Other", status="published")
+
+        with pytest.raises(ValueError) as exc_info:
+            sb_run_studio_attack(attack_id=10000298, console="demo", all_connected=True)
+
+        assert "10000298" in str(exc_info.value)
+        mock_post.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_run_status_lookup_failure_proceeds_published(
+        self, mock_get_base_url, mock_get_account_id, mock_post, mock_get, mock_run_response
+    ):
+        """If the status lookup fails, queue as published (draft=False) and warn; still run."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+        mock_get.side_effect = requests.exceptions.RequestException("boom")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = mock_run_response
+        mock_post.return_value = mock_response
+
+        result = sb_run_studio_attack(attack_id=10000298, console="demo", all_connected=True)
+
+        payload = mock_post.call_args[1]['json']
+        assert payload['plan']['draft'] is False
+        mock_post.assert_called_once()
+        assert "could not be confirmed" in result['hint_to_agent']
 
 
 class TestMainFunctionPattern:
@@ -3799,6 +3915,16 @@ class TestExplicitSimulatorSelection:
         yield
         _user_auth_artifacts.reset(token)
 
+    @pytest.fixture(autouse=True)
+    def stub_status_lookup(self):
+        """Status pre-check (SAF-31468) returns a published attack so runs queue with draft=False."""
+        status_resp = MagicMock()
+        status_resp.json.return_value = [
+            {"id": 10000298, "name": "Test Attack", "status": "published"}
+        ]
+        with patch('safebreach_mcp_studio.studio_functions.requests.get', return_value=status_resp):
+            yield
+
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -4022,7 +4148,8 @@ class TestExplicitSimulatorSelection:
         assert 'name' in payload['plan']
         assert 'steps' in payload['plan']
         assert 'draft' in payload['plan']
-        assert payload['plan']['draft'] is True
+        # Published attack -> draft False so the run is visible in Test Results (SAF-31468)
+        assert payload['plan']['draft'] is False
         assert payload['plan']['name'] == "Test Run"
 
         # Verify step structure
@@ -5225,6 +5352,102 @@ class TestSetStudioAttackStatus:
 
         # Cache entry should be removed
         assert cache_key not in studio_draft_cache
+
+
+class TestGetAttackStatusById:
+    """Test the _get_attack_status_by_id helper (SAF-31468)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_attack_status_by_id_published(
+        self, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """A published attack resolves to ('published', name); reads the customMethods list API."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Dict-wrapper payload shape: {"data": [...]}
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [
+                {"id": 10000297, "name": "Published Simulation 1", "status": "published"}
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        status, name = _get_attack_status_by_id(10000297, console="demo")
+
+        assert status == "published"
+        assert name == "Published Simulation 1"
+        mock_get.assert_called_once()
+        assert "customMethods?status=all" in mock_get.call_args[0][0]
+        assert mock_get.call_args[1]['timeout'] == 120
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_attack_status_by_id_draft(
+        self, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """A draft attack resolves to ('draft', name); raw-list payload shape is supported."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        # Raw-list payload shape (no "data" wrapper)
+        mock_response = MagicMock()
+        mock_response.json.return_value = [
+            {"id": 10000296, "name": "Draft Simulation 1", "status": "draft"}
+        ]
+        mock_get.return_value = mock_response
+
+        status, name = _get_attack_status_by_id(10000296, console="demo")
+
+        assert status == "draft"
+        assert name == "Draft Simulation 1"
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_attack_status_by_id_not_found(
+        self, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """An attack ID absent from the list raises ValueError mentioning the id."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [{"id": 99999, "name": "Other Attack", "status": "draft"}]
+        }
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError) as exc_info:
+            _get_attack_status_by_id(10000298, console="demo")
+        assert "not found" in str(exc_info.value)
+        assert "10000298" in str(exc_info.value)
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_attack_status_by_id_request_error(
+        self, mock_get_base_url, mock_get_account_id, mock_get
+    ):
+        """A request failure propagates (is not swallowed)."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_get.side_effect = requests.exceptions.RequestException("boom")
+
+        with pytest.raises(requests.exceptions.RequestException):
+            _get_attack_status_by_id(10000298, console="demo")
 
 
 # =====================================================================
