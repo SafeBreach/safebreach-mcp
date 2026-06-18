@@ -64,6 +64,25 @@ def e2e_auth_for_console():
 
 
 @pytest.fixture(autouse=True)
+def route_auth_ctxvar_to_request_ctx(monkeypatch):
+    """Bridge the test auth ContextVar to the live-request reader.
+
+    Tests inject user auth via the _user_auth_artifacts ContextVar, but
+    get_auth_headers_for_console() now reads only the current MCP request
+    (_get_auth_from_mcp_request_ctx). With no real ASGI request in unit tests,
+    route the ContextVar value to that reader so existing injections still work.
+    """
+    from safebreach_mcp_core import token_context
+    real_reader = token_context._get_auth_from_mcp_request_ctx
+    monkeypatch.setattr(
+        token_context,
+        "_get_auth_from_mcp_request_ctx",
+        lambda: token_context._user_auth_artifacts.get() or real_reader(),
+    )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def clear_rate_limit_store():
     """Clear rate limit state between tests to prevent cross-test accumulation."""
     _rate_limit_store.clear()

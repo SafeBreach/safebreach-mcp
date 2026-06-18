@@ -6,12 +6,11 @@ Supports multiple secret storage backends through the SecretProvider interface.
 '''
 
 import logging
-from typing import Optional, Dict, Any
 import os
+from typing import Dict, Any
 from .cache_config import is_caching_enabled
 from .secret_providers import SecretProviderFactory, SecretProvider
 from .environments_metadata import safebreach_envs, get_environment_by_name
-from .token_context import _user_auth_artifacts, mask_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -92,49 +91,24 @@ def check_rbac_response(response) -> None:
 def get_auth_headers_for_console(console: str) -> Dict[str, str]:
     """Return auth headers for outbound backend API calls.
 
-    Priority:
-    1. Per-request user auth bundle (from ContextVar)
-    2. MCP SDK request_ctx — reads POST headers directly from tool handler context
-    3. Session store lookup via session_id from request_ctx
-    4. Embedded mode (SAFEBREACH_LOCAL_ENV set): raise AuthenticationRequired
-       Standalone mode (no SAFEBREACH_LOCAL_ENV): fall back to env-var API key
+    Auth is taken only from the current MCP request (the live request_ctx).
+    When the request carries no user credentials:
+      - Embedded mode (SAFEBREACH_LOCAL_ENV set): raise AuthenticationRequired.
+      - Standalone mode (no SAFEBREACH_LOCAL_ENV): fall back to env-var API key.
     """
-    bundle = _user_auth_artifacts.get()
-
-    # SSE transport fallback (SAF-29974 Slice 6): the ContextVar set on the
-    # /messages/ POST doesn't propagate to the tool handler (SSE GET's create_task
-    # uses a different async context).  Read the POST's headers directly from the
-    # MCP SDK's request_ctx, which IS set on the tool handler's task.
-    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
-        from .token_context import _get_auth_from_mcp_request_ctx
-        mcp_bundle = _get_auth_from_mcp_request_ctx()
-        if mcp_bundle:
-            bundle = mcp_bundle
-
-    # Tertiary fallback: session store lookup via session_id from request_ctx
-    if not bundle or ('x-token' not in bundle and 'cookie' not in bundle):
-        from .token_context import _get_session_id_from_mcp_ctx, _session_auth_artifacts
-        session_id = _get_session_id_from_mcp_ctx()
-        if session_id:
-            entry = _session_auth_artifacts.get(session_id)
-            if entry:
-                bundle = entry[0]
-
+    from .token_context import _get_auth_from_mcp_request_ctx
+    bundle = _get_auth_from_mcp_request_ctx()
     if bundle:
         logger.debug(f"get_auth_headers_for_console('{console}') → user bundle "
                      f"(keys: {list(bundle.keys())})")
-        return dict(bundle)  # copy — callers may mutate
+        return dict(bundle)
 
-    # No user auth in request context.
-    # In embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP) this is an RBAC violation.
-    # In standalone mode (no SAFEBREACH_LOCAL_ENV) fall back to env-var API key.
     if os.environ.get('SAFEBREACH_LOCAL_ENV'):
         logger.warning(f"No user auth in context for '{console}' — rejecting (RBAC enforcement)")
         raise AuthenticationRequired(
             f"Authentication required for console '{console}': no user credentials in request context"
         )
 
-    # Standalone mode — use shared API key from env/secret provider
     logger.debug(f"get_auth_headers_for_console('{console}') → standalone mode, "
                  f"falling back to env-var API key")
     api_key = get_secret_for_console(console)
