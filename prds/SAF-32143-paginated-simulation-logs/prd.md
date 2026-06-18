@@ -7,7 +7,7 @@
 | Repo / branch | `safebreach-mcp` / `feature/SAF-32143-paginated-simulation-logs` |
 | Companion | [SAF-32099](https://safebreach.atlassian.net/browse/SAF-32099) (data v3 `/simulationLogs`, branch `feature/SAF-32099-paginate-simulation-logs-api`) |
 | Context bug | [SAF-32058](https://safebreach.atlassian.net/browse/SAF-32058) / support SB-36091 (HELM LLM token overflow) |
-| Status | Implemented (Phases 1–3 + scope additions 5–7); in Code Review. Phase 4 real-env verification optional/pending. |
+| Status | Implemented (Phases 1–3 + scope additions 5–8); Phase 4 E2E verification complete; in Code Review. |
 
 > **Authoritative contract note.** The SAF-32143 ticket text describes a per-sim path
 > `…/executionsHistoryResults/{id}/logs`. That endpoint was **not** what shipped. The data side consolidated to a single
@@ -44,8 +44,10 @@ incrementally and filtered (token-bounded), while `get_full_simulation_logs` rem
 - Shared fetch + cache + response-mapping core.
 - **`get_full_simulation_logs` migrated to the v3 result endpoint** (`includeLogs=true`, v1 fallback) and now exposes
   `logs_embedded` (Phase 5).
-- **`get_test_simulation_details` returns the raw v3 result without logs** (result + `SIMULATION_STEPS` + `logsEmbedded`),
-  making it the result-first investigation entry point (Phase 6). **Intended breaking response-shape change.**
+- **`get_test_simulation_details` returns a curated hybrid result without logs** — the flat snake_case envelope PLUS
+  `simulation_steps_by_node` + `logs_embedded` (Phase 6, revised by Phase 8). Result-first investigation entry point.
+- **Phase 8 (scope addition) — hybrid revision of Phase 6:** Phase 6 originally relayed the *entire raw v3 document*.
+  Phase 8 replaces that with a curated envelope + nested per-node steps (see §3.8 for the design and reasoning).
 - Unit + integration tests; `CHANGELOG.md` + `CLAUDE.md` docs.
 
 **Out of scope**
@@ -223,6 +225,48 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
   boundaries. Acceptable for triage; note it for strict forensic ordering.
 - **Index**: `executions_simulations_logs` (alias `…-rollover-*`); per-line fields `_source` passed through verbatim.
 
+### 3.8 `get_test_simulation_details` shape — curated hybrid (Phase 8, supersedes the Phase 6 raw passthrough)
+
+**What Phase 6 shipped first.** Phase 6 replaced the curated simulation entity with the *entire raw v3 result document*
+(`includeLogs=false`): raw camelCase/Pascal_Case fields, `dataObj.data[..].details.SIMULATION_STEPS`, and `logsEmbedded`.
+The driver was sound: the old curated entity exposed **no execution steps**, so an investigating agent had nothing
+between "final status" and "dump the 40KB log blob" — which is exactly the gap that produced the SAF-32058 overflow.
+
+**Why raw-passthrough was the wrong delivery (reasoning).** Returning the whole raw doc as the top-level shape carried
+four costs:
+1. **Contradicts our own design principle** — detail tools should *explain to the LLM (reduce/simplify)*, not *relay raw
+   payload* (recorded design feedback; `get_scenario_details` precedent). Phase 6 conflated the two in one tool.
+2. **Token cost rises for the common path** — ironic for a token-reduction ticket: an agent that just needs "was this
+   blocked?" receives a large raw document instead of ~25 curated fields. (Still far cheaper than logs.)
+3. **Brittle contract** — couples every MCP consumer to the data service's internal ES/v3 schema and casing; a curated
+   mapping is a stable interface, "whatever v3 returns" is not.
+4. **Silent breaking change** — top-level `simulation_id`/`status`/`attacker_node_id` disappeared; any consumer reading
+   them breaks with no migration path. (Our own E2E assertions were the canary — 5 failures, see §9 Phase 8.)
+
+   The capability (steps) is essential; the raw envelope is not. The fix is **both**, not either/or.
+
+**Phase 8 hybrid shape.** `get_test_simulation_details` returns a curated, LLM-friendly envelope **plus** the forensic
+middle tier:
+- **Curated flat fields** (snake_case) — rebuilt from the existing `full_simulation_results_mapping` via
+  `get_full_simulation_result_entity(...)`: `simulation_id`, `status`, `test_id`, `playbook_attack_name`, `attack_plan`,
+  `attacker_node_id`/`target_node_id` (+ names/OS), `result_details`, security-control fields, plus the optional
+  `mitre_techniques` / `basic_attack_logs_by_hosts` / `drift_info` enrichments merged into the same envelope.
+- **`simulation_steps_by_node`** — a flat list, one entry per simulator node, each tagged with its `role`
+  (`attacker` / `target` / `host` / `unknown`) and carrying `node_id`, `node_name`, `state`, `task_status`, `error`,
+  and `simulation_steps`. **Heavy per-node LOGS/OUTPUT blobs are excluded** (steps only) — deep log retrieval stays in
+  `get_paginated_simulation_logs` / `get_full_simulation_logs`. Built by `build_simulation_steps_by_node()` in
+  `data_types.py` from `dataObj.data[0]`, with role assignment mirroring `get_full_simulation_logs_mapping`'s
+  attacker/target/host logic.
+- **`logs_embedded`** — snake_case routing flag (was raw `logsEmbedded`): `false` → escalate to
+  `get_paginated_simulation_logs`; `true` → old-format sim, use `get_full_simulation_logs`; `None` → unknown (v1 fallback).
+- **`hint_to_agent`** — steers result-first, severity-first per §3.6.
+- **Older consoles (no v3 result endpoint)** → curated list row + **empty** `simulation_steps_by_node` + explanatory hint.
+
+**Net effect.** Keeps 100% of the Phase 6 capability (per-node steps → the middle tier that prevents SAF-32058) while
+eliminating all four costs: the curated snake_case contract is restored (no silent break), token cost for the common
+path drops, consumers no longer couple to the raw schema, and the tool re-aligns with the "explain to the LLM" principle.
+The raw v3 document is **not** relayed; it remains reachable only through the dedicated logs tools when truly needed.
+
 ## 4. Implementation Phases (TDD)
 
 ### Phase 1 — Shared fetch core + mapping (red→green)
@@ -254,14 +298,22 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 - Fetch via `GET …/v3/…/executionsHistoryResults/{id}?runId=&includeLogs=true`; fall back to v1 on 404 (older consoles).
 - Expose `logs_embedded` in the mapped response; add the `logsEmbedded` routing rule to all three logs-tool descriptions.
 
-### Phase 6 — `get_test_simulation_details` → raw v3 result without logs (scope addition)
+### Phase 6 — `get_test_simulation_details` → raw v3 result without logs (scope addition; superseded by Phase 8)
 - Replace the curated entity with the raw v3 result (`includeLogs=false`): full doc + `SIMULATION_STEPS` + `logsEmbedded`,
   LOGS/OUTPUT excluded server-side. Merge optional enrichments (mitre/basic logs/drift) on top; list-row fallback on old
   consoles. `hint_to_agent` routes to paginated logs (`logsEmbedded=false`) or full logs (`true`). **Breaking shape change.**
+- **Superseded by Phase 8** — raw-passthrough delivery was reverted to a curated hybrid (see §3.8 for the reasoning).
 
 ### Phase 7 — `node_id` per-node filter (scope addition)
 - data added a `nodeId` filter to `/simulationLogs` (merged to develop). Thread `node_id` through the fetch core, cache
   key, and both `sb_*` entry points + tool wrappers; descriptions explain scoping to the attacker vs target node.
+
+### Phase 8 — `get_test_simulation_details` curated hybrid shape (scope addition; revises Phase 6)
+- Stop relaying the raw v3 document. Build the curated flat envelope via `get_full_simulation_result_entity(...)` and
+  attach `simulation_steps_by_node` (new `build_simulation_steps_by_node()` in `data_types.py`, role-tagged, heavy
+  LOGS/OUTPUT excluded) + snake_case `logs_embedded` + `hint_to_agent`. See §3.8 for the full design and reasoning.
+- Restores the curated snake_case contract (`simulation_id`/`status`/node ids), so the Phase 4 E2E assertions pass again
+  while additionally verifying the new `simulation_steps_by_node` / `logs_embedded` fields.
 
 ## 5. Testing strategy
 - **Unit**: mapping (`test_data_types.py`), fetch/cache/param-build + `sb_*` validation (`test_data_functions.py`).
@@ -271,8 +323,12 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
   enum validation (`min_level`/`log_type`/`sort_order`), empty-logs hint, 400/401/404 messages, deep-page
   (`page*page_size > 10000`) ceiling error + hint, cache key uniqueness per filter combination.
 - **Existing-tool changes**: `get_full_simulation_logs` v3 URL + v1 fallback + `logs_embedded`; `get_test_simulation_details`
-  raw-v3 result (steps present, logs absent), v3-404 list-row fallback, `logsEmbedded` routing hint.
-- Run: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` — **467 data tests green**.
+  curated hybrid (Phase 8) — curated flat fields present, `simulation_steps_by_node` role-tagged with steps and **no**
+  heavy LOGS/OUTPUT, `logs_embedded` snake_case, v3-404 list-row fallback (empty steps), routing hint.
+- **Phase 8 coverage**: `build_simulation_steps_by_node()` (host single-node, dual-script attacker/target roles,
+  unknown-id role, empty/missing `dataObj`); `sb_get_simulation_details` hybrid shape (curated fields + steps +
+  `logs_embedded`, no `dataObj`/raw camelCase passthrough); `logsEmbedded=true` old-format hint.
+- Run: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` — **471 data tests green** (467 + 4 new helper tests).
 
 ## 6. Risks
 - **Console data version**: target console must have the SAF-32099 endpoint, else 404 — surfaced clearly.
@@ -304,12 +360,15 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 - [x] Caching: key includes console + jobIds + `node_id` + every filter + page; gated on `is_caching_enabled("data")`.
 - [x] `node_id` per-node filter threaded through both tools (Phase 7).
 - [x] `get_full_simulation_logs` on v3 result endpoint (`includeLogs=true`, v1 fallback) exposing `logs_embedded` (Phase 5).
-- [x] `get_test_simulation_details` returns the raw v3 result without logs (steps + `logsEmbedded`, enrichments on top,
-  list-row fallback); CHANGELOG flags the breaking shape change (Phase 6).
-- [x] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` (467 data tests green).
-- [x] All existing tests pass (467 data tests green). *(No linter configured in this repo — tests are the gate.)*
+- [x] `get_test_simulation_details` returns a curated hybrid result (Phase 8, supersedes Phase 6 raw-passthrough):
+  curated flat fields + `simulation_steps_by_node` (role-tagged, no heavy logs) + `logs_embedded` + enrichments +
+  list-row fallback; CHANGELOG + CLAUDE.md updated for the hybrid shape.
+- [x] `build_simulation_steps_by_node()` added in `data_types.py` with unit coverage (Phase 8).
+- [x] Unit + integration tests pass: `uv run pytest safebreach_mcp_data/tests/ -m "not e2e"` (471 data tests green).
+- [x] All existing tests pass (471 data tests green; 1204 cross-server non-e2e green). *(No linter configured — tests are the gate.)*
 - [x] `CHANGELOG.md` + `CLAUDE.md` updated.
-- [ ] Phase 4 real-env/agent verification (optional) — `manual-tests.md` + `agent-test-plan.md`.
+- [x] Phase 4 real-env verification — full E2E run against a SAF-32099 console (the 5 previously-failing
+  `get_test_simulation_details` / `get_full_simulation_logs` E2E tests now assert + pass the hybrid shape).
 
 ## 9. Phase Status Tracking
 
@@ -318,15 +377,16 @@ Confirmed by reading the branch (not docs): OpenAPI `src/api/dashboardapi.json:2
 | 1 | Shared fetch core + mapping | ✅ Complete | 2026-06-11 | (this branch) | `get_simulation_logs_mapping` + `_fetch_simulation_logs_from_api` + `_get_..._from_cache_or_api` + `simulation_logs_cache`; 15 new tests, 429 data tests green |
 | 2 | Public entry points + tool registration | ✅ Complete | 2026-06-11 | (this branch) | `sb_get_paginated_simulation_logs` + `sb_search_simulation_logs` (validation: required id, page_size≤1000, deep-page ~10k guard, enum checks) + two `@mcp.tool` regs; 17 new tests, 446 data tests green |
 | 3 | Integration + docs | ✅ Complete | 2026-06-11 | (this branch) | `TestSimulationLogsIntegration` (7 HTTP-mocked e2e tests) + CHANGELOG Unreleased + CLAUDE.md 12a/12b; 453 data tests green |
-| 4 | Manual / E2E verification (optional) | ⏳ Pending | — | — | Real-env checks; optional, no code — needs a console with the SAF-32099 endpoint |
+| 4 | Manual / E2E verification | ✅ Complete | 2026-06-18 | (this branch) | Full E2E run against `pentest01` (SAF-32099 console): 107 passed initially; surfaced the Phase 6 stale-assertion gap (5 `simulation_id` failures) → fixed via Phase 8 hybrid; re-verified all 5 now pass |
 | 5 | v3 migration of `get_full_simulation_logs` (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | v3 result endpoint `includeLogs=true` + v1 fallback; `logs_embedded` exposed; logsEmbedded routing rule in all 3 logs-tool descriptions; 7 new tests, 460 green |
 | 6 | `get_test_simulation_details` → raw v3 result without logs (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | Replace curated entity with raw v3 result (`includeLogs=false`): full doc + SIMULATION_STEPS + logsEmbedded, LOGS/OUTPUT excluded server-side (ES `_source` excludes — no client strip needed); enrichments merged on top; list-row fallback for old consoles; hint routes to paginated logs / full logs by logsEmbedded; 462 tests green |
 | 7 | `node_id` filter for per-node investigation (scope addition) | ✅ Complete | 2026-06-11 | (this branch) | data added `nodeId` to /simulationLogs (merged to develop); MCP threads `node_id` through fetch/cache/both entry points + tool wrappers; descriptions explain scoping to attacker vs target node (id from get_test_simulation_details); 467 tests green |
+| 8 | `get_test_simulation_details` curated hybrid shape (scope addition; revises Phase 6) | ✅ Complete | 2026-06-18 | (this branch) | Reverted the Phase 6 raw-passthrough to a curated envelope + `simulation_steps_by_node` (role-tagged, heavy logs excluded) + snake_case `logs_embedded`; new `build_simulation_steps_by_node()` in data_types.py; restores the curated snake_case contract while keeping the forensic steps (see §3.8 for reasoning); 471 data / 1204 cross-server non-e2e green |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 
 ## 10. Document Status
-- **Last Updated:** 2026-06-17
-- **Author:** Amir Rossert (planning via planning-dev-task)
+- **Last Updated:** 2026-06-18
+- **Author:** Amir Rossert (planning via planning-dev-task); Phase 8 hybrid revision + E2E verification by Yossi Attas
 - **Branch:** `feature/SAF-32143-paginated-simulation-logs`
 - **Related test docs:** `manual-tests.md` (API-level), `agent-test-plan.md` (agent-behavioral), `context.md` (investigation notes).
