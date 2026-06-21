@@ -14,8 +14,11 @@ from safebreach_mcp_data.data_functions import (
     sb_get_test_simulations,
     sb_get_simulation_details,
     sb_get_test_drifts,
+    sb_get_paginated_simulation_logs,
+    sb_search_simulation_logs,
     security_control_events_cache,
-    simulations_cache
+    simulations_cache,
+    simulation_logs_cache,
 )
 
 
@@ -178,8 +181,10 @@ class TestSecurityControlEventsIntegration:
             "test-console"
         )
         
-        # Assertions
-        assert "simulation_id" in simulation_details
+        # Assertions — curated hybrid shape (flat snake_case envelope)
+        assert simulation_details.get("simulation_id")
+        assert "simulation_steps_by_node" in simulation_details
+        assert "hint_to_agent" in simulation_details
         assert security_events["total_events"] == 2
         assert len(security_events["events_in_page"]) == 2
         assert event_details["event_id"] == "event-001"
@@ -187,8 +192,8 @@ class TestSecurityControlEventsIntegration:
         assert event_details["product"] == "CrowdStrike FDR"
         
         # Verify API calls
-        assert mock_post.call_count == 1  # One for simulation details
-        assert mock_get.call_count == 1  # One for security events (event details uses cache)
+        assert mock_post.call_count == 1  # One for simulation details (list lookup)
+        assert mock_get.call_count == 2  # v3 raw-result attempt + security events (event details uses cache)
         # Check that test-console was called (but might not be the last call due to caching)
         secret_calls = [call[0][0] for call in mock_secret.call_args_list]
         assert "test-console" in secret_calls, f"Expected 'test-console' in calls but got: {secret_calls}"
@@ -1294,7 +1299,144 @@ class TestDriftAnalysisIntegration:
         
         mock_get.side_effect = mock_get_error_response_selector
         mock_post.return_value = simulations_error_response
-        
+
         # Should propagate the exception
         with pytest.raises(Exception, match="Simulations API timeout"):
             sb_get_test_drifts('test-error-123', 'error-console')
+
+
+class TestSimulationLogsIntegration:
+    """End-to-end (HTTP-mocked) integration for the paginated/search simulation-logs tools."""
+
+    def setup_method(self):
+        simulation_logs_cache.clear()
+
+    @staticmethod
+    def _resp(logs, total, page, page_size, has_more):
+        r = Mock()
+        r.status_code = 200
+        r.json.return_value = {
+            "logs": logs, "total": total, "page": page, "pageSize": page_size, "hasMore": has_more,
+        }
+        r.raise_for_status.return_value = None
+        return r
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_paginated_single_sim_end_to_end(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        line = {"timestamp": "t1", "level": "ERROR", "message": "boom", "jobId": "555",
+                "planRunId": "pr-1", "logType": "LOGS"}
+        mock_get.return_value = self._resp([line, line], 5, 1, 2, True)
+
+        result = sb_get_paginated_simulation_logs(
+            simulation_id='555', page=1, page_size=2, min_level='ERROR', console='c'
+        )
+
+        assert result['total'] == 5
+        assert result['page_size'] == 2
+        assert result['has_more'] is True
+        assert len(result['logs']) == 2
+        # URL + params
+        args, kwargs = mock_get.call_args
+        assert args[0] == 'https://test.com/api/data/v3/accounts/123/simulationLogs'
+        assert kwargs['params']['jobIds'] == '555'
+        assert kwargs['params']['minLevel'] == 'ERROR'
+        assert kwargs['params']['pageSize'] == 2
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_has_more_across_pages(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        line = {"timestamp": "t", "level": "INFO", "message": "m", "jobId": "9"}
+        mock_get.side_effect = [
+            self._resp([line], 2, 1, 1, True),   # page 1
+            self._resp([line], 2, 2, 1, False),  # page 2
+        ]
+        p1 = sb_get_paginated_simulation_logs(simulation_id='9', page=1, page_size=1, console='c')
+        p2 = sb_get_paginated_simulation_logs(simulation_id='9', page=2, page_size=1, console='c')
+        assert p1['has_more'] is True
+        assert p2['has_more'] is False
+        assert mock_get.call_count == 2
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_all_filters_normalized_in_request(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        mock_get.return_value = self._resp([{"jobId": "1"}], 1, 1, 500, False)
+
+        sb_get_paginated_simulation_logs(
+            simulation_id='1', levels='error|warning', message_contains='timeout',
+            start_time='2026-06-01T00:00:00Z', end_time='2026-06-02T00:00:00Z',
+            log_type='all', sort_order='desc', console='c',
+        )
+        params = mock_get.call_args.kwargs['params']
+        assert params['levels'] == 'ERROR|WARNING'
+        assert params['messageContains'] == 'timeout'
+        assert params['startTime'] == '2026-06-01T00:00:00Z'
+        assert params['endTime'] == '2026-06-02T00:00:00Z'
+        assert params['logType'] == 'ALL'
+        assert params['sortOrder'] == 'desc'
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_search_all_sims_omits_jobids(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        mock_get.return_value = self._resp([], 0, 1, 500, False)
+
+        result = sb_search_simulation_logs(simulation_ids='', levels='ERROR', console='c')
+        params = mock_get.call_args.kwargs['params']
+        assert 'jobIds' not in params
+        assert params['levels'] == 'ERROR'
+        # empty -> hint surfaced
+        assert result['logs'] == []
+        assert result.get('hint_to_agent')
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_cache_hit_on_identical_call(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        mock_get.return_value = self._resp([{"jobId": "9"}], 1, 1, 500, False)
+
+        sb_get_paginated_simulation_logs(simulation_id='9', console='c')
+        sb_get_paginated_simulation_logs(simulation_id='9', console='c')
+        assert mock_get.call_count == 1  # second served from cache
+
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_404_endpoint_missing(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        r = Mock()
+        r.status_code = 404
+        mock_get.return_value = r
+        with pytest.raises(ValueError, match="not available|not found"):
+            sb_get_paginated_simulation_logs(simulation_id='9', console='c')
+
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_auth_headers_for_console')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_401_auth(self, mock_get, mock_secret, *_):
+        mock_secret.return_value = {"x-apitoken": "test-token"}
+        r = Mock()
+        r.status_code = 401
+        mock_get.return_value = r
+        with pytest.raises(ValueError, match="Authentication failed"):
+            sb_search_simulation_logs(simulation_ids='9', console='c')

@@ -16,8 +16,10 @@ from safebreach_mcp_data.data_types import (
     reduced_security_control_events_mapping,
     full_security_control_events_mapping,
     get_full_simulation_logs_mapping,
+    get_simulation_logs_mapping,
     get_reduced_test_summary_mapping,
     _build_node_data,
+    build_simulation_steps_by_node,
     get_reduced_peer_benchmark_response,
 )
 
@@ -1089,3 +1091,205 @@ class TestPeerBenchmarkTransform:
         # Customer order matches peer order (this is the comparison-friendliness property
         # the agent relies on).
         assert customer_names == peer_names == industry_names
+
+
+class TestGetSimulationLogsMapping:
+    """Test suite for get_simulation_logs_mapping (paginated /simulationLogs envelope)."""
+
+    @pytest.fixture
+    def api_response(self):
+        """A representative /simulationLogs API response with two log lines."""
+        return {
+            "logs": [
+                {
+                    "timestamp": "2026-06-10T09:15:03.120Z", "level": "ERROR", "logType": "LOGS",
+                    "logger": "simulator", "sourceFile": "runner.py", "line": "212",
+                    "message": "connection refused", "pid": "8123", "jobId": "4915971", "planRunId": "pr-77",
+                },
+                {
+                    "timestamp": "2026-06-10T09:15:04.000Z", "level": "WARNING", "logType": "LOGS",
+                    "logger": "simulator", "sourceFile": "runner.py", "line": "9",
+                    "message": "retrying", "pid": "8123", "jobId": "4915971", "planRunId": "pr-77",
+                },
+            ],
+            "total": 1234,
+            "page": 1,
+            "pageSize": 500,
+            "hasMore": True,
+        }
+
+    def test_full_envelope_snake_cased(self, api_response):
+        """Envelope keys are snake_cased; pageSize->page_size, hasMore->has_more."""
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 1234
+        assert result["page"] == 1
+        assert result["page_size"] == 500
+        assert result["has_more"] is True
+        assert "pageSize" not in result
+        assert "hasMore" not in result
+        assert len(result["logs"]) == 2
+
+    def test_per_line_fields_preserved_verbatim(self, api_response):
+        """Per-line fields are passed through unchanged (incl. camelCase jobId/planRunId)."""
+        first = get_simulation_logs_mapping(api_response)["logs"][0]
+        assert first["timestamp"] == "2026-06-10T09:15:03.120Z"
+        assert first["level"] == "ERROR"
+        assert first["logType"] == "LOGS"
+        assert first["jobId"] == "4915971"
+        assert first["planRunId"] == "pr-77"
+        assert first["message"] == "connection refused"
+        assert first["sourceFile"] == "runner.py"
+
+    def test_empty_logs_returns_zero_and_hint(self):
+        """Empty logs -> logs:[], total:0, has_more:False, plus a hint_to_agent."""
+        result = get_simulation_logs_mapping({
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        })
+        assert result["logs"] == []
+        assert result["total"] == 0
+        assert result["has_more"] is False
+        assert result.get("hint_to_agent")
+
+    def test_missing_keys_use_safe_defaults(self):
+        """A response missing keys does not crash and yields safe defaults."""
+        result = get_simulation_logs_mapping({})
+        assert result["logs"] == []
+        assert result["total"] == 0
+        assert result["page"] == 1
+        assert result["has_more"] is False
+        # empty -> hint present
+        assert result.get("hint_to_agent")
+
+    def test_has_more_false_passthrough(self, api_response):
+        """hasMore False is preserved when present with non-empty logs."""
+        api_response["hasMore"] = False
+        result = get_simulation_logs_mapping(api_response)
+        assert result["has_more"] is False
+        # non-empty logs -> no hint
+        assert not result.get("hint_to_agent")
+
+    def test_total_not_capped_below_10k(self, api_response):
+        """A normal total (< 10000) -> total_capped False, no cap hint."""
+        api_response["total"] = 42
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 42
+        assert result["total_capped"] is False
+        assert "capped" not in str(result.get("hint_to_agent") or "")
+
+    def test_total_capped_at_10k_flags_and_hints(self, api_response):
+        """total at the ES 10k cap -> total_capped True + a lower-bound hint."""
+        api_response["total"] = 10000
+        result = get_simulation_logs_mapping(api_response)
+        assert result["total"] == 10000
+        assert result["total_capped"] is True
+        assert "lower bound" in (result.get("hint_to_agent") or "").lower()
+
+    def test_total_capped_present_even_when_empty(self):
+        """total_capped is always present in the envelope (False for empty results)."""
+        result = get_simulation_logs_mapping({"logs": [], "total": 0})
+        assert result["total_capped"] is False
+
+
+class TestFullSimulationLogsEmbeddedFlag:
+    """logs_embedded passthrough from the v3 result endpoint (logsEmbedded hint)."""
+
+    def _minimal_response(self, **extra):
+        resp = {
+            'id': 'sim1', 'runId': 'r1', 'planRunId': 'r1', 'status': 'SUCCESS',
+            'dataObj': {'data': [[{'id': 'n1', 'nodeNameInMove': 'x', 'state': 'finished',
+                                   'details': {'LOGS': 'log', 'SIMULATION_STEPS': []}}]]},
+        }
+        resp.update(extra)
+        return resp
+
+    def test_logs_embedded_true_passthrough(self):
+        result = get_full_simulation_logs_mapping(self._minimal_response(logsEmbedded=True))
+        assert result["logs_embedded"] is True
+
+    def test_logs_embedded_false_passthrough(self):
+        result = get_full_simulation_logs_mapping(self._minimal_response(logsEmbedded=False))
+        assert result["logs_embedded"] is False
+
+    def test_logs_embedded_missing_is_none(self):
+        """v1 responses (no logsEmbedded field) -> None, not a crash."""
+        result = get_full_simulation_logs_mapping(self._minimal_response())
+        assert result["logs_embedded"] is None
+
+    def test_logs_embedded_on_empty_data_path(self):
+        """The graceful empty-data response also carries logs_embedded."""
+        result = get_full_simulation_logs_mapping({'id': 's', 'logsEmbedded': True, 'dataObj': {'data': [[]]}})
+        assert result["logs_available"] is False
+        assert result["logs_embedded"] is True
+
+
+class TestBuildSimulationStepsByNode:
+    """Per-node execution-steps extraction for the hybrid get_test_simulation_details shape."""
+
+    def test_host_attack_single_node(self):
+        """No attacker/target node ids (or equal) -> single 'host' node, steps preserved, no heavy logs."""
+        raw = {
+            "id": "sim1",
+            "dataObj": {"data": [[{
+                "id": "n1",
+                "nodeNameInMove": "host-A",
+                "state": "DONE",
+                "details": {
+                    "SIMULATION_STEPS": [{"level": "INFO", "message": "step 1"}],
+                    "STATUS": "DONE",
+                    "ERROR": "",
+                    "LOGS": "x" * 1000,  # heavy blob must NOT leak into steps
+                    "OUTPUT": "y" * 1000,
+                },
+            }]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node["node_id"] == "n1"
+        assert node["node_name"] == "host-A"
+        assert node["role"] == "host"
+        assert node["state"] == "DONE"
+        assert node["task_status"] == "DONE"
+        assert node["error"] == ""
+        assert node["simulation_steps"] == [{"level": "INFO", "message": "step 1"}]
+        # heavy blobs excluded
+        assert "logs" not in node and "output" not in node and "LOGS" not in node
+
+    def test_dual_script_roles_assigned(self):
+        """Distinct attacker/target node ids -> each node tagged with its role."""
+        raw = {
+            "id": "sim2",
+            "attackerNodeId": "atk",
+            "targetNodeId": "tgt",
+            "dataObj": {"data": [[
+                {"id": "tgt", "nodeNameInMove": "victim", "state": "DONE",
+                 "details": {"SIMULATION_STEPS": [{"message": "t"}], "STATUS": "DONE", "ERROR": ""}},
+                {"id": "atk", "nodeNameInMove": "attacker", "state": "DONE",
+                 "details": {"SIMULATION_STEPS": [{"message": "a"}], "STATUS": "DONE", "ERROR": "boom"}},
+            ]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        by_role = {n["role"]: n for n in nodes}
+        assert set(by_role) == {"attacker", "target"}
+        assert by_role["attacker"]["node_id"] == "atk"
+        assert by_role["attacker"]["error"] == "boom"
+        assert by_role["target"]["node_id"] == "tgt"
+
+    def test_unknown_role_when_id_mismatch(self):
+        """A node whose id matches neither attacker nor target is tagged 'unknown'."""
+        raw = {
+            "id": "sim3",
+            "attackerNodeId": "atk",
+            "targetNodeId": "tgt",
+            "dataObj": {"data": [[
+                {"id": "other", "details": {"SIMULATION_STEPS": [], "STATUS": "DONE"}},
+            ]]},
+        }
+        nodes = build_simulation_steps_by_node(raw)
+        assert nodes[0]["role"] == "unknown"
+
+    def test_empty_or_missing_dataobj_returns_empty_list(self):
+        """v1 fallback / no execution data -> empty list, never raises."""
+        assert build_simulation_steps_by_node({}) == []
+        assert build_simulation_steps_by_node({"dataObj": {"data": [[]]}}) == []
+        assert build_simulation_steps_by_node({"dataObj": {"data": []}}) == []

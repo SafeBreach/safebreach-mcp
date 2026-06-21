@@ -26,6 +26,8 @@ from .data_functions import (
     sb_get_test_findings_details,
     sb_get_test_drifts,
     sb_get_full_simulation_logs,
+    sb_get_paginated_simulation_logs,
+    sb_search_simulation_logs,
     sb_get_simulation_result_drifts,
     sb_get_simulation_status_drifts,
     sb_get_security_control_drifts,
@@ -149,13 +151,26 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
         @self.mcp.tool(
             name="get_test_simulation_details",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns the full details of a specific simulation by id on a given Safebreach management console.
-Supports optional extensions for detailed analysis: MITRE ATT&CK techniques, basic attack logs by host from simulation events, and drift analysis information.
+            description="""Returns a CURATED simulation result (logs excluded) for a specific simulation id — \
+the PRIMARY investigation entry point for a simulation.
+
+The response is a flat, LLM-friendly envelope (simulation_id, status, attacker/target nodes, attack info, \
+result_details) PLUS 'simulation_steps_by_node': the per-node execution steps (each tagged role=attacker/target/host, \
+with task_status and error) that form the forensic middle tier. The heavy per-node LOGS/OUTPUT blobs are NOT included. \
+It also includes 'logs_embedded':
+- logs_embedded=false: if the result + steps are not enough to understand the flow, pull logs incrementally with \
+get_paginated_simulation_logs (severity-first: levels=ERROR for failed simulations, min_level=INFO for successful ones).
+- logs_embedded=true: OLD-format simulation — its logs are NOT in the logs index; use get_full_simulation_logs instead \
+(get_paginated_simulation_logs/search_simulation_logs would return empty).
+In most investigations the result + steps are sufficient and no logs call is needed.
+
+Supports optional extensions merged into the envelope: MITRE ATT&CK techniques, basic attack logs by host from \
+simulation events, and drift analysis information.
 When include_drift_info=True, returns drift_tracking_code for drifted simulations. Pass this code to \
 get_simulation_lineage to see the full execution timeline across all test runs.
 Parameters: console (required), simulation_id (required), include_mitre_techniques (bool, default False),
 include_basic_attack_logs (bool, default False), include_drift_info (bool, default False).
-Note: For comprehensive execution logs (~40KB), use get_full_simulation_logs tool instead.
+On older consoles without the v3 result endpoint, falls back to the curated list-API summary (simulation_steps_by_node empty).
 For time-window-based drift trends, see get_simulation_result_drifts and get_simulation_status_drifts."""
         )
         async def get_test_simulation_details_tool(
@@ -296,23 +311,33 @@ use get_simulation_result_drifts or get_simulation_status_drifts instead."""
         @self.mcp.tool(
             name="get_full_simulation_logs",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Retrieves comprehensive low-level execution logs for a specific simulation (~40KB detailed traces per node).
+            description="""Retrieves the full embedded execution-log blob for ONE simulation (~40KB raw traces per node).
 
-IMPORTANT: Use this tool to diagnose why a simulation was stopped, failed, returned no-result, or produced unexpected results.
-The logs contain granular execution traces NOT available in get_simulation_details or get_studio_attack_latest_result.
-When a simulation status is "stopped" or "no-result", always retrieve these logs before concluding root cause.
-
-Primary use cases: Deep troubleshooting, forensic analysis, step-by-step execution analysis, detailed log correlation. \
+Use this tool in EXACTLY ONE case: the simulation's logs_embedded=true. That flag (from get_test_simulation_details, or \
+from this tool) means the logs are an OLD-format embedded blob that is NOT in the logs index — \
+get_paginated_simulation_logs / search_simulation_logs return EMPTY for that simulation, so this tool is the only way to \
+read its logs.
+For EVERY other simulation (logs_embedded=false — the common case) use get_paginated_simulation_logs instead: it is \
+filtered, paginated, severity-scoped, and does NOT load ~40KB into context.
+Do NOT call this tool merely because a simulation is "stopped", "no-result", or failed — those statuses do NOT imply \
+logs_embedded=true. Investigate result-first via get_test_simulation_details (its per-node simulation_steps_by_node usually \
+explains the flow on its own), then, only if needed, pull filtered logs with get_paginated_simulation_logs (severity-first: \
+levels=ERROR for failures). When this tool IS the right source, prefer the structured simulation_steps over the raw 'logs' \
+string where both are present.
 Use drift_tracking_code from the parent simulation to correlate logs across test runs via get_simulation_lineage.
+Fetches via the data v3 result endpoint with includeLogs=true (falls back to v1 on older consoles).
 Returns a role-based structure:
 - 'target': Contains the target node's full execution data. Null when logs_available is False.
 - 'attacker': Present for dual-script attacks (exfil, infil, lateral movement). Null for host-only attacks or when logs_available is False.
 - 'logs_available' (bool): True when execution logs are present, False when the API returned empty data (e.g., INTERNAL_FAIL simulations).
 - 'logs_status' (str or null): Null when logs are available. Contains an explanatory message when logs_available is False.
+- 'logs_embedded' (bool or null): True = OLD-format simulation — its logs exist ONLY in this embedded blob and are NOT in \
+the logs index, so get_paginated_simulation_logs / search_simulation_logs return empty for it; this tool is the correct \
+source. False = logs are also in the index (prefer the paginated tools for filtered access). Null = v1 fallback (no hint).
 - Also includes: simulation_id, test_id, run_id, execution_times, status, attack_info (always present regardless of logs_available).
 Each role section contains: node_name, node_id, os_type, os_version, state, logs, simulation_steps, details_summary, error, output, task_status, task_code.
 Parameters: simulation_id (required - e.g., '1477531'), test_id (required - planRunId, e.g., '1764165600525.2'), console (required).
-Note: Results are cached for 5 minutes. Use get_simulation_details with include_basic_attack_logs for summary-level logs only."""
+Note: Results are cached for 5 minutes. Use get_test_simulation_details with include_basic_attack_logs for summary-level logs only."""
         )
         async def get_full_simulation_logs_tool(
             simulation_id: str,
@@ -322,6 +347,128 @@ Note: Results are cached for 5 minutes. Use get_simulation_details with include_
             return sb_get_full_simulation_logs(
                 simulation_id=simulation_id,
                 test_id=test_id,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="get_paginated_simulation_logs",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Fetch ONE simulation's execution logs incrementally and filtered (level/type/time/message), page by page.
+
+LOGS ARE USUALLY NOT NEEDED. First inspect the raw simulation object and its simulation steps via get_test_simulation_details \
+(optionally include_basic_attack_logs / include_mitre_techniques / include_drift_info). Reach for these logs ONLY when the \
+simulation object + steps are insufficient to understand the flow (root cause still unclear, or an explicit deep dive into \
+execution traces is required).
+
+When you do pull logs, do it smartly by severity, keyed on the simulation's status:
+- FAILED / errored / unexpected simulation: start with levels=ERROR; if insufficient widen to min_level=INFO, then DEBUG.
+- SUCCESSFUL simulation: start at min_level=INFO (default); escalate to DEBUG only if a deeper trace is genuinely needed.
+Read one page, then request the next only if has_more=true and the answer isn't there yet. Prefer a start_time/end_time \
+window and message_contains to narrow.
+
+IMPORTANT — old-format simulations: if the simulation result reports logs_embedded=true, do NOT use this tool — the logs \
+of that simulation are NOT in the new logs index (this tool will return empty). Use get_full_simulation_logs instead, \
+which fetches the v3 result with includeLogs=true and returns the embedded blob. Also use get_full_simulation_logs when \
+you need the full ~40KB blob at once.
+
+Investigating a specific node of the attack: a dual-script attack (exfil/infil/lateral movement) runs on two simulators — \
+an attacker node and a target node. Pass node_id to read only ONE node's logs (e.g. only the attacker's side, or only the \
+target's). Get the node ids from get_test_simulation_details — attackerNodeId / targetNodeId, or the per-node id under \
+dataObj.data[..].id. Omit node_id to see all nodes.
+
+Parameters: simulation_id (required, e.g. '4915971'), page (default 1), page_size (default 500, max 1000; page*page_size \
+must be <= 10000), min_level (DEBUG|INFO|WARNING|ERROR, default INFO — threshold, returns that level and above; DEBUG hidden \
+by default), levels (pipe-delimited explicit set e.g. 'ERROR|WARNING', overrides min_level), message_contains (case-insensitive \
+substring), start_time / end_time (ISO-8601 or epoch ms), log_type (LOGS|OUTPUT|ALL, default LOGS), sort_order (asc|desc, \
+default asc), node_id (optional simulator-node id to scope to one node of the attack), console. \
+Returns { logs, total, total_capped, page, page_size, has_more } (total_capped=true means total is the ES 10k lower \
+bound, not exact). Results cached ~10 minutes."""
+        )
+        async def get_paginated_simulation_logs_tool(
+            simulation_id: str,
+            page: int = 1,
+            page_size: int = 500,
+            min_level: str = "INFO",
+            levels: str = "",
+            message_contains: str = "",
+            start_time: str = "",
+            end_time: str = "",
+            log_type: str = "LOGS",
+            sort_order: str = "asc",
+            node_id: str = "",
+            console: str = "default"
+        ) -> dict:
+            return sb_get_paginated_simulation_logs(
+                simulation_id=simulation_id,
+                page=page,
+                page_size=page_size,
+                min_level=min_level,
+                levels=levels,
+                message_contains=message_contains,
+                start_time=start_time,
+                end_time=end_time,
+                log_type=log_type,
+                sort_order=sort_order,
+                node_id=node_id,
+                console=console
+            )
+
+        @self.mcp.tool(
+            name="search_simulation_logs",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Search execution logs across MANY or ALL simulations (v3 /simulationLogs). Cross-simulation / fleet-wide investigation.
+
+Use for questions that span simulations, e.g. 'find every ERROR containing "<X>" in the last day', 'which sims logged a \
+timeout this week', or as the first step of 'how many simulations hit error X'. Pass simulation_ids as a pipe-delimited list \
+(e.g. 'id1|id2') to scope to specific simulations, or OMIT it to search across all simulations.
+
+Like get_paginated_simulation_logs, logs are a last resort — prefer result-level tools first. Lead with the tightest filter: \
+typically levels=ERROR + message_contains + a start_time/end_time window, then page. Deep paging is bounded (page*page_size \
+must be <= 10000) — narrow filters rather than paging far.
+
+Old-format simulations (result reports logs_embedded=true) are NOT in the logs index, so this search will NOT see them — \
+their logs are only available via get_full_simulation_logs (v3 result with includeLogs=true).
+
+IMPORTANT counting note: the response returns log LINES and `total` counts lines, NOT simulations. To count distinct \
+simulations (e.g. 'how many sims ended with error X'), dedupe the `jobId` field across the returned lines (each line includes \
+jobId and planRunId). CRITICAL: `total` is capped by Elasticsearch at 10000 — when `total_capped=true` in the response, \
+`total` is a LOWER BOUND, not the exact count (the real number is larger and unknown). Never report a capped total as exact; \
+narrow filters (tighter time window, more specific message_contains, levels=ERROR) until total_capped=false, then dedupe \
+jobId. There is no server-side aggregation. Use the most SPECIFIC message_contains available (e.g. a hostname) — a broad \
+keyword can match unrelated failure modes.
+
+Parameters: simulation_ids (optional pipe-delimited list; omit = all sims), page, page_size (default 500, max 1000), min_level \
+(default INFO), levels (pipe-delimited, overrides min_level), message_contains, start_time / end_time (ISO-8601 or epoch ms), \
+log_type (LOGS|OUTPUT|ALL), sort_order (asc|desc), node_id (optional simulator-node id to scope every match to a single node — \
+e.g. only the attacker or only the target node), console. Returns { logs, total, total_capped, page, page_size, has_more } \
+(total_capped=true => total is the ES 10k lower bound, not exact). Cached ~10 min."""
+        )
+        async def search_simulation_logs_tool(
+            simulation_ids: str = "",
+            page: int = 1,
+            page_size: int = 500,
+            min_level: str = "INFO",
+            levels: str = "",
+            message_contains: str = "",
+            start_time: str = "",
+            end_time: str = "",
+            log_type: str = "LOGS",
+            sort_order: str = "asc",
+            node_id: str = "",
+            console: str = "default"
+        ) -> dict:
+            return sb_search_simulation_logs(
+                simulation_ids=simulation_ids,
+                page=page,
+                page_size=page_size,
+                min_level=min_level,
+                levels=levels,
+                message_contains=message_contains,
+                start_time=start_time,
+                end_time=end_time,
+                log_type=log_type,
+                sort_order=sort_order,
+                node_id=node_id,
                 console=console
             )
 

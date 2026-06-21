@@ -258,6 +258,55 @@ def get_full_simulation_result_entity(simulation_result_entity, include_mitre_te
     return full_simulation_result_entity
 
 
+def build_simulation_steps_by_node(api_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract the per-node execution steps from a raw v3 result document.
+
+    This is the forensic "middle tier" of the result-first investigation flow: the
+    step-by-step execution trace per simulator node, WITHOUT the heavy LOGS/OUTPUT blobs
+    (those stay in the dedicated logs tools). Each node is tagged with its role
+    (attacker / target / host) so the agent can reason about dual-script attacks.
+
+    Args:
+        api_response: Raw v3 result document (from executionsHistoryResults, includeLogs=false).
+
+    Returns:
+        List of per-node dicts: {node_id, node_name, role, state, task_status, error,
+        simulation_steps}. Empty list when the document has no dataObj execution data
+        (e.g. the v1 list-row fallback on older consoles).
+    """
+    data_array = api_response.get('dataObj', {}).get('data', [[]])
+    if not data_array or not data_array[0]:
+        return []
+
+    entries = data_array[0]
+    attacker_node_id = api_response.get('attackerNodeId', '')
+    target_node_id = api_response.get('targetNodeId', '')
+    is_host_attack = (attacker_node_id == target_node_id)
+
+    nodes = []
+    for entry in entries:
+        details = entry.get('details', {})
+        node_id = entry.get('id', '')
+        if is_host_attack:
+            role = 'host'
+        elif node_id == attacker_node_id:
+            role = 'attacker'
+        elif node_id == target_node_id:
+            role = 'target'
+        else:
+            role = 'unknown'
+        nodes.append({
+            'node_id': node_id,
+            'node_name': entry.get('nodeNameInMove', ''),
+            'role': role,
+            'state': entry.get('state', ''),
+            'task_status': details.get('STATUS', ''),
+            'error': details.get('ERROR', ''),
+            'simulation_steps': details.get('SIMULATION_STEPS', []),
+        })
+    return nodes
+
+
 # Security control events mappings
 reduced_security_control_events_mapping = {
     'event_id': 'id',
@@ -528,6 +577,7 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
         metadata["attacker"] = None
         metadata["logs_available"] = False
         metadata["logs_status"] = "No execution logs available for this simulation"
+        metadata["logs_embedded"] = api_response.get('logsEmbedded')
         return metadata
 
     entries = data_array[0]
@@ -595,6 +645,73 @@ def get_full_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, 
     result["attacker"] = attacker_data
     result["logs_available"] = True
     result["logs_status"] = None
+    # v3 result endpoint hint: True = old-format sim, logs live only in this embedded blob
+    # (NOT in the logs index, so the paginated /simulationLogs tools return empty for it).
+    # None when the response came from the v1 fallback (no logsEmbedded field).
+    result["logs_embedded"] = api_response.get('logsEmbedded')
+    return result
+
+
+def get_simulation_logs_mapping(api_response: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform the v3 /simulationLogs envelope to the MCP tool format.
+
+    The data API returns ``{ logs, total, page, pageSize, hasMore }`` where each ``logs`` entry is a
+    structured per-line record (timestamp, level, logType, logger, sourceFile, line, message, pid,
+    jobId, planRunId). This mapping snake-cases the envelope keys (``pageSize`` -> ``page_size``,
+    ``hasMore`` -> ``has_more``) and passes the per-line records through verbatim.
+
+    When no logs match, returns an empty page with a ``hint_to_agent`` pointing at likely causes
+    (filters too narrow, or an old-format simulation whose logs are embedded — use
+    ``get_full_simulation_logs`` for those).
+
+    Elasticsearch caps ``hits.total.value`` at 10,000 (no ``track_total_hits``), so for large
+    cross-simulation searches ``total`` is a **lower bound**, not the exact count. This is signalled
+    explicitly via ``total_capped`` so consumers can detect it programmatically rather than inferring
+    it from ``has_more``.
+
+    Args:
+        api_response: Raw JSON dict from GET /api/data/v3/accounts/{accountId}/simulationLogs.
+
+    Returns:
+        Dict with keys: logs, total, total_capped, page, page_size, has_more (+ hint_to_agent when
+        empty or when the total is capped).
+    """
+    # Elasticsearch's default max_result_window / hits.total cap.
+    ES_TOTAL_CAP = 10000
+
+    api_response = api_response or {}
+    logs = api_response.get("logs") or []
+    total = api_response.get("total") or 0
+    page = api_response.get("page", 1)
+    page_size = api_response.get("pageSize", api_response.get("page_size", 0))
+    has_more = bool(api_response.get("hasMore", api_response.get("has_more", False)))
+    total_capped = isinstance(total, int) and total >= ES_TOTAL_CAP
+
+    result: Dict[str, Any] = {
+        "logs": logs,
+        "total": total,
+        # True => `total` is a lower bound (ES capped at 10k); the real count is larger and unknown.
+        "total_capped": total_capped,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+    }
+
+    if not logs:
+        result["hint_to_agent"] = (
+            "No log lines matched. Either the filters are too narrow (try widening the time window, "
+            "lowering min_level, or clearing message_contains), or this is an old-format simulation "
+            "whose logs are embedded in the result rather than indexed — in that case use "
+            "get_full_simulation_logs."
+        )
+    elif total_capped:
+        result["hint_to_agent"] = (
+            f"total is capped at {ES_TOTAL_CAP} (Elasticsearch limit) and is a LOWER BOUND, not the exact "
+            "count — the real number of matching lines is larger and unknown. Do NOT report it as exact. "
+            "Narrow with a tighter time window / more specific message_contains / levels=ERROR to bring the "
+            "result set under the cap, and dedupe by jobId for distinct-simulation counts."
+        )
+
     return result
 
 

@@ -22,6 +22,7 @@ from .data_types import (
     get_reduced_test_summary_mapping,
     get_reduced_simulation_result_entity,
     get_full_simulation_result_entity,
+    build_simulation_steps_by_node,
     get_reduced_security_control_events_mapping,
     get_full_security_control_events_mapping,
     group_and_enrich_drift_records,
@@ -890,16 +891,25 @@ def sb_get_simulation_details(
 ) -> Dict[str, Any]:
     """
     Get detailed information for a specific simulation.
-    
+
+    Returns a curated, LLM-friendly hybrid envelope (NOT the raw v3 document): flat snake_case
+    result fields (simulation_id, status, attacker/target nodes, attack info, result_details),
+    plus `simulation_steps_by_node` — the per-node execution steps that form the forensic
+    "middle tier" of the result-first investigation flow — and `logs_embedded` for log-tool
+    routing. Heavy per-node LOGS/OUTPUT blobs are excluded; deep log retrieval goes through
+    get_paginated_simulation_logs / get_full_simulation_logs. On older consoles without the v3
+    result endpoint, falls back to the curated list row (no per-node steps).
+
     Args:
         console: SafeBreach console name
         simulation_id: Simulation ID
         include_mitre_techniques: Include MITRE ATT&CK techniques
         include_basic_attack_logs: Include basic attack logs from simulation events
         include_drift_info: Include drift analysis information
-        
+
     Returns:
-        Dict containing simulation details
+        Dict with the curated simulation result, simulation_steps_by_node, logs_embedded,
+        optional enrichments, and a hint_to_agent.
     """
     try:
         logger.info("Getting api key for console %s", console)
@@ -910,7 +920,7 @@ def sb_get_simulation_details(
 
         headers = {"Content-Type": "application/json",
                     **get_auth_headers_for_console(console)}
-        
+
         data = {
             "runId": "*",
             "query": f"id:{simulation_id}",
@@ -919,21 +929,90 @@ def sb_get_simulation_details(
             "orderBy": "desc",
             "sortBy": "executionTime"
         }
-        
+
         logger.info("Fetching simulation '%s' from console '%s'", simulation_id, console)
         response = requests.post(api_url, headers=headers, json=data, timeout=120)
         if response.status_code != 200:
             logger.error("Failed to fetch simulation details for simulation ID %s: %s", simulation_id, response.text)
             return {"error": "Failed to fetch simulation details", "status_code": response.status_code}
-        
-        simulation_result = response.json()
+
+        simulations_list = response.json().get('simulations', [])
+        if not simulations_list:
+            # No simulation with this id on this console (e.g. a sim id from a different console).
+            # Return a clear, structured signal instead of crashing with an IndexError.
+            logger.info("No simulation found with id '%s' on console '%s'", simulation_id, console)
+            return {
+                "error": f"Simulation '{simulation_id}' not found on console '{console}'",
+                "simulation_id": simulation_id,
+                "hint_to_agent": (
+                    "No simulation with this id exists on this console. Verify the simulation_id and the console "
+                    "(simulation ids are console-specific) via get_test_simulations."
+                ),
+            }
+        list_row = simulations_list[0]
+        plan_run_id = list_row.get('planRunId')
+
+        # Fetch the raw v3 result without logs: full document (incl. dataObj simulation steps)
+        # with details.LOGS/OUTPUT stripped server-side, plus the logsEmbedded hint.
+        raw_result = None
+        if plan_run_id:
+            v3_url = (
+                f"{base_url}/api/data/v3/accounts/{account_id}/executionsHistoryResults/{simulation_id}"
+                f"?runId={plan_run_id}&includeLogs=false"
+            )
+            try:
+                v3_response = requests.get(v3_url, headers=headers, timeout=120)
+                if v3_response.status_code == 200:
+                    raw_result = v3_response.json()
+                else:
+                    logger.info("v3 result endpoint returned %s for simulation '%s'; falling back to list row",
+                                v3_response.status_code, simulation_id)
+            except (requests.exceptions.RequestException, ValueError) as e:
+                logger.warning("v3 result fetch failed for simulation '%s': %s; falling back to list row",
+                               simulation_id, str(e))
+
+        # Hybrid shape: a curated, LLM-friendly envelope (flat snake_case fields + optional
+        # enrichments) PLUS the per-node execution steps — the forensic "middle tier" — without
+        # the heavy LOGS/OUTPUT blobs. The full raw v3 document is NOT relayed; deep log retrieval
+        # goes through the dedicated logs tools (get_paginated_simulation_logs / get_full_simulation_logs).
+        source_entity = raw_result if raw_result is not None else list_row
         return_details = get_full_simulation_result_entity(
-            simulation_result['simulations'][0],
+            source_entity,
             include_mitre_techniques=include_mitre_techniques,
             include_basic_attack_logs=include_basic_attack_logs,
             include_drift_info=include_drift_info
         )
-        
+
+        if raw_result is not None:
+            # logsEmbedded only exists on the v3 result; None signals "unknown" (v1 fallback).
+            return_details['logs_embedded'] = raw_result.get('logsEmbedded')
+            return_details['simulation_steps_by_node'] = build_simulation_steps_by_node(raw_result)
+            if return_details['logs_embedded']:
+                return_details['hint_to_agent'] = (
+                    "Curated simulation result with per-node execution steps in simulation_steps_by_node "
+                    "(heavy logs excluded). logs_embedded=true: this is an old-format simulation — its logs "
+                    "are NOT in the logs index, so do NOT use get_paginated_simulation_logs/"
+                    "search_simulation_logs; use get_full_simulation_logs to retrieve the embedded logs if "
+                    "the result and steps are not enough."
+                )
+            else:
+                return_details['hint_to_agent'] = (
+                    "Curated simulation result with per-node execution steps in simulation_steps_by_node "
+                    "(heavy logs excluded). If the result and steps are not enough to understand the flow, "
+                    "pull logs incrementally with get_paginated_simulation_logs (severity-first: levels=ERROR "
+                    "for failed simulations, min_level=INFO for successful ones)."
+                )
+        else:
+            # Older console (no v3 result endpoint) or fetch failure — curated list row only; the
+            # v1 list API strips dataObj, so per-node steps are unavailable here.
+            return_details['logs_embedded'] = None
+            return_details['simulation_steps_by_node'] = []
+            return_details['hint_to_agent'] = (
+                "Curated simulation summary from the list API (the v3 result endpoint is unavailable on this "
+                "console, so per-node simulation steps are not included). For execution logs use "
+                "get_paginated_simulation_logs, or get_full_simulation_logs for the full embedded blob."
+            )
+
         if include_drift_info and return_details.get('is_drifted', False):
             # Get the previous run ID of the most recent simulation with the same parameters such attack_playbook_id, simulators etc
             drift_code = return_details['drift_info']['drift_tracking_code']
@@ -953,8 +1032,9 @@ def sb_get_simulation_details(
             else:
                 previous_simulations = response.json().get('simulations', [])
                 if previous_simulations:
+                    current_execution_time = source_entity.get('executionTime', '')
                     for sim in previous_simulations:
-                        if sim['executionTime'] < return_details['end_time']:
+                        if sim['executionTime'] < current_execution_time:
                             # We found the most recent previous simulation with the same drift_tracking_code
                             logger.info("Found previous simulation with ID %s for drift_tracking_code %s", sim.get('id', 'Unknown'), drift_code)
                             return_details['drift_info']['previous_simulation_id'] = sim.get('id', 'Unknown')
@@ -964,7 +1044,7 @@ def sb_get_simulation_details(
                     return_details['drift_info']['previous_simulation_id'] = "No previous simulation found with same drift_tracking_code"
 
         return return_details
-        
+
     except Exception as e:
         logger.error("Error getting simulation details for ID '%s': %s", simulation_id, str(e))
         raise
@@ -1862,8 +1942,12 @@ def _fetch_full_simulation_logs_from_api(
         base_url = get_api_base_url(console, 'data')
         account_id = get_api_account_id(console)
 
-        # Build API URL with simulation_id as path parameter and runId as query parameter
-        api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+        # Prefer the v3 result endpoint: includeLogs=true returns the embedded blob AND the
+        # logsEmbedded hint (True = old-format sim whose logs are NOT in the logs index).
+        api_url = (
+            f"{base_url}/api/data/v3/accounts/{account_id}/executionsHistoryResults/{simulation_id}"
+            f"?runId={test_id}&includeLogs=true"
+        )
 
         headers = {
             "Content-Type": "application/json",
@@ -1872,6 +1956,13 @@ def _fetch_full_simulation_logs_from_api(
 
         logger.info("GET request to: %s", api_url)
         response = requests.get(api_url, headers=headers, timeout=120)
+
+        if response.status_code == 404:
+            # Older consoles predate the v3 result endpoint — fall back to the v1 legacy URL
+            # (which embeds logs unconditionally but has no logsEmbedded hint).
+            api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults/{simulation_id}?runId={test_id}"
+            logger.info("v3 result endpoint returned 404; falling back to v1: %s", api_url)
+            response = requests.get(api_url, headers=headers, timeout=120)
 
         # Handle HTTP errors
         if response.status_code == 404:
@@ -1901,6 +1992,324 @@ def _fetch_full_simulation_logs_from_api(
         raise
     except Exception as e:
         logger.error("Unexpected error fetching full simulation logs: %s", str(e))
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Paginated / filterable simulation logs (v3 /simulationLogs) — SAF-32143
+# ---------------------------------------------------------------------------
+
+# Bounded cache for paginated simulation logs
+simulation_logs_cache = SafeBreachCache(name="simulation_logs", maxsize=3, ttl=600)
+
+
+def _fetch_simulation_logs_from_api(
+    job_ids=None,
+    node_id="",
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Fetch paginated simulation logs from the v3 /simulationLogs endpoint.
+
+    Builds the query params with the API's casing/format contract: ``jobIds`` and ``levels`` are
+    pipe-delimited strings (omitted when empty), ``minLevel``/``logType`` upper-cased, ``sortOrder``
+    lower-cased, ``page``/``pageSize`` ints, ``nodeId`` an exact simulator-node id (omitted when
+    empty). Empty optional filters are omitted entirely.
+
+    Returns the raw API JSON ``{ logs, total, page, pageSize, hasMore }``.
+
+    Raises:
+        ValueError: 404 (endpoint unavailable / no logs), 401 (auth), 400 (bad request — surfaces
+            the server message), or invalid JSON.
+    """
+    try:
+        base_url = get_api_base_url(console, 'data')
+        account_id = get_api_account_id(console)
+        api_url = f"{base_url}/api/data/v3/accounts/{account_id}/simulationLogs"
+
+        params: Dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
+
+        if job_ids:
+            ids = "|".join(seg.strip() for seg in str(job_ids).split("|") if seg.strip())
+            if ids:
+                params["jobIds"] = ids
+        if node_id and str(node_id).strip():
+            params["nodeId"] = str(node_id).strip()
+        if levels:
+            normalized_levels = "|".join(
+                seg.strip().upper() for seg in str(levels).split("|") if seg.strip()
+            )
+            if normalized_levels:
+                params["levels"] = normalized_levels
+        if min_level:
+            params["minLevel"] = str(min_level).upper()
+        if message_contains:
+            params["messageContains"] = message_contains
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
+        if log_type:
+            params["logType"] = str(log_type).upper()
+        if sort_order:
+            params["sortOrder"] = str(sort_order).lower()
+
+        headers = {
+            "Content-Type": "application/json",
+            **get_auth_headers_for_console(console),
+        }
+
+        logger.info("GET request to: %s params=%s", api_url, params)
+        response = requests.get(api_url, headers=headers, params=params, timeout=120)
+
+        if response.status_code == 404:
+            raise ValueError(
+                f"Simulation logs endpoint not available or no logs found on console '{console}'. "
+                "The target console's data service may predate the /simulationLogs (v3) endpoint."
+            )
+        elif response.status_code == 401:
+            raise ValueError(f"Authentication failed for console '{console}'")
+        elif response.status_code == 400:
+            server_message = None
+            try:
+                body = response.json()
+                server_message = (body.get("error", {}) or {}).get("message") or body.get("message")
+            except (ValueError, AttributeError):
+                server_message = getattr(response, "text", None)
+            raise ValueError(
+                f"Bad request to simulation logs API: {server_message or 'invalid parameters'}"
+            )
+
+        check_rbac_response(response)
+
+        try:
+            return response.json()
+        except ValueError as e:
+            logger.error("Failed to parse simulation logs response: %s", str(e))
+            raise ValueError(f"Invalid JSON response from API: {str(e)}")
+
+    except requests.exceptions.Timeout:
+        logger.error("Timeout fetching simulation logs from console '%s'", console)
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error("Request error fetching simulation logs from console '%s': %s", console, str(e))
+        raise
+
+
+def _get_simulation_logs_from_cache_or_api(
+    job_ids=None,
+    node_id="",
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    console="default",
+) -> Dict[str, Any]:
+    """Get paginated simulation logs from cache or API (validate-then-cache).
+
+    The cache key includes the console, jobIds, node_id, every filter, and the page, scoped per user,
+    so two different filter combinations never collide.
+    """
+    cache_key = (
+        f"simulation_logs_{console}_{job_ids or 'ALL'}_{node_id or 'ALLNODES'}_{page}_{page_size}_"
+        f"{min_level}_{levels}_{message_contains}_{start_time}_{end_time}_{log_type}_{sort_order}"
+        f"{get_cache_user_suffix()}"
+    )
+
+    if is_caching_enabled("data"):
+        cached = simulation_logs_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Retrieved simulation logs from cache: %s", cache_key)
+            return cached
+
+    raw_data = _fetch_simulation_logs_from_api(
+        job_ids=job_ids, node_id=node_id, page=page, page_size=page_size, min_level=min_level, levels=levels,
+        message_contains=message_contains, start_time=start_time, end_time=end_time,
+        log_type=log_type, sort_order=sort_order, console=console,
+    )
+
+    from .data_types import get_simulation_logs_mapping
+    transformed = get_simulation_logs_mapping(raw_data)
+
+    if is_caching_enabled("data"):
+        simulation_logs_cache.set(cache_key, transformed)
+        logger.info("Cached transformed simulation logs: %s", cache_key)
+
+    return transformed
+
+
+_VALID_MIN_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+_VALID_LOG_TYPES = {"LOGS", "OUTPUT", "ALL"}
+_VALID_SORT_ORDERS = {"asc", "desc"}
+_SIM_LOGS_MAX_PAGE_SIZE = 1000
+_SIM_LOGS_MAX_RESULT_WINDOW = 10000  # Elasticsearch offset ceiling (from + size)
+
+
+def _validate_simulation_logs_params(page, page_size, min_level, levels, log_type, sort_order):
+    """Validate/normalize pagination + filter params client-side for fast, friendly errors.
+
+    Mirrors the data API's server-side enum + pageSize validation, and additionally guards the
+    Elasticsearch ~10k offset ceiling (`page * page_size`) since deep paging fails server-side.
+
+    Returns the coerced (page, page_size) ints. Raises ValueError on any violation.
+    """
+    try:
+        page = int(page)
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        raise ValueError("page and page_size must be integers")
+
+    if page < 1:
+        raise ValueError("page must be >= 1")
+    if page_size < 1 or page_size > _SIM_LOGS_MAX_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {_SIM_LOGS_MAX_PAGE_SIZE}")
+    if page * page_size > _SIM_LOGS_MAX_RESULT_WINDOW:
+        raise ValueError(
+            f"Requested page exceeds the ~{_SIM_LOGS_MAX_RESULT_WINDOW} offset ceiling "
+            f"(page * page_size = {page * page_size}). Narrow the search with a time window "
+            "(start_time/end_time), levels, or message_contains instead of paging deeper."
+        )
+    if min_level and str(min_level).upper() not in _VALID_MIN_LEVELS:
+        raise ValueError(f"min_level must be one of {sorted(_VALID_MIN_LEVELS)}")
+    if log_type and str(log_type).upper() not in _VALID_LOG_TYPES:
+        raise ValueError(f"log_type must be one of {sorted(_VALID_LOG_TYPES)}")
+    if sort_order and str(sort_order).lower() not in _VALID_SORT_ORDERS:
+        raise ValueError(f"sort_order must be one of {sorted(_VALID_SORT_ORDERS)}")
+    if levels:
+        bad = [
+            seg.strip() for seg in str(levels).split("|")
+            if seg.strip() and seg.strip().upper() not in _VALID_MIN_LEVELS
+        ]
+        if bad:
+            raise ValueError(
+                f"levels contains invalid level(s) {bad}; valid levels: {sorted(_VALID_MIN_LEVELS)}"
+            )
+    return page, page_size
+
+
+def sb_get_paginated_simulation_logs(
+    simulation_id,
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    node_id="",
+    console="default",
+) -> Dict[str, Any]:
+    """Fetch one simulation's execution logs, paginated and filtered (v3 /simulationLogs).
+
+    Investigation last-resort: prefer `get_test_simulation_details` (the raw simulation object + steps)
+    first; use this only when those are insufficient. Pull smartly by severity (FAILED sims:
+    `min_level=ERROR` first; SUCCESS sims: INFO), and page rather than dump.
+
+    Args:
+        simulation_id: The simulation id (jobId), required. Sent as `jobIds=<simulation_id>`.
+        page/page_size: 1-based pagination; page_size 1-1000 (default 500). `page*page_size` ≤ 10000.
+        min_level: severity threshold (DEBUG<INFO<WARNING<ERROR), default INFO. Ignored if `levels` set.
+        levels: explicit pipe-delimited level set (e.g. "ERROR|WARNING"); overrides min_level.
+        message_contains: case-insensitive substring filter on the message.
+        start_time/end_time: inclusive timestamp bounds (ISO-8601 or epoch ms).
+        log_type: LOGS (default) | OUTPUT | ALL. sort_order: asc (default) | desc.
+        node_id: optional simulator-node id (e.g. the attacker_node_id or target_node_id from
+            get_test_simulation_details). Scopes logs to a single node of the attack — use it to read
+            only the attacker's or only the target's side of a dual-script (exfil/infil/lateral) attack.
+            Omit to include all nodes.
+        console: SafeBreach console name.
+
+    Returns:
+        Dict { logs, total, page, page_size, has_more } (+ hint_to_agent when empty).
+    """
+    if not simulation_id or not str(simulation_id).strip():
+        raise ValueError("simulation_id parameter is required and cannot be empty")
+
+    page, page_size = _validate_simulation_logs_params(
+        page, page_size, min_level, levels, log_type, sort_order
+    )
+
+    try:
+        return _get_simulation_logs_from_cache_or_api(
+            job_ids=str(simulation_id).strip(), node_id=node_id, page=page, page_size=page_size,
+            min_level=min_level, levels=levels, message_contains=message_contains,
+            start_time=start_time, end_time=end_time, log_type=log_type,
+            sort_order=sort_order, console=console,
+        )
+    except Exception as e:
+        logger.error(
+            "Error getting paginated simulation logs for simulation '%s' on console '%s': %s",
+            simulation_id, console, str(e)
+        )
+        raise
+
+
+def sb_search_simulation_logs(
+    simulation_ids="",
+    page=1,
+    page_size=500,
+    min_level="INFO",
+    levels="",
+    message_contains="",
+    start_time="",
+    end_time="",
+    log_type="LOGS",
+    sort_order="asc",
+    node_id="",
+    console="default",
+) -> Dict[str, Any]:
+    """Search execution logs across many or all simulations (v3 /simulationLogs).
+
+    Built for cross-simulation / fleet-wide investigation (e.g. "every ERROR containing X in the last
+    day"). Pass `simulation_ids` as a pipe-delimited list (e.g. "a|b") to scope, or omit it to search
+    across all simulations. Lead with the tightest filter (levels + message_contains + time window).
+
+    Note: the response returns log *lines* and `total` counts lines, not simulations — to count
+    distinct simulations, dedupe the returned `jobId`s (exact only within the ~10k offset ceiling).
+
+    Args:
+        simulation_ids: optional pipe-delimited simulation ids; omit/empty = all simulations.
+        node_id: optional simulator-node id to scope every match to a single node (e.g. only the
+            attacker or only the target node).
+        (other args identical to sb_get_paginated_simulation_logs)
+
+    Returns:
+        Dict { logs, total, page, page_size, has_more } (+ hint_to_agent when empty).
+    """
+    page, page_size = _validate_simulation_logs_params(
+        page, page_size, min_level, levels, log_type, sort_order
+    )
+
+    job_ids = None
+    if simulation_ids and str(simulation_ids).strip():
+        job_ids = "|".join(
+            seg.strip() for seg in str(simulation_ids).split("|") if seg.strip()
+        ) or None
+
+    try:
+        return _get_simulation_logs_from_cache_or_api(
+            job_ids=job_ids, node_id=node_id, page=page, page_size=page_size,
+            min_level=min_level, levels=levels, message_contains=message_contains,
+            start_time=start_time, end_time=end_time, log_type=log_type,
+            sort_order=sort_order, console=console,
+        )
+    except Exception as e:
+        logger.error("Error searching simulation logs on console '%s': %s", console, str(e))
         raise
 
 

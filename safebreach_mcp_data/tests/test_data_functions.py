@@ -42,6 +42,11 @@ from safebreach_mcp_data.data_functions import (
     findings_cache,
     full_simulation_logs_cache,
     peer_benchmark_cache,
+    _fetch_simulation_logs_from_api,
+    _get_simulation_logs_from_cache_or_api,
+    sb_get_paginated_simulation_logs,
+    sb_search_simulation_logs,
+    simulation_logs_cache,
     PAGE_SIZE
 )
 
@@ -668,26 +673,40 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
     @patch('safebreach_mcp_data.data_functions.requests.post')
-    def test_sb_get_simulation_details_success(self, mock_post, mock_base_url, mock_account_id):
-        """Test successful simulation details retrieval."""
-        # Setup mocks
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "simulations": [{
-                "id": "sim1",
-                "moveName": "Test Move",
-                "MITRE_Technique": [{"value": "T1234", "displayName": "Test Technique", "url": "https://attack.mitre.org/techniques/T1234/"}],
-                "simulationEvents": [
-                    {"nodeId": "node1", "type": "PROCESS", "action": "START", "timestamp": "2025-01-01T10:00:00Z"},
-                    {"nodeId": "node1", "type": "FILE", "action": "CREATE", "timestamp": "2025-01-01T10:01:00Z"},
-                    {"nodeId": "node2", "type": "DIRECTORY", "action": "CREATE", "timestamp": "2025-01-01T10:02:00Z"}
-                ]
-            }]
+    def test_sb_get_simulation_details_success(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """Raw v3 result (without logs) is the response; enrichments merged on top."""
+        # v1 list lookup resolves the row (and planRunId for the v3 call)
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {
+            "simulations": [{"id": "sim1", "planRunId": "pr1", "moveName": "Test Move"}]
         }
-        mock_response.status_code = 200
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+        mock_post.return_value = list_response
+
+        # v3 raw result: full doc incl. steps, logs stripped server-side, logsEmbedded hint
+        raw_doc = {
+            "id": "sim1",
+            "planRunId": "pr1",
+            "moveName": "Test Move",
+            "finalStatus": "missed",
+            "logsEmbedded": False,
+            "MITRE_Technique": [{"value": "T1234", "displayName": "Test Technique", "url": "https://attack.mitre.org/techniques/T1234/"}],
+            "simulationEvents": [
+                {"nodeId": "node1", "type": "PROCESS", "action": "START", "timestamp": "2025-01-01T10:00:00Z"},
+                {"nodeId": "node1", "type": "FILE", "action": "CREATE", "timestamp": "2025-01-01T10:01:00Z"},
+                {"nodeId": "node2", "type": "DIRECTORY", "action": "CREATE", "timestamp": "2025-01-01T10:02:00Z"}
+            ],
+            "dataObj": {"data": [[{"id": "node1", "details": {
+                "SIMULATION_STEPS": [{"level": "INFO", "message": "step 1"}],
+                "ERROR": "", "STATUS": "DONE"
+            }}]]},
+        }
+        v3_response = Mock()
+        v3_response.status_code = 200
+        v3_response.json.return_value = raw_doc
+        mock_get.return_value = v3_response
 
         result = sb_get_simulation_details(
             "sim1",
@@ -696,39 +715,86 @@ class TestDataFunctions:
             include_basic_attack_logs=True
         )
 
-        assert "simulation_id" in result
+        # Hybrid shape: curated flat fields (no raw camelCase / dataObj passthrough)
+        assert result["simulation_id"] == "sim1"
+        assert result["status"] == "missed"
+        assert result["playbook_attack_name"] == "Test Move"
+        assert result["logs_embedded"] is False
+        assert "dataObj" not in result  # raw document is NOT relayed
+        assert "finalStatus" not in result  # curated, not raw camelCase
+        # Per-node execution steps (the forensic middle tier), heavy logs excluded
+        nodes = result["simulation_steps_by_node"]
+        assert len(nodes) == 1
+        assert nodes[0]["node_id"] == "node1"
+        assert nodes[0]["role"] == "host"  # no attacker/target node ids -> host attack
+        assert nodes[0]["task_status"] == "DONE"
+        assert nodes[0]["simulation_steps"][0]["message"] == "step 1"
+        assert "logs" not in nodes[0]  # heavy LOGS/OUTPUT not included in steps
+        # Steering hint to the paginated logs tool
+        assert "get_paginated_simulation_logs" in result.get("hint_to_agent", "")
+
+        # v3 URL was used with runId from the list row and includeLogs=false
+        v3_url = mock_get.call_args.args[0]
+        assert "/api/data/v3/accounts/123/executionsHistoryResults/sim1" in v3_url
+        assert "runId=pr1" in v3_url
+        assert "includeLogs=false" in v3_url
+
+        # Enrichments merged on top of the raw doc
         assert "mitre_techniques" in result
-        assert "basic_attack_logs_by_hosts" in result
-
-        # Verify attack logs structure
+        assert result["mitre_techniques"][0]["id"] == "T1234"
         attack_logs = result["basic_attack_logs_by_hosts"]
-        assert isinstance(attack_logs, list)
-        assert len(attack_logs) == 2  # Two hosts (node1 and node2)
-
-        # Check each host log structure
-        for host_log in attack_logs:
-            assert "host_info" in host_log
-            assert "host_logs" in host_log
-            assert "node_id" in host_log["host_info"]
-            assert "event_count" in host_log["host_info"]
-            assert isinstance(host_log["host_logs"], list)
-
-        # Verify specific host data
-        host_nodes = [log["host_info"]["node_id"] for log in attack_logs]
-        assert "node1" in host_nodes
-        assert "node2" in host_nodes
-
-        # Find node1 and verify it has 2 events
+        assert len(attack_logs) == 2
         node1_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node1")
         assert node1_log["host_info"]["event_count"] == 2
-        assert len(node1_log["host_logs"]) == 2
 
-        # Find node2 and verify it has 1 event
-        node2_log = next(log for log in attack_logs if log["host_info"]["node_id"] == "node2")
-        assert node2_log["host_info"]["event_count"] == 1
-        assert len(node2_log["host_logs"]) == 1
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_v3_404_falls_back_to_row(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """Older console (v3 404): the raw list row is returned with an explanatory hint."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {
+            "simulations": [{"id": "sim1", "planRunId": "pr1", "finalStatus": "missed"}]
+        }
+        mock_post.return_value = list_response
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.return_value = not_found
 
-        mock_post.assert_called_once()
+        result = sb_get_simulation_details("sim1", "test-console")
+
+        # Curated shape from the v1 list-row fallback (no v3 -> no per-node steps)
+        assert result["simulation_id"] == "sim1"
+        assert result["status"] == "missed"
+        assert result["logs_embedded"] is None  # unknown on v1 fallback
+        assert result["simulation_steps_by_node"] == []  # list API strips dataObj
+        assert "hint_to_agent" in result  # explains steps unavailable / v3 missing
+
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_old_format_hint(self, mock_post, mock_get, mock_base_url, mock_account_id):
+        """logsEmbedded=true (old-format sim) -> hint routes to get_full_simulation_logs."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {"simulations": [{"id": "sim1", "planRunId": "pr1"}]}
+        mock_post.return_value = list_response
+        v3_response = Mock()
+        v3_response.status_code = 200
+        v3_response.json.return_value = {
+            "id": "sim1", "logsEmbedded": True,
+            "dataObj": {"data": [[{"id": "n1", "details": {"SIMULATION_STEPS": []}}]]},
+        }
+        mock_get.return_value = v3_response
+
+        result = sb_get_simulation_details("sim1", "test-console")
+        assert result["logs_embedded"] is True
+        assert "get_full_simulation_logs" in result.get("hint_to_agent", "")
+        # and explicitly steers AWAY from the index-backed tools
+        assert "NOT" in result["hint_to_agent"]
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
@@ -740,9 +806,26 @@ class TestDataFunctions:
         # Should now raise exception
         with pytest.raises(Exception) as exc_info:
             sb_get_simulation_details("sim1", "test-console")
-        
+
         assert "API Error" in str(exc_info.value)
-    
+
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.post')
+    def test_sb_get_simulation_details_not_found_returns_graceful(self, mock_post, mock_base_url, mock_account_id):
+        """Empty simulations list (e.g. a sim id from another console) -> graceful error, NOT IndexError."""
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.json.return_value = {"simulations": []}
+        mock_post.return_value = list_response
+
+        # Must not raise IndexError ('list index out of range')
+        result = sb_get_simulation_details("3504301", "test-console")
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        assert result["simulation_id"] == "3504301"
+        assert "hint_to_agent" in result
+
     # Security Control Events Tests
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
@@ -3716,3 +3799,423 @@ class TestStorageHintForTerminalTests:
         assert 'hint_to_agent' in result
         assert "poll" in result['hint_to_agent'].lower()
         assert "delete" not in result['hint_to_agent'].lower()
+
+
+class TestSimulationLogsFetchCore:
+    """Phase 1: shared fetch core + cache for the v3 /simulationLogs endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        simulation_logs_cache.clear()
+        yield
+        simulation_logs_cache.clear()
+
+    def _ok_response(self):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "logs": [{"timestamp": "2026-06-10T09:15:03.120Z", "level": "ERROR",
+                      "message": "boom", "jobId": "555", "planRunId": "pr-1", "logType": "LOGS"}],
+            "total": 1, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        mock_response.raise_for_status.return_value = None
+        return mock_response
+
+    # --- _fetch_simulation_logs_from_api: URL + params construction ---------
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_builds_v3_url_and_params(self, mock_account, mock_base_url, mock_get):
+        """Builds the v3 /simulationLogs URL and normalizes params."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='555', page=2, page_size=100, min_level='error', levels='',
+            message_contains='timeout', start_time='', end_time='', log_type='logs',
+            sort_order='DESC', console='test-console',
+        )
+
+        args, kwargs = mock_get.call_args
+        url = args[0] if args else kwargs.get('url')
+        assert url == 'https://test.safebreach.com/api/data/v3/accounts/123456/simulationLogs'
+        params = kwargs['params']
+        assert params['jobIds'] == '555'
+        assert params['page'] == 2
+        assert params['pageSize'] == 100
+        assert params['minLevel'] == 'ERROR'        # UPPER
+        assert params['logType'] == 'LOGS'          # UPPER
+        assert params['sortOrder'] == 'desc'        # lower
+        assert params['messageContains'] == 'timeout'
+        assert kwargs['timeout'] == 120
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_includes_nodeid_when_given(self, mock_account, mock_base_url, mock_get):
+        """node_id is sent as the nodeId query param (trimmed, no case change)."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='555', node_id=' abc-NODE-1 ', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        params = mock_get.call_args.kwargs['params']
+        assert params['nodeId'] == 'abc-NODE-1'
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_omits_nodeid_when_empty(self, mock_account, mock_base_url, mock_get):
+        """nodeId is omitted entirely when node_id is empty/None."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='555', node_id='', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        assert 'nodeId' not in mock_get.call_args.kwargs['params']
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_omits_jobids_when_empty(self, mock_account, mock_base_url, mock_get):
+        """jobIds is omitted entirely when job_ids is empty/None (search-all-sims)."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids=None, page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        params = mock_get.call_args.kwargs['params']
+        assert 'jobIds' not in params
+        # empty optional filters are omitted too
+        assert 'messageContains' not in params
+        assert 'levels' not in params
+        assert 'startTime' not in params
+        assert 'endTime' not in params
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_levels_pipe_joined_uppercased(self, mock_account, mock_base_url, mock_get):
+        """levels pipe-delimited input is trimmed, uppercased, and sent as a pipe string."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        _fetch_simulation_logs_from_api(
+            job_ids='1|2', page=1, page_size=500, min_level='INFO', levels='error| warning ',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        params = mock_get.call_args.kwargs['params']
+        assert params['jobIds'] == '1|2'
+        assert params['levels'] == 'ERROR|WARNING'
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_200_returns_parsed_json(self, mock_account, mock_base_url, mock_get):
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_get.return_value = self._ok_response()
+
+        result = _fetch_simulation_logs_from_api(
+            job_ids='555', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        assert result['total'] == 1
+        assert result['logs'][0]['jobId'] == '555'
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_404_raises_valueerror(self, mock_account, mock_base_url, mock_get):
+        """404 -> endpoint unavailable / no logs."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="not available|not found"):
+            _fetch_simulation_logs_from_api(
+                job_ids='555', page=1, page_size=500, min_level='INFO', levels='',
+                message_contains='', start_time='', end_time='', log_type='LOGS',
+                sort_order='asc', console='test-console',
+            )
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_401_raises_valueerror(self, mock_account, mock_base_url, mock_get):
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Authentication failed"):
+            _fetch_simulation_logs_from_api(
+                job_ids='555', page=1, page_size=500, min_level='INFO', levels='',
+                message_contains='', start_time='', end_time='', log_type='LOGS',
+                sort_order='asc', console='test-console',
+            )
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id')
+    def test_fetch_400_surfaces_server_message(self, mock_account, mock_base_url, mock_get):
+        """400 -> ValueError that surfaces the server-provided message."""
+        mock_base_url.return_value = 'https://test.safebreach.com'
+        mock_account.return_value = '123456'
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.json.return_value = {"error": {"message": "pageSize exceeds maximum"}}
+        mock_response.text = '{"error": {"message": "pageSize exceeds maximum"}}'
+        mock_get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="pageSize exceeds maximum|Bad request"):
+            _fetch_simulation_logs_from_api(
+                job_ids='555', page=1, page_size=5000, min_level='INFO', levels='',
+                message_contains='', start_time='', end_time='', log_type='LOGS',
+                sort_order='asc', console='test-console',
+            )
+
+    # --- _get_simulation_logs_from_cache_or_api: cache behavior -------------
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_simulation_logs_from_api')
+    def test_cache_miss_fetches_transforms_and_caches(self, mock_fetch, _cache_enabled):
+        """Cache miss -> fetch + transform (snake_case envelope) + store under the key."""
+        mock_fetch.return_value = {
+            "logs": [{"timestamp": "t", "level": "ERROR", "message": "x", "jobId": "9"}],
+            "total": 1, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        result = _get_simulation_logs_from_cache_or_api(
+            job_ids='9', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        # transformed envelope
+        assert result['page_size'] == 500
+        assert result['has_more'] is False
+        assert mock_fetch.call_count == 1
+        # something was cached (a single entry)
+        assert len(simulation_logs_cache) == 1
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_simulation_logs_from_api')
+    def test_cache_hit_skips_fetch(self, mock_fetch, _cache_enabled):
+        """Second identical call hits cache and does not call _fetch again."""
+        mock_fetch.return_value = {
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        kwargs = dict(
+            job_ids='9', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        _get_simulation_logs_from_cache_or_api(**kwargs)
+        _get_simulation_logs_from_cache_or_api(**kwargs)
+        assert mock_fetch.call_count == 1
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_simulation_logs_from_api')
+    def test_cache_key_unique_per_filter(self, mock_fetch, _cache_enabled):
+        """Different filters (min_level) produce distinct cache entries."""
+        mock_fetch.return_value = {
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        base = dict(
+            job_ids='9', page=1, page_size=500, levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        _get_simulation_logs_from_cache_or_api(min_level='ERROR', **base)
+        _get_simulation_logs_from_cache_or_api(min_level='INFO', **base)
+        assert mock_fetch.call_count == 2
+        assert len(simulation_logs_cache) == 2
+
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._fetch_simulation_logs_from_api')
+    def test_cache_key_unique_per_node(self, mock_fetch, _cache_enabled):
+        """Different node_id values produce distinct cache entries."""
+        mock_fetch.return_value = {
+            "logs": [], "total": 0, "page": 1, "pageSize": 500, "hasMore": False,
+        }
+        base = dict(
+            job_ids='9', page=1, page_size=500, min_level='INFO', levels='',
+            message_contains='', start_time='', end_time='', log_type='LOGS',
+            sort_order='asc', console='test-console',
+        )
+        _get_simulation_logs_from_cache_or_api(node_id='node-a', **base)
+        _get_simulation_logs_from_cache_or_api(node_id='node-b', **base)
+        assert mock_fetch.call_count == 2
+        assert len(simulation_logs_cache) == 2
+
+
+class TestFullSimulationLogsV3Migration:
+    """get_full_simulation_logs fetches via the v3 result endpoint (includeLogs=true)."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @staticmethod
+    def _ok(payload):
+        r = Mock()
+        r.status_code = 200
+        r.json.return_value = payload
+        r.raise_for_status.return_value = None
+        return r
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_uses_v3_with_includelogs(self, _acc, _base, mock_get):
+        """Primary fetch hits the v3 result endpoint with runId + includeLogs=true."""
+        mock_get.return_value = self._ok({'id': 's1', 'logsEmbedded': True})
+        _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+        url = mock_get.call_args_list[0].args[0]
+        assert '/api/data/v3/accounts/123/executionsHistoryResults/s1' in url
+        assert 'runId=t1' in url
+        assert 'includeLogs=true' in url
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_falls_back_to_v1_on_404(self, _acc, _base, mock_get):
+        """v3 404 (endpoint missing on older console) -> retry on the v1 legacy URL."""
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.side_effect = [not_found, self._ok({'id': 's1'})]
+        result = _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+        assert result == {'id': 's1'}
+        assert mock_get.call_count == 2
+        v1_url = mock_get.call_args_list[1].args[0]
+        assert '/api/data/v1/accounts/123/executionsHistoryResults/s1' in v1_url
+        assert 'runId=t1' in v1_url
+
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://t.com')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    def test_fetch_404_on_both_raises(self, _acc, _base, mock_get):
+        """404 from v3 AND v1 -> not-found ValueError."""
+        not_found = Mock()
+        not_found.status_code = 404
+        mock_get.side_effect = [not_found, not_found]
+        with pytest.raises(ValueError, match="not found"):
+            _fetch_full_simulation_logs_from_api('s1', 't1', 'c')
+
+
+class TestSimulationLogsEntryPoints:
+    """Phase 2: public sb_* entry points + input validation."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # --- single-sim tool: job_ids construction ------------------------------
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_single_sim_sets_jobids(self, mock_core):
+        mock_core.return_value = {"logs": [], "total": 0, "page": 1, "page_size": 500, "has_more": False}
+        sb_get_paginated_simulation_logs(simulation_id='555', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] == '555'
+
+    def test_paginated_empty_simulation_id_raises(self):
+        with pytest.raises(ValueError, match="simulation_id"):
+            sb_get_paginated_simulation_logs(simulation_id='', console='c')
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_return_passthrough(self, mock_core):
+        sentinel = {"_sentinel": True, "logs": []}
+        mock_core.return_value = sentinel
+        assert sb_get_paginated_simulation_logs(simulation_id='555', console='c') is sentinel
+
+    # --- cross-sim tool: job_ids construction -------------------------------
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_paginated_passes_node_id(self, mock_core):
+        """node_id is forwarded to the core fetch for single-node investigation."""
+        mock_core.return_value = {"logs": []}
+        sb_get_paginated_simulation_logs(simulation_id='555', node_id='node-x', console='c')
+        assert mock_core.call_args.kwargs['node_id'] == 'node-x'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_multi_sim_pipe_joined(self, mock_core):
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='a|b', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] == 'a|b'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_passes_node_id(self, mock_core):
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='a|b', node_id='node-y', console='c')
+        assert mock_core.call_args.kwargs['node_id'] == 'node-y'
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_empty_ids_means_all(self, mock_core):
+        """Omitting simulation_ids -> job_ids None (search across all sims)."""
+        mock_core.return_value = {"logs": []}
+        sb_search_simulation_logs(simulation_ids='', console='c')
+        assert mock_core.call_args.kwargs['job_ids'] in (None, '')
+
+    # --- shared validation (both tools) -------------------------------------
+
+    def test_page_size_over_max_raises(self):
+        with pytest.raises(ValueError, match="page_size|1000"):
+            sb_get_paginated_simulation_logs(simulation_id='555', page_size=5000, console='c')
+
+    def test_deep_page_over_ceiling_raises(self):
+        """page * page_size > 10000 -> clear ceiling error before any API call."""
+        with pytest.raises(ValueError, match="10000|10,000|narrow|ceiling"):
+            sb_get_paginated_simulation_logs(
+                simulation_id='555', page=11, page_size=1000, console='c'
+            )
+
+    def test_invalid_min_level_raises(self):
+        with pytest.raises(ValueError, match="min_level"):
+            sb_get_paginated_simulation_logs(simulation_id='555', min_level='TRACE', console='c')
+
+    def test_invalid_log_type_raises(self):
+        with pytest.raises(ValueError, match="log_type"):
+            sb_get_paginated_simulation_logs(simulation_id='555', log_type='STDERR', console='c')
+
+    def test_invalid_sort_order_raises(self):
+        with pytest.raises(ValueError, match="sort_order"):
+            sb_get_paginated_simulation_logs(simulation_id='555', sort_order='up', console='c')
+
+    @patch('safebreach_mcp_data.data_functions._get_simulation_logs_from_cache_or_api')
+    def test_search_validation_applies(self, mock_core):
+        """Cross-sim tool enforces the same page_size ceiling."""
+        with pytest.raises(ValueError, match="page_size|1000"):
+            sb_search_simulation_logs(simulation_ids='a', page_size=5000, console='c')
+        mock_core.assert_not_called()

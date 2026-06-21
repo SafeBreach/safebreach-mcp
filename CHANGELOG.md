@@ -5,6 +5,54 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Paginated, filterable simulation logs via two new read-only data tools backed by the data v3
+  `/simulationLogs` endpoint:
+  - `get_paginated_simulation_logs` — fetch one simulation's logs incrementally and filtered by
+    level/type/time/message, page by page. Use it only when the simulation object and steps
+    (`get_simulation_details`) aren't enough; pull smartly by severity (errors first for failed
+    simulations). `get_full_simulation_logs` remains for the full embedded blob / old-format sims.
+  - `search_simulation_logs` — cross-simulation / fleet-wide log search (e.g. "every ERROR
+    containing X in the last day"); pass a pipe-delimited `simulation_ids` list or omit it to
+    search all simulations.
+  - Filters: `min_level` (threshold) or explicit `levels`, `message_contains`, `start_time`/
+    `end_time`, `log_type` (LOGS/OUTPUT/ALL), `sort_order`, and `node_id` (scope to a single
+    simulator node — e.g. only the attacker or only the target node of a dual-script attack);
+    offset pagination via `page`/`page_size` (max 1000) returning
+    `{ logs, total, total_capped, page, page_size, has_more }`. Results cached ~10 minutes.
+  - `total_capped` (bool): Elasticsearch caps `total` at 10,000, so for large cross-simulation
+    searches `total` is a **lower bound**, not exact. `total_capped=true` signals this explicitly
+    (with a `hint_to_agent`) so consumers don't report a capped total as the real count.
+
+### Changed
+
+- `get_test_simulation_details` now returns a **curated hybrid result** (logs excluded): the
+  previous flat snake_case envelope (simulation_id, status, attacker/target nodes, attack info,
+  result_details) PLUS a new `simulation_steps_by_node` field — the per-node execution steps
+  (each tagged `role` = attacker/target/host, with `task_status`/`error`) that form the forensic
+  middle tier — and a snake_case `logs_embedded` routing flag. The heavy per-node LOGS/OUTPUT
+  blobs and the raw v3 document are NOT relayed. This makes it the primary investigation entry
+  point — inspect the result + steps first, and only escalate to `get_paginated_simulation_logs`
+  when they aren't enough (or `get_full_simulation_logs` when `logs_embedded=true`). Optional
+  enrichments (MITRE techniques, basic attack logs, drift info) are merged into the envelope.
+  Falls back to the curated list-API summary (empty `simulation_steps_by_node`) on older consoles
+  without the v3 endpoint.
+  **Shape change:** the curated snake_case fields (e.g. `simulation_id`, `status`) are preserved;
+  `simulation_steps_by_node` and `logs_embedded` are added.
+  Also now returns a graceful `{error, simulation_id, hint_to_agent}` when the simulation id does
+  not exist on the console (e.g. an id from a different console) instead of raising an `IndexError`.
+- `get_full_simulation_logs` now fetches via the data v3 result endpoint with `includeLogs=true`
+  (falling back to v1 on older consoles) and exposes a new `logs_embedded` field: `true` means an
+  old-format simulation whose logs exist only in the embedded blob (not in the logs index) — for
+  those, use this tool rather than the paginated/search logs tools, which will return empty.
+  Its description was rewritten to steer agents correctly: call it **only** when `logs_embedded=true`
+  (the previous wording told agents to "always retrieve" logs for `stopped`/`no-result` simulations,
+  causing them to over-call it and dump ~40KB into context when filtered `get_paginated_simulation_logs`
+  would answer in a few lines).
+
 ## 1.4.0 — 2026-06-18
 
 ### Changed
