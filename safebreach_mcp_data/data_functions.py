@@ -811,13 +811,26 @@ def sb_get_test_simulations(
         if drifted_only:
             applied_filters['drifted_only'] = drifted_only
         
+        # SAF-32018: these simulations are the live source, but for a running test they
+        # reflect only what has completed so far — total_simulations is point-in-time, not
+        # the final total. Flag that so the agent doesn't treat it as complete.
+        sim_hints = []
+        if page_number + 1 < total_pages:
+            sim_hints.append(f"You can scan next page by specifying page_number={page_number + 1}")
+        if _is_test_non_terminal(test_id, console):
+            sim_hints.append(
+                "Test is still running — these simulations and total_simulations reflect only "
+                "what has completed so far (partial, point-in-time). Poll again with "
+                "get_test_simulations for updated results."
+            )
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_simulations": total_simulations,
             "simulations_in_page": page_simulations,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+            "hint_to_agent": " ".join(sim_hints) if sim_hints else None
         }
         
     except Exception as e:
