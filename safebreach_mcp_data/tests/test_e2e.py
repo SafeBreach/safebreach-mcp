@@ -447,103 +447,93 @@ class TestDataServerE2E:
 
     @pytest.mark.e2e
     def test_get_test_drifts_e2e(self, e2e_console):
-        """Test getting real test drift analysis using known test data.
+        """Drift analysis E2E — self-discovering to avoid hardcoded-ID rot.
 
-        This test uses test ID 1771148836322.15 (test name: "BAS Scheduled Scenario (45~ simulations)")
-        which has drift patterns when compared to its previous test with the same name
-        (baseline test ID: 1770996600455.119):
-
-        Actual drift analysis results:
-        - detected-logged: 1 simulation (negative impact)
-        - logged-inconsistent: 1 simulation (negative impact)
-        Total: 2 drifts (2 status changes + 0 exclusive simulations)
+        Previously this test pinned a specific test ID and baseline pair, which
+        decayed as the shared environment churned (the baseline test eventually
+        no longer existed/matched), requiring repeated patching. Instead, this
+        version discovers a test name that has >=2 completed runs on the console
+        at runtime (so a baseline necessarily exists), runs sb_get_test_drifts on
+        the run with the latest start_time, and asserts the response is
+        well-formed. It does NOT assert exact drift counts (data-dependent). If
+        the environment has no test name with two runs, it skips.
         """
-        # Use specific test ID that has known drift patterns
-        test_id = "1771148836322.15"
+        # Discover a test name with >=2 completed runs by scanning pages.
+        name_to_tests: dict = {}
+        target_name = None
+        for page in range(30):
+            page_res = sb_get_tests(
+                console=e2e_console,
+                page_number=page,
+                status_filter="completed",
+                order_by="end_time",
+                order_direction="desc",
+            )
+            tests = page_res.get("tests_in_page", [])
+            if not tests:
+                break
+            for t in tests:
+                name = t.get("name")
+                if not name:
+                    continue
+                name_to_tests.setdefault(name, []).append(t)
+                if target_name is None and len(name_to_tests[name]) >= 2:
+                    target_name = name
+            if target_name is not None:
+                break
+            if page + 1 >= page_res.get("total_pages", 0):
+                break
 
-        result = sb_get_test_drifts(test_id, console=e2e_console)
+        if target_name is None:
+            pytest.skip(
+                "No test name with >=2 completed runs on this console — "
+                "cannot exercise drift baseline comparison."
+            )
 
-        # Verify response structure
+        # Pick the run with the latest start_time so an earlier run (baseline)
+        # exists strictly before it.
+        runs = sorted(name_to_tests[target_name], key=lambda t: t.get("start_time") or 0)
+        current = runs[-1]
+        current_test_id = current["test_id"]
+
+        result = sb_get_test_drifts(current_test_id, console=e2e_console)
+
+        # Structure assertions only — no hardcoded counts.
         assert isinstance(result, dict)
-        assert 'total_drifts' in result
-        assert 'drifts' in result
-        assert '_metadata' in result
-        assert isinstance(result['drifts'], dict)
+        assert "error" not in result, (
+            f"Drift analysis errored for a discovered baseline pair "
+            f"(name={target_name!r}, current={current_test_id}): {result.get('error')}"
+        )
+        assert isinstance(result.get("total_drifts"), int)
+        assert isinstance(result.get("drifts"), dict)
+        assert "_metadata" in result
 
-        # Verify metadata contains expected fields
-        metadata = result['_metadata']
-        assert metadata['console'] == e2e_console
-        assert metadata['current_test_id'] == test_id
-        assert 'baseline_test_id' in metadata
-        assert 'test_name' in metadata
-        assert 'baseline_simulations_count' in metadata
-        assert 'current_simulations_count' in metadata
-        assert 'analyzed_at' in metadata
+        metadata = result["_metadata"]
+        assert metadata["console"] == e2e_console
+        assert metadata["current_test_id"] == current_test_id
+        assert metadata["test_name"] == target_name
+        assert "baseline_test_id" in metadata
+        assert isinstance(metadata.get("baseline_simulations_count"), int)
+        assert isinstance(metadata.get("current_simulations_count"), int)
+        assert "analyzed_at" in metadata
 
-        # Verify expected metadata values based on actual data
-        assert metadata['baseline_test_id'] == "1770996600455.119"
-        assert metadata['test_name'] == "BAS Scheduled Scenario (45~ simulations)"
-        assert metadata['current_simulations_count'] == 95
-        assert metadata['baseline_simulations_count'] == 95
-        assert metadata['shared_drift_codes'] == 95
-        assert metadata['status_drifts'] == 2
-        assert len(metadata['simulations_exclusive_to_baseline']) == 0
-        assert len(metadata['simulations_exclusive_to_current']) == 0
+        # Each drift entry is well-formed; security impacts come from the valid set.
+        valid_impacts = {"positive", "negative", "neutral", "unknown"}
+        for drift_type, drift_info in result["drifts"].items():
+            assert "drift_type" in drift_info
+            assert "security_impact" in drift_info
+            assert drift_info["security_impact"] in valid_impacts
+            assert "drifted_simulations" in drift_info
+            for drifted_sim in drift_info["drifted_simulations"]:
+                assert "drift_tracking_code" in drifted_sim
+                assert "former_simulation_id" in drifted_sim
+                assert "current_simulation_id" in drifted_sim
 
-        # Verify we have the expected total number of drifts
-        total_drifts = result['total_drifts']
-        assert total_drifts == 2, f"Expected exactly 2 drifts, got {total_drifts}"
-
-        # Count drift types to verify expected patterns
-        drift_type_counts = {}
-        for drift_type, drift_info in result['drifts'].items():
-            assert 'drift_type' in drift_info
-            assert 'security_impact' in drift_info
-            assert 'drifted_simulations' in drift_info
-
-            # Count simulations for this drift type
-            drift_type_counts[drift_type] = len(drift_info['drifted_simulations'])
-
-            # Verify each drifted simulation has required fields
-            for drifted_sim in drift_info['drifted_simulations']:
-                assert 'drift_tracking_code' in drifted_sim
-                assert 'former_simulation_id' in drifted_sim
-                assert 'current_simulation_id' in drifted_sim
-
-        # Verify the expected drift patterns exist with expected counts
-        expected_drift_counts = {
-            'detected-logged': 1,        # Negative impact: detected → logged
-            'logged-inconsistent': 1,    # Negative impact: logged → inconsistent
-        }
-
-        # Verify all expected drift patterns are present with exact counts
-        found_patterns = set(drift_type_counts.keys())
-        expected_patterns = set(expected_drift_counts.keys())
-
-        assert found_patterns == expected_patterns, \
-            f"Expected patterns {expected_patterns}, found {found_patterns}. " \
-            f"Missing: {expected_patterns - found_patterns}, Extra: {found_patterns - expected_patterns}"
-
-        # Verify exact counts for each drift type
-        for drift_type, expected_count in expected_drift_counts.items():
-            actual_count = drift_type_counts[drift_type]
-            assert actual_count == expected_count, \
-                f"Expected {expected_count} simulations for {drift_type}, got {actual_count}"
-
-        # Verify security impact classification exists and is valid
-        security_impacts = {drift['security_impact'] for drift in result['drifts'].values()}
-        valid_impacts = {'positive', 'negative', 'neutral', 'unknown'}
-        assert security_impacts.issubset(valid_impacts), \
-            f"Invalid security impacts found: {security_impacts - valid_impacts}"
-
-        # Log results for debugging
-        print(f"\n=== E2E Drift Analysis Results ===")
-        print(f"Total drifts found: {total_drifts}")
-        print(f"Drift type counts: {drift_type_counts}")
-        print(f"Security impacts: {security_impacts}")
-        print(f"Baseline test: {metadata.get('baseline_test_id', 'Unknown')}")
-        print(f"Test name: {metadata.get('test_name', 'Unknown')}")
-        print(f"==================================\n")
+        print("\n=== E2E Drift Analysis (discovered) ===")
+        print(f"Test name: {target_name}")
+        print(f"Current test: {current_test_id}, baseline: {metadata.get('baseline_test_id')}")
+        print(f"Total drifts: {result['total_drifts']}")
+        print("========================================\n")
 
     @pytest.mark.e2e
     def test_get_full_simulation_logs_e2e(self, e2e_console, sample_simulation_id):
