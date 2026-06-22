@@ -27,6 +27,7 @@ from .data_types import (
     get_full_security_control_events_mapping,
     group_and_enrich_drift_records,
     get_reduced_peer_benchmark_response,
+    build_simulation_status_counts_from_simulations,
 )
 from .drifts_metadata import drift_types_mapping
 
@@ -482,6 +483,45 @@ def sb_get_test_details(test_id: str, console: str = "default",
             logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
             return_details = _fetch_single_test(test_id, console)
 
+        # SAF-32018: for a NON-TERMINAL test, recompute simulations_statistics from the
+        # live executionsHistoryResults source. The testsummaries.finalStatus aggregate
+        # (the default source) lags the live per-simulation results during an active run,
+        # so it under-reports counts until the test completes. Soft-capped: above
+        # LIVE_RECOUNT_MAX_SIMULATIONS we keep the aggregate and route the agent to
+        # get_test_simulations for an exact live count. Best-effort: any failure degrades
+        # to the aggregate (never raises).
+        live_recount_note = None
+        post_refresh_status = (return_details.get('status', '') or '').lower()
+        if post_refresh_status not in terminal_statuses:
+            known_total = sum(
+                s.get('count', 0)
+                for s in return_details.get('simulations_statistics', [])
+                if 'count' in s
+            )
+            if known_total <= LIVE_RECOUNT_MAX_SIMULATIONS:
+                try:
+                    live_sims = _get_all_simulations_from_cache_or_api(test_id, console)
+                    return_details['simulations_statistics'] = (
+                        build_simulation_status_counts_from_simulations(live_sims)
+                    )
+                    live_recount_note = 'live'
+                    logger.info(
+                        "SAF-32018: recomputed live counts for running test '%s' from %d simulations",
+                        test_id, len(live_sims),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "SAF-32018: live recount failed for running test '%s': %s — using aggregate counts",
+                        test_id, e,
+                    )
+                    live_recount_note = 'failed'
+            else:
+                logger.info(
+                    "SAF-32018: running test '%s' over soft cap (%d > %d) — keeping aggregate counts",
+                    test_id, known_total, LIVE_RECOUNT_MAX_SIMULATIONS,
+                )
+                live_recount_note = 'capped'
+
         if include_drift_count:
             drift_count = _count_drifted_simulations(test_id, console)
             return_details['simulations_statistics'].append({
@@ -500,10 +540,29 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
         if final_status not in terminal_statuses:
-            return_details['hint_to_agent'] = (
-                f"Test is still {return_details.get('status', 'in progress')}. "
-                "Poll again in 30 seconds using get_test_details with the same test_id."
-            )
+            if live_recount_note == 'live':
+                # Counts were recomputed from the live source — accurate as of now.
+                return_details['hint_to_agent'] = (
+                    f"Test is still {return_details.get('status', 'in progress')}. "
+                    "These simulation counts are live as of now and will keep changing while "
+                    "the test runs — poll again in ~30 seconds using get_test_details with the "
+                    "same test_id."
+                )
+            elif live_recount_note in ('capped', 'failed'):
+                # Counts are the lagging aggregate — route the agent to the live source.
+                return_details['hint_to_agent'] = (
+                    f"Test is still {return_details.get('status', 'in progress')}. "
+                    "These simulation counts come from a periodically-updated summary and may "
+                    "lag the live results while the test runs. For an exact live count of a "
+                    "given status, call get_test_simulations with the relevant status_filter "
+                    "(its total_simulations is the live count). Poll again in ~30 seconds with "
+                    "get_test_details for updated totals."
+                )
+            else:
+                return_details['hint_to_agent'] = (
+                    f"Test is still {return_details.get('status', 'in progress')}. "
+                    "Poll again in 30 seconds using get_test_details with the same test_id."
+                )
         else:
             # Terminal test — hint about delete for storage management (SAF-29972)
             return_details['hint_to_agent'] = (

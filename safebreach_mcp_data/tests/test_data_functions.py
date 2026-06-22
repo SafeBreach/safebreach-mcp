@@ -4219,3 +4219,107 @@ class TestSimulationLogsEntryPoints:
         with pytest.raises(ValueError, match="page_size|1000"):
             sb_search_simulation_logs(simulation_ids='a', page_size=5000, console='c')
         mock_core.assert_not_called()
+
+
+class TestGetTestDetailsLiveCounts:
+    """SAF-32018: get_test_details returns LIVE counts for non-terminal tests.
+
+    For a running test, simulations_statistics must reflect the live
+    executionsHistoryResults source (what the UI shows), not the lagging
+    testsummaries.finalStatus aggregate. Terminal tests keep the cheap aggregate.
+    A soft size cap falls back to the aggregate + a routing hint.
+    """
+
+    @staticmethod
+    def _aggregate_stats(missed=0, stopped=0, prevented=0, detected=0,
+                         logged=0, no_result=0, inconsistent=0):
+        return [
+            {"status": "missed", "explanation": "...", "count": missed},
+            {"status": "stopped", "explanation": "...", "count": stopped},
+            {"status": "prevented", "explanation": "...", "count": prevented},
+            {"status": "detected", "explanation": "...", "count": detected},
+            {"status": "logged", "explanation": "...", "count": logged},
+            {"status": "no-result", "explanation": "...", "count": no_result},
+            {"status": "inconsistent", "explanation": "...", "count": inconsistent},
+        ]
+
+    def _running_test(self, missed_aggregate):
+        return [{
+            "name": "Running Plan",
+            "test_id": "run1",
+            "start_time": 1640995200,
+            "end_time": 1640995800,
+            "duration": 600,
+            "status": "running",
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": self._aggregate_stats(missed=missed_aggregate),
+        }]
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_test_uses_live_counts(self, mock_tests, mock_sims, mock_orch):
+        """REPRODUCTION: aggregate says 28 missed, live says 80 -> result is 80."""
+        mock_tests.return_value = self._running_test(missed_aggregate=28)
+        mock_sims.return_value = [{"status": "missed"}] * 80 + [{"status": "prevented"}] * 5
+
+        result = sb_get_test_details("run1", "test-console")
+
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 80
+        assert stats["prevented"] == 5
+        mock_sims.assert_called_once()
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_test_live_hint(self, mock_tests, mock_sims, mock_orch):
+        """Non-terminal still emits a poll-again hint after live recount."""
+        mock_tests.return_value = self._running_test(missed_aggregate=28)
+        mock_sims.return_value = [{"status": "missed"}] * 80
+        result = sb_get_test_details("run1", "test-console")
+        assert "hint_to_agent" in result and result["hint_to_agent"]
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_terminal_test_keeps_aggregate(self, mock_tests, mock_sims):
+        """Completed test: aggregate kept, live source NEVER fetched."""
+        mock_tests.return_value = [{
+            "name": "Done Plan",
+            "test_id": "done1",
+            "start_time": 1640995200,
+            "end_time": 1640995800,
+            "duration": 600,
+            "status": "completed",
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": self._aggregate_stats(missed=28),
+        }]
+        result = sb_get_test_details("done1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 28
+        mock_sims.assert_not_called()
+
+    @patch('safebreach_mcp_data.data_functions.LIVE_RECOUNT_MAX_SIMULATIONS', 100)
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_over_soft_cap_falls_back_to_aggregate_with_hint(self, mock_tests, mock_sims, mock_orch):
+        """Over the soft cap: keep aggregate, do NOT fetch live, emit routing hint."""
+        mock_tests.return_value = self._running_test(missed_aggregate=6000)  # > cap (100)
+        result = sb_get_test_details("run1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 6000
+        mock_sims.assert_not_called()
+        assert "get_test_simulations" in (result.get("hint_to_agent") or "")
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api',
+           side_effect=Exception("API down"))
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_live_fetch_failure_falls_back_to_aggregate(self, mock_tests, mock_sims, mock_orch):
+        """Live fetch error: degrade to aggregate + routing hint, never raise."""
+        mock_tests.return_value = self._running_test(missed_aggregate=28)
+        result = sb_get_test_details("run1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 28
+        assert "get_test_simulations" in (result.get("hint_to_agent") or "")
