@@ -266,6 +266,12 @@ per-type LRU eviction and TTL expiration. Cache sizes are intentionally small to
 - `SB_MCP_CACHE_PLAYBOOK=true|false` — Playbook server
 - `SB_MCP_CACHE_STUDIO=true|false` — Studio server
 
+**Running-test live counts (SAF-32018):**
+- `SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS` — soft cap (default `5000`) on the number of
+  simulations `get_test_details` will page from the live `executionsHistoryResults` source when
+  recomputing counts for a **non-terminal** test. Above the cap it keeps the lagging
+  `testsummaries.finalStatus` aggregate and routes the agent to `get_test_simulations` via a hint.
+
 **Error Handling**: Functions include timeout configurations (120 seconds for API calls) and comprehensive logging for debugging SafeBreach API interactions.
 
 **Data Pagination**: All listing operations use `PAGE_SIZE = 10` with proper pagination handling for large datasets.
@@ -331,7 +337,15 @@ Rate limiting environment variables:
 
 **Data Server (Port 8001):**
 3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
-4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings
+4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings.
+  **SAF-32018**: for a **non-terminal (running) test**, `simulations_statistics` is recomputed
+  from the **live `executionsHistoryResults` source** (what the UI shows) instead of the lagging
+  `testsummaries.finalStatus` aggregate — so running-test counts are accurate, not stale.
+  Soft-capped by `SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS` (default 5000): above the cap, or on
+  fetch failure, it keeps the aggregate and emits a `hint_to_agent` routing to `get_test_simulations`
+  (whose `total_simulations` with a `status_filter` is the live count). Terminal tests are unchanged
+  (cheap reconciled aggregate). Other count/finding paths that cannot recount live (`get_tests`,
+  findings, security-control events, drift tools) carry a running-test caveat hint instead
 5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering, and drift analysis filtering
 6. `get_test_simulation_details` ✨ **Enhanced** - Returns a **curated hybrid result** (logs excluded): the flat snake_case envelope (simulation_id, status, attacker/target nodes, attack info, result_details) PLUS `simulation_steps_by_node` — the per-node execution steps (each tagged `role`=attacker/target/host, with `task_status`/`error`) forming the forensic middle tier — and a snake_case `logs_embedded` routing flag. Heavy per-node LOGS/OUTPUT and the raw v3 document are NOT relayed. **Primary investigation entry point** — inspect result + steps first; escalate to `get_paginated_simulation_logs` only when insufficient (`logs_embedded=true` → `get_full_simulation_logs` instead). Optional MITRE techniques, basic attack logs, and drift analysis merged into the envelope. Falls back to the curated list-API summary (empty `simulation_steps_by_node`) on consoles without the v3 endpoint
 7. `get_security_controls_events` - Security control events with filtering

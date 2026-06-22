@@ -7,6 +7,7 @@ specifically for test and simulation data management.
 
 import copy
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Any, Iterable
 
@@ -50,6 +51,25 @@ PAGE_SIZE = 10
 # the aggregate plus a routing hint to get_test_simulations. Made env-configurable
 # in a later phase.
 LIVE_RECOUNT_MAX_SIMULATIONS = 5000
+
+
+def _get_live_recount_cap() -> int:
+    """Resolve the live-recount soft cap (SAF-32018), env-overridable at call time.
+
+    Reads ``SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS`` and falls back to the module
+    default ``LIVE_RECOUNT_MAX_SIMULATIONS`` when unset or non-integer.
+    """
+    raw = os.environ.get('SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS')
+    if raw is None:
+        return LIVE_RECOUNT_MAX_SIMULATIONS
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            "SAF-32018: invalid SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS=%r — using default %d",
+            raw, LIVE_RECOUNT_MAX_SIMULATIONS,
+        )
+        return LIVE_RECOUNT_MAX_SIMULATIONS
 
 # SAF-32018: window-based drift tools cannot cheaply tell which tests in the window are
 # still running, and there is no live drift source. Append this caveat to drift summaries.
@@ -525,7 +545,7 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 for s in return_details.get('simulations_statistics', [])
                 if 'count' in s
             )
-            if known_total <= LIVE_RECOUNT_MAX_SIMULATIONS:
+            if known_total <= _get_live_recount_cap():
                 try:
                     live_sims = _get_all_simulations_from_cache_or_api(test_id, console)
                     return_details['simulations_statistics'] = (

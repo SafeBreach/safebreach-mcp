@@ -6,6 +6,7 @@ This module tests the data functions that handle test and simulation operations.
 
 import copy
 import logging
+import os
 
 import pytest
 import json
@@ -4420,3 +4421,23 @@ class TestDriftRunningCaveat:
         from safebreach_mcp_data.data_functions import _group_and_paginate_sc_drifts
         res = _group_and_paginate_sc_drifts([], "ctrl", 0, None, {}, 0.0)
         assert "still running" in (res.get("hint_to_agent") or "").lower()
+
+
+class TestLiveRecountCapConfig:
+    """SAF-32018 Phase 8: soft-cap threshold is env-configurable with safe fallback."""
+
+    def test_env_override(self):
+        from safebreach_mcp_data.data_functions import _get_live_recount_cap
+        with patch.dict('os.environ', {'SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS': '50'}):
+            assert _get_live_recount_cap() == 50
+
+    def test_default_when_unset(self):
+        import safebreach_mcp_data.data_functions as m
+        with patch.dict('os.environ', {}, clear=False):
+            os.environ.pop('SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS', None)
+            assert m._get_live_recount_cap() == m.LIVE_RECOUNT_MAX_SIMULATIONS
+
+    def test_invalid_env_falls_back_to_default(self):
+        import safebreach_mcp_data.data_functions as m
+        with patch.dict('os.environ', {'SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS': 'notanint'}):
+            assert m._get_live_recount_cap() == m.LIVE_RECOUNT_MAX_SIMULATIONS
