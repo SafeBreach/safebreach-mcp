@@ -2245,6 +2245,41 @@ class TestGetStudioAttackLatestResult:
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_latest_result_running_hint_routes_to_live_counts(
+        self,
+        mock_get_base_url,
+        mock_get_account_id,
+        mock_post,
+        mock_get,
+        mock_execution_result_response,
+        mock_test_summary_running_response
+    ):
+        """SAF-32018: running test_overview counts come from the lagging finalStatus
+        aggregate, so the hint must route the agent to the live source
+        (get_test_details / get_test_simulations) and flag that counts may lag."""
+        mock_get_base_url.return_value = "https://demo.safebreach.com"
+        mock_get_account_id.return_value = "1234567890"
+
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = mock_execution_result_response
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = mock_test_summary_running_response
+        mock_get_response.status_code = 200
+        mock_get.return_value = mock_get_response
+
+        result = sb_get_studio_attack_latest_result(attack_id=10000291, console="demo")
+
+        hint = result['test_overview']['hint_to_agent']
+        assert 'may lag' in hint.lower()
+        assert 'get_test_details' in hint
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.get')
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_get_latest_result_test_overview_completed(
         self,
         mock_get_base_url,
