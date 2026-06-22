@@ -126,6 +126,86 @@ every 5s across the full run (~200s, 125 sims):
 
 **Status:** Phase 8 Complete — investigation comment posted to SAF-32018 (comment 191903)
 
+---
+
+## planning-dev-task — Phase 4: Full inventory of stale count-bearing read paths
+
+Goal: decide between (A) real live-count code path in every affected read path vs. (B) a
+non-terminal "counts may lag" hint. Decision hinges on real-fix feasibility per path.
+
+| Path | Source | Stale while running? | Live alternative? | Real-fix cost | Terminal-aware? | Shares `_build_simulation_status_counts`? |
+|------|--------|----------------------|-------------------|---------------|-----------------|-------------------------------------------|
+| `get_test_details` | testsummaries.finalStatus | YES | YES (executionsHistoryResults) | Moderate (page 1 test) | YES (`:447`) | YES |
+| `get_tests` (list) | finalStatus per test | YES | YES per test | **Prohibitive** (≤1000 tests → 1000+ paged fetches) | NO | YES |
+| `get_studio_attack_latest_result` (test_overview) | finalStatus (inline @ `studio_functions.py:1538`) | YES | YES | Moderate (page 1 test) | YES (`:1555`) | NO — **duplicated inline logic** |
+| `get_test_simulations` | executionsHistoryResults (direct) | **No — already LIVE** | n/a (is the source) | n/a | implicit | NO (`get_reduced_simulation_result_entity`) |
+| `get_test_findings_counts` / `_details` | propagateSummary findings | YES (post-processing) | **NO live per-finding source** | **Infeasible** | NO | independent |
+| `get_security_controls_events` / `_details` | SIEM eventLogs | YES (external SIEM lag) | **NO (external)** | **Infeasible** | NO | independent |
+| `get_simulation_result_drifts` / `_status_drifts` / `get_security_control_drifts` | backend drift API | YES | only by re-implementing backend logic | **Infeasible** | NO | independent |
+| `get_test_drifts` | executionsHistoryResults | already live (incomplete mid-run) | n/a | n/a | implicit | independent |
+
+### Decisive facts
+1. **The "real fix" is NOT achievable in all paths.** Findings, security-control events, and the
+   drift tools have **no live alternative** — the lag is genuinely upstream (post-processing / SIEM
+   / backend drift service). A "real fix" there would mean re-implementing backend aggregation in
+   the MCP — infeasible and wrong.
+2. **`get_tests` real fix is prohibitive** — live counts for a list would require paging
+   `executionsHistoryResults` for every running test (up to 1000+ fetches per call).
+3. **Only 2 single-test paths can take a cheap real fix:** `get_test_details` and the Studio
+   `test_overview` block (which also has a **duplicated inline** copy of the count logic at
+   `studio_functions.py:1538` that bypasses the centralized helper).
+4. **The authoritative live count already exists** as a tool: `get_test_simulations` with a
+   `status_filter` returns `total_simulations` straight from `executionsHistoryResults` (proven to
+   reconcile with finalStatus at terminal: 67==67, 125/94).
+
+## planning-dev-task — Phase 5: Chosen approach (HYBRID)
+
+Decision: **Hybrid** — real-fix where cheap/feasible, routing-hint everywhere else.
+Rationale: a pure real-fix cannot cover all paths (findings/SIEM/drift have NO live source;
+`get_tests` is prohibitive). A bare hint is uniform but leaves headline numbers aggregate-sourced.
+Hybrid gives correct values where cheap + honest, actionable expectations everywhere.
+
+### Part A — Real live-count fix (gated to NON-TERMINAL tests)
+Applies to the two single-test count paths:
+- `sb_get_test_details` (`data_functions.py:416`)
+- Studio `test_overview` block (`studio_functions.py:1538`) — also fold its inline duplicate into
+  the centralized helper.
+
+Mechanism: when the test is non-terminal (reuse SAF-31111 `terminal_statuses` detection), compute
+`simulations_statistics` from the live `executionsHistoryResults` source (via
+`_get_all_simulations_from_cache_or_api` → count by status) instead of `finalStatus`.
+Terminal tests are unchanged (cheap aggregate, already reconciled).
+
+**Perf guardrail: SOFT CAP + FALLBACK.** Recount live only when the test's known total
+(from `finalStatus`) is ≤ a configurable threshold (default ~5000 sims). Beyond it, keep the
+aggregate count and attach the routing hint ("test too large for live recount; use
+get_test_simulations with a status filter for an exact live count"). Threshold via constant/env.
+
+### Part B — Universal routing hint (NON-TERMINAL tests)
+Attach a hint on every count/finding-bearing path when its test(s) are non-terminal:
+- Hint-only paths (counts stay aggregate-sourced): `get_tests` (if any test in page is running),
+  `get_test_findings_counts`/`_details`, `get_security_controls_events`/`_details`, the drift tools.
+  Text: "Test still running — these counts/findings may lag live results; for an exact live
+  simulation count call `get_test_simulations` with the relevant `status_filter`."
+- Real-fix paths (`get_test_details`, Studio test_overview): counts are now LIVE, so the hint
+  instead clarifies the count is point-in-time and will keep changing while running (retain the
+  existing 'poll again' guidance); fallback case (over soft cap) uses the routing-hint text.
+
+### Out of scope / follow-up notes
+- We do NOT re-implement backend aggregation for findings/SIEM/drift (no live source).
+- `get_tests` is intentionally hint-only (per-test live recount across a list is prohibitive).
+
+### Test strategy (TDD)
+- Reproduce: assert non-terminal `get_test_details` counts == live `executionsHistoryResults`
+  counts (fails today). Reuse repro scripts in this folder.
+- Terminal tests: counts unchanged (aggregate path).
+- Soft-cap fallback: over-threshold non-terminal test keeps aggregate + emits routing hint.
+- Hint presence on each hint-only path for a non-terminal test; absent for terminal.
+- Studio test_overview: live counts for non-terminal + uses centralized helper (no inline dup).
+
+**Status:** Phase 7 complete — PRD approved; JIRA RCA field populated; SAF-32018 "is caused by"
+SAF-28298 link created. Ready for implementation (tdd-implementing-prd).
+
 ## Problem Analysis
 
 _(to be populated in Phase 5)_
