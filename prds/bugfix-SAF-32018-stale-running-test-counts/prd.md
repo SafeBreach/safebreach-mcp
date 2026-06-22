@@ -363,3 +363,5 @@ configurable threshold for safe rollout.
 | 2026-06-22 09:30 | PRD created — initial draft |
 | 2026-06-22 09:40 | PRD approved by owner; ready for implementation |
 | 2026-06-22 11:10 | All 8 phases implemented via TDD (commits 56ecac7..bd7460f); PRD marked Complete |
+| 2026-06-22 11:30 | Green-tree fixes: stale SafeBreachAuth patch in test_disable_filtering (d31bc42); self-discovering test_get_test_drifts_e2e (5389908) |
+| 2026-06-22 11:45 | Gap fix from manual testing: get_test_simulations now emits a partial/point-in-time hint for running tests (3e4195d) |
