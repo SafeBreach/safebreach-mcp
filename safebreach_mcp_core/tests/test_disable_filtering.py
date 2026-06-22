@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from mcp.server.fastmcp.exceptions import ToolError
 from safebreach_mcp_core import safebreach_base as mod
@@ -27,8 +27,9 @@ def _make_tool(name: str):
 def _build_base_with_tools(tools_by_name: dict):
     """Construct a SafeBreachMCPBase, attach a fake tool manager, install
     the filter. Caller monkeypatches `_DISABLE_TOOL_LIST` to drive scenarios."""
-    with patch.object(mod, "SafeBreachAuth"):
-        base = mod.SafeBreachMCPBase("test-server")
+    # SafeBreachAuth was removed from safebreach_base in SAF-29974, so the base
+    # constructor no longer creates an auth object — instantiate directly (no patch needed).
+    base = mod.SafeBreachMCPBase("test-server")
 
     fake_manager = MagicMock()
     fake_manager.list_tools.side_effect = lambda: list(tools_by_name.values())
