@@ -42,6 +42,14 @@ peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600
 # Configuration constants
 PAGE_SIZE = 10
 
+# SAF-32018: soft cap for live simulation recount on non-terminal tests.
+# For a running test, counts are recomputed from the live executionsHistoryResults
+# source (which requires paging all simulations) instead of the lagging
+# testsummaries.finalStatus aggregate. Above this size, skip the recount and keep
+# the aggregate plus a routing hint to get_test_simulations. Made env-configurable
+# in a later phase.
+LIVE_RECOUNT_MAX_SIMULATIONS = 5000
+
 
 def _normalize_numeric(value: Any) -> Optional[float]:
     """
