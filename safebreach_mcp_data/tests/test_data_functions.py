@@ -4406,3 +4406,17 @@ class TestSecurityEventsRunningHint:
         mock_events.return_value = []
         result = sb_get_security_controls_events("t1", "sim1", "c")
         assert "still running" not in (result.get("hint_to_agent") or "").lower()
+
+
+class TestDriftRunningCaveat:
+    """SAF-32018: window-based drift tools note that in-flight tests may have incomplete drift data."""
+
+    def test_result_status_drift_summary_has_running_caveat(self):
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+        res = _group_and_paginate_drifts([], 0, None, {}, 0.0, group_by="result_status")
+        assert "still running" in (res.get("hint_to_agent") or "").lower()
+
+    def test_sc_drift_summary_has_running_caveat(self):
+        from safebreach_mcp_data.data_functions import _group_and_paginate_sc_drifts
+        res = _group_and_paginate_sc_drifts([], "ctrl", 0, None, {}, 0.0)
+        assert "still running" in (res.get("hint_to_agent") or "").lower()

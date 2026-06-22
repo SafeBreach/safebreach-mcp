@@ -51,6 +51,13 @@ PAGE_SIZE = 10
 # in a later phase.
 LIVE_RECOUNT_MAX_SIMULATIONS = 5000
 
+# SAF-32018: window-based drift tools cannot cheaply tell which tests in the window are
+# still running, and there is no live drift source. Append this caveat to drift summaries.
+_DRIFT_RUNNING_CAVEAT = (
+    "Note: any tests still running within this window may have incomplete drift data until "
+    "they complete — re-query after they finish for final drift results."
+)
+
 
 def _normalize_numeric(value: Any) -> Optional[float]:
     """
@@ -2665,7 +2672,7 @@ def _group_and_paginate_drifts(
             "total_groups": len(groups),
             "drift_groups": summary_groups,
             "applied_filters": applied_filters,
-            "hint_to_agent": hint,
+            "hint_to_agent": f"{hint} {_DRIFT_RUNNING_CAVEAT}",
         }
 
     # Drill-down mode: find the requested group
@@ -3058,7 +3065,7 @@ def _group_and_paginate_sc_drifts(
             "total_groups": len(groups),
             "drift_groups": summary_groups,
             "applied_filters": applied_filters,
-            "hint_to_agent": hint,
+            "hint_to_agent": f"{hint} {_DRIFT_RUNNING_CAVEAT}",
         }
 
     # Drill-down mode
