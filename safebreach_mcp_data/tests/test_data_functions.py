@@ -4323,3 +4323,40 @@ class TestGetTestDetailsLiveCounts:
         stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
         assert stats["missed"] == 28
         assert "get_test_simulations" in (result.get("hint_to_agent") or "")
+
+
+class TestGetTestsRunningHint:
+    """SAF-32018: get_tests warns + routes to live counts when the page has a running test."""
+
+    def _test(self, test_id, status, end_time):
+        return {
+            "name": f"Plan {test_id}",
+            "test_id": test_id,
+            "start_time": 1000,
+            "end_time": end_time,
+            "duration": 600,
+            "status": status,
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": [{"status": "missed", "explanation": "...", "count": 1}],
+        }
+
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_test_in_page_adds_routing_hint(self, mock_tests):
+        mock_tests.return_value = [
+            self._test("t1", "running", 2000),
+            self._test("t2", "completed", 1000),
+        ]
+        result = sb_get_tests(console="c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "may lag" in hint
+        assert "get_test_details" in hint
+
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_all_terminal_no_lag_hint(self, mock_tests):
+        mock_tests.return_value = [
+            self._test("t1", "completed", 2000),
+            self._test("t2", "canceled", 1000),
+        ]
+        result = sb_get_tests(console="c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "may lag" not in hint

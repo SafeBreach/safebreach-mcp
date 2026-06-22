@@ -196,13 +196,33 @@ def sb_get_tests(
         if order_direction != "desc":
             applied_filters['order_direction'] = order_direction
         
+        # SAF-32018: if any test on this page is non-terminal, its simulations_statistics
+        # come from the lagging testsummaries.finalStatus aggregate. Warn and route the agent
+        # to the live sources (get_test_details is live for running tests; get_test_simulations
+        # with a status_filter gives the exact live count). Per-test live recount across a list
+        # is intentionally NOT done here (would require paging every running test).
+        terminal_statuses = {'completed', 'canceled', 'failed'}
+        running_in_page = any(
+            (t.get('status', '') or '').lower() not in terminal_statuses for t in page_tests
+        )
+        pagination_hint = (
+            f"You can scan next page by specifying page_number={page_number + 1}"
+            if page_number + 1 < total_pages else None
+        )
+        running_hint = (
+            "Some tests on this page are still running; their simulations_statistics come from a "
+            "periodically-updated summary and may lag the live results. For live counts call "
+            "get_test_details (live for running tests) or get_test_simulations with a status_filter."
+        ) if running_in_page else None
+        combined_hint = " ".join(h for h in (pagination_hint, running_hint) if h) or None
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_tests": total_tests,
             "tests_in_page": page_tests,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+            "hint_to_agent": combined_hint
         }
         
     except Exception as e:
