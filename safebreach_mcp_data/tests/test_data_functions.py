@@ -4387,3 +4387,22 @@ class TestFindingsRunningHint:
         mock_findings.return_value = [{"type": "Vuln", "name": "x"}]
         result = sb_get_test_findings_details("t1", "c", page_number=0)
         assert "still running" in (result.get("hint_to_agent") or "").lower()
+
+
+class TestSecurityEventsRunningHint:
+    """SAF-32018: security-control events listing warns when the test is still running."""
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
+    def test_running_adds_caveat(self, mock_events, mock_orch):
+        mock_events.return_value = []
+        result = sb_get_security_controls_events("t1", "sim1", "c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "still running" in hint
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
+    @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
+    def test_terminal_no_caveat(self, mock_events, mock_orch):
+        mock_events.return_value = []
+        result = sb_get_security_controls_events("t1", "sim1", "c")
+        assert "still running" not in (result.get("hint_to_agent") or "").lower()

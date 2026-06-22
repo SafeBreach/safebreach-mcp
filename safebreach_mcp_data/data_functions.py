@@ -1349,14 +1349,27 @@ def sb_get_security_controls_events(
         if destination_host_filter:
             applied_filters['destination_host_filter'] = destination_host_filter
         
+        base_hint = (
+            f"Retrieved {len(reduced_events)} security control events for test {test_id} and "
+            f"simulation {simulation_id}. " +
+            (f"You can scan next page by calling with page_number={page_number + 1}"
+             if page_number + 1 < total_pages else "This is the last page.")
+        )
+        # SAF-32018: security-control events arrive with external SIEM indexing lag; while the
+        # test runs the event set may be incomplete. There is no live source to switch to — warn.
+        if _is_test_non_terminal(test_id, console):
+            base_hint += (
+                " Note: the test is still running — security-control events arrive with SIEM "
+                "indexing lag and may be incomplete. Re-query after the test completes."
+            )
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_events": total_events,
             "events_in_page": reduced_events,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"Retrieved {len(reduced_events)} security control events for test {test_id} and simulation {simulation_id}. " +
-                           (f"You can scan next page by calling with page_number={page_number + 1}" if page_number + 1 < total_pages else "This is the last page.")
+            "hint_to_agent": base_hint
         }
         
     except Exception as e:
