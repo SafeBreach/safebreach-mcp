@@ -4360,3 +4360,30 @@ class TestGetTestsRunningHint:
         result = sb_get_tests(console="c")
         hint = (result.get("hint_to_agent") or "").lower()
         assert "may lag" not in hint
+
+
+class TestFindingsRunningHint:
+    """SAF-32018: findings tools warn when the test is still running (findings still indexing)."""
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_counts_running_adds_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln"}, {"type": "Vuln"}]
+        result = sb_get_test_findings_counts("t1", "c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "still running" in hint
+        assert "finding" in hint
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_counts_terminal_no_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln"}]
+        result = sb_get_test_findings_counts("t1", "c")
+        assert "still running" not in (result.get("hint_to_agent") or "").lower()
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_details_running_adds_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln", "name": "x"}]
+        result = sb_get_test_findings_details("t1", "c", page_number=0)
+        assert "still running" in (result.get("hint_to_agent") or "").lower()

@@ -1557,6 +1557,22 @@ def _apply_findings_filters(
     return filtered_findings
 
 
+def _is_test_non_terminal(test_id: str, console: str) -> bool:
+    """
+    Best-effort check whether a test is currently RUNNING/PAUSED (SAF-32018).
+
+    Uses the real-time orchestrator queue (the same signal as SAF-31111). Returns
+    False on any error or when the test is not in the queue (terminal/unknown) — so
+    a failure degrades to "no running-test hint", never raises.
+    """
+    try:
+        from safebreach_mcp_core.queue_state import get_orchestrator_test_state
+        return get_orchestrator_test_state(test_id, console) is not None
+    except Exception as e:
+        logger.warning("SAF-32018: non-terminal check failed for test '%s': %s", test_id, e)
+        return False
+
+
 def sb_get_test_findings_counts(
     test_id: str,
     console: str = "default",
@@ -1609,7 +1625,16 @@ def sb_get_test_findings_counts(
             'applied_filters': applied_filters,
             'retrieved_at': time.time()
         }
-        
+
+        # SAF-32018: findings are indexed asynchronously; while the test runs these
+        # counts may be incomplete. There is no live findings source, so warn and
+        # advise re-querying after completion.
+        if _is_test_non_terminal(test_id, console):
+            result['hint_to_agent'] = (
+                "Test is still running — findings are still being indexed and these counts may "
+                "be incomplete. Re-query after the test completes for the final findings set."
+            )
+
         logger.info("Retrieved %d findings of %d types for %s:%s", len(filtered_findings), len(type_counts), console, test_id)
         return result
         
@@ -1692,9 +1717,21 @@ def sb_get_test_findings_details(
         }
         
         # Add hint for pagination
+        hints = []
         if page_number + 1 < total_pages:
-            result['hint_to_agent'] = f"You can scan next page by calling with page_number={page_number + 1}. There are {total_pages} total pages."
-        
+            hints.append(
+                f"You can scan next page by calling with page_number={page_number + 1}. "
+                f"There are {total_pages} total pages."
+            )
+        # SAF-32018: findings index asynchronously — warn while the test is still running.
+        if _is_test_non_terminal(test_id, console):
+            hints.append(
+                "Test is still running — findings are still being indexed and may be "
+                "incomplete. Re-query after the test completes for the final findings set."
+            )
+        if hints:
+            result['hint_to_agent'] = " ".join(hints)
+
         logger.info("Retrieved page %d of %d (%d findings) for %s:%s", page_number, total_pages, len(page_findings), console, test_id)
         return result
         
