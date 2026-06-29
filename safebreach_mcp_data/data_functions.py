@@ -491,10 +491,21 @@ def sb_get_test_details(test_id: str, console: str = "default",
 
         # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
+        test_phase = return_details.get('test_phase')
+        correlation_pending = test_phase in ("Waiting to correlate", "Correlating security events")
         if final_status not in terminal_statuses:
             return_details['hint_to_agent'] = (
                 f"Test is still {return_details.get('status', 'in progress')}. "
                 "Poll again in 30 seconds using get_test_details with the same test_id."
+            )
+        elif correlation_pending:
+            pct = return_details.get('log_processing_completion_percentage')
+            pct_str = f" ({round(pct * 100)}% complete)" if isinstance(pct, (int, float)) and 0 < pct < 1 else ""
+            return_details['hint_to_agent'] = (
+                f"Simulation execution has finished, but security-event correlation is still in "
+                f"progress{pct_str} — detection/prevention results are not final yet. Report the test "
+                "as still correlating (not fully complete), and re-check with get_test_details until "
+                "correlation is complete."
             )
         else:
             # Terminal test — hint about delete for storage management (SAF-29972)
