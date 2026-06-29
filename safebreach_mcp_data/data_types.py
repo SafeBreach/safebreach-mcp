@@ -139,30 +139,6 @@ def _build_simulation_status_counts(final_status: Dict[str, Any]) -> List[Dict[s
     ]
 
 
-def build_simulation_status_counts_from_simulations(
-    simulations: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """
-    Build simulations_statistics from a LIVE per-simulation list (SAF-32018).
-
-    For a running test, testsummaries.finalStatus lags the live per-simulation
-    results (executionsHistoryResults). This helper tallies the live simulation
-    statuses and returns the SAME shape as ``_build_simulation_status_counts``
-    (status / explanation / count, in the same order) by delegating to it with a
-    counts dict — so explanations and ordering stay in a single source of truth.
-
-    Each simulation's ``status`` field uses the same hyphenated values as the
-    finalStatus keys (missed, stopped, prevented, detected, logged, no-result,
-    inconsistent). Matching is case-insensitive; missing/empty statuses are ignored.
-    """
-    counts: Dict[str, int] = {}
-    for simulation in simulations:
-        status = (simulation.get('status') or '').lower()
-        if status:
-            counts[status] = counts.get(status, 0) + 1
-    return _build_simulation_status_counts(counts)
-
-
 def get_reduced_test_summary_mapping(test_summary_entity):
     """
     Returns a reduced test summary entity with only the relevant fields.

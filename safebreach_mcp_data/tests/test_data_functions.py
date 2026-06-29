@@ -6,7 +6,6 @@ This module tests the data functions that handle test and simulation operations.
 
 import copy
 import logging
-import os
 
 import pytest
 import json
@@ -4222,18 +4221,16 @@ class TestSimulationLogsEntryPoints:
         mock_core.assert_not_called()
 
 
-class TestGetTestDetailsLiveCounts:
-    """SAF-32018: get_test_details returns LIVE counts for non-terminal tests.
-
-    For a running test, simulations_statistics must reflect the live
-    executionsHistoryResults source (what the UI shows), not the lagging
-    testsummaries.finalStatus aggregate. Terminal tests keep the cheap aggregate.
-    A soft size cap falls back to the aggregate + a routing hint.
+class TestGetTestDetailsRunningCounts:
+    """SAF-32018: for a NON-TERMINAL test, get_test_details refreshes counts from the FRESH
+    single-test endpoint (testsummaries/{id}), defeating the stale cached finalStatus that
+    caused the bug. It adds a point-in-time hint and does NOT page executionsHistoryResults.
+    Terminal tests are unchanged.
     """
 
     @staticmethod
-    def _aggregate_stats(missed=0, stopped=0, prevented=0, detected=0,
-                         logged=0, no_result=0, inconsistent=0):
+    def _stats(missed=0, stopped=0, prevented=0, detected=0,
+               logged=0, no_result=0, inconsistent=0):
         return [
             {"status": "missed", "explanation": "...", "count": missed},
             {"status": "stopped", "explanation": "...", "count": stopped},
@@ -4244,7 +4241,7 @@ class TestGetTestDetailsLiveCounts:
             {"status": "inconsistent", "explanation": "...", "count": inconsistent},
         ]
 
-    def _running_test(self, missed_aggregate):
+    def _cached_running(self, missed_stale):
         return [{
             "name": "Running Plan",
             "test_id": "run1",
@@ -4253,77 +4250,72 @@ class TestGetTestDetailsLiveCounts:
             "duration": 600,
             "status": "running",
             "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
-            "simulations_statistics": self._aggregate_stats(missed=missed_aggregate),
+            "simulations_statistics": self._stats(missed=missed_stale),
         }]
 
     @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_running_test_uses_live_counts(self, mock_tests, mock_sims, mock_orch):
-        """REPRODUCTION: aggregate says 28 missed, live says 80 -> result is 80."""
-        mock_tests.return_value = self._running_test(missed_aggregate=28)
-        mock_sims.return_value = [{"status": "missed"}] * 80 + [{"status": "prevented"}] * 5
-
+    def test_running_refreshes_counts_from_single_endpoint(self, mock_tests, mock_single, mock_sims, mock_orch):
+        """REPRODUCTION: cached/stale aggregate says 28 missed; fresh single-test says 80 -> 80.
+        And NO expensive executionsHistoryResults paging happens."""
+        mock_tests.return_value = self._cached_running(missed_stale=28)
+        mock_single.return_value = {
+            "status": "running",
+            "end_time": 1640995800,
+            "simulations_statistics": self._stats(missed=80, prevented=5),
+        }
         result = sb_get_test_details("run1", "test-console")
-
         stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
         assert stats["missed"] == 80
         assert stats["prevented"] == 5
-        mock_sims.assert_called_once()
+        mock_single.assert_called_once()   # fresh single-test fetch used
+        mock_sims.assert_not_called()      # NO per-simulation paging
 
     @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_running_test_live_hint(self, mock_tests, mock_sims, mock_orch):
-        """Non-terminal still emits a poll-again hint after live recount."""
-        mock_tests.return_value = self._running_test(missed_aggregate=28)
-        mock_sims.return_value = [{"status": "missed"}] * 80
+    def test_running_point_in_time_hint(self, mock_tests, mock_single, mock_orch):
+        mock_tests.return_value = self._cached_running(missed_stale=28)
+        mock_single.return_value = {
+            "status": "running", "end_time": 1,
+            "simulations_statistics": self._stats(missed=80),
+        }
         result = sb_get_test_details("run1", "test-console")
-        assert "hint_to_agent" in result and result["hint_to_agent"]
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "point-in-time" in hint
+        assert "get_test_simulations" in hint
 
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_terminal_test_keeps_aggregate(self, mock_tests, mock_sims):
-        """Completed test: aggregate kept, live source NEVER fetched."""
+    def test_terminal_keeps_aggregate_no_refresh(self, mock_tests, mock_single, mock_sims):
+        """Completed test: counts unchanged; no refresh, no paging."""
         mock_tests.return_value = [{
             "name": "Done Plan",
             "test_id": "done1",
-            "start_time": 1640995200,
-            "end_time": 1640995800,
-            "duration": 600,
+            "start_time": 1, "end_time": 2, "duration": 1,
             "status": "completed",
             "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
-            "simulations_statistics": self._aggregate_stats(missed=28),
+            "simulations_statistics": self._stats(missed=28),
         }]
         result = sb_get_test_details("done1", "test-console")
         stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
         assert stats["missed"] == 28
-        mock_sims.assert_not_called()
-
-    @patch('safebreach_mcp_data.data_functions.LIVE_RECOUNT_MAX_SIMULATIONS', 100)
-    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_over_soft_cap_falls_back_to_aggregate_with_hint(self, mock_tests, mock_sims, mock_orch):
-        """Over the soft cap: keep aggregate, do NOT fetch live, emit routing hint."""
-        mock_tests.return_value = self._running_test(missed_aggregate=6000)  # > cap (100)
-        result = sb_get_test_details("run1", "test-console")
-        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
-        assert stats["missed"] == 6000
-        mock_sims.assert_not_called()
-        assert "get_test_simulations" in (result.get("hint_to_agent") or "")
+        mock_single.assert_not_called()   # no refresh for a terminal test
+        mock_sims.assert_not_called()     # never pages executionsHistoryResults
 
     @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api',
-           side_effect=Exception("API down"))
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test', side_effect=Exception("API down"))
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
-    def test_live_fetch_failure_falls_back_to_aggregate(self, mock_tests, mock_sims, mock_orch):
-        """Live fetch error: degrade to aggregate + routing hint, never raise."""
-        mock_tests.return_value = self._running_test(missed_aggregate=28)
+    def test_refresh_failure_falls_back_to_cached(self, mock_tests, mock_single, mock_orch):
+        """Single-test refresh error: keep cached counts, never raise, still hint."""
+        mock_tests.return_value = self._cached_running(missed_stale=28)
         result = sb_get_test_details("run1", "test-console")
         stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
         assert stats["missed"] == 28
-        assert "get_test_simulations" in (result.get("hint_to_agent") or "")
+        assert result.get("hint_to_agent")
 
 
 class TestGetTestsRunningHint:
@@ -4421,26 +4413,6 @@ class TestDriftRunningCaveat:
         from safebreach_mcp_data.data_functions import _group_and_paginate_sc_drifts
         res = _group_and_paginate_sc_drifts([], "ctrl", 0, None, {}, 0.0)
         assert "still running" in (res.get("hint_to_agent") or "").lower()
-
-
-class TestLiveRecountCapConfig:
-    """SAF-32018 Phase 8: soft-cap threshold is env-configurable with safe fallback."""
-
-    def test_env_override(self):
-        from safebreach_mcp_data.data_functions import _get_live_recount_cap
-        with patch.dict('os.environ', {'SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS': '50'}):
-            assert _get_live_recount_cap() == 50
-
-    def test_default_when_unset(self):
-        import safebreach_mcp_data.data_functions as m
-        with patch.dict('os.environ', {}, clear=False):
-            os.environ.pop('SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS', None)
-            assert m._get_live_recount_cap() == m.LIVE_RECOUNT_MAX_SIMULATIONS
-
-    def test_invalid_env_falls_back_to_default(self):
-        import safebreach_mcp_data.data_functions as m
-        with patch.dict('os.environ', {'SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS': 'notanint'}):
-            assert m._get_live_recount_cap() == m.LIVE_RECOUNT_MAX_SIMULATIONS
 
 
 class TestGetTestSimulationsRunningHint:

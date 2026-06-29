@@ -7,7 +7,6 @@ specifically for test and simulation data management.
 
 import copy
 import logging
-import os
 import time
 from typing import Dict, List, Optional, Any, Iterable
 
@@ -28,7 +27,6 @@ from .data_types import (
     get_full_security_control_events_mapping,
     group_and_enrich_drift_records,
     get_reduced_peer_benchmark_response,
-    build_simulation_status_counts_from_simulations,
 )
 from .drifts_metadata import drift_types_mapping
 
@@ -43,33 +41,6 @@ peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600
 
 # Configuration constants
 PAGE_SIZE = 10
-
-# SAF-32018: soft cap for live simulation recount on non-terminal tests.
-# For a running test, counts are recomputed from the live executionsHistoryResults
-# source (which requires paging all simulations) instead of the lagging
-# testsummaries.finalStatus aggregate. Above this size, skip the recount and keep
-# the aggregate plus a routing hint to get_test_simulations. Made env-configurable
-# in a later phase.
-LIVE_RECOUNT_MAX_SIMULATIONS = 5000
-
-
-def _get_live_recount_cap() -> int:
-    """Resolve the live-recount soft cap (SAF-32018), env-overridable at call time.
-
-    Reads ``SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS`` and falls back to the module
-    default ``LIVE_RECOUNT_MAX_SIMULATIONS`` when unset or non-integer.
-    """
-    raw = os.environ.get('SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS')
-    if raw is None:
-        return LIVE_RECOUNT_MAX_SIMULATIONS
-    try:
-        return int(raw)
-    except (ValueError, TypeError):
-        logger.warning(
-            "SAF-32018: invalid SAFEBREACH_MCP_LIVE_RECOUNT_MAX_SIMULATIONS=%r — using default %d",
-            raw, LIVE_RECOUNT_MAX_SIMULATIONS,
-        )
-        return LIVE_RECOUNT_MAX_SIMULATIONS
 
 # SAF-32018: window-based drift tools cannot cheaply tell which tests in the window are
 # still running, and there is no live drift source. Append this caveat to drift summaries.
@@ -495,79 +466,43 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
         return_details = _find_test_in_cached_list(test_id, console)
 
-        # If cached entry shows a non-terminal status, fetch fresh status.
-        # The cached list can be up to 30 minutes stale, and transient
-        # statuses (RUNNING, QUEUED, etc.) may have changed since caching.
-        # SAF-31111: Check orchestrator queue first (real-time) before the
-        # data API, which has 10-15s eventual consistency lag.
+        # SAF-32018 + SAF-31111: a non-terminal (running) test taken from the cached list can be
+        # stale in TWO ways — the tests_cache holds an up-to-30-min-old snapshot, and the
+        # running-test path previously refreshed only the status, never the COUNTS. That stale,
+        # never-refreshed finalStatus was the root cause of SAF-32018 (agent reported 28 while the
+        # UI showed 80). Fix: for a non-terminal test, refresh from fresh sources —
+        #   - real-time status from the orchestrator queue (no eventual-consistency lag), and
+        #   - fresh simulation counts from the single-test /testsummaries/{id} endpoint, whose
+        #     finalStatus tracks the live UI aggregation to within ~1 simulation (verified) — far
+        #     cheaper than paging every simulation.
         terminal_statuses = {'completed', 'canceled', 'failed'}
         cached_status = (return_details.get('status', '') or '').lower() if return_details else ''
         if return_details is not None and cached_status not in terminal_statuses:
-            logger.info("Test '%s' shows non-terminal status '%s' in cache — fetching fresh", test_id, cached_status)
+            logger.info("Test '%s' is non-terminal ('%s') — refreshing status and counts", test_id, cached_status)
 
-            # Phase 1: orchestrator queue (real-time, no lag)
+            # Real-time status from the orchestrator queue (no lag).
             from safebreach_mcp_core.queue_state import get_orchestrator_test_state
             orch_state = get_orchestrator_test_state(test_id, console)
             if orch_state is not None:
                 return_details['status'] = orch_state
                 logger.info("Test '%s' status from orchestrator queue: %s", test_id, orch_state)
-            else:
-                # Phase 2: data API single-test endpoint (eventual consistency)
-                try:
-                    fresh = _fetch_single_test(test_id, console)
-                    # Merge: use fresh status/end_time but keep cached extras
-                    # (findingsCount, compromisedHosts) that single-test omits
+
+            # Fresh counts (and status/end_time fallback) from the single-test endpoint.
+            try:
+                fresh = _fetch_single_test(test_id, console)
+                if orch_state is None:
                     return_details['status'] = fresh.get('status', return_details['status'])
-                    return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
-                    return_details['simulations_statistics'] = fresh.get(
-                        'simulations_statistics', return_details['simulations_statistics']
-                    )
-                except Exception as e:
-                    logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
+                return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
+                return_details['simulations_statistics'] = fresh.get(
+                    'simulations_statistics', return_details['simulations_statistics']
+                )
+            except Exception as e:
+                logger.warning("Failed to refresh non-terminal test '%s': %s — using cached data", test_id, e)
 
         if return_details is None:
             # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
             logger.info("Test '%s' not found in cached list, falling back to single-test endpoint", test_id)
             return_details = _fetch_single_test(test_id, console)
-
-        # SAF-32018: for a NON-TERMINAL test, recompute simulations_statistics from the
-        # live executionsHistoryResults source. The testsummaries.finalStatus aggregate
-        # (the default source) lags the live per-simulation results during an active run,
-        # so it under-reports counts until the test completes. Soft-capped: above
-        # LIVE_RECOUNT_MAX_SIMULATIONS we keep the aggregate and route the agent to
-        # get_test_simulations for an exact live count. Best-effort: any failure degrades
-        # to the aggregate (never raises).
-        live_recount_note = None
-        post_refresh_status = (return_details.get('status', '') or '').lower()
-        if post_refresh_status not in terminal_statuses:
-            known_total = sum(
-                s.get('count', 0)
-                for s in return_details.get('simulations_statistics', [])
-                if 'count' in s
-            )
-            if known_total <= _get_live_recount_cap():
-                try:
-                    live_sims = _get_all_simulations_from_cache_or_api(test_id, console)
-                    return_details['simulations_statistics'] = (
-                        build_simulation_status_counts_from_simulations(live_sims)
-                    )
-                    live_recount_note = 'live'
-                    logger.info(
-                        "SAF-32018: recomputed live counts for running test '%s' from %d simulations",
-                        test_id, len(live_sims),
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "SAF-32018: live recount failed for running test '%s': %s — using aggregate counts",
-                        test_id, e,
-                    )
-                    live_recount_note = 'failed'
-            else:
-                logger.info(
-                    "SAF-32018: running test '%s' over soft cap (%d > %d) — keeping aggregate counts",
-                    test_id, known_total, LIVE_RECOUNT_MAX_SIMULATIONS,
-                )
-                live_recount_note = 'capped'
 
         if include_drift_count:
             drift_count = _count_drifted_simulations(test_id, console)
@@ -587,29 +522,16 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
         if final_status not in terminal_statuses:
-            if live_recount_note == 'live':
-                # Counts were recomputed from the live source — accurate as of now.
-                return_details['hint_to_agent'] = (
-                    f"Test is still {return_details.get('status', 'in progress')}. "
-                    "These simulation counts are live as of now and will keep changing while "
-                    "the test runs — poll again in ~30 seconds using get_test_details with the "
-                    "same test_id."
-                )
-            elif live_recount_note in ('capped', 'failed'):
-                # Counts are the lagging aggregate — route the agent to the live source.
-                return_details['hint_to_agent'] = (
-                    f"Test is still {return_details.get('status', 'in progress')}. "
-                    "These simulation counts come from a periodically-updated summary and may "
-                    "lag the live results while the test runs. For an exact live count of a "
-                    "given status, call get_test_simulations with the relevant status_filter "
-                    "(its total_simulations is the live count). Poll again in ~30 seconds with "
-                    "get_test_details for updated totals."
-                )
-            else:
-                return_details['hint_to_agent'] = (
-                    f"Test is still {return_details.get('status', 'in progress')}. "
-                    "Poll again in 30 seconds using get_test_details with the same test_id."
-                )
+            # SAF-32018: counts were just refreshed from the live summary, but the test is still
+            # running so they are point-in-time and will keep changing. Flag that and point to the
+            # live filtered grid for exact per-status drill-down.
+            return_details['hint_to_agent'] = (
+                f"Test is still {return_details.get('status', 'in progress')}. "
+                "These simulation counts are refreshed as of now but are point-in-time and will "
+                "keep changing while the test runs — poll again in ~30 seconds with "
+                "get_test_details. For the live filtered grid of a given status, use "
+                "get_test_simulations with the relevant status_filter."
+            )
         else:
             # Terminal test — hint about delete for storage management (SAF-29972)
             return_details['hint_to_agent'] = (

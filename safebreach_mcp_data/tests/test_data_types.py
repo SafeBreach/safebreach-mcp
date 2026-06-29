@@ -21,7 +21,6 @@ from safebreach_mcp_data.data_types import (
     _build_node_data,
     build_simulation_steps_by_node,
     get_reduced_peer_benchmark_response,
-    build_simulation_status_counts_from_simulations,
 )
 
 
@@ -1294,56 +1293,3 @@ class TestBuildSimulationStepsByNode:
         assert build_simulation_steps_by_node({}) == []
         assert build_simulation_steps_by_node({"dataObj": {"data": [[]]}}) == []
         assert build_simulation_steps_by_node({"dataObj": {"data": []}}) == []
-
-class TestLiveSimulationStatusCounts:
-    """Tests for build_simulation_status_counts_from_simulations (SAF-32018).
-
-    Builds simulations_statistics from the LIVE per-simulation list
-    (executionsHistoryResults) instead of the lagging testsummaries.finalStatus
-    aggregate. Same output shape as _build_simulation_status_counts.
-    """
-
-    def test_counts_live_simulations_by_status(self):
-        sims = (
-            [{"status": "missed"}] * 80
-            + [{"status": "prevented"}] * 5
-            + [{"status": "detected"}] * 2
-            + [{"status": "no-result"}] * 1
-        )
-        stats = build_simulation_status_counts_from_simulations(sims)
-        assert len(stats) == 7
-        by_status = {s["status"]: s["count"] for s in stats}
-        assert by_status["missed"] == 80
-        assert by_status["prevented"] == 5
-        assert by_status["detected"] == 2
-        assert by_status["no-result"] == 1
-        assert by_status["stopped"] == 0
-        assert by_status["logged"] == 0
-        assert by_status["inconsistent"] == 0
-
-    def test_empty_list_all_zeros(self):
-        stats = build_simulation_status_counts_from_simulations([])
-        assert len(stats) == 7
-        for s in stats:
-            assert s["count"] == 0
-
-    def test_same_shape_as_aggregate_helper(self):
-        """Output structure (keys, status set, order) must match the aggregate helper."""
-        from safebreach_mcp_data.data_types import _build_simulation_status_counts
-        live = build_simulation_status_counts_from_simulations([{"status": "missed"}])
-        agg = _build_simulation_status_counts({"missed": 1})
-        assert [s["status"] for s in live] == [s["status"] for s in agg]
-        for s in live:
-            assert set(s.keys()) == {"status", "explanation", "count"}
-
-    def test_status_matching_is_case_insensitive(self):
-        sims = [{"status": "MISSED"}, {"status": "Missed"}, {"status": "missed"}]
-        stats = build_simulation_status_counts_from_simulations(sims)
-        by_status = {s["status"]: s["count"] for s in stats}
-        assert by_status["missed"] == 3
-
-    def test_missing_or_empty_status_ignored(self):
-        sims = [{"status": "missed"}, {"status": ""}, {}, {"status": None}]
-        stats = build_simulation_status_counts_from_simulations(sims)
-        by_status = {s["status"]: s["count"] for s in stats}
-        assert by_status["missed"] == 1
