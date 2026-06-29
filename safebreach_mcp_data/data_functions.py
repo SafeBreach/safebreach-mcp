@@ -697,13 +697,26 @@ def sb_get_test_simulations(
         if drifted_only:
             applied_filters['drifted_only'] = drifted_only
         
+        # Guard against false-empty filter results: if filters matched nothing but the test
+        # itself has simulations, warn rather than let the agent infer the attack/criteria is absent.
+        if applied_filters and total_simulations == 0 and len(all_simulations) > 0:
+            hint = (
+                f"0 of {len(all_simulations)} simulations in this test matched the applied filters "
+                f"({', '.join(applied_filters)}). Verify the filter values are correct — do not "
+                "conclude the attack or criteria is absent from the test based on this empty result."
+            )
+        elif page_number + 1 < total_pages:
+            hint = f"You can scan next page by specifying page_number={page_number + 1}"
+        else:
+            hint = None
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_simulations": total_simulations,
             "simulations_in_page": page_simulations,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+            "hint_to_agent": hint
         }
         
     except Exception as e:
@@ -843,15 +856,16 @@ def _apply_simulation_filters(
         filtered = [s for s in filtered 
                    if _safe_time_compare(s, end_time, lambda x, y: x <= y)]
     
-    # Apply playbook attack ID filter
+    # Apply playbook attack ID filter. Reduced entities key this as 'playbook_attack_id'
+    # (from moveId, an int); the filter param is a string — compare as strings.
     if playbook_attack_id_filter:
-        filtered = [s for s in filtered 
-                   if s.get('playbookAttackId') == playbook_attack_id_filter]
-    
-    # Apply playbook attack name filter
+        filtered = [s for s in filtered
+                   if str(s.get('playbook_attack_id')) == str(playbook_attack_id_filter)]
+
+    # Apply playbook attack name filter ('playbook_attack_name' on the reduced entity)
     if playbook_attack_name_filter:
-        filtered = [s for s in filtered 
-                   if playbook_attack_name_filter.lower() in s.get('playbookAttackName', '').lower()]
+        filtered = [s for s in filtered
+                   if playbook_attack_name_filter.lower() in (s.get('playbook_attack_name') or '').lower()]
     
     # Apply drift filter
     if drifted_only:
