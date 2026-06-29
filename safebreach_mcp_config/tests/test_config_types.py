@@ -577,6 +577,51 @@ class TestPaginateScenarios:
         hint = result["hint_to_agent"]
         assert hint is None or 'page_number=' not in hint
 
+    @pytest.fixture
+    def page0_not_ready_list(self):
+        """25 scenarios where page 0 (first 10) are all not-ready, but the last 5 are ready."""
+        return [
+            {
+                "id": f"scenario-{i}",
+                "name": f"Scenario {i}",
+                "category_names": ["Test"],
+                "tags": None,
+                "step_count": 1,
+                "is_ready_to_run": i >= 20,
+                "createdAt": "2025-01-01T00:00:00.000Z",
+                "updatedAt": "2025-01-01T00:00:00.000Z",
+            }
+            for i in range(25)
+        ]
+
+    def test_ready_to_run_hint_when_ready_scenarios_beyond_page(self, page0_not_ready_list):
+        """SAF-32210: page 0 shows no ready scenarios, but ready ones exist later — hint must
+        steer the agent to ready_to_run_filter=True (not let it conclude 'none are ready')."""
+        result = paginate_scenarios(page0_not_ready_list, page_number=0, page_size=10)
+        hint = result["hint_to_agent"]
+        assert "ready_to_run_filter=True" in hint
+        assert "5 of 25" in hint
+
+    def test_no_ready_hint_when_filter_already_applied(self, page0_not_ready_list):
+        """When ready_to_run_filter was applied, don't nudge toward it again."""
+        result = paginate_scenarios(
+            page0_not_ready_list, page_number=0, page_size=10, ready_to_run_filter_applied=True
+        )
+        hint = result["hint_to_agent"] or ""
+        assert "ready_to_run_filter=True" not in hint
+
+    def test_no_ready_hint_when_all_ready_shown(self, sample_reduced_scenarios):
+        """Single page where every ready scenario is already visible — no nudge needed."""
+        result = paginate_scenarios(sample_reduced_scenarios, page_number=0, page_size=10)
+        hint = result["hint_to_agent"] or ""
+        assert "ready_to_run_filter=True" not in hint
+
+    def test_no_ready_hint_when_none_ready(self, large_scenario_list):
+        """No ready-to-run scenarios at all — no nudge."""
+        result = paginate_scenarios(large_scenario_list, page_number=0, page_size=10)
+        hint = result["hint_to_agent"] or ""
+        assert "ready_to_run_filter=True" not in hint
+
 
 class TestMalformedScenarioSteps:
     """Regression tests for malformed scenario data from content-manager API.

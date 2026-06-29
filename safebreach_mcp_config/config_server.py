@@ -94,6 +94,9 @@ label_filter (partial label match), os_type_filter (OS type match), critical_onl
             description="""Returns a filtered and paginated list of SafeBreach scenarios for a given console.
 Scenarios are multi-step attack workflows. Each scenario includes metadata about its type (OOB/custom),
 category, readiness status, and step count. Results are paginated (10 per page) and ordered by name ascending by default.
+To find scenarios that can be executed immediately, pass ready_to_run_filter=True — do NOT conclude from a single
+page that none are ready, since ready-to-run scenarios may be on any page. A ready-to-run scenario has simulators
+already assigned and can be run as-is.
 Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
 creator_filter ('safebreach' for OOB or 'custom' for user-created), category_filter (partial category name match),
 recommended_filter (True/False), tag_filter (partial tag match), ready_to_run_filter (True/False - whether all steps
