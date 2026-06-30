@@ -30,6 +30,8 @@ from safebreach_mcp_data.data_functions import (
     _apply_simulation_filters,
     _safe_time_compare,
     _get_all_security_control_events_from_cache_or_api,
+    _get_with_auth_retry,
+    TransientAuthError,
     _apply_security_control_events_filters,
     _get_all_findings_from_cache_or_api,
     _apply_findings_filters,
@@ -912,7 +914,33 @@ class TestDataFunctions:
         # Assertions
         assert "API Error" in str(exc_info.value)
         mock_get.assert_called_once()
-    
+
+    @patch('safebreach_mcp_data.data_functions.time.sleep')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_get_with_auth_retry_recovers_from_transient_401(self, mock_get, mock_sleep):
+        """A 401 that clears on retry returns the eventual 200 — no error surfaced."""
+        ok = Mock(); ok.status_code = 200; ok.raise_for_status.return_value = None
+        bad = Mock(); bad.status_code = 401
+        mock_get.side_effect = [bad, ok]
+
+        resp = _get_with_auth_retry("https://x/eventLogs", headers={})
+
+        assert resp is ok
+        assert mock_get.call_count == 2
+        assert mock_sleep.call_count == 1
+
+    @patch('safebreach_mcp_data.data_functions.time.sleep')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_get_with_auth_retry_persistent_401_raises_typed(self, mock_get, mock_sleep):
+        """Persistent 401 raises a typed error after N attempts — never silent-empty."""
+        bad = Mock(); bad.status_code = 401
+        mock_get.return_value = bad
+
+        with pytest.raises(TransientAuthError):
+            _get_with_auth_retry("https://x/eventLogs", headers={})
+
+        assert mock_get.call_count == 3
+
     def test_apply_security_control_events_filters_product_name(self, mock_security_control_events_data):
         """Test filtering by product name."""
         # Test exact match

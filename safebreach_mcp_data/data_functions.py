@@ -7,6 +7,7 @@ specifically for test and simulation data management.
 
 import copy
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Any, Iterable
 
@@ -1050,6 +1051,43 @@ def sb_get_simulation_details(
         raise
 
 
+_AUTH_RETRY_ATTEMPTS = int(os.environ.get('SAFEBREACH_MCP_AUTH_RETRY_ATTEMPTS', '3'))
+_AUTH_RETRY_BACKOFF_SEC = float(os.environ.get('SAFEBREACH_MCP_AUTH_RETRY_BACKOFF_SEC', '0.5'))
+
+
+class TransientAuthError(Exception):
+    """Raised when a backend API keeps returning HTTP 401 after bounded retries.
+
+    Surfaced as an explicit, typed error so a persistent auth failure is never mistaken
+    for an empty/zero result (the SB-36136 failure mode).
+    """
+
+
+def _get_with_auth_retry(url: str, *, headers: Dict[str, str], timeout: int = 120):
+    """GET ``url``, retrying transient 401s with exponential backoff.
+
+    On HTTP 401: retry up to _AUTH_RETRY_ATTEMPTS with exponential backoff; if it still
+    fails, raise TransientAuthError. Non-401 responses go through check_rbac_response
+    (403 RBAC hint + raise_for_status), preserving existing behaviour.
+    """
+    for attempt in range(_AUTH_RETRY_ATTEMPTS):
+        response = requests.get(url, headers=headers, timeout=timeout)
+        if response.status_code == 401:
+            if attempt < _AUTH_RETRY_ATTEMPTS - 1:
+                sleep_s = _AUTH_RETRY_BACKOFF_SEC * (2 ** attempt)
+                logger.warning("Transient 401 from %s (attempt %d/%d); retrying in %.2fs",
+                               url, attempt + 1, _AUTH_RETRY_ATTEMPTS, sleep_s)
+                time.sleep(sleep_s)
+                continue
+            raise TransientAuthError(
+                f"Authentication failed (HTTP 401) for {url} after {_AUTH_RETRY_ATTEMPTS} attempts. "
+                "Likely a transient auth/RBAC-gateway issue that did not clear on retry. "
+                "Do NOT treat this as an empty or zero result."
+            )
+        check_rbac_response(response)
+        return response
+
+
 def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_id: str, console: str = "default") -> List[Dict[str, Any]]:
     """
     Get all security control events from cache or API.
@@ -1081,8 +1119,7 @@ def _get_all_security_control_events_from_cache_or_api(test_id: str, simulation_
         headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
         
         logger.info("Fetching security control events from API for %s:%s:%s", console, test_id, simulation_id)
-        response = requests.get(api_url, headers=headers, timeout=120)
-        check_rbac_response(response)
+        response = _get_with_auth_retry(api_url, headers=headers, timeout=120)
         
         response_data = response.json()
         
