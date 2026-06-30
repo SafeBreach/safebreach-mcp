@@ -155,16 +155,21 @@ class TestRunScenarioE2E:
         ready_plans = [p for p in plans if compute_scenario_readiness(p)]
         assert len(ready_plans) > 0, f"No ready custom plan on {E2E_CONSOLE}"
 
-        # Pick a plan with enough predicted sims
+        # Pick a plan with enough predicted sims AND no empty step. The real run below uses
+        # allow_partial_steps=False, so a plan with any 0-sim step (e.g. an AI-generated email
+        # step whose attacks are constrained out on the current fleet — root/proxy/package
+        # requirements) would be correctly refused by run_scenario. Structural readiness
+        # (compute_scenario_readiness) is not enough — require every step to actually predict
+        # simulations on this environment.
         ready_plan = None
         for p in ready_plans:
             dry = sb_run_scenario(scenario_id=str(p['id']),
                                  console=E2E_CONSOLE, dry_run=True)
-            if dry.get('predicted_simulations', 0) >= 20:
+            if dry.get('predicted_simulations', 0) >= 20 and not dry.get('empty_steps'):
                 ready_plan = p
                 break
         if ready_plan is None:
-            pytest.skip("No ready custom plan with >=20 predicted sims")
+            pytest.skip("No ready custom plan with >=20 predicted sims and no empty steps")
 
         test_id = None
         passed = False
