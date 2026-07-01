@@ -64,7 +64,9 @@ status_filter ('completed'/'canceled'/'failed'/'running'/None), name_filter (par
 launched_by_filter (partial username match, case-insensitive — e.g. 'sbadmin'), \
 order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
 Accepts both epoch timestamps and ISO 8601 strings for date parameters.
-Each test includes a launched_by field with the resolved username of who ran the test."""
+Each test includes a launched_by field with the resolved username of who ran the test.
+A test may also include test_phase ('Waiting to correlate'/'Correlating security events'/'Completed') when security-event \
+correlation is tracked — a 'completed' status with a non-'Completed' test_phase means correlation is still in progress."""
         )
         async def get_tests_tool(
             console: str = "default",
@@ -99,6 +101,11 @@ Each test includes a launched_by field with the resolved username of who ran the
             description="""Returns the full details for a specific test by id executed on a given Safebreach management console.
 Always includes simulation status counts (missed, stopped, prevented, detected, logged, no-result, inconsistent) at no extra cost.
 Optionally includes drift count via include_drift_count parameter.
+A test whose `status` is 'completed' may still be running security-event correlation. Check `test_phase` \
+('Waiting to correlate'/'Correlating security events'/'Completed'): while it is not 'Completed', simulation execution \
+has finished but correlation is still in progress and detection/prevention results are not final — describe the test \
+as still correlating (not done) rather than completed. `log_processing_completion_percentage` (0..1) gives correlation \
+progress; `status` alone reflects only execution.
 WARNING: include_drift_count=True may take a significant amount of time for large tests (proportional to the number of simulations) as it must scan all simulation pages. Only request drift count when specifically needed."""
         )
         async def get_test_details_tool(

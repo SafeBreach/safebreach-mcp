@@ -488,6 +488,38 @@ class TestDataFunctions:
         detected_stat = next(s for s in stats if s.get("status") == "detected")
         assert detected_stat["count"] == 2
 
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_correlation_pending_hint(self, mock_get_all_tests):
+        """SAF-32063: a COMPLETED test that is still correlating must not be reported as done.
+
+        status='completed' is terminal, but test_phase shows correlation in progress — the
+        hint must steer the agent away from declaring COMPLETED and toward polling.
+        """
+        mock_get_all_tests.return_value = [
+            {
+                "name": "Corr Test",
+                "test_id": "test-corr",
+                "start_time": 1640995200,
+                "end_time": 1640995800,
+                "duration": 600,
+                "status": "completed",
+                "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+                "simulations_statistics": [],
+                "log_processing_completion_percentage": 0.72,
+                "test_phase": "Correlating security events",
+            }
+        ]
+
+        result = sb_get_test_details("test-corr", "test-console")
+
+        hint = result.get("hint_to_agent", "")
+        assert "correlation" in hint.lower()
+        assert "not final" in hint.lower()
+        assert "72%" in hint
+        assert "test_phase" not in hint
+        assert result["status"] == "completed"
+        assert result["test_phase"] == "Correlating security events"
+
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.requests.get')
@@ -3771,7 +3803,7 @@ class TestStorageHintForTerminalTests:
         self, mock_base_url, mock_account_id, mock_get,
         mock_orch_state, mock_user_name
     ):
-        """Completed test includes hint about delete dry-run for storage."""
+        """Fully-correlated completed test includes hint about delete dry-run for storage."""
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -3781,6 +3813,7 @@ class TestStorageHintForTerminalTests:
             "startTime": 1000, "endTime": 2000, "duration": 1000,
             "status": "COMPLETED", "systemTags": [],
             "finalStatus": {"missed": 1}, "ranBy": 100001,
+            "logProcessingCompletionPercentage": 1,
         }]
         mock_list_response.raise_for_status.return_value = None
 
