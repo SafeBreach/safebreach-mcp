@@ -42,6 +42,13 @@ peer_benchmark_cache = SafeBreachCache(name="peer_benchmark", maxsize=3, ttl=600
 # Configuration constants
 PAGE_SIZE = 10
 
+# SAF-32018: window-based drift tools cannot cheaply tell which tests in the window are
+# still running, and there is no live drift source. Append this caveat to drift summaries.
+_DRIFT_RUNNING_CAVEAT = (
+    "Note: any tests still running within this window may have incomplete drift data until "
+    "they complete — re-query after they finish for final drift results."
+)
+
 
 def _normalize_numeric(value: Any) -> Optional[float]:
     """
@@ -187,13 +194,33 @@ def sb_get_tests(
         if order_direction != "desc":
             applied_filters['order_direction'] = order_direction
         
+        # SAF-32018: if any test on this page is non-terminal, its simulations_statistics
+        # come from the lagging testsummaries.finalStatus aggregate. Warn and route the agent
+        # to the live sources (get_test_details is live for running tests; get_test_simulations
+        # with a status_filter gives the exact live count). Per-test live recount across a list
+        # is intentionally NOT done here (would require paging every running test).
+        terminal_statuses = {'completed', 'canceled', 'failed'}
+        running_in_page = any(
+            (t.get('status', '') or '').lower() not in terminal_statuses for t in page_tests
+        )
+        pagination_hint = (
+            f"You can scan next page by specifying page_number={page_number + 1}"
+            if page_number + 1 < total_pages else None
+        )
+        running_hint = (
+            "Some tests on this page are still running; their simulations_statistics come from a "
+            "periodically-updated summary and may lag the live results. For live counts call "
+            "get_test_details (live for running tests) or get_test_simulations with a status_filter."
+        ) if running_in_page else None
+        combined_hint = " ".join(h for h in (pagination_hint, running_hint) if h) or None
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_tests": total_tests,
             "tests_in_page": page_tests,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"You can scan next page by specifying page_number={page_number + 1}" if page_number + 1 < total_pages else None
+            "hint_to_agent": combined_hint
         }
         
     except Exception as e:
@@ -439,35 +466,38 @@ def sb_get_test_details(test_id: str, console: str = "default",
         # Try the list endpoint first (via cache) — it includes findingsCount/compromisedHosts
         return_details = _find_test_in_cached_list(test_id, console)
 
-        # If cached entry shows a non-terminal status, fetch fresh status.
-        # The cached list can be up to 30 minutes stale, and transient
-        # statuses (RUNNING, QUEUED, etc.) may have changed since caching.
-        # SAF-31111: Check orchestrator queue first (real-time) before the
-        # data API, which has 10-15s eventual consistency lag.
+        # SAF-32018 + SAF-31111: a non-terminal (running) test taken from the cached list can be
+        # stale in TWO ways — the tests_cache holds an up-to-30-min-old snapshot, and the
+        # running-test path previously refreshed only the status, never the COUNTS. That stale,
+        # never-refreshed finalStatus was the root cause of SAF-32018 (agent reported 28 while the
+        # UI showed 80). Fix: for a non-terminal test, refresh from fresh sources —
+        #   - real-time status from the orchestrator queue (no eventual-consistency lag), and
+        #   - fresh simulation counts from the single-test /testsummaries/{id} endpoint, whose
+        #     finalStatus tracks the live UI aggregation to within ~1 simulation (verified) — far
+        #     cheaper than paging every simulation.
         terminal_statuses = {'completed', 'canceled', 'failed'}
         cached_status = (return_details.get('status', '') or '').lower() if return_details else ''
         if return_details is not None and cached_status not in terminal_statuses:
-            logger.info("Test '%s' shows non-terminal status '%s' in cache — fetching fresh", test_id, cached_status)
+            logger.info("Test '%s' is non-terminal ('%s') — refreshing status and counts", test_id, cached_status)
 
-            # Phase 1: orchestrator queue (real-time, no lag)
+            # Real-time status from the orchestrator queue (no lag).
             from safebreach_mcp_core.queue_state import get_orchestrator_test_state
             orch_state = get_orchestrator_test_state(test_id, console)
             if orch_state is not None:
                 return_details['status'] = orch_state
                 logger.info("Test '%s' status from orchestrator queue: %s", test_id, orch_state)
-            else:
-                # Phase 2: data API single-test endpoint (eventual consistency)
-                try:
-                    fresh = _fetch_single_test(test_id, console)
-                    # Merge: use fresh status/end_time but keep cached extras
-                    # (findingsCount, compromisedHosts) that single-test omits
+
+            # Fresh counts (and status/end_time fallback) from the single-test endpoint.
+            try:
+                fresh = _fetch_single_test(test_id, console)
+                if orch_state is None:
                     return_details['status'] = fresh.get('status', return_details['status'])
-                    return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
-                    return_details['simulations_statistics'] = fresh.get(
-                        'simulations_statistics', return_details['simulations_statistics']
-                    )
-                except Exception as e:
-                    logger.warning("Failed to refresh RUNNING test '%s': %s — using cached data", test_id, e)
+                return_details['end_time'] = fresh.get('end_time', return_details['end_time'])
+                return_details['simulations_statistics'] = fresh.get(
+                    'simulations_statistics', return_details['simulations_statistics']
+                )
+            except Exception as e:
+                logger.warning("Failed to refresh non-terminal test '%s': %s — using cached data", test_id, e)
 
         if return_details is None:
             # Fallback: single-test endpoint (missing findingsCount/compromisedHosts)
@@ -494,9 +524,15 @@ def sb_get_test_details(test_id: str, console: str = "default",
         test_phase = return_details.get('test_phase')
         correlation_pending = test_phase in ("Waiting to correlate", "Correlating security events")
         if final_status not in terminal_statuses:
+            # SAF-32018: counts were just refreshed from the live summary, but the test is still
+            # running so they are point-in-time and will keep changing. Flag that and point to the
+            # live filtered grid for exact per-status drill-down.
             return_details['hint_to_agent'] = (
                 f"Test is still {return_details.get('status', 'in progress')}. "
-                "Poll again in 30 seconds using get_test_details with the same test_id."
+                "These simulation counts are refreshed as of now but are point-in-time and will "
+                "keep changing while the test runs — poll again in ~30 seconds with "
+                "get_test_details. For the live filtered grid of a given status, use "
+                "get_test_simulations with the relevant status_filter."
             )
         elif correlation_pending:
             pct = return_details.get('log_processing_completion_percentage')
@@ -708,18 +744,26 @@ def sb_get_test_simulations(
         if drifted_only:
             applied_filters['drifted_only'] = drifted_only
         
-        # Guard against false-empty filter results: if filters matched nothing but the test
-        # itself has simulations, warn rather than let the agent infer the attack/criteria is absent.
+        # Build hints — multiple can apply; join them.
+        sim_hints = []
+        # SAF-32805: guard against false-empty filter results — filters matched nothing but the test
+        # itself has simulations. Warn rather than let the agent infer the attack/criteria is absent.
         if applied_filters and total_simulations == 0 and len(all_simulations) > 0:
-            hint = (
+            sim_hints.append(
                 f"0 of {len(all_simulations)} simulations in this test matched the applied filters "
                 f"({', '.join(applied_filters)}). Verify the filter values are correct — do not "
                 "conclude the attack or criteria is absent from the test based on this empty result."
             )
-        elif page_number + 1 < total_pages:
-            hint = f"You can scan next page by specifying page_number={page_number + 1}"
-        else:
-            hint = None
+        if page_number + 1 < total_pages:
+            sim_hints.append(f"You can scan next page by specifying page_number={page_number + 1}")
+        # SAF-32018: for a running test these are the live source but reflect only what has completed
+        # so far — total_simulations is point-in-time, not the final total. Flag it.
+        if _is_test_non_terminal(test_id, console):
+            sim_hints.append(
+                "Test is still running — these simulations and total_simulations reflect only "
+                "what has completed so far (partial, point-in-time). Poll again with "
+                "get_test_simulations for updated results."
+            )
 
         return {
             "page_number": page_number,
@@ -727,7 +771,7 @@ def sb_get_test_simulations(
             "total_simulations": total_simulations,
             "simulations_in_page": page_simulations,
             "applied_filters": applied_filters,
-            "hint_to_agent": hint
+            "hint_to_agent": " ".join(sim_hints) if sim_hints else None
         }
         
     except Exception as e:
@@ -1287,14 +1331,27 @@ def sb_get_security_controls_events(
         if destination_host_filter:
             applied_filters['destination_host_filter'] = destination_host_filter
         
+        base_hint = (
+            f"Retrieved {len(reduced_events)} security control events for test {test_id} and "
+            f"simulation {simulation_id}. " +
+            (f"You can scan next page by calling with page_number={page_number + 1}"
+             if page_number + 1 < total_pages else "This is the last page.")
+        )
+        # SAF-32018: security-control events arrive with external SIEM indexing lag; while the
+        # test runs the event set may be incomplete. There is no live source to switch to — warn.
+        if _is_test_non_terminal(test_id, console):
+            base_hint += (
+                " Note: the test is still running — security-control events arrive with SIEM "
+                "indexing lag and may be incomplete. Re-query after the test completes."
+            )
+
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_events": total_events,
             "events_in_page": reduced_events,
             "applied_filters": applied_filters,
-            "hint_to_agent": f"Retrieved {len(reduced_events)} security control events for test {test_id} and simulation {simulation_id}. " +
-                           (f"You can scan next page by calling with page_number={page_number + 1}" if page_number + 1 < total_pages else "This is the last page.")
+            "hint_to_agent": base_hint
         }
         
     except Exception as e:
@@ -1495,6 +1552,22 @@ def _apply_findings_filters(
     return filtered_findings
 
 
+def _is_test_non_terminal(test_id: str, console: str) -> bool:
+    """
+    Best-effort check whether a test is currently RUNNING/PAUSED (SAF-32018).
+
+    Uses the real-time orchestrator queue (the same signal as SAF-31111). Returns
+    False on any error or when the test is not in the queue (terminal/unknown) — so
+    a failure degrades to "no running-test hint", never raises.
+    """
+    try:
+        from safebreach_mcp_core.queue_state import get_orchestrator_test_state
+        return get_orchestrator_test_state(test_id, console) is not None
+    except Exception as e:
+        logger.warning("SAF-32018: non-terminal check failed for test '%s': %s", test_id, e)
+        return False
+
+
 def sb_get_test_findings_counts(
     test_id: str,
     console: str = "default",
@@ -1547,7 +1620,16 @@ def sb_get_test_findings_counts(
             'applied_filters': applied_filters,
             'retrieved_at': time.time()
         }
-        
+
+        # SAF-32018: findings are indexed asynchronously; while the test runs these
+        # counts may be incomplete. There is no live findings source, so warn and
+        # advise re-querying after completion.
+        if _is_test_non_terminal(test_id, console):
+            result['hint_to_agent'] = (
+                "Test is still running — findings are still being indexed and these counts may "
+                "be incomplete. Re-query after the test completes for the final findings set."
+            )
+
         logger.info("Retrieved %d findings of %d types for %s:%s", len(filtered_findings), len(type_counts), console, test_id)
         return result
         
@@ -1630,9 +1712,21 @@ def sb_get_test_findings_details(
         }
         
         # Add hint for pagination
+        hints = []
         if page_number + 1 < total_pages:
-            result['hint_to_agent'] = f"You can scan next page by calling with page_number={page_number + 1}. There are {total_pages} total pages."
-        
+            hints.append(
+                f"You can scan next page by calling with page_number={page_number + 1}. "
+                f"There are {total_pages} total pages."
+            )
+        # SAF-32018: findings index asynchronously — warn while the test is still running.
+        if _is_test_non_terminal(test_id, console):
+            hints.append(
+                "Test is still running — findings are still being indexed and may be "
+                "incomplete. Re-query after the test completes for the final findings set."
+            )
+        if hints:
+            result['hint_to_agent'] = " ".join(hints)
+
         logger.info("Retrieved page %d of %d (%d findings) for %s:%s", page_number, total_pages, len(page_findings), console, test_id)
         return result
         
@@ -2553,7 +2647,7 @@ def _group_and_paginate_drifts(
             "total_groups": len(groups),
             "drift_groups": summary_groups,
             "applied_filters": applied_filters,
-            "hint_to_agent": hint,
+            "hint_to_agent": f"{hint} {_DRIFT_RUNNING_CAVEAT}",
         }
 
     # Drill-down mode: find the requested group
@@ -2946,7 +3040,7 @@ def _group_and_paginate_sc_drifts(
             "total_groups": len(groups),
             "drift_groups": summary_groups,
             "applied_filters": applied_filters,
-            "hint_to_agent": hint,
+            "hint_to_agent": f"{hint} {_DRIFT_RUNNING_CAVEAT}",
         }
 
     # Drill-down mode

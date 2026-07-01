@@ -1535,6 +1535,11 @@ def sb_get_studio_attack_latest_result(
                     check_rbac_response(summary_response)
                     summary_data = summary_response.json()
 
+                    # SAF-32018: test_overview is a coarse status-tracker for this custom
+                    # attack's run, so we keep the cheap test-level finalStatus aggregate here.
+                    # For a RUNNING test this aggregate lags the live per-simulation results;
+                    # the non-terminal hint below routes the agent to get_test_details (which
+                    # returns live counts for running tests) for the exact numbers.
                     final_status = summary_data.get('finalStatus', {})
                     simulation_status_counts = [
                         {"status": status, "count": final_status.get(status, 0)}
@@ -1558,9 +1563,12 @@ def sb_get_studio_attack_latest_result(
                         test_overview['hint_to_agent'] = (
                             f"Test is still {test_overview['status']} "
                             f"({total_found} of {total_simulations} simulations completed so far). "
-                            f"Poll this tool again in 30 seconds, or use "
-                            f"get_test_details(test_id='{resolved_test_id}', console='{console}') "
-                            f"from the Data Server for detailed status."
+                            f"These simulation_status_counts come from a periodically-updated "
+                            f"summary and may lag the live results while the test runs. For exact "
+                            f"live counts, call get_test_details(test_id='{resolved_test_id}', "
+                            f"console='{console}') on the Data Server (it returns live counts for "
+                            f"running tests), or get_test_simulations with a status_filter. "
+                            f"Poll this tool again in ~30 seconds for updated totals."
                         )
                 except Exception as e:
                     logger.warning(f"Failed to fetch test summary for test_id '{resolved_test_id}': {e}")

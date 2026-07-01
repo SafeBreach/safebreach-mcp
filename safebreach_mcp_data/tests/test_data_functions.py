@@ -4281,3 +4281,217 @@ class TestSimulationLogsEntryPoints:
         with pytest.raises(ValueError, match="page_size|1000"):
             sb_search_simulation_logs(simulation_ids='a', page_size=5000, console='c')
         mock_core.assert_not_called()
+
+
+class TestGetTestDetailsRunningCounts:
+    """SAF-32018: for a NON-TERMINAL test, get_test_details refreshes counts from the FRESH
+    single-test endpoint (testsummaries/{id}), defeating the stale cached finalStatus that
+    caused the bug. It adds a point-in-time hint and does NOT page executionsHistoryResults.
+    Terminal tests are unchanged.
+    """
+
+    @staticmethod
+    def _stats(missed=0, stopped=0, prevented=0, detected=0,
+               logged=0, no_result=0, inconsistent=0):
+        return [
+            {"status": "missed", "explanation": "...", "count": missed},
+            {"status": "stopped", "explanation": "...", "count": stopped},
+            {"status": "prevented", "explanation": "...", "count": prevented},
+            {"status": "detected", "explanation": "...", "count": detected},
+            {"status": "logged", "explanation": "...", "count": logged},
+            {"status": "no-result", "explanation": "...", "count": no_result},
+            {"status": "inconsistent", "explanation": "...", "count": inconsistent},
+        ]
+
+    def _cached_running(self, missed_stale):
+        return [{
+            "name": "Running Plan",
+            "test_id": "run1",
+            "start_time": 1640995200,
+            "end_time": 1640995800,
+            "duration": 600,
+            "status": "running",
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": self._stats(missed=missed_stale),
+        }]
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_refreshes_counts_from_single_endpoint(self, mock_tests, mock_single, mock_sims, mock_orch):
+        """REPRODUCTION: cached/stale aggregate says 28 missed; fresh single-test says 80 -> 80.
+        And NO expensive executionsHistoryResults paging happens."""
+        mock_tests.return_value = self._cached_running(missed_stale=28)
+        mock_single.return_value = {
+            "status": "running",
+            "end_time": 1640995800,
+            "simulations_statistics": self._stats(missed=80, prevented=5),
+        }
+        result = sb_get_test_details("run1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 80
+        assert stats["prevented"] == 5
+        mock_single.assert_called_once()   # fresh single-test fetch used
+        mock_sims.assert_not_called()      # NO per-simulation paging
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_point_in_time_hint(self, mock_tests, mock_single, mock_orch):
+        mock_tests.return_value = self._cached_running(missed_stale=28)
+        mock_single.return_value = {
+            "status": "running", "end_time": 1,
+            "simulations_statistics": self._stats(missed=80),
+        }
+        result = sb_get_test_details("run1", "test-console")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "point-in-time" in hint
+        assert "get_test_simulations" in hint
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_terminal_keeps_aggregate_no_refresh(self, mock_tests, mock_single, mock_sims):
+        """Completed test: counts unchanged; no refresh, no paging."""
+        mock_tests.return_value = [{
+            "name": "Done Plan",
+            "test_id": "done1",
+            "start_time": 1, "end_time": 2, "duration": 1,
+            "status": "completed",
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": self._stats(missed=28),
+        }]
+        result = sb_get_test_details("done1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 28
+        mock_single.assert_not_called()   # no refresh for a terminal test
+        mock_sims.assert_not_called()     # never pages executionsHistoryResults
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._fetch_single_test', side_effect=Exception("API down"))
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_refresh_failure_falls_back_to_cached(self, mock_tests, mock_single, mock_orch):
+        """Single-test refresh error: keep cached counts, never raise, still hint."""
+        mock_tests.return_value = self._cached_running(missed_stale=28)
+        result = sb_get_test_details("run1", "test-console")
+        stats = {s["status"]: s["count"] for s in result["simulations_statistics"]}
+        assert stats["missed"] == 28
+        assert result.get("hint_to_agent")
+
+
+class TestGetTestsRunningHint:
+    """SAF-32018: get_tests warns + routes to live counts when the page has a running test."""
+
+    def _test(self, test_id, status, end_time):
+        return {
+            "name": f"Plan {test_id}",
+            "test_id": test_id,
+            "start_time": 1000,
+            "end_time": end_time,
+            "duration": 600,
+            "status": status,
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": [{"status": "missed", "explanation": "...", "count": 1}],
+        }
+
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_running_test_in_page_adds_routing_hint(self, mock_tests):
+        mock_tests.return_value = [
+            self._test("t1", "running", 2000),
+            self._test("t2", "completed", 1000),
+        ]
+        result = sb_get_tests(console="c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "may lag" in hint
+        assert "get_test_details" in hint
+
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_all_terminal_no_lag_hint(self, mock_tests):
+        mock_tests.return_value = [
+            self._test("t1", "completed", 2000),
+            self._test("t2", "canceled", 1000),
+        ]
+        result = sb_get_tests(console="c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "may lag" not in hint
+
+
+class TestFindingsRunningHint:
+    """SAF-32018: findings tools warn when the test is still running (findings still indexing)."""
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_counts_running_adds_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln"}, {"type": "Vuln"}]
+        result = sb_get_test_findings_counts("t1", "c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "still running" in hint
+        assert "finding" in hint
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_counts_terminal_no_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln"}]
+        result = sb_get_test_findings_counts("t1", "c")
+        assert "still running" not in (result.get("hint_to_agent") or "").lower()
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_findings_from_cache_or_api')
+    def test_details_running_adds_hint(self, mock_findings, mock_orch):
+        mock_findings.return_value = [{"type": "Vuln", "name": "x"}]
+        result = sb_get_test_findings_details("t1", "c", page_number=0)
+        assert "still running" in (result.get("hint_to_agent") or "").lower()
+
+
+class TestSecurityEventsRunningHint:
+    """SAF-32018: security-control events listing warns when the test is still running."""
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value="RUNNING")
+    @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
+    def test_running_adds_caveat(self, mock_events, mock_orch):
+        mock_events.return_value = []
+        result = sb_get_security_controls_events("t1", "sim1", "c")
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "still running" in hint
+
+    @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
+    @patch('safebreach_mcp_data.data_functions._get_all_security_control_events_from_cache_or_api')
+    def test_terminal_no_caveat(self, mock_events, mock_orch):
+        mock_events.return_value = []
+        result = sb_get_security_controls_events("t1", "sim1", "c")
+        assert "still running" not in (result.get("hint_to_agent") or "").lower()
+
+
+class TestDriftRunningCaveat:
+    """SAF-32018: window-based drift tools note that in-flight tests may have incomplete drift data."""
+
+    def test_result_status_drift_summary_has_running_caveat(self):
+        from safebreach_mcp_data.data_functions import _group_and_paginate_drifts
+        res = _group_and_paginate_drifts([], 0, None, {}, 0.0, group_by="result_status")
+        assert "still running" in (res.get("hint_to_agent") or "").lower()
+
+    def test_sc_drift_summary_has_running_caveat(self):
+        from safebreach_mcp_data.data_functions import _group_and_paginate_sc_drifts
+        res = _group_and_paginate_sc_drifts([], "ctrl", 0, None, {}, 0.0)
+        assert "still running" in (res.get("hint_to_agent") or "").lower()
+
+
+class TestGetTestSimulationsRunningHint:
+    """SAF-32018: get_test_simulations flags that results are partial/point-in-time while running."""
+
+    @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=True)
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_running_adds_partial_hint(self, mock_sims, mock_nonterminal):
+        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
+        result = sb_get_test_simulations("t1", "c", page_number=0)
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "still running" in hint
+        assert "partial" in hint or "point-in-time" in hint
+
+    @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=False)
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_terminal_no_partial_hint(self, mock_sims, mock_nonterminal):
+        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
+        result = sb_get_test_simulations("t1", "c", page_number=0)
+        assert "still running" not in (result.get("hint_to_agent") or "").lower()

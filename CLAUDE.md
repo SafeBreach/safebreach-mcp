@@ -331,7 +331,16 @@ Rate limiting environment variables:
 
 **Data Server (Port 8001):**
 3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
-4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings
+4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings.
+  **SAF-32018**: for a **non-terminal (running) test**, `simulations_statistics` is refreshed from
+  a **fresh single-test `testsummaries/{id}` call** instead of the (up-to-30-min) cached test-list
+  snapshot. Root cause of the original bug: the running-test path served a stale *cached*
+  `finalStatus` whose counts were never refreshed (only the status was). A fresh `finalStatus`
+  tracks the live UI aggregation to within ~1 simulation, so this single cheap call fixes the
+  staleness — no per-simulation paging. A `hint_to_agent` flags the counts as point-in-time while
+  running and routes to `get_test_simulations` for the live filtered grid. Terminal tests are
+  unchanged. Other count/finding paths (`get_tests`, findings, security-control events, drift tools)
+  carry a running-test caveat hint instead
 5. `get_test_simulations` ✨ **Enhanced** - Filtered and paginated simulations within a test with status, time window, playbook attack filtering, and drift analysis filtering
 6. `get_test_simulation_details` ✨ **Enhanced** - Returns a **curated hybrid result** (logs excluded): the flat snake_case envelope (simulation_id, status, attacker/target nodes, attack info, result_details) PLUS `simulation_steps_by_node` — the per-node execution steps (each tagged `role`=attacker/target/host, with `task_status`/`error`) forming the forensic middle tier — and a snake_case `logs_embedded` routing flag. Heavy per-node LOGS/OUTPUT and the raw v3 document are NOT relayed. **Primary investigation entry point** — inspect result + steps first; escalate to `get_paginated_simulation_logs` only when insufficient (`logs_embedded=true` → `get_full_simulation_logs` instead). Optional MITRE techniques, basic attack logs, and drift analysis merged into the envelope. Falls back to the curated list-API summary (empty `simulation_steps_by_node`) on consoles without the v3 endpoint
 7. `get_security_controls_events` - Security control events with filtering
