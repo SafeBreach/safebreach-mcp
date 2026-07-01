@@ -609,22 +609,51 @@ class TestDataFunctions:
         assert filtered[0]["simulation_id"] == "sim1"
     
     def test_apply_simulation_filters_playbook(self):
-        """Test playbook attack filtering."""
+        """Playbook attack id/name filtering on the REAL reduced entity shape.
+
+        The filter runs on reduced entities (get_reduced_simulation_result_entity), whose keys
+        are snake_case: playbook_attack_id (from moveId, an int) and playbook_attack_name (str).
+        The id filter param is a string, so the id comparison must coerce types.
+        """
         sim_data = [
-            {"simulation_id": "sim1", "playbookAttackId": "move1", "playbookAttackName": "File Operation"},
-            {"simulation_id": "sim2", "playbookAttackId": "move2", "playbookAttackName": "Network Access"}
+            {"simulation_id": "sim1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan to disk"},
+            {"simulation_id": "sim2", "playbook_attack_id": 456, "playbook_attack_name": "Network Access"},
         ]
-        
-        # Test playbook attack ID filter
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_id_filter="move1")
+
+        # id filter: string param vs int field — must still match (type coercion)
+        filtered = _apply_simulation_filters(sim_data, playbook_attack_id_filter="923")
         assert len(filtered) == 1
         assert filtered[0]["simulation_id"] == "sim1"
-        
-        # Test playbook attack name filter
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_name_filter="file")
+
+        # name filter: case-insensitive partial match on the snake_case key
+        filtered = _apply_simulation_filters(sim_data, playbook_attack_name_filter="trojan")
         assert len(filtered) == 1
         assert filtered[0]["simulation_id"] == "sim1"
-    
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_get_test_simulations_id_filter_matches_int_attack(self, mock_get_all):
+        """End-to-end: filtering by a string attack id matches the int playbook_attack_id."""
+        mock_get_all.return_value = [
+            {"simulation_id": "5192190", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
+            {"simulation_id": "5192189", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
+        ]
+        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="923")
+        assert res["total_simulations"] == 1
+        assert res["simulations_in_page"][0]["simulation_id"] == "5192190"
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_get_test_simulations_empty_filter_match_warns(self, mock_get_all):
+        """Guard: a filter matching nothing in a NON-empty test must warn, not imply absence."""
+        mock_get_all.return_value = [
+            {"simulation_id": "s1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
+            {"simulation_id": "s2", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
+        ]
+        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="999")
+        assert res["total_simulations"] == 0
+        hint = (res.get("hint_to_agent") or "").lower()
+        assert "0 of 2" in hint
+        assert "verify" in hint
+
     def test_safe_time_compare(self):
         """Test safe time comparison with type conversion."""
         # Test integer end_time
@@ -2041,10 +2070,10 @@ class TestDataFunctions:
     def test_apply_simulation_filters_drifted_only_combined_with_other_filters(self):
         """Test drifted_only filter combined with other filters."""
         simulations = [
-            {"id": "sim1", "is_drifted": True, "status": "reported", "playbookAttackName": "File Transfer"},
-            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbookAttackName": "Network Scan"},
-            {"id": "sim3", "is_drifted": False, "status": "reported", "playbookAttackName": "File Transfer"},
-            {"id": "sim4", "is_drifted": True, "status": "logged", "playbookAttackName": "File Transfer"},
+            {"id": "sim1", "is_drifted": True, "status": "reported", "playbook_attack_name": "File Transfer"},
+            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbook_attack_name": "Network Scan"},
+            {"id": "sim3", "is_drifted": False, "status": "reported", "playbook_attack_name": "File Transfer"},
+            {"id": "sim4", "is_drifted": True, "status": "logged", "playbook_attack_name": "File Transfer"},
         ]
         
         # Test drifted_only + status filter
