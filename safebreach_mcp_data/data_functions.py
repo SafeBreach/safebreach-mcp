@@ -521,6 +521,8 @@ def sb_get_test_details(test_id: str, console: str = "default",
 
         # Add contextual hints
         final_status = (return_details.get('status', '') or '').lower()
+        test_phase = return_details.get('test_phase')
+        correlation_pending = test_phase in ("Waiting to correlate", "Correlating security events")
         if final_status not in terminal_statuses:
             # SAF-32018: counts were just refreshed from the live summary, but the test is still
             # running so they are point-in-time and will keep changing. Flag that and point to the
@@ -531,6 +533,15 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 "keep changing while the test runs — poll again in ~30 seconds with "
                 "get_test_details. For the live filtered grid of a given status, use "
                 "get_test_simulations with the relevant status_filter."
+            )
+        elif correlation_pending:
+            pct = return_details.get('log_processing_completion_percentage')
+            pct_str = f" ({round(pct * 100)}% complete)" if isinstance(pct, (int, float)) and 0 < pct < 1 else ""
+            return_details['hint_to_agent'] = (
+                f"Simulation execution has finished, but security-event correlation is still in "
+                f"progress{pct_str} — detection/prevention results are not final yet. Report the test "
+                "as still correlating (not fully complete), and re-check with get_test_details until "
+                "correlation is complete."
             )
         else:
             # Terminal test — hint about delete for storage management (SAF-29972)
@@ -733,12 +744,20 @@ def sb_get_test_simulations(
         if drifted_only:
             applied_filters['drifted_only'] = drifted_only
         
-        # SAF-32018: these simulations are the live source, but for a running test they
-        # reflect only what has completed so far — total_simulations is point-in-time, not
-        # the final total. Flag that so the agent doesn't treat it as complete.
+        # Build hints — multiple can apply; join them.
         sim_hints = []
+        # SAF-32805: guard against false-empty filter results — filters matched nothing but the test
+        # itself has simulations. Warn rather than let the agent infer the attack/criteria is absent.
+        if applied_filters and total_simulations == 0 and len(all_simulations) > 0:
+            sim_hints.append(
+                f"0 of {len(all_simulations)} simulations in this test matched the applied filters "
+                f"({', '.join(applied_filters)}). Verify the filter values are correct — do not "
+                "conclude the attack or criteria is absent from the test based on this empty result."
+            )
         if page_number + 1 < total_pages:
             sim_hints.append(f"You can scan next page by specifying page_number={page_number + 1}")
+        # SAF-32018: for a running test these are the live source but reflect only what has completed
+        # so far — total_simulations is point-in-time, not the final total. Flag it.
         if _is_test_non_terminal(test_id, console):
             sim_hints.append(
                 "Test is still running — these simulations and total_simulations reflect only "
@@ -892,15 +911,16 @@ def _apply_simulation_filters(
         filtered = [s for s in filtered 
                    if _safe_time_compare(s, end_time, lambda x, y: x <= y)]
     
-    # Apply playbook attack ID filter
+    # Apply playbook attack ID filter. Reduced entities key this as 'playbook_attack_id'
+    # (from moveId, an int); the filter param is a string — compare as strings.
     if playbook_attack_id_filter:
-        filtered = [s for s in filtered 
-                   if s.get('playbookAttackId') == playbook_attack_id_filter]
-    
-    # Apply playbook attack name filter
+        filtered = [s for s in filtered
+                   if str(s.get('playbook_attack_id')) == str(playbook_attack_id_filter)]
+
+    # Apply playbook attack name filter ('playbook_attack_name' on the reduced entity)
     if playbook_attack_name_filter:
-        filtered = [s for s in filtered 
-                   if playbook_attack_name_filter.lower() in s.get('playbookAttackName', '').lower()]
+        filtered = [s for s in filtered
+                   if playbook_attack_name_filter.lower() in (s.get('playbook_attack_name') or '').lower()]
     
     # Apply drift filter
     if drifted_only:

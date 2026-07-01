@@ -488,6 +488,38 @@ class TestDataFunctions:
         detected_stat = next(s for s in stats if s.get("status") == "detected")
         assert detected_stat["count"] == 2
 
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_sb_get_test_details_correlation_pending_hint(self, mock_get_all_tests):
+        """SAF-32063: a COMPLETED test that is still correlating must not be reported as done.
+
+        status='completed' is terminal, but test_phase shows correlation in progress — the
+        hint must steer the agent away from declaring COMPLETED and toward polling.
+        """
+        mock_get_all_tests.return_value = [
+            {
+                "name": "Corr Test",
+                "test_id": "test-corr",
+                "start_time": 1640995200,
+                "end_time": 1640995800,
+                "duration": 600,
+                "status": "completed",
+                "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+                "simulations_statistics": [],
+                "log_processing_completion_percentage": 0.72,
+                "test_phase": "Correlating security events",
+            }
+        ]
+
+        result = sb_get_test_details("test-corr", "test-console")
+
+        hint = result.get("hint_to_agent", "")
+        assert "correlation" in hint.lower()
+        assert "not final" in hint.lower()
+        assert "72%" in hint
+        assert "test_phase" not in hint
+        assert result["status"] == "completed"
+        assert result["test_phase"] == "Correlating security events"
+
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.requests.get')
@@ -609,22 +641,51 @@ class TestDataFunctions:
         assert filtered[0]["simulation_id"] == "sim1"
     
     def test_apply_simulation_filters_playbook(self):
-        """Test playbook attack filtering."""
+        """Playbook attack id/name filtering on the REAL reduced entity shape.
+
+        The filter runs on reduced entities (get_reduced_simulation_result_entity), whose keys
+        are snake_case: playbook_attack_id (from moveId, an int) and playbook_attack_name (str).
+        The id filter param is a string, so the id comparison must coerce types.
+        """
         sim_data = [
-            {"simulation_id": "sim1", "playbookAttackId": "move1", "playbookAttackName": "File Operation"},
-            {"simulation_id": "sim2", "playbookAttackId": "move2", "playbookAttackName": "Network Access"}
+            {"simulation_id": "sim1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan to disk"},
+            {"simulation_id": "sim2", "playbook_attack_id": 456, "playbook_attack_name": "Network Access"},
         ]
-        
-        # Test playbook attack ID filter
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_id_filter="move1")
+
+        # id filter: string param vs int field — must still match (type coercion)
+        filtered = _apply_simulation_filters(sim_data, playbook_attack_id_filter="923")
         assert len(filtered) == 1
         assert filtered[0]["simulation_id"] == "sim1"
-        
-        # Test playbook attack name filter
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_name_filter="file")
+
+        # name filter: case-insensitive partial match on the snake_case key
+        filtered = _apply_simulation_filters(sim_data, playbook_attack_name_filter="trojan")
         assert len(filtered) == 1
         assert filtered[0]["simulation_id"] == "sim1"
-    
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_get_test_simulations_id_filter_matches_int_attack(self, mock_get_all):
+        """End-to-end: filtering by a string attack id matches the int playbook_attack_id."""
+        mock_get_all.return_value = [
+            {"simulation_id": "5192190", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
+            {"simulation_id": "5192189", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
+        ]
+        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="923")
+        assert res["total_simulations"] == 1
+        assert res["simulations_in_page"][0]["simulation_id"] == "5192190"
+
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_get_test_simulations_empty_filter_match_warns(self, mock_get_all):
+        """Guard: a filter matching nothing in a NON-empty test must warn, not imply absence."""
+        mock_get_all.return_value = [
+            {"simulation_id": "s1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
+            {"simulation_id": "s2", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
+        ]
+        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="999")
+        assert res["total_simulations"] == 0
+        hint = (res.get("hint_to_agent") or "").lower()
+        assert "0 of 2" in hint
+        assert "verify" in hint
+
     def test_safe_time_compare(self):
         """Test safe time comparison with type conversion."""
         # Test integer end_time
@@ -2041,10 +2102,10 @@ class TestDataFunctions:
     def test_apply_simulation_filters_drifted_only_combined_with_other_filters(self):
         """Test drifted_only filter combined with other filters."""
         simulations = [
-            {"id": "sim1", "is_drifted": True, "status": "reported", "playbookAttackName": "File Transfer"},
-            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbookAttackName": "Network Scan"},
-            {"id": "sim3", "is_drifted": False, "status": "reported", "playbookAttackName": "File Transfer"},
-            {"id": "sim4", "is_drifted": True, "status": "logged", "playbookAttackName": "File Transfer"},
+            {"id": "sim1", "is_drifted": True, "status": "reported", "playbook_attack_name": "File Transfer"},
+            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbook_attack_name": "Network Scan"},
+            {"id": "sim3", "is_drifted": False, "status": "reported", "playbook_attack_name": "File Transfer"},
+            {"id": "sim4", "is_drifted": True, "status": "logged", "playbook_attack_name": "File Transfer"},
         ]
         
         # Test drifted_only + status filter
@@ -3742,7 +3803,7 @@ class TestStorageHintForTerminalTests:
         self, mock_base_url, mock_account_id, mock_get,
         mock_orch_state, mock_user_name
     ):
-        """Completed test includes hint about delete dry-run for storage."""
+        """Fully-correlated completed test includes hint about delete dry-run for storage."""
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -3752,6 +3813,7 @@ class TestStorageHintForTerminalTests:
             "startTime": 1000, "endTime": 2000, "duration": 1000,
             "status": "COMPLETED", "systemTags": [],
             "finalStatus": {"missed": 1}, "ranBy": 100001,
+            "logProcessingCompletionPercentage": 1,
         }]
         mock_list_response.raise_for_status.return_value = None
 

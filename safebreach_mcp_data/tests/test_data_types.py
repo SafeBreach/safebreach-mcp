@@ -757,6 +757,61 @@ class TestTestSummaryMapping:
         assert result["findings_count"] == 0
         assert result["compromised_hosts"] == 0
 
+    def _base_entity(self, **overrides):
+        entity = {
+            "planName": "Corr Test",
+            "planRunId": "run1",
+            "startTime": 1000,
+            "endTime": 2000,
+            "duration": 1000,
+            "status": "COMPLETED",
+            "systemTags": [],
+            "finalStatus": {},
+        }
+        entity.update(overrides)
+        return entity
+
+    def test_correlating_phase_when_percentage_partial(self):
+        """0 < pct < 1 -> 'Correlating security events', and raw percentage surfaced."""
+        result = get_reduced_test_summary_mapping(self._base_entity(logProcessingCompletionPercentage=0.72))
+        assert result["test_phase"] == "Correlating security events"
+        assert result["log_processing_completion_percentage"] == 0.72
+        assert result["status"] == "COMPLETED"
+
+    def test_waiting_to_correlate_phase_when_percentage_zero(self):
+        """pct == 0 -> 'Waiting to correlate'."""
+        result = get_reduced_test_summary_mapping(self._base_entity(logProcessingCompletionPercentage=0))
+        assert result["test_phase"] == "Waiting to correlate"
+        assert result["log_processing_completion_percentage"] == 0
+
+    def test_completed_phase_when_percentage_one(self):
+        """pct == 1 -> 'Completed'."""
+        result = get_reduced_test_summary_mapping(self._base_entity(logProcessingCompletionPercentage=1))
+        assert result["test_phase"] == "Completed"
+        assert result["log_processing_completion_percentage"] == 1
+
+    def test_invalid_phase_when_percentage_out_of_range(self):
+        """Out-of-range percentage -> 'Invalid'."""
+        result = get_reduced_test_summary_mapping(self._base_entity(logProcessingCompletionPercentage=1.5))
+        assert result["test_phase"] == "Invalid"
+
+    def test_completed_test_absent_percentage_is_waiting_to_correlate(self):
+        """A completed test whose percentage hasn't appeared yet -> 'Waiting to correlate'.
+
+        logProcessingCompletionPercentage always exists and always reaches 1, but with delay;
+        the absent/None window after execution is the waiting-to-correlate phase.
+        """
+        result = get_reduced_test_summary_mapping(self._base_entity())
+        assert result["test_phase"] == "Waiting to correlate"
+        assert "log_processing_completion_percentage" not in result
+
+    def test_non_completed_status_has_no_test_phase(self):
+        """Running/paused/cancelled/failed tests keep their status verbatim, no test_phase."""
+        result = get_reduced_test_summary_mapping(
+            self._base_entity(status="RUNNING", logProcessingCompletionPercentage=0)
+        )
+        assert "test_phase" not in result
+
 
 class TestPeerBenchmarkTransform:
     """Test suite for the peer benchmark score rename mapping and transform helper (SAF-29415)."""

@@ -139,6 +139,17 @@ def _build_simulation_status_counts(final_status: Dict[str, Any]) -> List[Dict[s
     ]
 
 
+def _percentage_to_test_phase(percentage):
+    """Map logProcessingCompletionPercentage (None or 0..1) to its correlation phase label."""
+    if percentage is None or percentage == 0:
+        return "Waiting to correlate"
+    if 0 < percentage < 1:
+        return "Correlating security events"
+    if percentage == 1:
+        return "Completed"
+    return "Invalid"
+
+
 def get_reduced_test_summary_mapping(test_summary_entity):
     """
     Returns a reduced test summary entity with only the relevant fields.
@@ -159,6 +170,12 @@ def get_reduced_test_summary_mapping(test_summary_entity):
             reduced_test_summary_entity['findings_count'] = test_summary_entity['findingsCount']
         if 'compromisedHosts' in test_summary_entity:
             reduced_test_summary_entity['compromised_hosts'] = test_summary_entity['compromisedHosts']
+
+    if str(reduced_test_summary_entity.get('status', '')).lower() == 'completed':
+        log_processing_pct = test_summary_entity.get('logProcessingCompletionPercentage')
+        if log_processing_pct is not None:
+            reduced_test_summary_entity['log_processing_completion_percentage'] = log_processing_pct
+        reduced_test_summary_entity['test_phase'] = _percentage_to_test_phase(log_processing_pct)
 
     return reduced_test_summary_entity
 
