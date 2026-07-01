@@ -26,7 +26,9 @@
 
 ### Chosen Solution
 
-Make the response *tell the agent the truth about the whole result set*: when `ready_to_run_filter` was not applied and ready-to-run scenarios exist beyond the current page, `paginate_scenarios` adds a deterministic hint — e.g. *"86 of 547 scenarios are ready to run (simulators already assigned). To list only those, call get_scenarios with ready_to_run_filter=True instead of paging."* The `get_scenarios` tool description also calls out `ready_to_run_filter` as the way to answer "what can I run" and explicitly warns against concluding readiness from one page.
+Make the response *tell the agent the truth about the whole result set*: when `ready_to_run_filter` was not applied and ready-to-run scenarios exist beyond the current page, `paginate_scenarios` adds a deterministic hint — e.g. *"86 of 547 scenarios are ready to run as-is (simulators already assigned). You can run the others too — for a scenario that is not ready, run_scenario returns a diagnostic and you supply per-step simulator selection (step_overrides) to run it. To list only the ready-to-run ones, call get_scenarios with ready_to_run_filter=True."* The `get_scenarios` tool description warns against concluding readiness from one page and clarifies that ready-to-run is a **convenience, not a prerequisite** — non-ready scenarios remain runnable via `step_overrides`.
+
+**Deliberately balanced** (per review): the hint must not discourage the agent from running non-ready scenarios. Running a non-ready scenario is a first-class, supported flow (`run_scenario`'s two-turn diagnostic → `step_overrides` path), so the guidance surfaces the ready count without framing ready-to-run as the only runnable set.
 
 Computed from `is_ready_to_run` (already present on every reduced scenario), so no extra API calls. Fires only when `ready_total > ready_shown` (there are ready scenarios the agent can't see on this page) and the filter wasn't already applied.
 
@@ -54,7 +56,7 @@ No new endpoints. Uses the existing `is_ready_to_run` field already computed on 
 
 ## 6. Verification
 
-- **Function-level (pentest01):** no-filter page 0 returns the hint "86 of 547 scenarios are ready to run … ready_to_run_filter=True"; `ready_to_run_filter=True` returns no nudge.
+- **Function-level (pentest01):** no-filter page 0 returns the hint "86 of 547 scenarios are ready to run as-is … you can run the others too (step_overrides) … ready_to_run_filter=True"; `ready_to_run_filter=True` returns no nudge.
 - **Agent E2E (Claude Desktop):** on `flat-carp` (page 0 has 0 ready, 14 ready total — the original-bug shape), Helm now finds the 14 ready scenarios and runs one instead of concluding "none are ready". pentest01 confirms no regression.
 
 ## 7. Definition of Done

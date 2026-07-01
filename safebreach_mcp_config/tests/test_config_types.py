@@ -595,12 +595,14 @@ class TestPaginateScenarios:
         ]
 
     def test_ready_to_run_hint_when_ready_scenarios_beyond_page(self, page0_not_ready_list):
-        """SAF-32210: page 0 shows no ready scenarios, but ready ones exist later — hint must
-        steer the agent to ready_to_run_filter=True (not let it conclude 'none are ready')."""
+        """SAF-32210: page 0 shows no ready scenarios, but ready ones exist later — the hint must
+        surface the true ready count (so the agent doesn't conclude 'none are ready') AND make
+        clear the non-ready scenarios are still runnable via step_overrides (not steer to ready-only)."""
         result = paginate_scenarios(page0_not_ready_list, page_number=0, page_size=10)
         hint = result["hint_to_agent"]
-        assert "ready_to_run_filter=True" in hint
         assert "5 of 25" in hint
+        assert "step_overrides" in hint
+        assert "ready_to_run_filter=True" in hint
 
     def test_no_ready_hint_when_filter_already_applied(self, page0_not_ready_list):
         """When ready_to_run_filter was applied, don't nudge toward it again."""
