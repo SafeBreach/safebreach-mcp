@@ -311,6 +311,7 @@ def paginate_scenarios(
     scenarios: List[Dict[str, Any]],
     page_number: int = 0,
     page_size: int = 10,
+    ready_to_run_filter_applied: bool = False,
 ) -> Dict[str, Any]:
     """Paginate a list of scenarios."""
     total_scenarios = len(scenarios)
@@ -330,10 +331,20 @@ def paginate_scenarios(
     end_idx = min(start_idx + page_size, total_scenarios)
     page_scenarios = scenarios[start_idx:end_idx]
 
-    # Build hint_to_agent: pagination + optional attack count note
     hints = []
     if page_number + 1 < total_pages:
         hints.append(f'You can scan next page by calling with page_number={page_number + 1}')
+    if not ready_to_run_filter_applied:
+        ready_total = sum(1 for s in scenarios if s.get('is_ready_to_run'))
+        ready_shown = sum(1 for s in page_scenarios if s.get('is_ready_to_run'))
+        if ready_total > ready_shown:
+            hints.append(
+                f'{ready_total} of {total_scenarios} scenarios are ready to run as-is '
+                f'(simulators already assigned). You can run the others too — for a '
+                f'scenario that is not ready, run_scenario returns a diagnostic and you '
+                f'supply per-step simulator selection (step_overrides) to run it. To list '
+                f'only the ready-to-run ones, call get_scenarios with ready_to_run_filter=True.'
+            )
     has_indeterminate = any(
         s.get('total_attack_count') is None for s in page_scenarios
     )
