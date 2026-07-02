@@ -13,6 +13,7 @@ from safebreach_mcp_core.safebreach_base import (
     _session_semaphores,
     _mcp_session_id,
     _concurrency_limit,
+    _concurrency_key,
     _cleanup_stale_semaphores,
     _SEMAPHORE_MAX_AGE,
 )
@@ -87,7 +88,7 @@ class TestConcurrencyLimiter:
         asyncio.run(run())
 
     def test_message_over_limit_returns_429(self):
-        """Requests exceeding the concurrency limit get HTTP 429."""
+        """Requests exceeding the concurrency limit get an immediate HTTP 429."""
         async def run():
             app, _ = _make_app()
             # Create a session with limit=1
@@ -97,7 +98,6 @@ class TestConcurrencyLimiter:
             _mcp_session_id.set(session_id)
             # Exhaust the semaphore
             await sem.acquire()
-            # Second request should get 429
             msg_scope = make_scope(path="/messages/")
             send = AsyncMock()
             await app(msg_scope, AsyncMock(), send)
@@ -339,9 +339,9 @@ class TestConcurrencyLimiterSAF28585:
             acquired = []
 
             class TrackingSemaphore(asyncio.Semaphore):
-                async def __aenter__(self):
+                async def acquire(self):
                     acquired.append(True)
-                    return await super().__aenter__()
+                    return await super().acquire()
 
             sem = TrackingSemaphore(_concurrency_limit)
             _session_semaphores[session_id] = (sem, time.time())
@@ -500,3 +500,77 @@ class TestStaleSemaphoreCleanup:
             _session_semaphores.pop(sid, None)
 
         assert len(_session_semaphores) == 0
+
+
+def _sh_scope(session_id, token, path="/mcp"):
+    """A streamable-http POST scope carrying an mcp-session-id and an x-token JWT."""
+    return {
+        "type": "http",
+        "path": path,
+        "method": "POST",
+        "headers": [(b"mcp-session-id", session_id.encode()), (b"x-token", token.encode())],
+        "client": ("127.0.0.1", 12345),
+        "query_string": b"",
+    }
+
+
+class TestPerJwtConcurrency:
+    """SAF-31903: concurrency is bucketed per-JWT, not per shared mcp-session-id."""
+
+    def test_key_prefers_jwt_and_is_session_independent(self):
+        k1 = _concurrency_key({"x-token": "tok"}, "sessionA")
+        k2 = _concurrency_key({"x-token": "tok"}, "sessionB")
+        assert k1 == k2 and k1.startswith("jwt:")
+        assert _concurrency_key({"x-token": "a"}, "s") != _concurrency_key({"x-token": "b"}, "s")
+        assert _concurrency_key({}, "sid-fallback") == "sid-fallback"
+        assert _concurrency_key(None, None) is None
+
+    def test_two_jwts_have_independent_limits(self):
+        async def run():
+            base = SafeBreachMCPBase("test-perjwt")
+            original = AsyncMock()
+            app = base._create_concurrency_limited_app(
+                original, transport="streamable-http", endpoint_path="/mcp"
+            )
+            session_id = "shared-session"
+            # Saturate JWT A's bucket (limit 1, no release)
+            key_a = _concurrency_key({"x-token": "tokenA"}, session_id)
+            sem_a = asyncio.Semaphore(1)
+            await sem_a.acquire()
+            _session_semaphores[key_a] = (sem_a, time.time())
+
+            # Request as JWT A on the shared session → 429 (its bucket is full)
+            send_a = AsyncMock()
+            await app(_sh_scope(session_id, "tokenA"), AsyncMock(), send_a)
+            assert send_a.call_args_list[0][0][0]["status"] == 429
+
+            # Request as JWT B on the SAME session → passes (independent bucket)
+            send_b = AsyncMock()
+            await app(_sh_scope(session_id, "tokenB"), AsyncMock(), send_b)
+            original.assert_awaited_once()
+            assert send_b.await_count == 0
+
+            sem_a.release()
+        asyncio.run(run())
+
+    def test_same_jwt_shares_bucket_across_sessions(self):
+        async def run():
+            base = SafeBreachMCPBase("test-perjwt2")
+            original = AsyncMock()
+            app = base._create_concurrency_limited_app(
+                original, transport="streamable-http", endpoint_path="/mcp"
+            )
+            # Saturate the JWT's bucket, computed with one session id
+            key = _concurrency_key({"x-token": "tok"}, "session-1")
+            sem = asyncio.Semaphore(1)
+            await sem.acquire()
+            _session_semaphores[key] = (sem, time.time())
+
+            # Same token but a DIFFERENT session id → same bucket → 429
+            send = AsyncMock()
+            await app(_sh_scope("session-2", "tok"), AsyncMock(), send)
+            assert send.call_args_list[0][0][0]["status"] == 429
+            original.assert_not_awaited()
+
+            sem.release()
+        asyncio.run(run())

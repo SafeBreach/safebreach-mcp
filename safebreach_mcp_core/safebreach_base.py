@@ -6,6 +6,7 @@ Base class for all SafeBreach MCP servers providing common functionality.
 
 import asyncio
 import contextvars
+import hashlib
 import json
 import logging
 import os
@@ -85,6 +86,44 @@ async def _cleanup_stale_semaphores() -> None:
             logger.info(f"🧹 Cleaned up {len(stale)} stale SSE semaphore(s), {len(_session_semaphores)} remaining")
         # Also clean up stale auth artifacts (SAF-29974)
         cleanup_stale_artifacts(_SEMAPHORE_MAX_AGE)
+
+
+async def _send_concurrency_429(send) -> None:
+    """Emit the 429 concurrency-limit response on the ASGI send channel."""
+    response_body = json.dumps({
+        "error": "Too Many Requests",
+        "message": f"Concurrency limit of {_concurrency_limit} exceeded. Please retry.",
+        "retry_after": 5,
+    }).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 429,
+        "headers": [
+            [b"content-type", b"application/json"],
+            [b"content-length", str(len(response_body)).encode()],
+            [b"retry-after", b"5"],
+        ],
+    })
+    await send({"type": "http.response.body", "body": response_body})
+
+
+def _concurrency_key(bundle: Optional[Dict[str, str]], session_id: Optional[str]) -> Optional[str]:
+    """Identity the concurrency semaphore is bucketed by.
+
+    Per-JWT: hash the caller's auth token (same priority as get_caller_identity —
+    x-apitoken > x-token > cookie value) so each user gets an independent limit even
+    though breach-genie multiplexes them over one shared mcp-session-id. Falls back to
+    the raw session_id when no token is present, then None (no identity → not limited).
+    """
+    if bundle:
+        value = bundle.get('x-apitoken') or bundle.get('x-token')
+        if not value:
+            cookie = bundle.get('cookie', '')
+            if '=' in cookie:
+                value = cookie.split('=', 1)[1]
+        if value:
+            return f"jwt:{hashlib.sha256(value.encode()).hexdigest()[:16]}"
+    return session_id or None
 
 
 class SafeBreachMCPBase:
@@ -674,45 +713,23 @@ class SafeBreachMCPBase:
                                 f"🔑 Auth from session store for {session_id[:8]}..."
                             )
 
-                    # Lazy semaphore creation for sessions first seen via query string
-                    if session_id not in _session_semaphores:
-                        _session_semaphores[session_id] = (
+                    conc_key = _concurrency_key(bundle, session_id)
+                    if conc_key not in _session_semaphores:
+                        _session_semaphores[conc_key] = (
                             asyncio.Semaphore(_concurrency_limit), time.time()
                         )
                         logger.info(
-                            f"🆔 Session registered (from query): {session_id[:8]}..."
+                            f"🆔 Concurrency bucket registered: {conc_key[:12]}..."
                         )
 
-                    sem, _ = _session_semaphores[session_id]
+                    sem, _ = _session_semaphores[conc_key]
                     if sem.locked():
                         logger.warning(
-                            f"⚠️ Rate limited session {session_id[:8]}... "
-                            f"(limit={_concurrency_limit}, lookup={lookup_source})"
+                            f"⚠️ Concurrency limit reached for {conc_key[:12]}... (limit={_concurrency_limit})"
                         )
-                        response_body = json.dumps({
-                            "error": "Too Many Requests",
-                            "message": f"Concurrency limit of {_concurrency_limit} exceeded. Please retry.",
-                            "retry_after": 5
-                        }).encode()
-                        await send({
-                            "type": "http.response.start",
-                            "status": 429,
-                            "headers": [
-                                [b"content-type", b"application/json"],
-                                [b"content-length", str(len(response_body)).encode()],
-                                [b"retry-after", b"5"],
-                            ],
-                        })
-                        await send({
-                            "type": "http.response.body",
-                            "body": response_body,
-                        })
+                        await _send_concurrency_429(send)
                         return
 
-                    logger.debug(
-                        f"🔓 Acquired semaphore for {session_id[:8]}... "
-                        f"(slots={sem._value}/{_concurrency_limit}, lookup={lookup_source})"  # noqa: SLF001
-                    )
                     async with sem:
                         return await original_app(scope, receive, send)
 
@@ -733,34 +750,20 @@ class SafeBreachMCPBase:
                     # Initialize request — no session yet, pass through
                     return await original_app(scope, receive, send)
 
-                # Lazy semaphore creation per session
-                if session_id not in _session_semaphores:
-                    _session_semaphores[session_id] = (asyncio.Semaphore(_concurrency_limit), time.time())
+                conc_key = _concurrency_key(bundle, session_id)
+                if conc_key not in _session_semaphores:
+                    _session_semaphores[conc_key] = (asyncio.Semaphore(_concurrency_limit), time.time())
                     logger.info(
-                        f"🆔 New streamable-http session: {session_id[:8]}... "
-                        f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
+                        f"🆔 New concurrency bucket: {conc_key[:12]}... "
+                        f"(limit={_concurrency_limit}, active_buckets={len(_session_semaphores)})"
                     )
 
-                sem, _ = _session_semaphores[session_id]
+                sem, _ = _session_semaphores[conc_key]
                 if sem.locked():
                     logger.warning(
-                        f"⚠️ Rate limited session {session_id[:8]}... (limit={_concurrency_limit})"
+                        f"⚠️ Concurrency limit reached for {conc_key[:12]}... (limit={_concurrency_limit})"
                     )
-                    response_body = json.dumps({
-                        "error": "Too Many Requests",
-                        "message": f"Concurrency limit of {_concurrency_limit} exceeded. Please retry.",
-                        "retry_after": 5
-                    }).encode()
-                    await send({
-                        "type": "http.response.start",
-                        "status": 429,
-                        "headers": [
-                            [b"content-type", b"application/json"],
-                            [b"content-length", str(len(response_body)).encode()],
-                            [b"retry-after", b"5"],
-                        ],
-                    })
-                    await send({"type": "http.response.body", "body": response_body})
+                    await _send_concurrency_429(send)
                     return
 
                 async with sem:
