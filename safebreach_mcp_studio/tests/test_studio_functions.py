@@ -35,7 +35,7 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_storage_stats,
     _build_linear_dag,
     _submit_to_queue,
-    sb_run_adhoc_scenario,
+    sb_quick_run,
     studio_draft_cache,
     MAIN_FUNCTION_PATTERN,
     _validate_and_build_parameters,
@@ -7227,12 +7227,12 @@ class TestCustomPlanAugmentation:
 
 
 # =====================================================================
-# dry_run Tests (SAF-29967 — Slice 4 extension)
+# evaluate Tests (SAF-29967 — Slice 4 extension)
 # =====================================================================
 
 
-class TestDryRun:
-    """Test dry_run parameter — returns predictions without queuing."""
+class TestEvaluate:
+    """Test evaluate parameter — returns predictions without queuing."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -7247,11 +7247,11 @@ class TestDryRun:
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_dry_run_returns_prediction_without_queuing(
+    def test_evaluate_returns_prediction_without_queuing(
         self, mock_base_url, mock_account_id,
         mock_get, mock_post, mock_stats, mock_oob_scenario
     ):
-        """dry_run=True returns statistics but does NOT call queue API."""
+        """evaluate=True returns statistics but does NOT call queue API."""
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
 
@@ -7263,10 +7263,10 @@ class TestDryRun:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True
+            evaluate=True
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         assert result['predicted_simulations'] == 3874
         assert result['predicted_per_step'] == [1676, 2198]
         assert result['step_stats'] is not None
@@ -7281,11 +7281,11 @@ class TestDryRun:
            return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 0, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0, 'matchedAttacks': 0, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_dry_run_with_empty_steps_reports_them(
+    def test_evaluate_with_empty_steps_reports_them(
         self, mock_base_url, mock_get, mock_stats,
         mock_oob_scenario
     ):
-        """dry_run with some steps producing 0 still returns (no error)."""
+        """evaluate with some steps producing 0 still returns (no error)."""
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -7296,10 +7296,10 @@ class TestDryRun:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True
+            evaluate=True
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         assert result['predicted_simulations'] == 500
         assert result['empty_steps'] == [2]
 
@@ -7307,11 +7307,11 @@ class TestDryRun:
            return_value=[{'simulationCount': 500, 'matchedTargetSimulators': 5, 'matchedAttackerSimulators': 3, 'matchedAttacks': 10, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 15}, {'simulationCount': 300, 'matchedTargetSimulators': 4, 'matchedAttackerSimulators': 2, 'matchedAttacks': 8, 'totalTargetSimulators': 12, 'totalAttackerSimulators': 6, 'totalAttacks': 12}])
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_dry_run_with_overrides(
+    def test_evaluate_with_overrides(
         self, mock_base_url, mock_get, mock_stats,
         mock_scenario_all_missing
     ):
-        """dry_run with step_overrides — augments then predicts."""
+        """evaluate with step_overrides — augments then predicts."""
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -7338,10 +7338,10 @@ class TestDryRun:
             scenario_id="aaaa-bbbb-cccc-dddd",
             console="test-console",
             step_overrides=overrides,
-            dry_run=True
+            evaluate=True
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         assert result['predicted_simulations'] == 800
         assert 'test_id' not in result  # No queue call made
 
@@ -7352,7 +7352,7 @@ class TestDryRun:
 
 
 class TestResolvedAttacks:
-    """Test that dry_run includes resolved attacks per step."""
+    """Test that evaluate includes resolved attacks per step."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -7366,11 +7366,11 @@ class TestResolvedAttacks:
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_dry_run_includes_resolved_attacks(
+    def test_evaluate_includes_resolved_attacks(
         self, mock_base_url, mock_get, mock_stats, mock_names,
         mock_oob_scenario
     ):
-        """dry_run response includes resolved_attacks per step with names."""
+        """evaluate response includes resolved_attacks per step with names."""
         mock_base_url.return_value = "https://test.safebreach.com"
 
         mock_get_response = MagicMock()
@@ -7397,10 +7397,10 @@ class TestResolvedAttacks:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True
+            evaluate=True
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         step_stats = result.get('step_stats', [])
         assert len(step_stats) == 2
 
@@ -7447,7 +7447,7 @@ class TestResolvedAttacks:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True
+            evaluate=True
         )
 
         resolved = result['step_stats'][0].get('resolved_attacks', [])
@@ -7509,11 +7509,11 @@ class TestVerboseFailures:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True,
+            evaluate=True,
             verbose_failures=True,
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         # Step 1 (partial) should have constraint_summary (per-attack), not aggregated
         step1 = result['step_stats'][0]
         assert 'constraint_summary' in step1
@@ -7561,11 +7561,11 @@ class TestVerboseFailures:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test-console",
-            dry_run=True,
+            evaluate=True,
             verbose_failures=False,
         )
 
-        assert result['status'] == 'dry_run'
+        assert result['status'] == 'evaluating'
         step1 = result['step_stats'][0]
         # Should have aggregated, not per-attack
         assert 'constraint_summary_aggregated' in step1
@@ -9170,8 +9170,8 @@ DEFAULT_CONNECTION_FILTER = {
 }
 
 
-class TestAdhocScenarioInputParsing:
-    """Test input parsing for sb_run_adhoc_scenario."""
+class TestQuickRunInputParsing:
+    """Test input parsing for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9190,10 +9190,10 @@ class TestAdhocScenarioInputParsing:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(3)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217,1071", console="test"
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert len(result["steps"]) == 3
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
@@ -9206,21 +9206,21 @@ class TestAdhocScenarioInputParsing:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(2)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids=" 8849 , 217 ", console="test"
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert len(result["steps"]) == 2
 
     def test_empty_string_raises_valueerror(self):
         """Empty string raises ValueError."""
         with pytest.raises(ValueError, match="attack_ids.*required"):
-            sb_run_adhoc_scenario(attack_ids="", console="test")
+            sb_quick_run(attack_ids="", console="test")
 
     def test_none_raises_valueerror(self):
         """None raises ValueError."""
         with pytest.raises(ValueError, match="attack_ids.*required"):
-            sb_run_adhoc_scenario(attack_ids=None, console="test")
+            sb_quick_run(attack_ids=None, console="test")
 
     @patch(
         'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
@@ -9229,7 +9229,7 @@ class TestAdhocScenarioInputParsing:
     def test_non_integer_raises_valueerror(self, mock_playbook):
         """'8849,abc,217' raises ValueError for non-integer."""
         with pytest.raises(ValueError, match="invalid"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids="8849,abc,217", console="test"
             )
 
@@ -9243,13 +9243,13 @@ class TestAdhocScenarioInputParsing:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(2)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,,217", console="test"
         )
         assert len(result["steps"]) == 2
 
 
-class TestAdhocScenarioAttackValidation:
+class TestQuickRunAttackValidation:
     """Test attack ID validation against playbook cache."""
 
     @pytest.fixture(autouse=True)
@@ -9269,10 +9269,10 @@ class TestAdhocScenarioAttackValidation:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(2)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217", console="test"
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
 
     @patch(
         'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
@@ -9281,7 +9281,7 @@ class TestAdhocScenarioAttackValidation:
     def test_some_invalid_ids_raises_valueerror(self, mock_playbook):
         """Some invalid IDs raises ValueError listing the invalid ones."""
         with pytest.raises(ValueError, match="99999"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids="8849,99999,88888", console="test"
             )
 
@@ -9292,7 +9292,7 @@ class TestAdhocScenarioAttackValidation:
     def test_all_invalid_ids_raises_valueerror(self, mock_playbook):
         """All invalid IDs raises ValueError listing all."""
         with pytest.raises(ValueError, match="not found"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids="99999,88888", console="test"
             )
 
@@ -9304,15 +9304,15 @@ class TestAdhocScenarioAttackValidation:
     def test_playbook_cache_failure_graceful(self, mock_playbook, mock_stats):
         """Playbook cache failure degrades gracefully — names unavailable."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         # Should still work — just without attack name resolution
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert len(result["steps"]) == 1
 
 
-class TestAdhocScenarioStepConstruction:
+class TestQuickRunStepConstruction:
     """Test one-step-per-attack construction."""
 
     @pytest.fixture(autouse=True)
@@ -9332,7 +9332,7 @@ class TestAdhocScenarioStepConstruction:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(3)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217,1071", console="test"
         )
         steps = result["steps"]
@@ -9352,7 +9352,7 @@ class TestAdhocScenarioStepConstruction:
         mock_stats.return_value = [
             {"simulationCount": 10} for _ in range(2)
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217", console="test"
         )
         steps = result["steps"]
@@ -9367,7 +9367,7 @@ class TestAdhocScenarioStepConstruction:
     def test_step_names_fallback_without_cache(self, mock_playbook, mock_stats):
         """Step names fall back to 'Attack {id}' when cache unavailable."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         steps = result["steps"]
@@ -9381,7 +9381,7 @@ class TestAdhocScenarioStepConstruction:
     def test_steps_have_uuid(self, mock_playbook, mock_stats):
         """Each step has a non-empty uuid."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         step = result["steps"][0]
@@ -9399,7 +9399,7 @@ class TestAdhocScenarioStepConstruction:
     ):
         """Default targetFilter is connection: all_connected."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         step = result["steps"][0]
@@ -9415,7 +9415,7 @@ class TestAdhocScenarioStepConstruction:
     ):
         """Default attackerFilter is connection: all_connected."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         step = result["steps"][0]
@@ -9429,7 +9429,7 @@ class TestAdhocScenarioStepConstruction:
     def test_steps_have_empty_system_filter(self, mock_playbook, mock_stats):
         """Each step has systemFilter: {}."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         assert result["steps"][0]["systemFilter"] == {}
@@ -9442,7 +9442,7 @@ class TestAdhocScenarioStepConstruction:
     def test_attacks_filter_structure(self, mock_playbook, mock_stats):
         """attacksFilter has correct playbook filter structure."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test"
         )
         af = result["steps"][0]["attacksFilter"]["playbook"]
@@ -9456,8 +9456,8 @@ class TestAdhocScenarioStepConstruction:
 # ---------------------------------------------------------------------------
 
 
-class TestAdhocScenarioSimulatorOverrides:
-    """Test simulator_overrides for sb_run_adhoc_scenario."""
+class TestQuickRunSimulatorOverrides:
+    """Test simulator_overrides for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9480,7 +9480,7 @@ class TestAdhocScenarioSimulatorOverrides:
                 "attacker": ["sim-uuid-3"],
             }
         })
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217", console="test",
             simulator_overrides=overrides,
         )
@@ -9515,7 +9515,7 @@ class TestAdhocScenarioSimulatorOverrides:
         overrides = json.dumps({
             "8849": {"target": ["sim-uuid-1"]},
         })
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test",
             simulator_overrides=overrides,
         )
@@ -9544,7 +9544,7 @@ class TestAdhocScenarioSimulatorOverrides:
                 "attacker": ["sim-attacker"],
             },
         })
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test",
             simulator_overrides=overrides,
         )
@@ -9564,7 +9564,7 @@ class TestAdhocScenarioSimulatorOverrides:
             "8849": {"target": ["sim-a"]},
             "1071": {"target": ["sim-b"], "attacker": ["sim-c"]},
         })
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217,1071", console="test",
             simulator_overrides=overrides,
         )
@@ -9588,7 +9588,7 @@ class TestAdhocScenarioSimulatorOverrides:
             "99999": {"target": ["sim-x"]},
         })
         with pytest.raises(ValueError, match="99999"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids="8849", console="test",
                 simulator_overrides=overrides,
             )
@@ -9596,7 +9596,7 @@ class TestAdhocScenarioSimulatorOverrides:
     def test_invalid_json_raises(self):
         """Invalid JSON string raises ValueError (fail-fast, before attack validation)."""
         with pytest.raises(ValueError, match="[Ii]nvalid.*JSON"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids="8849", console="test",
                 simulator_overrides="not-valid-json{",
             )
@@ -9610,7 +9610,7 @@ class TestAdhocScenarioSimulatorOverrides:
         """Override filter uses simulators key with operator/values/name."""
         mock_stats.return_value = [{"simulationCount": 10}]
         overrides = json.dumps({"8849": {"target": ["uuid-1"]}})
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test",
             simulator_overrides=overrides,
         )
@@ -9621,8 +9621,8 @@ class TestAdhocScenarioSimulatorOverrides:
         assert tf["simulators"]["values"] == ["uuid-1"]
 
 
-class TestAdhocScenarioAllConnected:
-    """Test all_connected override for sb_run_adhoc_scenario."""
+class TestQuickRunAllConnected:
+    """Test all_connected override for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9639,7 +9639,7 @@ class TestAdhocScenarioAllConnected:
     def test_all_connected_keeps_default_filters(self, mock_playbook, mock_stats):
         """all_connected=True — steps already have connection filter (no change)."""
         mock_stats.return_value = [{"simulationCount": 10} for _ in range(2)]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217", console="test",
             all_connected=True,
         )
@@ -9660,7 +9660,7 @@ class TestAdhocScenarioAllConnected:
         overrides = json.dumps({
             "8849": {"target": ["sim-uuid-1"], "attacker": ["sim-uuid-2"]},
         })
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test",
             all_connected=True,
             simulator_overrides=overrides,
@@ -9682,7 +9682,7 @@ class TestAdhocScenarioAllConnected:
         """all_connected=False (default) allows simulator_overrides to apply."""
         mock_stats.return_value = [{"simulationCount": 10}]
         overrides = json.dumps({"8849": {"target": ["sim-uuid-1"]}})
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849", console="test",
             all_connected=False,
             simulator_overrides=overrides,
@@ -9692,14 +9692,14 @@ class TestAdhocScenarioAllConnected:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 (SAF-31295): Statistics, dry-run & execution
+# Phase 4 (SAF-31295): Statistics, evaluate & execution
 # ---------------------------------------------------------------------------
 
 # Standard mock for queue API response
-MOCK_QUEUE_RESPONSE_ADHOC = {
+MOCK_QUEUE_RESPONSE_QUICK_RUN = {
     "data": {
         "planRunId": "1779200000000.1",
-        "name": "Ad-hoc Test",
+        "name": "Quick Run Test",
         "steps": [
             {"stepRunId": "1779200000000.2"},
             {"stepRunId": "1779200000000.3"},
@@ -9708,8 +9708,8 @@ MOCK_QUEUE_RESPONSE_ADHOC = {
 }
 
 
-class TestAdhocScenarioDryRun:
-    """Test dry_run=True (default) behavior."""
+class TestQuickRunEvaluate:
+    """Test evaluate=True (default) behavior."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9724,20 +9724,20 @@ class TestAdhocScenarioDryRun:
         'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
         return_value=MOCK_PLAYBOOK_ATTACKS,
     )
-    def test_dry_run_calls_statistics_not_queue(
+    def test_evaluate_calls_statistics_not_queue(
         self, mock_playbook, mock_stats, mock_queue
     ):
-        """dry_run=True: statistics called, queue NOT called."""
+        """evaluate=True: statistics called, queue NOT called."""
         mock_stats.return_value = [
             {"simulationCount": 10},
             {"simulationCount": 5},
         ]
-        result = sb_run_adhoc_scenario(
-            attack_ids="8849,217", console="test", dry_run=True,
+        result = sb_quick_run(
+            attack_ids="8849,217", console="test", evaluate=True,
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         mock_stats.assert_called_once()
-        # dry_run should pass include_constraints=True for diagnostic detail
+        # evaluate should pass include_constraints=True for diagnostic detail
         assert mock_stats.call_args[1].get("include_constraints") is True
         mock_queue.assert_not_called()
 
@@ -9747,18 +9747,18 @@ class TestAdhocScenarioDryRun:
         'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
         return_value=MOCK_PLAYBOOK_ATTACKS,
     )
-    def test_dry_run_response_structure(
+    def test_evaluate_response_structure(
         self, mock_playbook, mock_stats, mock_queue
     ):
-        """dry_run response has status, steps, predicted counts, empty_steps."""
+        """evaluate response has status, steps, predicted counts, empty_steps."""
         mock_stats.return_value = [
             {"simulationCount": 10},
             {"simulationCount": 0},
         ]
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids="8849,217", console="test",
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert result["predicted_simulations"] == 10
         assert result["predicted_per_step"] == [10, 0]
         assert 2 in result["empty_steps"]  # step 2 (1-indexed) has 0 sims
@@ -9771,20 +9771,20 @@ class TestAdhocScenarioDryRun:
         'safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api',
         return_value=MOCK_PLAYBOOK_ATTACKS,
     )
-    def test_dry_run_does_not_trigger_rate_limiting(
+    def test_evaluate_does_not_trigger_rate_limiting(
         self, mock_playbook, mock_stats, mock_queue, mock_limiter
     ):
-        """dry_run=True: rate limiter NOT called."""
+        """evaluate=True: rate limiter NOT called."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        sb_run_adhoc_scenario(
-            attack_ids="8849", console="test", dry_run=True,
+        sb_quick_run(
+            attack_ids="8849", console="test", evaluate=True,
         )
         mock_limiter.check_limit.assert_not_called()
         mock_limiter.record_action.assert_not_called()
 
 
-class TestAdhocScenarioExecution:
-    """Test dry_run=False (execution) behavior."""
+class TestQuickRunExecution:
+    """Test evaluate=False (execution) behavior."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9803,14 +9803,14 @@ class TestAdhocScenarioExecution:
     def test_execution_calls_queue(
         self, mock_playbook, mock_stats, mock_queue, mock_limiter
     ):
-        """dry_run=False: statistics + queue both called, returns queued status."""
+        """evaluate=False: statistics + queue both called, returns queued status."""
         mock_stats.return_value = [
             {"simulationCount": 10},
             {"simulationCount": 5},
         ]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        result = sb_run_adhoc_scenario(
-            attack_ids="8849,217", console="test", dry_run=False,
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        result = sb_quick_run(
+            attack_ids="8849,217", console="test", evaluate=False,
         )
         assert result["status"] == "queued"
         assert result["test_id"] == "1779200000000.1"
@@ -9834,9 +9834,9 @@ class TestAdhocScenarioExecution:
             {"simulationCount": 10},
             {"simulationCount": 5},
         ]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        result = sb_run_adhoc_scenario(
-            attack_ids="8849,217", console="test", dry_run=False,
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        result = sb_quick_run(
+            attack_ids="8849,217", console="test", evaluate=False,
         )
         assert result["step_run_ids"] == [
             "1779200000000.2", "1779200000000.3"
@@ -9857,8 +9857,8 @@ class TestAdhocScenarioExecution:
             {"simulationCount": 0},
         ]
         with pytest.raises(ValueError, match="0 simulations"):
-            sb_run_adhoc_scenario(
-                attack_ids="8849,217", console="test", dry_run=False,
+            sb_quick_run(
+                attack_ids="8849,217", console="test", evaluate=False,
             )
         mock_queue.assert_not_called()
 
@@ -9881,15 +9881,15 @@ class TestAdhocScenarioExecution:
         mock_queue.return_value = {
             "data": {
                 "planRunId": "test.1",
-                "name": "Ad-hoc Test",
+                "name": "Quick Run Test",
                 "steps": [
                     {"stepRunId": "test.2"},
                     {"stepRunId": "test.3"},
                 ],
             }
         }
-        result = sb_run_adhoc_scenario(
-            attack_ids="8849,217,1071", console="test", dry_run=False,
+        result = sb_quick_run(
+            attack_ids="8849,217,1071", console="test", evaluate=False,
         )
         assert result["status"] == "queued"
         # Verify the queue payload has only 2 steps (0-sim step removed)
@@ -9921,8 +9921,8 @@ class TestAdhocScenarioExecution:
                 "steps": [{"stepRunId": "t.2"}, {"stepRunId": "t.3"}],
             }
         }
-        sb_run_adhoc_scenario(
-            attack_ids="8849,217,1071", console="test", dry_run=False,
+        sb_quick_run(
+            attack_ids="8849,217,1071", console="test", evaluate=False,
         )
         queue_payload = mock_queue.call_args[0][0]
         # DAG should have actions and edges for 2 steps
@@ -9933,8 +9933,8 @@ class TestAdhocScenarioExecution:
         assert len(multi) == 2
 
 
-class TestAdhocScenarioRateLimiting:
-    """Test rate limiting gates for sb_run_adhoc_scenario."""
+class TestQuickRunRateLimiting:
+    """Test rate limiting gates for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -9955,14 +9955,14 @@ class TestAdhocScenarioRateLimiting:
     ):
         """check_limit called BEFORE queue POST."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        sb_run_adhoc_scenario(
-            attack_ids="8849", console="test", dry_run=False,
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        sb_quick_run(
+            attack_ids="8849", console="test", evaluate=False,
         )
         mock_limiter.check_limit.assert_called_once()
         # check_limit must be called with caller_id and tool name
         call_args = mock_limiter.check_limit.call_args
-        assert call_args[0][1] == "run_adhoc_scenario"
+        assert call_args[0][1] == "quick_run"
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -9976,13 +9976,13 @@ class TestAdhocScenarioRateLimiting:
     ):
         """record_action called AFTER successful queue POST."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        sb_run_adhoc_scenario(
-            attack_ids="8849", console="test", dry_run=False,
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        sb_quick_run(
+            attack_ids="8849", console="test", evaluate=False,
         )
         mock_limiter.record_action.assert_called_once()
         call_args = mock_limiter.record_action.call_args
-        assert call_args[0][1] == "run_adhoc_scenario"
+        assert call_args[0][1] == "quick_run"
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -9998,14 +9998,14 @@ class TestAdhocScenarioRateLimiting:
         mock_stats.return_value = [{"simulationCount": 10}]
         mock_queue.side_effect = requests.exceptions.ConnectionError("fail")
         with pytest.raises(requests.exceptions.RequestException):
-            sb_run_adhoc_scenario(
-                attack_ids="8849", console="test", dry_run=False,
+            sb_quick_run(
+                attack_ids="8849", console="test", evaluate=False,
             )
         mock_limiter.check_limit.assert_called_once()
         mock_limiter.record_action.assert_not_called()
 
 
-class TestAdhocScenarioTestName:
+class TestQuickRunTestName:
     """Test test_name parameter handling."""
 
     @pytest.fixture(autouse=True)
@@ -10027,10 +10027,10 @@ class TestAdhocScenarioTestName:
     ):
         """Custom test_name appears in queue payload."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        sb_run_adhoc_scenario(
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        sb_quick_run(
             attack_ids="8849", console="test",
-            test_name="My Custom Test", dry_run=False,
+            test_name="My Custom Test", evaluate=False,
         )
         payload = mock_queue.call_args[0][0]
         assert payload["plan"]["name"] == "My Custom Test"
@@ -10045,23 +10045,23 @@ class TestAdhocScenarioTestName:
     def test_default_test_name_auto_generated(
         self, mock_playbook, mock_stats, mock_queue, mock_limiter
     ):
-        """No test_name → auto-generated default containing 'Ad-hoc'."""
+        """No test_name → auto-generated default containing 'Quick Run'."""
         mock_stats.return_value = [{"simulationCount": 10}]
-        mock_queue.return_value = MOCK_QUEUE_RESPONSE_ADHOC
-        sb_run_adhoc_scenario(
-            attack_ids="8849", console="test", dry_run=False,
+        mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
+        sb_quick_run(
+            attack_ids="8849", console="test", evaluate=False,
         )
         payload = mock_queue.call_args[0][0]
-        assert "Ad-hoc" in payload["plan"]["name"] or "ad-hoc" in payload["plan"]["name"].lower()
+        assert "Quick Run" in payload["plan"]["name"]
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 (SAF-31295): MCP tool wrapper — run_adhoc_scenario
+# Phase 5 (SAF-31295): MCP tool wrapper — quick_run
 # ---------------------------------------------------------------------------
 
 
-class TestAdhocScenarioMCPWrapper:
-    """Test the run_adhoc_scenario MCP tool wrapper (Markdown formatting)."""
+class TestQuickRunMCPWrapper:
+    """Test the quick_run MCP tool wrapper (Markdown formatting)."""
 
     @pytest.fixture(autouse=True)
     def set_auth_context(self):
@@ -10071,29 +10071,29 @@ class TestAdhocScenarioMCPWrapper:
         _user_auth_artifacts.reset(token)
 
     def _get_wrapper(self):
-        """Get the run_adhoc_scenario wrapper function from the server."""
+        """Get the quick_run wrapper function from the server."""
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         server = SafeBreachStudioServer()
         # Find the registered tool by name
         for tool in server.mcp._tool_manager._tools.values():
-            if tool.name == "run_adhoc_scenario":
+            if tool.name == "quick_run":
                 return tool.fn
-        raise AssertionError("run_adhoc_scenario tool not registered")
+        raise AssertionError("quick_run tool not registered")
 
     def test_tool_is_registered(self):
-        """Tool is registered with name run_adhoc_scenario."""
+        """Tool is registered with name quick_run."""
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         server = SafeBreachStudioServer()
         tool_names = [
             t.name for t in server.mcp._tool_manager._tools.values()
         ]
-        assert "run_adhoc_scenario" in tool_names
+        assert "quick_run" in tool_names
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
-    def test_dry_run_markdown_contains_preview_header(self, mock_fn):
-        """Dry-run Markdown contains 'Dry Run Preview'."""
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
+    def test_evaluate_markdown_contains_preview_header(self, mock_fn):
+        """Evaluate Markdown contains 'Quick Run — Test Evaluation'."""
         mock_fn.return_value = {
-            'status': 'dry_run',
+            'status': 'evaluating',
             'attack_ids': [8849, 217],
             'steps': [
                 {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
@@ -10107,16 +10107,16 @@ class TestAdhocScenarioMCPWrapper:
         }
         wrapper = self._get_wrapper()
         result = wrapper(attack_ids="8849,217", console="test")
-        assert "Dry Run" in result
-        assert "Preview" in result
+        assert "Quick Run" in result
+        assert "Test Evaluation" in result
         assert "15" in result  # total predicted
         assert "No test was queued" in result or "no test" in result.lower()
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
-    def test_dry_run_markdown_flags_zero_sim(self, mock_fn):
-        """Dry-run Markdown flags 0-sim attacks."""
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
+    def test_evaluate_markdown_flags_zero_sim(self, mock_fn):
+        """Evaluate Markdown flags 0-sim attacks."""
         mock_fn.return_value = {
-            'status': 'dry_run',
+            'status': 'evaluating',
             'attack_ids': [8849, 217],
             'steps': [
                 {"name": "Attack 8849", "attacksFilter": {"playbook": {"values": [8849]}}},
@@ -10134,13 +10134,13 @@ class TestAdhocScenarioMCPWrapper:
         # Should mention the 0-sim attack
         assert "217" in result or "0 sim" in result.lower()
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
     def test_queued_markdown_contains_test_id(self, mock_fn):
         """Queued Markdown contains test_id and queued header."""
         mock_fn.return_value = {
             'status': 'queued',
             'test_id': '1779200000000.1',
-            'test_name': 'Ad-hoc Test',
+            'test_name': 'Quick Run Test',
             'attack_ids': [8849],
             'step_count': 1,
             'step_run_ids': ['1779200000000.2'],
@@ -10155,13 +10155,13 @@ class TestAdhocScenarioMCPWrapper:
             ),
         }
         wrapper = self._get_wrapper()
-        result = wrapper(attack_ids="8849", console="test", dry_run=False)
+        result = wrapper(attack_ids="8849", console="test", evaluate=False)
         assert "Queued" in result or "queued" in result
         assert "1779200000000.1" in result
         assert "get_test_details" in result
         assert "manage_test" in result
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
     def test_queued_markdown_shows_skipped_attacks(self, mock_fn):
         """Partial execution Markdown lists skipped attacks."""
         mock_fn.return_value = {
@@ -10179,12 +10179,12 @@ class TestAdhocScenarioMCPWrapper:
         }
         wrapper = self._get_wrapper()
         result = wrapper(
-            attack_ids="8849,217,1071", console="test", dry_run=False,
+            attack_ids="8849,217,1071", console="test", evaluate=False,
         )
         assert "217" in result
         assert "skipped" in result.lower() or "0 sim" in result.lower()
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
     def test_valueerror_returns_error_message(self, mock_fn):
         """ValueError returns error-prefixed message."""
         mock_fn.side_effect = ValueError("attack_ids is required")
@@ -10193,7 +10193,7 @@ class TestAdhocScenarioMCPWrapper:
         assert "Error" in result
         assert "attack_ids is required" in result
 
-    @patch('safebreach_mcp_studio.studio_server.sb_run_adhoc_scenario')
+    @patch('safebreach_mcp_studio.studio_server.sb_quick_run')
     def test_exception_returns_error_message(self, mock_fn):
         """Generic exception returns error message."""
         mock_fn.side_effect = RuntimeError("unexpected failure")

@@ -164,7 +164,7 @@ class TestRunScenarioE2E:
         ready_plan = None
         for p in ready_plans:
             dry = sb_run_scenario(scenario_id=str(p['id']),
-                                 console=E2E_CONSOLE, dry_run=True)
+                                 console=E2E_CONSOLE, evaluate=True)
             if dry.get('predicted_simulations', 0) >= 20 and not dry.get('empty_steps'):
                 ready_plan = p
                 break
@@ -213,10 +213,10 @@ class TestRunScenarioE2E:
         step = result['diagnostic']['missing_steps'][0]
         assert 'recommendation' in step
 
-    def test_dry_run(self):
-        """Slice 4: dry_run for OOB, custom plan, and with overrides — no queuing.
-        Covers: dry_run predictions, source_type, step_overrides, resolved_attacks."""
-        # OOB dry_run
+    def test_evaluate(self):
+        """Slice 4: evaluate for OOB, custom plan, and with overrides — no queuing.
+        Covers: evaluate predictions, source_type, step_overrides, resolved_attacks."""
+        # OOB evaluate
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
         ready_oob = next((s for s in scenarios
                           if compute_scenario_readiness(s)), None)
@@ -224,8 +224,8 @@ class TestRunScenarioE2E:
 
         result = sb_run_scenario(
             scenario_id=str(ready_oob['id']),
-            console=E2E_CONSOLE, dry_run=True)
-        assert result['status'] == 'dry_run'
+            console=E2E_CONSOLE, evaluate=True)
+        assert result['status'] == 'evaluating'
         assert result['predicted_simulations'] > 0
         assert result['source_type'] == 'oob'
         assert 'test_id' not in result
@@ -234,7 +234,7 @@ class TestRunScenarioE2E:
         if result['step_stats'][0].get('resolved_attacks'):
             assert result['step_stats'][0]['resolved_attacks'][0].get('move_id')
 
-        # Custom plan dry_run
+        # Custom plan evaluate
         plans = _fetch_all_plans(E2E_CONSOLE)
         ready_plan = next((p for p in plans
                            if compute_scenario_readiness(p)), None)
@@ -242,12 +242,12 @@ class TestRunScenarioE2E:
 
         result2 = sb_run_scenario(
             scenario_id=str(ready_plan['id']),
-            console=E2E_CONSOLE, dry_run=True)
-        assert result2['status'] == 'dry_run'
+            console=E2E_CONSOLE, evaluate=True)
+        assert result2['status'] == 'evaluating'
         assert result2['source_type'] == 'custom'
         assert 'test_id' not in result2
 
-        # Augmented dry_run
+        # Augmented evaluate
         not_ready = next((s for s in scenarios
                           if not compute_scenario_readiness(s)), None)
         if not_ready:
@@ -255,8 +255,8 @@ class TestRunScenarioE2E:
             result3 = sb_run_scenario(
                 scenario_id=str(not_ready['id']),
                 console=E2E_CONSOLE,
-                step_overrides=overrides, dry_run=True)
-            assert result3['status'] == 'dry_run'
+                step_overrides=overrides, evaluate=True)
+            assert result3['status'] == 'evaluating'
             assert len(result3['predicted_per_step']) == len(
                 not_ready.get('steps', []))
 
