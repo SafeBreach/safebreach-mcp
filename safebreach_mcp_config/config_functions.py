@@ -642,7 +642,12 @@ def sb_get_scenarios(
         )
 
         ordered = apply_scenario_ordering(filtered, order_by=order_by, order_direction=order_direction)
-        paginated = paginate_scenarios(ordered, page_number=page_number, page_size=PAGE_SIZE)
+        paginated = paginate_scenarios(
+            ordered,
+            page_number=page_number,
+            page_size=PAGE_SIZE,
+            ready_to_run_filter_applied=ready_to_run_filter is not None,
+        )
 
         applied_filters = {}
         if name_filter:
