@@ -1735,142 +1735,177 @@ def sb_get_test_findings_details(
         raise
 
 
-def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]:
+# Normalized status tokens that represent a "no-result" (technical failure) simulation.
+# A simulation's raw status may arrive as 'no-result', 'no_result', or 'INTERNAL_FAIL';
+# after .replace("-", "_").lower() normalization all collapse into this set.
+_NO_RESULT_STATUS_TOKENS = {"no_result", "internal_fail"}
+
+
+def _is_no_result_status(status: Any) -> bool:
+    """Return True if a simulation status represents a no-result / internal_fail outcome."""
+    return str(status or "").replace("-", "_").lower() in _NO_RESULT_STATUS_TOKENS
+
+
+def sb_get_test_drifts(
+    test_id: str,
+    console: str = "default",
+    baseline_test_id: Optional[str] = None,
+    include_baseline_only: bool = False,
+    include_current_only: bool = False,
+    include_no_results: bool = False,
+) -> Dict[str, Any]:
     """
-    Analyze drift between the given test and the most recent previous test with the same name.
-    
-    This function compares simulations between two test runs to identify:
-    1. Simulations that exist only in the first test (baseline)
-    2. Simulations that exist only in the second test (current)
-    3. Simulations that exist in both tests but have different status values (drifted)
-    
+    Analyze drift between a current test and a baseline test run.
+
+    By default the baseline is auto-selected as the most recent previous test with the same
+    name. Provide ``baseline_test_id`` to compare two specific (arbitrary / non-consecutive)
+    runs instead — in that case no auto-selection, name matching, or time-ordering is applied.
+
+    The comparison correlates simulations across the two runs by ``drift_tracking_code`` and,
+    by default, performs an INNER JOIN excluding no-result (internal_fail) simulations. The
+    join breadth is controlled by the ``include_*`` flags below.
+
     Args:
-        console: SafeBreach console name
-        test_id: Test ID to analyze for drifts
-        
+        test_id: Current test ID to analyze for drifts (the ``drift_to`` side).
+        console: SafeBreach console name.
+        baseline_test_id: Optional explicit baseline test ID (the ``drift_from`` side). When
+            omitted, the baseline is auto-selected (most recent prior test with the same name).
+        include_baseline_only: Include simulations that exist only in the baseline run
+            (``simulations_exclusive_to_baseline``). Default False.
+        include_current_only: Include simulations that exist only in the current run
+            (``simulations_exclusive_to_current``). Default False.
+        include_no_results: Include simulations whose status is no-result / internal_fail.
+            Default False (they are filtered from both runs before correlation).
+
     Returns:
-        Dict containing drift analysis results with the following structure:
-        {
-            "total_drifts": int,  # Total number of drifts found
-            "baseline_test_id": ["sim_id1", ...],  # Simulations exclusive to baseline test
-            "current_test_id": ["sim_id2", ...],   # Simulations exclusive to current test
-            "drifts": [  # Simulations with matching drift_tracking_code but different status
-                {
-                    "drift_tracking_code": str,
-                    "drift_from": {"simulation_id": str, "status": str},
-                    "drift_to": {"simulation_id": str, "status": str},
-                    "drift_type": str,  # Key from drift_types_mapping
-                    "security_impact": str,  # "positive", "negative", or "neutral"
-                    "description": str
-                }
-            ]
-        }
+        Dict containing drift analysis results. ``drifts`` holds the status-transition drifts
+        (inner join); ``_metadata`` holds counts, the exclusive-simulation lists (when the
+        corresponding include flag is set), the applied-filter summary, and a ``hint_to_agent``
+        describing how to widen the analysis.
     """
     # Validate required parameters
     if not test_id or not test_id.strip():
         raise ValueError("test_id parameter is required and cannot be empty")
-    
+
+    explicit_baseline_id = baseline_test_id.strip() if baseline_test_id and baseline_test_id.strip() else None
+    explicit_baseline = explicit_baseline_id is not None
+
     try:
-        # Step 1: Get details of the current test to find its name and start_time
+        # Step 1: Get details of the current test (name/context; also validates the test exists)
         logger.info("Getting test details for test '%s' on console '%s'", test_id, console)
         current_test = sb_get_test_details(test_id, console)
-        
+
         if not current_test or 'name' not in current_test:
             return {
                 "error": f"Could not retrieve test details for test_id '{test_id}' or test lacks a name attribute",
                 "console": console,
                 "test_id": test_id
             }
-        
+
         test_name = current_test['name']
         current_start_time = current_test.get('start_time')
-        
-        if not current_start_time:
-            return {
-                "error": f"Test '{test_id}' does not have a start_time attribute",
-                "console": console,
-                "test_id": test_id,
-                "test_name": test_name
-            }
-        
-        # Step 2: Find the most recent previous test with the same name
-        logger.info("Searching for baseline test with name '%s' before start_time %s", test_name, current_start_time)
-        baseline_tests = sb_get_tests(
-            console=console,
-            page_number=0,
-            name_filter=test_name,
-            end_date=current_start_time,  # include tests that ended exactly at the current start_time
-            order_by="end_time",
-            order_direction="desc"
-        )
-        
-        baseline_entry = baseline_tests.get('tests_in_page', [])
-        if baseline_entry:
-            baseline_candidate = baseline_entry[0]
+
+        # Step 2: Resolve the baseline test
+        if explicit_baseline_id is not None:
+            # Explicit two-run comparison: skip auto-selection entirely.
+            baseline_test_id = explicit_baseline_id
+            logger.info("Using explicit baseline test: '%s' (auto-selection skipped)", baseline_test_id)
         else:
-            baseline_candidate = _find_previous_test_by_name(
-                test_name=test_name,
-                before_start_time=current_start_time,
-                console=console
+            if not current_start_time:
+                return {
+                    "error": f"Test '{test_id}' does not have a start_time attribute",
+                    "console": console,
+                    "test_id": test_id,
+                    "test_name": test_name
+                }
+
+            logger.info("Searching for baseline test with name '%s' before start_time %s", test_name, current_start_time)
+            baseline_tests = sb_get_tests(
+                console=console,
+                page_number=0,
+                name_filter=test_name,
+                end_date=current_start_time,  # include tests that ended exactly at the current start_time
+                order_by="end_time",
+                order_direction="desc"
             )
 
-        if not baseline_candidate:
-            return {
-                "error": f"No previous test found with name '{test_name}' before the current test execution",
-                "console": console,
-                "test_id": test_id,
-                "test_name": test_name,
-                "current_start_time": current_start_time
-            }
-        
-        baseline_test_id = baseline_candidate['test_id']
-        logger.info("Found baseline test: '%s'", baseline_test_id)
-        
+            baseline_entry = baseline_tests.get('tests_in_page', [])
+            if baseline_entry:
+                baseline_candidate = baseline_entry[0]
+            else:
+                baseline_candidate = _find_previous_test_by_name(
+                    test_name=test_name,
+                    before_start_time=current_start_time,
+                    console=console
+                )
+
+            if not baseline_candidate:
+                return {
+                    "error": f"No previous test found with name '{test_name}' before the current test execution",
+                    "console": console,
+                    "test_id": test_id,
+                    "test_name": test_name,
+                    "current_start_time": current_start_time
+                }
+
+            baseline_test_id = baseline_candidate['test_id']
+            logger.info("Found baseline test: '%s'", baseline_test_id)
+
         # Step 3: Get all simulations for both tests
+        assert baseline_test_id is not None  # resolved by explicit id or auto-selection above
         logger.info("Fetching all simulations for baseline test '%s'", baseline_test_id)
         baseline_simulations = _get_all_simulations_from_cache_or_api(baseline_test_id, console)
-        
+
         logger.info("Fetching all simulations for current test '%s'", test_id)
         current_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
-        
+
+        # Step 3b: Filter no-result / internal_fail simulations unless explicitly included
+        baseline_total = len(baseline_simulations)
+        current_total = len(current_simulations)
+        no_result_filtered = 0
+        if not include_no_results:
+            filtered_baseline = [s for s in baseline_simulations if not _is_no_result_status(s.get('status'))]
+            filtered_current = [s for s in current_simulations if not _is_no_result_status(s.get('status'))]
+            no_result_filtered = (baseline_total - len(filtered_baseline)) + (current_total - len(filtered_current))
+            baseline_simulations = filtered_baseline
+            current_simulations = filtered_current
+
         # Step 4: Group simulations by drift_tracking_code
         baseline_by_drift_code = {}
         for sim in baseline_simulations:
             drift_code = sim.get('drift_tracking_code')
             if drift_code:
                 baseline_by_drift_code[drift_code] = sim
-        
+
         current_by_drift_code = {}
         for sim in current_simulations:
             drift_code = sim.get('drift_tracking_code')
             if drift_code:
                 current_by_drift_code[drift_code] = sim
-        
+
         # Step 5: Analyze drift patterns
         baseline_only_codes = set(baseline_by_drift_code.keys()) - set(current_by_drift_code.keys())
         current_only_codes = set(current_by_drift_code.keys()) - set(baseline_by_drift_code.keys())
         shared_codes = set(baseline_by_drift_code.keys()) & set(current_by_drift_code.keys())
-        
-        # Simulations exclusive to baseline test
+
+        # Simulations exclusive to each test (outer sides of the join)
         baseline_only_sims = [baseline_by_drift_code[code]['simulation_id'] for code in baseline_only_codes]
-        
-        # Simulations exclusive to current test
         current_only_sims = [current_by_drift_code[code]['simulation_id'] for code in current_only_codes]
-        
-        # Analyze shared simulations for status drifts
+
+        # Analyze shared simulations for status drifts (inner join)
         drifts_by_types = {}
         for drift_code in shared_codes:
             baseline_sim = baseline_by_drift_code[drift_code]
             current_sim = current_by_drift_code[drift_code]
             baseline_status = baseline_sim['status'].replace("-", "_").lower()
             current_status = current_sim['status'].replace("-", "_").lower()
-            
+
             if baseline_status != current_status:
                 # Found a drift - look up drift type
                 drift_key = f"{baseline_status}-{current_status}"
                 drift_info = drift_types_mapping.get(drift_key, {
                     "type_of_drift": f"from_{baseline_status}_to_{current_status}",
-                    "security_impact": "unknown", 
+                    "security_impact": "unknown",
                     "description": f"Status changed from {baseline_status} to {current_status}",
                     "hint_to_llm": "Review simulation logs and security control events for this drift pattern"
                 })
@@ -1888,36 +1923,80 @@ def sb_get_test_drifts(test_id: str, console: str = "default") -> Dict[str, Any]
                     "former_simulation_id": baseline_sim['simulation_id'],
                     "current_simulation_id": current_sim['simulation_id'],
                 })
-        
-        # Calculate total drifts
+
+        # Calculate total drifts — exclusive sides count only when their include flag is set
         status_drifts = 0
         for _, list_of_drifts in drifts_by_types.items():
             status_drifts += len(list_of_drifts["drifted_simulations"])
 
-        total_drifts = len(baseline_only_sims) + len(current_only_sims) + status_drifts
-        
+        total_drifts = status_drifts
+        if include_baseline_only:
+            total_drifts += len(baseline_only_sims)
+        if include_current_only:
+            total_drifts += len(current_only_sims)
+
+        # Build the applied-filter summary and a hint guiding the agent on how to widen the analysis
+        applied_filters = {
+            "join_mode": "inner",
+            "baseline_selection": "explicit" if explicit_baseline else "auto",
+            "include_baseline_only": include_baseline_only,
+            "include_current_only": include_current_only,
+            "include_no_results": include_no_results,
+        }
+        widen_hints = []
+        if not include_baseline_only and baseline_only_codes:
+            widen_hints.append(
+                f"{len(baseline_only_codes)} simulation(s) exist only in the baseline run and were excluded; "
+                "pass include_baseline_only=True to include them."
+            )
+        if not include_current_only and current_only_codes:
+            widen_hints.append(
+                f"{len(current_only_codes)} simulation(s) exist only in the current run and were excluded; "
+                "pass include_current_only=True to include them."
+            )
+        if not include_no_results and no_result_filtered:
+            widen_hints.append(
+                f"{no_result_filtered} no-result/internal_fail simulation(s) were filtered out; "
+                "pass include_no_results=True to include them."
+            )
+        hint_to_agent = (
+            " ".join(widen_hints)
+            if widen_hints
+            else "Inner-join drift analysis complete; no additional simulations were excluded by the current filters."
+        )
+
         # Prepare result
+        metadata = {
+            "console": console,
+            "current_test_id": test_id,
+            "baseline_test_id": baseline_test_id,
+            "test_name": test_name,
+            "baseline_simulations_count": len(baseline_simulations),
+            "current_simulations_count": len(current_simulations),
+            "shared_drift_codes": len(shared_codes),
+            "baseline_only_count": len(baseline_only_sims),
+            "current_only_count": len(current_only_sims),
+            "no_result_filtered_count": no_result_filtered,
+            "status_drifts": status_drifts,
+            "applied_filters": applied_filters,
+            "analyzed_at": time.time()
+        }
+        # Only surface the exclusive-simulation ID lists when the caller opted in
+        if include_baseline_only:
+            metadata["simulations_exclusive_to_baseline"] = baseline_only_sims
+        if include_current_only:
+            metadata["simulations_exclusive_to_current"] = current_only_sims
+
         result = {
             "total_drifts": total_drifts,
             "drifts": drifts_by_types if drifts_by_types else {},
-            "_metadata": {
-                "console": console,
-                "current_test_id": test_id,
-                "baseline_test_id": baseline_test_id,
-                "test_name": test_name,
-                "baseline_simulations_count": len(baseline_simulations),
-                "current_simulations_count": len(current_simulations),
-                "shared_drift_codes": len(shared_codes),
-                "simulations_exclusive_to_baseline": baseline_only_sims,
-                "simulations_exclusive_to_current": current_only_sims,
-                "status_drifts": status_drifts,
-                "analyzed_at": time.time()
-            }
+            "hint_to_agent": hint_to_agent,
+            "_metadata": metadata
         }
-        
+
         logger.info("Drift analysis complete for test '%s': %d total drifts found", test_id, total_drifts)
         return result
-        
+
     except Exception as e:
         logger.error("Error analyzing test drifts for %s:%s: %s", console, test_id, str(e))
         raise

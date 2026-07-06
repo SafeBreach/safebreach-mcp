@@ -1,6 +1,24 @@
 # Context: SAF-33124 — get_test_drifts two-run comparison + join options
 
-**Status:** Phase 5: Problem Analysis Complete
+**Status:** Implemented — all unit/integration tests green
+
+## Implementation (complete)
+
+- `data_functions.py` `sb_get_test_drifts`: added `baseline_test_id`, `include_baseline_only`,
+  `include_current_only`, `include_no_results`. Explicit `baseline_test_id` skips auto-selection.
+  Added `_NO_RESULT_STATUS_TOKENS` + `_is_no_result_status` helper (matches `no-result`/`no_result`/
+  `INTERNAL_FAIL`). No-result filter applied pre-correlation. Exclusive sides gated + counted only when
+  their flag is set. New `hint_to_agent` + `_metadata` counts (`baseline_only_count`,
+  `current_only_count`, `no_result_filtered_count`, `applied_filters`); exclusive ID lists surfaced
+  only when the include flag is on.
+- `data_server.py` `get_test_drifts_tool`: threaded the four params + rewrote description.
+- Tests: updated `_success`, `_no_drifts`, and the integration workflow test to the new defaults;
+  added 5 tests (explicit baseline skips auto-select, default excludes outer, include-outer flags,
+  no-result filtering, same-id-twice). `CLAUDE.md` updated.
+- Verified: data suite 504 passed; full cross-server 1242 passed (config/data/utilities/playbook/studio),
+  0 failures, e2e deselected.
+
+**Status (original):** Phase 5: Problem Analysis Complete
 **Mode:** Improve existing ticket
 **Ticket:** [SAF-33124](https://safebreach.atlassian.net/browse/SAF-33124) — Task, Medium, Reporter: Yossi Attas
 **Branch:** `feature/SAF-33124-get-test-drifts-two-run-comparison`

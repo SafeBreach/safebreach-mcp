@@ -297,22 +297,38 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
         @self.mcp.tool(
             name="get_test_drifts",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Analyzes drift between the given test and the most recent previous test with the same name.
-            Compares simulation results to identify: (1) simulations exclusive to baseline test, (2) simulations exclusive to current test,
-            (3) simulations with matching drift_tracking_code but different status values.
-            Returns comprehensive drift analysis with security impact classification and detailed metadata for further investigation.
+            description="""Analyzes drift between a current test and a baseline test run.
+            By default the baseline is auto-selected as the most recent previous test with the same name; pass \
+baseline_test_id to compare two specific (arbitrary / non-consecutive) runs — auto-selection, name matching, and \
+time-ordering are then skipped (test_id = current / drift_to, baseline_test_id = baseline / drift_from).
+            Simulations are correlated across the two runs by drift_tracking_code. By DEFAULT this performs an \
+INNER JOIN excluding no-result (internal_fail) simulations, so the result contains only status-transition drifts.
+            Widen the analysis with: include_baseline_only=True (adds simulations exclusive to the baseline run), \
+include_current_only=True (adds simulations exclusive to the current run), include_no_results=True (includes \
+no-result / internal_fail simulations). All three default False. The response hint_to_agent states which filters \
+were applied and how to widen; _metadata always reports baseline_only_count, current_only_count, and \
+no_result_filtered_count so excluded data is discoverable.
             Each drifted simulation includes a drift_tracking_code — use get_simulation_lineage to trace its full history across all test runs.
-            Parameters: console (required), test_id (required - the test to analyze for drifts).
+            Parameters: test_id (required - the current test), console, baseline_test_id (optional explicit baseline), \
+include_baseline_only, include_current_only, include_no_results.
             Note: For time-window-based drift analysis across all tests (not comparing two specific test runs), \
 use get_simulation_result_drifts or get_simulation_status_drifts instead."""
         )
         async def get_test_drifts_tool(
             test_id: str,
-            console: str = "default"
+            console: str = "default",
+            baseline_test_id: Optional[str] = None,
+            include_baseline_only: bool = False,
+            include_current_only: bool = False,
+            include_no_results: bool = False
         ) -> dict:
             return sb_get_test_drifts(
                 test_id=test_id,
-                console=console
+                console=console,
+                baseline_test_id=baseline_test_id,
+                include_baseline_only=include_baseline_only,
+                include_current_only=include_current_only,
+                include_no_results=include_no_results
             )
 
         @self.mcp.tool(

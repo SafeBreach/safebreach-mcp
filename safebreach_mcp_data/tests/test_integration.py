@@ -1115,9 +1115,12 @@ class TestDriftAnalysisIntegration:
         mock_get.side_effect = mock_response_selector
         mock_post.side_effect = mock_post_response_selector
         
-        # Execute drift analysis
-        result = sb_get_test_drifts('test-current-123', 'integration-console')
-        
+        # Execute drift analysis — opt into the outer sides to exercise the full comparison
+        result = sb_get_test_drifts(
+            'test-current-123', 'integration-console',
+            include_baseline_only=True, include_current_only=True
+        )
+
         # Verify comprehensive results
         assert isinstance(result, dict)
         assert 'total_drifts' in result
