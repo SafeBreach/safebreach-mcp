@@ -107,3 +107,34 @@ no-result sims are never filtered, so callers can't scope noise down to a clean 
 
 ### Dependencies
 - None external; self-contained in Data Server. Reuses existing sim-fetch + cache path.
+
+## Parameter Convention Audit (cross-tool)
+
+Audited param naming/semantics across all `*_server.py` / `*_functions.py` to keep the new params
+consistent. Findings:
+
+- **Boolean toggles**: universally `include_<noun>`, default `False` (e.g. `include_drift_count`
+  `data_server.py:114`, `include_mitre_techniques` `:186`, `include_drift_info` `:188`,
+  `include_basic_attack_logs` `:187`). Only `include_logs` defaults True.
+- **Two-id comparison**: `get_test_drifts` is the ONLY two-test comparison; today it exposes just
+  `test_id` (= *current*) and auto-discovers baseline. Internal vars are `baseline_test_id` /
+  `current_test_id` (`data_functions.py:1826,1834`); output keys `simulations_exclusive_to_baseline`
+  / `_to_current` (`:1911–1912`); drift direction `drift_from`(baseline)→`drift_to`(current)
+  (`:1760–1761`). **No `_a/_b`, no `from_test_id/to_test_id`, no `left/right` anywhere.**
+- **Transition params (time-window tools)** use `from_*`/`to_*` (`from_status`/`to_status` `:531`,
+  `from_final_status`/`to_final_status` `:617`) — that's for *status* transitions, not test ids.
+- **no-result terminology**: status string `"no-result"` (hyphen) in output/API (`data_types.py:125,129`);
+  `"no_result"` (underscore) in drift keys (`drifts_metadata.py`). No existing no-result inclusion param.
+- **Filters** use `_filter` suffix; include/exclude filter pair precedent = `include_test_ids_filter` /
+  `exclude_test_ids_filter` (`data_server.py:869–870`).
+
+### Reconciliation applied to this ticket
+| Original proposal | Issue vs conventions | Final name |
+|---|---|---|
+| `second_test_id` | no two-id precedent; `baseline/current` is the established vocab; `test_id` is already *current* | `baseline_test_id` |
+| `include_outer_left` | no `left/right` suffix in repo | `include_baseline_only` |
+| `include_outer_right` | no `left/right` suffix in repo | `include_current_only` |
+| `include_no_results` | already matches `include_<plural_noun>`/default False | `include_no_results` (kept) |
+
+**Semantic correction**: `test_id` stays the *current* (later) run — earlier draft wrongly framed it as
+"first/left". `baseline_test_id` is the run compared against, preserving `drift_from`→`drift_to` direction.
