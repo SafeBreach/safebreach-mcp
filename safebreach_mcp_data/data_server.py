@@ -301,21 +301,23 @@ verbosity_level (default 'standard', options: 'minimal', 'standard', 'detailed',
             By default the baseline is auto-selected as the most recent previous test with the same name; pass \
 baseline_test_id to compare two specific (arbitrary / non-consecutive) runs — auto-selection, name matching, and \
 time-ordering are then skipped (test_id = current / drift_to, baseline_test_id = baseline / drift_from).
-            Simulations are correlated across the two runs by drift_tracking_code. By DEFAULT this performs an \
-INNER JOIN excluding no-result (internal_fail) simulations, so the result contains only status-transition drifts.
+            Simulations are correlated across the two runs by drift_tracking_code.
             IMPORTANT: total_drifts counts GENUINE STATUS TRANSITIONS ONLY (a matched simulation whose status \
 changed between runs). Simulations that exist in only one run reflect a changed test scope, are NOT drifts, and \
 never inflate total_drifts — they are reported separately under exclusive_simulations / summary.
-            Widen the analysis with: include_baseline_only=True (adds a baseline-exclusive attack breakdown), \
-include_current_only=True (adds a current-exclusive attack breakdown), include_no_results=True (includes \
-no-result / internal_fail simulations). All three default False.
+            No-result (internal_fail) status transitions are INCLUDED BY DEFAULT (include_no_results=True) — \
+excluding them once hid the majority of drifts, including critical loss-of-visibility transitions like \
+prevented->no_result. Pass include_no_results=False to exclude them; the hidden count is still reported as \
+summary.hidden_no_result_drift_count with a loud hint (never silently truncated).
+            Widen scope with: include_baseline_only=True (baseline-exclusive attack breakdown), \
+include_current_only=True (current-exclusive attack breakdown). Both default False.
             Response shape: total_drifts (status transitions); drifts (grouped by transition, each drifted \
 simulation carries attack_id + attack_name so it is actionable without a follow-up call, and each group has \
 former_status/current_status/security_impact); summary (stable filter-independent counts: status_drifts, \
-baseline_only_count, current_only_count, no_result_filtered_count, baseline_total_simulations, \
-current_total_simulations, shared_simulations); exclusive_simulations (only when the corresponding flag is set — a \
-per-attack breakdown + capped sample + pointer to get_test_simulations for the full list, NOT a raw ID dump); \
-hint_to_agent; _metadata (identity + applied_filters).
+hidden_no_result_drift_count, baseline_only_count, current_only_count, no_result_filtered_count, \
+baseline_total_simulations, current_total_simulations, shared_simulations); exclusive_simulations (only when the \
+corresponding flag is set — a per-attack breakdown + capped sample + pointer to get_test_simulations for the full \
+list, NOT a raw ID dump); hint_to_agent; _metadata (identity + applied_filters).
             Each drifted simulation includes a drift_tracking_code — use get_simulation_lineage to trace its full history across all test runs.
             Parameters: test_id (required - the current test), console, baseline_test_id (optional explicit baseline), \
 include_baseline_only, include_current_only, include_no_results.
@@ -328,7 +330,7 @@ use get_simulation_result_drifts or get_simulation_status_drifts instead."""
             baseline_test_id: Optional[str] = None,
             include_baseline_only: bool = False,
             include_current_only: bool = False,
-            include_no_results: bool = False
+            include_no_results: bool = True
         ) -> dict:
             return sb_get_test_drifts(
                 test_id=test_id,

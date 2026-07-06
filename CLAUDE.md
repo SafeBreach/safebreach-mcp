@@ -351,19 +351,21 @@ Rate limiting environment variables:
   type classification and security impact assessment. By default the baseline is auto-selected (most recent
   prior test with the same name); pass **`baseline_test_id`** to compare two arbitrary/non-consecutive runs
   (auto-selection, name matching, and time-ordering are then skipped — `test_id`=current/`drift_to`,
-  `baseline_test_id`=baseline/`drift_from`). Simulations are correlated by `drift_tracking_code`. **Default =
-  INNER JOIN with no-result (`internal_fail`) simulations excluded** (SAF-33124). Widen with
-  **`include_baseline_only`** (adds `simulations_exclusive_to_baseline`), **`include_current_only`** (adds
-  `simulations_exclusive_to_current`), **`include_no_results`** (retains no-result/internal_fail sims) — all
-  default False. **`total_drifts` counts genuine status transitions ONLY** — simulations exclusive to one run
+  `baseline_test_id`=baseline/`drift_from`). Simulations are correlated by `drift_tracking_code`.
+  **`include_no_results` defaults to True** (SAF-33124 field feedback: excluding no-result/`internal_fail`
+  transitions once hid the majority of drifts, incl. critical loss-of-visibility transitions like
+  `prevented→no_result`); pass `False` to exclude, and the excluded count is still surfaced as
+  `summary.hidden_no_result_drift_count` with a loud hint — never silently truncated. Widen scope with
+  **`include_baseline_only`** / **`include_current_only`** (per-attack breakdowns of run-exclusive sims; both
+  default False). **`total_drifts` counts genuine status transitions ONLY** — simulations exclusive to one run
   reflect a changed test scope, are NOT drifts, and never inflate the headline (they live under
   `exclusive_simulations` / `summary`). Each drifted simulation carries inline `attack_id` + `attack_name` (so a
   drift is actionable without a per-simulation follow-up), and each transition group has
   `former_status`/`current_status`/`security_impact`. A `summary` block reports stable, filter-independent counts
-  (`status_drifts`, `baseline_only_count`, `current_only_count`, `no_result_filtered_count`,
-  `baseline_total_simulations`, `current_total_simulations`, `shared_simulations`). When an `include_*_only` flag
-  is set, `exclusive_simulations` gives a per-attack breakdown + capped sample + pointer to `get_test_simulations`
-  (not a raw ID dump, which does not scale). `hint_to_agent` states which filters were applied and how to widen
+  (`status_drifts`, `hidden_no_result_drift_count`, `baseline_only_count`, `current_only_count`,
+  `no_result_filtered_count`, `baseline_total_simulations`, `current_total_simulations`, `shared_simulations`).
+  When an `include_*_only` flag is set, `exclusive_simulations` gives a per-attack breakdown + capped sample +
+  pointer to `get_test_simulations` (not a raw ID dump, which does not scale). `hint_to_agent` states applied filters
 12. `get_full_simulation_logs` ✨ **Enhanced** - Retrieves comprehensive execution logs with role-based structure: `target` (always present) and `attacker` (present for dual-script exfil/infil/lateral attacks, null for host attacks). Each role contains ~40KB LOGS, simulation_steps, error, output, os_type, and state. Now fetches via the **data v3 result endpoint with `includeLogs=true`** (v1 fallback on older consoles) and returns `logs_embedded`: **true = old-format simulation whose logs exist ONLY in this embedded blob (NOT in the logs index)** — for those sims do NOT use `get_paginated_simulation_logs`/`search_simulation_logs` (they return empty); this tool is the correct source. For deep troubleshooting, forensic analysis, step-by-step execution analysis, and detailed log correlation
 12a. `get_paginated_simulation_logs` ✨ **NEW** - Paginated, filterable logs for ONE simulation from the data v3 `/simulationLogs` endpoint. **Logs are a last resort** — inspect the simulation object + steps (`get_test_simulation_details`) first; pull logs only when those are insufficient, and smartly by severity (FAILED sims start `min_level=ERROR`, then widen; SUCCESS sims start INFO). Params: `simulation_id` (required), `page`/`page_size` (max 1000, `page*page_size`≤10000), `min_level` (threshold, default INFO) or explicit pipe-delimited `levels`, `message_contains`, `start_time`/`end_time` (ISO-8601 or epoch ms), `log_type` (LOGS/OUTPUT/ALL), `sort_order` (asc/desc), `node_id` (scope to one simulator node of the attack — e.g. attacker vs target, from `get_test_simulation_details`), `console`. Returns `{ logs, total, total_capped, page, page_size, has_more }`. Cached ~10 min. For the full ~40KB embedded blob / old-format sims (`logs_embedded=true`), use `get_full_simulation_logs`.
 12b. `search_simulation_logs` ✨ **NEW** - Cross-simulation / fleet-wide log search over the same endpoint (e.g. "every ERROR containing X in the last day"). Pass pipe-delimited `simulation_ids` to scope, or omit to search ALL simulations. Same filters/pagination as `get_paginated_simulation_logs`. Note: returns log **lines** and `total` counts lines, not simulations — to count distinct simulations, dedupe the per-line `jobId` (exact only within the ~10k offset ceiling; no server-side aggregation). `total_capped=true` flags when `total` hit the Elasticsearch 10k cap (lower bound, not exact) — narrow filters and dedupe `jobId` rather than trusting the count.
@@ -538,9 +540,9 @@ All filters work in combination and include pagination support. The response inc
 **Test-Run-Centric Tools:**
 - `get_test_simulations(..., drifted_only=True)` - Filter drifted simulations within a single test
 - `get_simulation_details(..., include_drift_info=True)` - Get drift details for a specific simulation
-- `get_test_drifts(console, test_id, baseline_test_id=None, include_baseline_only=False, include_current_only=False, include_no_results=False)`
-  - Compare a test against an auto-selected previous run, or against an explicit `baseline_test_id`; inner-join by
-    default (no-results excluded), widen via the `include_*` flags
+- `get_test_drifts(console, test_id, baseline_test_id=None, include_baseline_only=False, include_current_only=False, include_no_results=True)`
+  - Compare a test against an auto-selected previous run, or against an explicit `baseline_test_id`. Correlates by
+    `drift_tracking_code`; no-result transitions included by default; run-exclusive breakdowns via `include_*_only`
 
 **Time-Window-Based Tools (SAF-28330):**
 - `get_simulation_result_drifts(console, window_start, window_end)` - **Posture view**: groups drifts

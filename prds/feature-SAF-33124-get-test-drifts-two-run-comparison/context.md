@@ -17,6 +17,15 @@ Triaged feedback from a live at-scale session. In-scope fixes applied to the two
   a per-attack breakdown + capped sample (`_EXCLUSIVE_SIM_SAMPLE_CAP=50`) + pointer to
   `get_test_simulations`, instead of a flat multi-thousand ID dump (payload scale fix).
 
+### v2.1 — default flip (2nd round of field feedback)
+
+A re-test surfaced that excluding no-results by default hid ~88% of genuine status drifts (27 shown vs
+215 total in one env), incl. critical `prevented→no_result` loss-of-visibility transitions. Decision
+(reverses the earlier ticket-approved default): **`include_no_results` now defaults to True.** No-result
+sims are always correlated; passing `include_no_results=False` excludes them but always reports
+`summary.hidden_no_result_drift_count` with a loud hint (never silent). Removed the `*_considered`
+counts (we no longer pre-filter). JIRA updated via comment.
+
 Deferred (pre-existing / global, not SAF-33124 regressions): #4 `console="default"` discovery error
 (cross-cutting across all 20+ tools) and #5 `stopped→no_result` = "negative" taxonomy label
 (`drifts_metadata.py`, product judgment; less prominent now that no-results are excluded by default).

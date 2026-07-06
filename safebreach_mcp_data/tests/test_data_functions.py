@@ -2854,20 +2854,24 @@ class TestDataFunctions:
 
         mock_get_sims.side_effect = side_effect
 
-        # Default: both no-result sims filtered → track-001 & track-002 each lose one side,
-        # so no shared codes remain → 0 drifts, and the hint mentions the filtered count.
+        # Default (include_no_results=True): both codes shared with a no-result transition → 2 drifts.
         result = sb_get_test_drifts('test-current-123', 'test-console')
-        assert result['summary']['no_result_filtered_count'] == 2
-        assert result['total_drifts'] == 0
-        assert 'include_no_results=True' in result['hint_to_agent']
-
-        # Opt in: no-result sims retained → both codes shared with differing status → 2 drifts
-        result = sb_get_test_drifts(
-            'test-current-123', 'test-console', include_no_results=True
-        )
-        assert result['summary']['no_result_filtered_count'] == 0
         assert result['total_drifts'] == 2
+        assert result['summary']['hidden_no_result_drift_count'] == 0
+        assert result['summary']['no_result_filtered_count'] == 0
         # Stable totals are independent of the no-result filter
+        assert result['summary']['baseline_total_simulations'] == 2
+        assert result['summary']['current_total_simulations'] == 2
+
+        # Opt out: the no-result transitions are hidden but counted (never silently truncated).
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console', include_no_results=False
+        )
+        assert result['total_drifts'] == 0
+        assert result['summary']['hidden_no_result_drift_count'] == 2
+        assert 'include_no_results=True' in result['hint_to_agent']
+        assert 'HIDDEN' in result['hint_to_agent']
+        # Stable totals unchanged regardless of the flag
         assert result['summary']['baseline_total_simulations'] == 2
         assert result['summary']['current_total_simulations'] == 2
 

@@ -708,31 +708,29 @@ class TestDataServerE2E:
 
     @pytest.mark.e2e
     def test_drift_include_no_results_effect_e2e(self, e2e_console, drift_pair):
-        """SAF-33124: include_no_results retains no-result sims; default filters them out."""
+        """SAF-33124: no-results included by default; opting out hides them but counts them."""
         current, baseline = drift_pair["current_test_id"], drift_pair["baseline_test_id"]
 
+        # Default now INCLUDES no-result transitions.
         default_res = sb_get_test_drifts(current, console=e2e_console, baseline_test_id=baseline)
-        with_nr = sb_get_test_drifts(
-            current, console=e2e_console, baseline_test_id=baseline, include_no_results=True,
+        excluded = sb_get_test_drifts(
+            current, console=e2e_console, baseline_test_id=baseline, include_no_results=False,
         )
-        assert "error" not in default_res and "error" not in with_nr
-        d_sum, n_sum = default_res["summary"], with_nr["summary"]
+        assert "error" not in default_res and "error" not in excluded
+        d_sum, e_sum = default_res["summary"], excluded["summary"]
 
-        # When no-results are included, nothing is filtered.
-        assert n_sum["no_result_filtered_count"] == 0
-        assert with_nr["_metadata"]["applied_filters"]["include_no_results"] is True
+        # Default: nothing hidden; the include flag is on.
+        assert default_res["_metadata"]["applied_filters"]["include_no_results"] is True
+        assert d_sum["hidden_no_result_drift_count"] == 0
         # Stable totals are filter-independent — identical across both calls.
-        assert n_sum["baseline_total_simulations"] == d_sum["baseline_total_simulations"]
-        assert n_sum["current_total_simulations"] == d_sum["current_total_simulations"]
-        # Filtering can only remove simulations, so considered counts are >= the default path's.
-        assert n_sum["baseline_considered_simulations"] >= d_sum["baseline_considered_simulations"]
-        assert n_sum["current_considered_simulations"] >= d_sum["current_considered_simulations"]
-        # The default-path filtered count equals the difference it removed from the two runs.
-        removed = (
-            (n_sum["baseline_considered_simulations"] - d_sum["baseline_considered_simulations"])
-            + (n_sum["current_considered_simulations"] - d_sum["current_considered_simulations"])
-        )
-        assert d_sum["no_result_filtered_count"] == removed
+        assert e_sum["baseline_total_simulations"] == d_sum["baseline_total_simulations"]
+        assert e_sum["current_total_simulations"] == d_sum["current_total_simulations"]
+        # Excluding can only drop drifts: the default's status_drifts >= the excluded path's,
+        # and the difference is exactly what the excluded path reports as hidden.
+        assert d_sum["status_drifts"] >= e_sum["status_drifts"]
+        assert e_sum["hidden_no_result_drift_count"] == d_sum["status_drifts"] - e_sum["status_drifts"]
+        if e_sum["hidden_no_result_drift_count"] > 0:
+            assert "HIDDEN" in excluded["hint_to_agent"]
 
     @pytest.mark.e2e
     def test_drift_same_id_twice_e2e(self, e2e_console, drift_pair):
