@@ -529,10 +529,41 @@ class TestDataServerE2E:
                 assert "former_simulation_id" in drifted_sim
                 assert "current_simulation_id" in drifted_sim
 
+        # SAF-33124: default is an inner join — exclusive ID lists are gated, counts always present.
+        assert isinstance(metadata.get("baseline_only_count"), int)
+        assert isinstance(metadata.get("current_only_count"), int)
+        assert isinstance(metadata.get("no_result_filtered_count"), int)
+        assert "simulations_exclusive_to_baseline" not in metadata
+        assert "simulations_exclusive_to_current" not in metadata
+        assert metadata["applied_filters"]["baseline_selection"] == "auto"
+        assert "hint_to_agent" in result
+
+        # SAF-33124: explicit baseline_test_id (discovered earlier run) skips auto-selection,
+        # and the include_* flags widen the join. Self-discovering — no hardcoded IDs.
+        discovered_baseline_id = metadata["baseline_test_id"]
+        widened = sb_get_test_drifts(
+            current_test_id,
+            console=e2e_console,
+            baseline_test_id=discovered_baseline_id,
+            include_baseline_only=True,
+            include_current_only=True,
+            include_no_results=True,
+        )
+        assert "error" not in widened, widened.get("error")
+        w_meta = widened["_metadata"]
+        # Explicit baseline is honored verbatim and flagged as explicit.
+        assert w_meta["baseline_test_id"] == discovered_baseline_id
+        assert w_meta["applied_filters"]["baseline_selection"] == "explicit"
+        assert w_meta["applied_filters"]["include_no_results"] is True
+        # With both outer flags on, the exclusive ID lists are surfaced.
+        assert isinstance(w_meta.get("simulations_exclusive_to_baseline"), list)
+        assert isinstance(w_meta.get("simulations_exclusive_to_current"), list)
+
         print("\n=== E2E Drift Analysis (discovered) ===")
         print(f"Test name: {target_name}")
         print(f"Current test: {current_test_id}, baseline: {metadata.get('baseline_test_id')}")
-        print(f"Total drifts: {result['total_drifts']}")
+        print(f"Total drifts (default inner join): {result['total_drifts']}")
+        print(f"Total drifts (explicit baseline + all flags): {widened['total_drifts']}")
         print("========================================\n")
 
     @pytest.mark.e2e
