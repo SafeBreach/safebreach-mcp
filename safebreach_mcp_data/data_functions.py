@@ -1746,6 +1746,49 @@ def _is_no_result_status(status: Any) -> bool:
     return str(status or "").replace("-", "_").lower() in _NO_RESULT_STATUS_TOKENS
 
 
+# Cap on the number of exclusive simulations echoed inline before pointing the caller at
+# get_test_simulations for the full enumerable list. Keeps the payload bounded at scale.
+_EXCLUSIVE_SIM_SAMPLE_CAP = 50
+
+
+def _summarize_exclusive_sims(codes, by_drift_code, source_test_id: str) -> Dict[str, Any]:
+    """Summarize simulations exclusive to one run as an attack breakdown + capped sample.
+
+    A flat dump of thousands of raw simulation IDs does not scale and is not actionable
+    without attack identity. Instead we return: a total count, a per-attack-name breakdown
+    (sorted by frequency), a capped sample carrying attack identity, a truncated flag, and a
+    hint routing to get_test_simulations for the full list.
+    """
+    sims = [by_drift_code[code] for code in codes]
+    by_attack: Dict[str, int] = {}
+    for s in sims:
+        name = s.get('playbook_attack_name')
+        attack_id = s.get('playbook_attack_id')
+        key = name or (f"attack_id:{attack_id}" if attack_id is not None else "unknown")
+        by_attack[key] = by_attack.get(key, 0) + 1
+
+    sample = [
+        {
+            "simulation_id": s['simulation_id'],
+            "attack_id": s.get('playbook_attack_id'),
+            "attack_name": s.get('playbook_attack_name'),
+        }
+        for s in sims[:_EXCLUSIVE_SIM_SAMPLE_CAP]
+    ]
+
+    return {
+        "count": len(sims),
+        "by_attack": dict(sorted(by_attack.items(), key=lambda kv: kv[1], reverse=True)),
+        "sample_simulations": sample,
+        "truncated": len(sims) > _EXCLUSIVE_SIM_SAMPLE_CAP,
+        "hint_to_agent": (
+            f"Full list available via get_test_simulations(test_id='{source_test_id}'); "
+            "sample capped at "
+            f"{_EXCLUSIVE_SIM_SAMPLE_CAP}."
+        ),
+    }
+
+
 def sb_get_test_drifts(
     test_id: str,
     console: str = "default",
@@ -1888,11 +1931,13 @@ def sb_get_test_drifts(
         current_only_codes = set(current_by_drift_code.keys()) - set(baseline_by_drift_code.keys())
         shared_codes = set(baseline_by_drift_code.keys()) & set(current_by_drift_code.keys())
 
-        # Simulations exclusive to each test (outer sides of the join)
-        baseline_only_sims = [baseline_by_drift_code[code]['simulation_id'] for code in baseline_only_codes]
-        current_only_sims = [current_by_drift_code[code]['simulation_id'] for code in current_only_codes]
+        baseline_only_count = len(baseline_only_codes)
+        current_only_count = len(current_only_codes)
 
-        # Analyze shared simulations for status drifts (inner join)
+        # Analyze shared simulations for status drifts (inner join). This is the ONLY set that
+        # counts as a genuine "drift": a matched simulation whose status changed between runs.
+        # Simulations exclusive to one run are NOT drifts (they reflect a changed test scope),
+        # so they are reported separately and never inflate total_drifts (SAF-33124 / feedback).
         drifts_by_types = {}
         for drift_code in shared_codes:
             baseline_sim = baseline_by_drift_code[drift_code]
@@ -1913,29 +1958,41 @@ def sb_get_test_drifts(
                 if drift_key not in drifts_by_types:
                     drifts_by_types[drift_key] = {
                         "drift_type": drift_key,
+                        "former_status": baseline_status,
+                        "current_status": current_status,
                         "security_impact": drift_info.get("security_impact", "unknown"),
                         "description": drift_info.get("description", f"Status changed from {baseline_status} to {current_status}"),
                         "drifted_simulations": []
                     }
 
+                # Inline attack identity so a drift is actionable without a per-simulation follow-up call.
                 drifts_by_types[drift_key]["drifted_simulations"].append({
                     "drift_tracking_code": drift_code,
+                    "attack_id": current_sim.get('playbook_attack_id') or baseline_sim.get('playbook_attack_id'),
+                    "attack_name": current_sim.get('playbook_attack_name') or baseline_sim.get('playbook_attack_name'),
                     "former_simulation_id": baseline_sim['simulation_id'],
                     "current_simulation_id": current_sim['simulation_id'],
                 })
 
-        # Calculate total drifts — exclusive sides count only when their include flag is set
-        status_drifts = 0
-        for _, list_of_drifts in drifts_by_types.items():
-            status_drifts += len(list_of_drifts["drifted_simulations"])
-
+        # total_drifts = genuine status transitions ONLY (headline no longer inflated by scope changes)
+        status_drifts = sum(len(g["drifted_simulations"]) for g in drifts_by_types.values())
         total_drifts = status_drifts
-        if include_baseline_only:
-            total_drifts += len(baseline_only_sims)
-        if include_current_only:
-            total_drifts += len(current_only_sims)
 
-        # Build the applied-filter summary and a hint guiding the agent on how to widen the analysis
+        # Stable, filter-independent simulation totals (answer "how many ran" unambiguously).
+        # *_total_simulations are the raw per-run counts before no-result filtering; *_considered
+        # are what remained after the current filter and were actually correlated.
+        summary = {
+            "status_drifts": status_drifts,
+            "baseline_only_count": baseline_only_count,
+            "current_only_count": current_only_count,
+            "no_result_filtered_count": no_result_filtered,
+            "shared_simulations": len(shared_codes),
+            "baseline_total_simulations": baseline_total,
+            "current_total_simulations": current_total,
+            "baseline_considered_simulations": len(baseline_simulations),
+            "current_considered_simulations": len(current_simulations),
+        }
+
         applied_filters = {
             "join_mode": "inner",
             "baseline_selection": "explicit" if explicit_baseline else "auto",
@@ -1943,58 +2000,57 @@ def sb_get_test_drifts(
             "include_current_only": include_current_only,
             "include_no_results": include_no_results,
         }
-        widen_hints = []
-        if not include_baseline_only and baseline_only_codes:
-            widen_hints.append(
-                f"{len(baseline_only_codes)} simulation(s) exist only in the baseline run and were excluded; "
-                "pass include_baseline_only=True to include them."
+
+        # Exclusive (outer) sides: summarized with an attack breakdown + capped sample instead of a
+        # raw ID dump, which does not scale (thousands of IDs). Only surfaced when opted in; the
+        # full enumerable list lives in get_test_simulations for the corresponding run.
+        exclusive_simulations = {}
+        if include_baseline_only:
+            exclusive_simulations["baseline_only"] = _summarize_exclusive_sims(
+                baseline_only_codes, baseline_by_drift_code, baseline_test_id
             )
-        if not include_current_only and current_only_codes:
+        if include_current_only:
+            exclusive_simulations["current_only"] = _summarize_exclusive_sims(
+                current_only_codes, current_by_drift_code, test_id
+            )
+
+        # Hint guiding the agent on how to interpret/widen the analysis
+        widen_hints = ["total_drifts counts genuine status transitions only (not scope changes)."]
+        if not include_baseline_only and baseline_only_count:
             widen_hints.append(
-                f"{len(current_only_codes)} simulation(s) exist only in the current run and were excluded; "
-                "pass include_current_only=True to include them."
+                f"{baseline_only_count} simulation(s) exist only in the baseline run (excluded); "
+                "pass include_baseline_only=True for an attack breakdown."
+            )
+        if not include_current_only and current_only_count:
+            widen_hints.append(
+                f"{current_only_count} simulation(s) exist only in the current run (excluded); "
+                "pass include_current_only=True for an attack breakdown."
             )
         if not include_no_results and no_result_filtered:
             widen_hints.append(
                 f"{no_result_filtered} no-result/internal_fail simulation(s) were filtered out; "
                 "pass include_no_results=True to include them."
             )
-        hint_to_agent = (
-            " ".join(widen_hints)
-            if widen_hints
-            else "Inner-join drift analysis complete; no additional simulations were excluded by the current filters."
-        )
-
-        # Prepare result
-        metadata = {
-            "console": console,
-            "current_test_id": test_id,
-            "baseline_test_id": baseline_test_id,
-            "test_name": test_name,
-            "baseline_simulations_count": len(baseline_simulations),
-            "current_simulations_count": len(current_simulations),
-            "shared_drift_codes": len(shared_codes),
-            "baseline_only_count": len(baseline_only_sims),
-            "current_only_count": len(current_only_sims),
-            "no_result_filtered_count": no_result_filtered,
-            "status_drifts": status_drifts,
-            "applied_filters": applied_filters,
-            "analyzed_at": time.time()
-        }
-        # Only surface the exclusive-simulation ID lists when the caller opted in
-        if include_baseline_only:
-            metadata["simulations_exclusive_to_baseline"] = baseline_only_sims
-        if include_current_only:
-            metadata["simulations_exclusive_to_current"] = current_only_sims
+        hint_to_agent = " ".join(widen_hints)
 
         result = {
             "total_drifts": total_drifts,
             "drifts": drifts_by_types if drifts_by_types else {},
+            "summary": summary,
             "hint_to_agent": hint_to_agent,
-            "_metadata": metadata
+            "_metadata": {
+                "console": console,
+                "current_test_id": test_id,
+                "baseline_test_id": baseline_test_id,
+                "test_name": test_name,
+                "applied_filters": applied_filters,
+                "analyzed_at": time.time()
+            }
         }
+        if exclusive_simulations:
+            result["exclusive_simulations"] = exclusive_simulations
 
-        logger.info("Drift analysis complete for test '%s': %d total drifts found", test_id, total_drifts)
+        logger.info("Drift analysis complete for test '%s': %d status drifts found", test_id, total_drifts)
         return result
 
     except Exception as e:

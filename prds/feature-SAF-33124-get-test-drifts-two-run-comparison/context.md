@@ -1,6 +1,27 @@
 # Context: SAF-33124 — get_test_drifts two-run comparison + join options
 
-**Status:** Implemented — all unit/integration tests green
+**Status:** Implemented + v2 refinement from field feedback — all unit/integration + E2E green
+
+## v2 refinement (Claude Desktop field feedback, at-scale use)
+
+Triaged feedback from a live at-scale session. In-scope fixes applied to the two-run feature:
+- **total_drifts = genuine status transitions ONLY** — exclusive (scope-change) sims no longer inflate
+  the headline (was 6,826 vs 27 real). They live under `summary`/`exclusive_simulations`.
+- **Inline attack identity** — each drifted simulation now carries `attack_id` + `attack_name` (data was
+  already on the reduced sim via `moveId`/`moveName`); each transition group carries
+  `former_status`/`current_status`. Removes the per-sim follow-up round-trips.
+- **Stable `summary` block** — filter-independent `baseline_total_simulations`/`current_total_simulations`
+  plus `*_considered`, `shared_simulations`, and the three exclusion counts. Answers "how many ran"
+  unambiguously regardless of flags.
+- **Exclusive lists summarized, not dumped** — `exclusive_simulations.{baseline_only,current_only}` gives
+  a per-attack breakdown + capped sample (`_EXCLUSIVE_SIM_SAMPLE_CAP=50`) + pointer to
+  `get_test_simulations`, instead of a flat multi-thousand ID dump (payload scale fix).
+
+Deferred (pre-existing / global, not SAF-33124 regressions): #4 `console="default"` discovery error
+(cross-cutting across all 20+ tools) and #5 `stopped→no_result` = "negative" taxonomy label
+(`drifts_metadata.py`, product judgment; less prominent now that no-results are excluded by default).
+
+## Implementation (complete)
 
 ## Implementation (complete)
 

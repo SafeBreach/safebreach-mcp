@@ -587,28 +587,36 @@ class TestDataServerE2E:
         assert metadata["current_test_id"] == current_test_id
         assert metadata["test_name"] == target_name
         assert "baseline_test_id" in metadata
-        assert isinstance(metadata.get("baseline_simulations_count"), int)
-        assert isinstance(metadata.get("current_simulations_count"), int)
         assert "analyzed_at" in metadata
 
-        # Each drift entry is well-formed; security impacts come from the valid set.
+        # Summary carries the stable, filter-independent counts.
+        summary = result["summary"]
+        assert isinstance(summary.get("baseline_total_simulations"), int)
+        assert isinstance(summary.get("current_total_simulations"), int)
+        assert isinstance(summary.get("status_drifts"), int)
+        # total_drifts is exactly the genuine status-transition count (not inflated by scope).
+        assert result["total_drifts"] == summary["status_drifts"]
+
+        # Each drift entry is well-formed; security impacts come from the valid set; attack identity inline.
         valid_impacts = {"positive", "negative", "neutral", "unknown"}
         for drift_type, drift_info in result["drifts"].items():
             assert "drift_type" in drift_info
+            assert "former_status" in drift_info and "current_status" in drift_info
             assert "security_impact" in drift_info
             assert drift_info["security_impact"] in valid_impacts
             assert "drifted_simulations" in drift_info
             for drifted_sim in drift_info["drifted_simulations"]:
                 assert "drift_tracking_code" in drifted_sim
+                assert "attack_id" in drifted_sim
+                assert "attack_name" in drifted_sim
                 assert "former_simulation_id" in drifted_sim
                 assert "current_simulation_id" in drifted_sim
 
-        # SAF-33124: default is an inner join — exclusive ID lists are gated, counts always present.
-        assert isinstance(metadata.get("baseline_only_count"), int)
-        assert isinstance(metadata.get("current_only_count"), int)
-        assert isinstance(metadata.get("no_result_filtered_count"), int)
-        assert "simulations_exclusive_to_baseline" not in metadata
-        assert "simulations_exclusive_to_current" not in metadata
+        # SAF-33124: default is an inner join — exclusive block is gated, counts always in summary.
+        assert isinstance(summary.get("baseline_only_count"), int)
+        assert isinstance(summary.get("current_only_count"), int)
+        assert isinstance(summary.get("no_result_filtered_count"), int)
+        assert "exclusive_simulations" not in result
         assert metadata["applied_filters"]["baseline_selection"] == "auto"
         assert "hint_to_agent" in result
 
@@ -629,9 +637,12 @@ class TestDataServerE2E:
         assert w_meta["baseline_test_id"] == discovered_baseline_id
         assert w_meta["applied_filters"]["baseline_selection"] == "explicit"
         assert w_meta["applied_filters"]["include_no_results"] is True
-        # With both outer flags on, the exclusive ID lists are surfaced.
-        assert isinstance(w_meta.get("simulations_exclusive_to_baseline"), list)
-        assert isinstance(w_meta.get("simulations_exclusive_to_current"), list)
+        # total_drifts stays the genuine status-transition count even with outer flags on.
+        assert widened["total_drifts"] == widened["summary"]["status_drifts"]
+        # With both outer flags on, exclusive sides are surfaced as summarized blocks.
+        w_excl = widened["exclusive_simulations"]
+        assert isinstance(w_excl["baseline_only"]["by_attack"], dict)
+        assert isinstance(w_excl["current_only"]["sample_simulations"], list)
 
         print("\n=== E2E Drift Analysis (discovered) ===")
         print(f"Test name: {target_name}")
@@ -650,13 +661,14 @@ class TestDataServerE2E:
             include_baseline_only=True,
         )
         assert "error" not in result, result.get("error")
-        meta = result["_metadata"]
-        assert isinstance(meta.get("simulations_exclusive_to_baseline"), list)
-        assert "simulations_exclusive_to_current" not in meta
-        # The surfaced list length matches the always-present count.
-        assert len(meta["simulations_exclusive_to_baseline"]) == meta["baseline_only_count"]
-        assert meta["applied_filters"]["include_baseline_only"] is True
-        assert meta["applied_filters"]["include_current_only"] is False
+        excl = result["exclusive_simulations"]
+        assert "baseline_only" in excl
+        assert "current_only" not in excl
+        # The summarized block reconciles with the always-present summary count.
+        assert excl["baseline_only"]["count"] == result["summary"]["baseline_only_count"]
+        assert isinstance(excl["baseline_only"]["by_attack"], dict)
+        assert result["_metadata"]["applied_filters"]["include_baseline_only"] is True
+        assert result["_metadata"]["applied_filters"]["include_current_only"] is False
 
     @pytest.mark.e2e
     def test_drift_include_current_only_gating_e2e(self, e2e_console, drift_pair):
@@ -668,16 +680,17 @@ class TestDataServerE2E:
             include_current_only=True,
         )
         assert "error" not in result, result.get("error")
-        meta = result["_metadata"]
-        assert isinstance(meta.get("simulations_exclusive_to_current"), list)
-        assert "simulations_exclusive_to_baseline" not in meta
-        assert len(meta["simulations_exclusive_to_current"]) == meta["current_only_count"]
-        assert meta["applied_filters"]["include_current_only"] is True
-        assert meta["applied_filters"]["include_baseline_only"] is False
+        excl = result["exclusive_simulations"]
+        assert "current_only" in excl
+        assert "baseline_only" not in excl
+        assert excl["current_only"]["count"] == result["summary"]["current_only_count"]
+        assert isinstance(excl["current_only"]["by_attack"], dict)
+        assert result["_metadata"]["applied_filters"]["include_current_only"] is True
+        assert result["_metadata"]["applied_filters"]["include_baseline_only"] is False
 
     @pytest.mark.e2e
     def test_drift_total_drifts_accounting_e2e(self, e2e_console, drift_pair):
-        """SAF-33124: total_drifts = status_drifts (+ outer sides only when their flag is set)."""
+        """SAF-33124: total_drifts = genuine status transitions ONLY, invariant to outer flags."""
         current, baseline = drift_pair["current_test_id"], drift_pair["baseline_test_id"]
 
         default_res = sb_get_test_drifts(current, console=e2e_console, baseline_test_id=baseline)
@@ -686,15 +699,12 @@ class TestDataServerE2E:
             include_baseline_only=True, include_current_only=True,
         )
 
-        status_drifts = default_res["_metadata"]["status_drifts"]
-        # Default: exclusive sides excluded from the count.
+        status_drifts = default_res["summary"]["status_drifts"]
+        # total_drifts is exactly the status-transition count — scope changes never inflate it.
         assert default_res["total_drifts"] == status_drifts
-        # Both flags on: exclusive sides added in.
-        both_meta = both_res["_metadata"]
-        expected = both_meta["status_drifts"] + both_meta["baseline_only_count"] + both_meta["current_only_count"]
-        assert both_res["total_drifts"] == expected
-        # status_drifts is invariant to the outer flags (same pair).
-        assert both_meta["status_drifts"] == status_drifts
+        # Turning the outer flags on surfaces exclusive breakdowns but does NOT change total_drifts.
+        assert both_res["total_drifts"] == status_drifts
+        assert both_res["summary"]["status_drifts"] == status_drifts
 
     @pytest.mark.e2e
     def test_drift_include_no_results_effect_e2e(self, e2e_console, drift_pair):
@@ -706,20 +716,23 @@ class TestDataServerE2E:
             current, console=e2e_console, baseline_test_id=baseline, include_no_results=True,
         )
         assert "error" not in default_res and "error" not in with_nr
-        d_meta, n_meta = default_res["_metadata"], with_nr["_metadata"]
+        d_sum, n_sum = default_res["summary"], with_nr["summary"]
 
         # When no-results are included, nothing is filtered.
-        assert n_meta["no_result_filtered_count"] == 0
-        assert n_meta["applied_filters"]["include_no_results"] is True
-        # Filtering can only remove simulations, so included counts are >= default counts.
-        assert n_meta["baseline_simulations_count"] >= d_meta["baseline_simulations_count"]
-        assert n_meta["current_simulations_count"] >= d_meta["current_simulations_count"]
+        assert n_sum["no_result_filtered_count"] == 0
+        assert with_nr["_metadata"]["applied_filters"]["include_no_results"] is True
+        # Stable totals are filter-independent — identical across both calls.
+        assert n_sum["baseline_total_simulations"] == d_sum["baseline_total_simulations"]
+        assert n_sum["current_total_simulations"] == d_sum["current_total_simulations"]
+        # Filtering can only remove simulations, so considered counts are >= the default path's.
+        assert n_sum["baseline_considered_simulations"] >= d_sum["baseline_considered_simulations"]
+        assert n_sum["current_considered_simulations"] >= d_sum["current_considered_simulations"]
         # The default-path filtered count equals the difference it removed from the two runs.
         removed = (
-            (n_meta["baseline_simulations_count"] - d_meta["baseline_simulations_count"])
-            + (n_meta["current_simulations_count"] - d_meta["current_simulations_count"])
+            (n_sum["baseline_considered_simulations"] - d_sum["baseline_considered_simulations"])
+            + (n_sum["current_considered_simulations"] - d_sum["current_considered_simulations"])
         )
-        assert d_meta["no_result_filtered_count"] == removed
+        assert d_sum["no_result_filtered_count"] == removed
 
     @pytest.mark.e2e
     def test_drift_same_id_twice_e2e(self, e2e_console, drift_pair):
@@ -729,10 +742,9 @@ class TestDataServerE2E:
         assert "error" not in result, result.get("error")
         assert result["total_drifts"] == 0
         assert result["drifts"] == {}
-        meta = result["_metadata"]
         # Every coded simulation is shared with itself; no exclusive sides.
-        assert meta["baseline_only_count"] == 0
-        assert meta["current_only_count"] == 0
+        assert result["summary"]["baseline_only_count"] == 0
+        assert result["summary"]["current_only_count"] == 0
 
     @pytest.mark.e2e
     def test_drift_reversed_direction_e2e(self, e2e_console, drift_pair):
@@ -763,11 +775,10 @@ class TestDataServerE2E:
         # No exception; either a well-formed drift result or a clear structured error.
         assert ("total_drifts" in result) or ("error" in result)
         if "total_drifts" in result:
-            meta = result["_metadata"]
-            assert meta["baseline_test_id"] == "0000000000000.0"
+            assert result["_metadata"]["baseline_test_id"] == "0000000000000.0"
             # An empty baseline means no shared codes; current sims become current-exclusive.
-            assert meta["baseline_only_count"] == 0
-            assert isinstance(meta["current_only_count"], int)
+            assert result["summary"]["baseline_only_count"] == 0
+            assert isinstance(result["summary"]["current_only_count"], int)
 
     @pytest.mark.e2e
     def test_drift_differing_test_names_e2e(self, e2e_console, drift_pair, differing_name_test_id):

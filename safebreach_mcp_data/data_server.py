@@ -303,11 +303,19 @@ baseline_test_id to compare two specific (arbitrary / non-consecutive) runs — 
 time-ordering are then skipped (test_id = current / drift_to, baseline_test_id = baseline / drift_from).
             Simulations are correlated across the two runs by drift_tracking_code. By DEFAULT this performs an \
 INNER JOIN excluding no-result (internal_fail) simulations, so the result contains only status-transition drifts.
-            Widen the analysis with: include_baseline_only=True (adds simulations exclusive to the baseline run), \
-include_current_only=True (adds simulations exclusive to the current run), include_no_results=True (includes \
-no-result / internal_fail simulations). All three default False. The response hint_to_agent states which filters \
-were applied and how to widen; _metadata always reports baseline_only_count, current_only_count, and \
-no_result_filtered_count so excluded data is discoverable.
+            IMPORTANT: total_drifts counts GENUINE STATUS TRANSITIONS ONLY (a matched simulation whose status \
+changed between runs). Simulations that exist in only one run reflect a changed test scope, are NOT drifts, and \
+never inflate total_drifts — they are reported separately under exclusive_simulations / summary.
+            Widen the analysis with: include_baseline_only=True (adds a baseline-exclusive attack breakdown), \
+include_current_only=True (adds a current-exclusive attack breakdown), include_no_results=True (includes \
+no-result / internal_fail simulations). All three default False.
+            Response shape: total_drifts (status transitions); drifts (grouped by transition, each drifted \
+simulation carries attack_id + attack_name so it is actionable without a follow-up call, and each group has \
+former_status/current_status/security_impact); summary (stable filter-independent counts: status_drifts, \
+baseline_only_count, current_only_count, no_result_filtered_count, baseline_total_simulations, \
+current_total_simulations, shared_simulations); exclusive_simulations (only when the corresponding flag is set — a \
+per-attack breakdown + capped sample + pointer to get_test_simulations for the full list, NOT a raw ID dump); \
+hint_to_agent; _metadata (identity + applied_filters).
             Each drifted simulation includes a drift_tracking_code — use get_simulation_lineage to trace its full history across all test runs.
             Parameters: test_id (required - the current test), console, baseline_test_id (optional explicit baseline), \
 include_baseline_only, include_current_only, include_no_results.
