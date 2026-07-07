@@ -2403,7 +2403,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         steps: List of scenario step dicts (with filter fields)
         console: SafeBreach console name
         include_constraints: If True, include per-attack constraint failure reasons
-            (adds latency — use only for dry_run)
+            (adds latency — use only for evaluate)
         verbose_failures: If True, show per-attack constraints even for partial steps
             (default: aggregated summary for partial, per-attack for zero)
 
@@ -2437,7 +2437,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
 
-    # Build attack name map for dry_run (resolved attacks + constraint rendering)
+    # Build attack name map for evaluate (resolved attacks + constraint rendering)
     attack_names = _build_attack_name_map(console) if include_constraints else {}
 
     result = []
@@ -2495,7 +2495,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
 
 
 # ---------------------------------------------------------------------------
-# run_adhoc_scenario — SAF-31295: Ad-hoc attack execution
+# quick_run — SAF-31295: Quick Run attack execution
 # ---------------------------------------------------------------------------
 
 
@@ -2561,7 +2561,7 @@ def _validate_and_resolve_attack_ids(attack_ids_str, console):
     return parsed_ids, name_map
 
 
-def _build_adhoc_steps(parsed_ids, name_map):
+def _build_quick_run_steps(parsed_ids, name_map):
     """
     Construct one step per attack with default connection filters.
 
@@ -2606,7 +2606,7 @@ def _build_adhoc_steps(parsed_ids, name_map):
     return steps
 
 
-def _apply_adhoc_overrides(steps, overrides, parsed_ids):
+def _apply_quick_run_overrides(steps, overrides, parsed_ids):
     """
     Apply per-attack simulator overrides to constructed steps.
 
@@ -2666,20 +2666,20 @@ def _apply_adhoc_overrides(steps, overrides, parsed_ids):
             step["attackerFilter"] = target_filter
 
 
-def sb_run_adhoc_scenario(
+def sb_quick_run(
     attack_ids: str,
     console: str = "default",
     test_name: str = None,
     all_connected: bool = False,
     simulator_overrides: str = None,
-    dry_run: bool = True,
+    evaluate: bool = True,
 ) -> Dict[str, Any]:
     """
-    Construct and execute an ad-hoc scenario from explicit playbook attack IDs.
+    Construct and execute a Quick Run test from explicit playbook attack IDs.
 
     Creates one step per attack with default all-connected simulator filters.
     Supports per-attack simulator overrides and a global all_connected toggle.
-    Defaults to dry_run=True — returns a preview without queuing.
+    Defaults to evaluate=True — evaluates the test without queuing.
 
     Args:
         attack_ids: Comma-separated playbook attack IDs (integers)
@@ -2687,10 +2687,10 @@ def sb_run_adhoc_scenario(
         test_name: Custom test name (optional, auto-generated if not provided)
         all_connected: Global override — all connected simulators (default: False)
         simulator_overrides: JSON string for per-attack simulator targeting
-        dry_run: If True (default), preview without queuing
+        evaluate: If True (default), evaluate without queuing
 
     Returns:
-        Dict with status='dry_run' (preview) or status='queued' (execution)
+        Dict with status='evaluating' (evaluation) or status='queued' (execution)
 
     Raises:
         ValueError: If attack_ids invalid, not found, or overrides malformed
@@ -2705,23 +2705,23 @@ def sb_run_adhoc_scenario(
 
     # Phase 2: Input validation and step construction
     parsed_ids, name_map = _validate_and_resolve_attack_ids(attack_ids, console)
-    steps = _build_adhoc_steps(parsed_ids, name_map)
+    steps = _build_quick_run_steps(parsed_ids, name_map)
 
     # Phase 3: Simulator overrides
 
     if parsed_overrides and not all_connected:
-        _apply_adhoc_overrides(steps, parsed_overrides, parsed_ids)
+        _apply_quick_run_overrides(steps, parsed_overrides, parsed_ids)
 
     # Phase 4: Statistics pre-flight
     step_stats = _get_scenario_statistics(
-        steps, console, include_constraints=dry_run
+        steps, console, include_constraints=evaluate
     )
     step_counts = [s.get('simulationCount', 0) for s in step_stats]
     total_predicted = sum(step_counts)
     empty_steps = [i + 1 for i, c in enumerate(step_counts) if c == 0]
 
-    # Dry-run: return preview without queuing
-    if dry_run:
+    # Evaluate: return prediction without queuing
+    if evaluate:
         # Build contextual hint based on results
         if total_predicted == 0:
             hint = (
@@ -2734,19 +2734,19 @@ def sb_run_adhoc_scenario(
                 f"{len(empty_steps)} attack(s) will produce 0 simulations. "
                 "You can proceed (they will be skipped), provide "
                 "simulator_overrides for those attacks, or remove them. "
-                "To execute, call again with dry_run=False."
+                "To execute, call again with evaluate=False."
             )
         elif total_predicted > 1000:
             hint = (
                 f"High simulation count ({total_predicted:,}). Consider using "
                 "simulator_overrides to target specific simulators and reduce "
-                "the count. To execute as-is, call again with dry_run=False."
+                "the count. To execute as-is, call again with evaluate=False."
             )
         else:
-            hint = "To execute, call again with dry_run=False."
+            hint = "To execute, call again with evaluate=False."
 
         return {
-            'status': 'dry_run',
+            'status': 'evaluating',
             'attack_ids': parsed_ids,
             'steps': steps,
             'predicted_simulations': total_predicted,
@@ -2760,7 +2760,7 @@ def sb_run_adhoc_scenario(
     # Execution validation
     if total_predicted == 0:
         raise ValueError(
-            f"Ad-hoc scenario would produce 0 simulations across all "
+            f"Quick Run would produce 0 simulations across all "
             f"{len(steps)} attacks. No matching simulators found."
         )
 
@@ -2780,7 +2780,7 @@ def sb_run_adhoc_scenario(
     actions, edges = _build_linear_dag(steps)
 
     # Build queue payload
-    effective_test_name = test_name or f"Ad-hoc Test ({len(steps)} attacks)"
+    effective_test_name = test_name or f"Quick Run ({len(steps)} attacks)"
     payload = {
         "plan": {
             "name": effective_test_name,
@@ -2793,13 +2793,13 @@ def sb_run_adhoc_scenario(
 
     # Rate limiting gates
     caller_id = get_caller_identity()
-    rate_limiter.check_limit(caller_id, "run_adhoc_scenario")
+    rate_limiter.check_limit(caller_id, "quick_run")
 
     # Submit to queue
     api_response = _submit_to_queue(payload, console)
 
     # Record successful action
-    rate_limiter.record_action(caller_id, "run_adhoc_scenario")
+    rate_limiter.record_action(caller_id, "quick_run")
 
     # Extract response data
     data = api_response.get('data', {})
@@ -2832,7 +2832,7 @@ def sb_run_adhoc_scenario(
     }
 
     logger.info(
-        f"Successfully queued ad-hoc scenario "
+        f"Successfully queued Quick Run "
         f"(test_id: {result['test_id']}, attacks: {len(parsed_ids)}, "
         f"steps queued: {result['step_count']})"
     )
@@ -2846,7 +2846,7 @@ def sb_run_scenario(
     test_name: str = None,
     allow_partial_steps: bool = False,
     step_overrides: str = None,
-    dry_run: bool = False,
+    evaluate: bool = False,
     verbose_failures: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -2863,7 +2863,7 @@ def sb_run_scenario(
         allow_partial_steps: If False (default), refuse if any step produces 0 simulations.
         step_overrides: JSON string mapping step numbers (1-indexed) to filter overrides.
             Example: '{"1": {"targetFilter": {"os": {"operator": "is", "values": ["WINDOWS"]}}}}'
-        dry_run: If True, predict simulation counts without actually queuing the test.
+        evaluate: If True, predict simulation counts without actually queuing the test.
 
     Returns:
         If ready (or made ready via overrides): dict with test_id, status='queued', etc.
@@ -2933,9 +2933,9 @@ def sb_run_scenario(
         }
 
     # Statistics pre-flight: predict simulation counts per step
-    # Include constraints for dry_run to diagnose zero-simulation steps
+    # Include constraints for evaluate to diagnose zero-simulation steps
     step_stats = _get_scenario_statistics(scenario['steps'], console,
-                                          include_constraints=dry_run,
+                                          include_constraints=evaluate,
                                           verbose_failures=verbose_failures)
     step_counts = [s['simulationCount'] for s in step_stats]
     total_predicted = sum(step_counts)
@@ -2943,14 +2943,14 @@ def sb_run_scenario(
         i + 1 for i, count in enumerate(step_counts) if count == 0
     ]
 
-    # dry_run: return prediction without queuing (before validation — the point is to preview)
-    if dry_run:
+    # evaluate: return prediction without queuing (before validation — the point is to preview)
+    if evaluate:
         logger.info(
-            f"Dry run for scenario '{scenario.get('name')}' ({scenario_id}): "
+            f"Evaluating test for scenario '{scenario.get('name')}' ({scenario_id}): "
             f"predicted {total_predicted} simulations, empty steps: {empty_steps}"
         )
         return {
-            'status': 'dry_run',
+            'status': 'evaluating',
             'scenario_id': scenario_id,
             'scenario_name': scenario.get('name', ''),
             'source_type': 'custom' if is_custom_plan else 'oob',
@@ -2961,7 +2961,7 @@ def sb_run_scenario(
             'step_count': len(scenario.get('steps', [])),
         }
 
-    # Validate simulation counts (only for actual runs, not dry_run)
+    # Validate simulation counts (only for actual runs, not evaluate)
     if total_predicted == 0:
         step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
         raise ValueError(
@@ -3031,7 +3031,7 @@ def sb_run_scenario(
 
         payload = {"plan": plan_body}
 
-    # Rate limiting gate — check before queuing (after dry_run/not_ready early returns)
+    # Rate limiting gate — check before queuing (after evaluate/not_ready early returns)
     caller_id = get_caller_identity()
     rate_limiter.check_limit(caller_id, "run_scenario")
 

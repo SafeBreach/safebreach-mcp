@@ -352,7 +352,7 @@ def paginate_scenarios(
         hints.append(
             'Some scenarios have criteria-based attack selection, so their '
             'total_attack_count is unavailable at listing time. Use run_scenario '
-            'with dry_run=True to determine the exact attack count for those scenarios.'
+            'with evaluate=True to determine the exact attack count for those scenarios.'
         )
 
     return {

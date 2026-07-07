@@ -303,7 +303,7 @@ MOCK_QUEUE_RESPONSE = {
 
 
 class TestRunScenarioRateLimitingGate:
-    """Verify run_scenario gates: check_limit before queue POST, skip on dry_run."""
+    """Verify run_scenario gates: check_limit before queue POST, skip on evaluate."""
 
     @patch("safebreach_mcp_studio.studio_functions.rate_limiter")
     @patch("safebreach_mcp_studio.studio_functions.get_caller_identity",
@@ -370,11 +370,11 @@ class TestRunScenarioRateLimitingGate:
            return_value="1234567890")
     @patch("safebreach_mcp_studio.studio_functions.get_api_base_url",
            return_value="https://test.safebreach.com")
-    def test_dry_run_does_not_call_gates(
+    def test_evaluate_does_not_call_gates(
         self, _mock_base_url, _mock_account_id,
         mock_get, _mock_stats, _mock_identity, mock_rate_limiter,
     ):
-        """dry_run=True returns prediction without calling check_limit or record_action."""
+        """evaluate=True returns prediction without calling check_limit or record_action."""
         mock_get_resp = MagicMock()
         mock_get_resp.json.return_value = [MOCK_OOB_SCENARIO]
         mock_get_resp.raise_for_status.return_value = None
@@ -383,9 +383,9 @@ class TestRunScenarioRateLimitingGate:
         result = sb_run_scenario(
             scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5",
             console="test",
-            dry_run=True,
+            evaluate=True,
         )
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         mock_rate_limiter.check_limit.assert_not_called()
         mock_rate_limiter.record_action.assert_not_called()
 

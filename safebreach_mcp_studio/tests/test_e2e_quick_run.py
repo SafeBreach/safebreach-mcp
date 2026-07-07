@@ -1,8 +1,8 @@
 """
-End-to-End Tests for run_adhoc_scenario (SAF-31295)
+End-to-End Tests for quick_run (SAF-31295)
 
-Tests the ad-hoc scenario execution pipeline using real API calls.
-Pattern: dry_run → verify predictions → queue → cancel.
+Tests the Quick Run execution pipeline using real API calls.
+Pattern: evaluate → verify predictions → queue → cancel.
 
 ZERO MOCKS — all calls hit real SafeBreach APIs.
 
@@ -20,7 +20,7 @@ import pytest
 import os
 import requests
 
-from safebreach_mcp_studio.studio_functions import sb_run_adhoc_scenario
+from safebreach_mcp_studio.studio_functions import sb_quick_run
 from safebreach_mcp_core.secret_utils import get_secret_for_console
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 
@@ -120,46 +120,46 @@ def _cleanup_test(test_id, console, test_name, passed, detail=""):
 
 
 # ---------------------------------------------------------------------------
-# E2E Tests — run_adhoc_scenario
+# E2E Tests — quick_run
 # ---------------------------------------------------------------------------
 
 
 @skip_e2e
 @pytest.mark.e2e
-class TestRunAdhocScenarioE2E:
-    """E2E tests for sb_run_adhoc_scenario against a real console."""
+class TestQuickRunE2E:
+    """E2E tests for sb_quick_run against a real console."""
 
-    def test_dry_run_all_attacks(self):
-        """Dry-run with all verified attacks produces predicted_simulations > 0."""
+    def test_evaluate_all_attacks(self):
+        """Evaluate with all verified attacks produces predicted_simulations > 0."""
         attack_ids_str = ",".join(str(a) for a in E2E_ATTACK_IDS)
 
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids=attack_ids_str,
             console=E2E_CONSOLE,
-            dry_run=True,
+            evaluate=True,
         )
 
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert result["predicted_simulations"] > 0
         assert len(result["steps"]) == len(E2E_ATTACK_IDS)
         assert len(result["predicted_per_step"]) == len(E2E_ATTACK_IDS)
         logger.info(
-            f"Dry-run {len(E2E_ATTACK_IDS)} attacks: {result['predicted_simulations']} predicted sims, "
+            f"Evaluate {len(E2E_ATTACK_IDS)} attacks: {result['predicted_simulations']} predicted sims, "
             f"per-step: {result['predicted_per_step']}"
         )
 
-    def test_dry_run_subset_two_attacks(self):
-        """Dry-run with 2 attacks returns correct step count and per-step counts."""
+    def test_evaluate_subset_two_attacks(self):
+        """Evaluate with 2 attacks returns correct step count and per-step counts."""
         subset = E2E_ATTACK_IDS[:2]
         attack_ids_str = ",".join(str(a) for a in subset)
 
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids=attack_ids_str,
             console=E2E_CONSOLE,
-            dry_run=True,
+            evaluate=True,
         )
 
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert len(result["steps"]) == 2
         assert len(result["predicted_per_step"]) == 2
         # Each step should have a non-negative count
@@ -167,7 +167,7 @@ class TestRunAdhocScenarioE2E:
             assert isinstance(count, int)
             assert count >= 0
         logger.info(
-            f"Dry-run 2 attacks: {result['predicted_simulations']} predicted sims, "
+            f"Evaluate 2 attacks: {result['predicted_simulations']} predicted sims, "
             f"per-step: {result['predicted_per_step']}"
         )
 
@@ -179,10 +179,10 @@ class TestRunAdhocScenarioE2E:
         passed = False
 
         try:
-            result = sb_run_adhoc_scenario(
+            result = sb_quick_run(
                 attack_ids=attack_ids_str,
                 console=E2E_CONSOLE,
-                dry_run=False,
+                evaluate=False,
             )
 
             assert result["status"] == "queued"
@@ -191,7 +191,7 @@ class TestRunAdhocScenarioE2E:
             test_id = result["test_id"]
             passed = True
             logger.info(
-                f"Queued ad-hoc scenario: test_id={test_id}, "
+                f"Queued Quick Run: test_id={test_id}, "
                 f"steps={result['step_count']}, "
                 f"predicted={result['predicted_simulations']}"
             )
@@ -208,23 +208,23 @@ class TestRunAdhocScenarioE2E:
         attack_ids_str = f"{E2E_ATTACK_IDS[0]},99999999"
 
         with pytest.raises(ValueError, match="not found"):
-            sb_run_adhoc_scenario(
+            sb_quick_run(
                 attack_ids=attack_ids_str,
                 console=E2E_CONSOLE,
             )
 
-    def test_dry_run_with_simulator_overrides(self):
-        """Dry-run with pre-verified simulator overrides produces minimal sims."""
+    def test_evaluate_with_simulator_overrides(self):
+        """Evaluate with pre-verified simulator overrides produces minimal sims."""
         attack_ids_str = ",".join(str(a) for a in E2E_ATTACK_IDS)
 
-        result = sb_run_adhoc_scenario(
+        result = sb_quick_run(
             attack_ids=attack_ids_str,
             console=E2E_CONSOLE,
             simulator_overrides=json.dumps(E2E_SIMULATOR_OVERRIDES),
-            dry_run=True,
+            evaluate=True,
         )
 
-        assert result["status"] == "dry_run"
+        assert result["status"] == "evaluating"
         assert result["predicted_simulations"] > 0
         # Every attack should produce at least 1 simulation
         for i, count in enumerate(result["predicted_per_step"]):
@@ -237,7 +237,7 @@ class TestRunAdhocScenarioE2E:
             f"got {result['predicted_simulations']}"
         )
         logger.info(
-            f"Overrides dry-run: {result['predicted_simulations']} sims, "
+            f"Overrides evaluation: {result['predicted_simulations']} sims, "
             f"per-step: {result['predicted_per_step']}"
         )
 
@@ -248,11 +248,11 @@ class TestRunAdhocScenarioE2E:
         passed = False
 
         try:
-            result = sb_run_adhoc_scenario(
+            result = sb_quick_run(
                 attack_ids=attack_ids_str,
                 console=E2E_CONSOLE,
                 simulator_overrides=json.dumps(E2E_SIMULATOR_OVERRIDES),
-                dry_run=False,
+                evaluate=False,
             )
 
             assert result["status"] == "queued"

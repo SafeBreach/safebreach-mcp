@@ -298,8 +298,8 @@ Caller identity (`get_caller_identity()`): auth token SHA256[:16] for external c
 | `update_studio_attack_draft` | After param validation | After PUT + cache update | — |
 | `run_studio_attack` | After input validation | After POST queue response | — |
 | `set_studio_attack_status` | After pre-check GET | After PUT + cache invalidate | Allow read first |
-| `run_scenario` | Before queue POST | After POST queue response | Skip on dry_run/not_ready |
-| `run_adhoc_scenario` | Before queue POST | After POST queue response | Skip on dry_run |
+| `run_scenario` | Before queue POST | After POST queue response | Skip on evaluate/not_ready |
+| `quick_run` | Before queue POST | After POST queue response | Skip on evaluate |
 | `manage_test` | After input validation | After state change | Note append is best-effort |
 
 Rate limiting environment variables:
@@ -323,7 +323,7 @@ Rate limiting environment variables:
   Ready-to-run = all steps have both targetFilter AND attackerFilter with non-empty criteria values.
   Supports ordering by name, step_count, createdAt, updatedAt (asc/desc). PAGE_SIZE=10 with hint_to_agent.
   Each scenario includes `total_attack_count` (int or None for criteria-based).
-  Conditional `hint_to_agent` when indeterminate counts exist: use `run_scenario` with `dry_run=True`.
+  Conditional `hint_to_agent` when indeterminate counts exist: use `run_scenario` with `evaluate=True`.
 4. `get_scenario_details` ✨ **NEW** - Full scenario/plan payload by ID. Accepts UUID string (OOB) or
   integer-as-string (custom plan). Returns complete payload including all steps with attack filters,
   system/target/attacker filters, phases, actions, edges, plus `source_type` and resolved category names
@@ -414,11 +414,11 @@ Rate limiting environment variables:
   key must be `{"<type>": {"operator": "is", "values": [...], "name": "<type>"}}`. Valid types:
   os, role, simulators, connection. Supports `"default"` key for applying to all missing steps —
   note: "default" only applies to fully-missing steps, not partially-ready ones),
-  `dry_run` (default False — preview without queuing),
+  `evaluate` (default False — evaluate the test without queuing),
   `verbose_failures` (default False — per-attack constraint detail for partial steps).
   **Three-turn workflow**: (1) Call without overrides → diagnostic showing missing filters with
   per-step recommendations (role for network steps, OS for host-level). (2) Call with
-  `step_overrides` + `dry_run=True` → preview with resolved attacks per step, per-step
+  `step_overrides` + `evaluate=True` → preview with resolved attacks per step, per-step
   simulation breakdown (matched target/attacker simulators, matched attacks), and constraint
   failure details for unmatched attacks. (3) Call with `step_overrides` → queue the test.
   **Constraint diagnostics**: 14 constraint reason codes mapped to human-readable descriptions.
@@ -437,16 +437,17 @@ Rate limiting environment variables:
   Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
   best-effort — failure does not block the lifecycle operation. Response includes
   `hint_to_agent` with contextual next-step guidance per action.
-22. `run_adhoc_scenario` ✨ **NEW** 🔒 **Rate-limited** - Execute an ad-hoc scenario from explicit
-  playbook attack IDs. Constructs one step per attack with default all-connected simulator
-  filters. Supports `simulator_overrides` (JSON string mapping attack IDs to specific target/attacker
-  simulator UUIDs) for exact targeting, and `all_connected` global override. Defaults to
-  `dry_run=True` — returns a preview with per-step simulation counts without queuing. The agent
-  MUST present the preview to the user and get confirmation before calling with `dry_run=False`.
-  Partial execution: if some attacks produce 0 simulations, they are skipped (user saw the preview).
+22. `quick_run` ✨ **NEW** 🔒 **Rate-limited** - Quick Run — execute a test from explicit
+  playbook attack IDs without a pre-existing scenario. Constructs one step per attack with default
+  all-connected simulator filters. Supports `simulator_overrides` (JSON string mapping attack IDs
+  to specific target/attacker simulator UUIDs) for exact targeting, and `all_connected` global
+  override. Defaults to `evaluate=True` — evaluates the test with per-step simulation counts
+  without queuing. The agent MUST present the evaluation to the user and get confirmation before
+  calling with `evaluate=False`.
+  Partial execution: if some attacks produce 0 simulations, they are skipped (user saw the evaluation).
   Hard-refuses if ALL attacks produce 0. Parameters: `attack_ids` (required, comma-separated
   integers), `console`, `test_name`, `all_connected` (bool), `simulator_overrides` (JSON string),
-  `dry_run` (bool, default True). Uses the same queue API as `run_scenario`.
+  `evaluate` (bool, default True). Uses the same queue API as `run_scenario`.
   **Simulator UUID discovery**: For rerun workflows, get UUIDs from `get_simulation_details`
   (`attacker_node_id`, `target_node_id`). For discovery workflows, use `get_console_simulators`.
 23. `get_studio_attack_latest_result` ✨ **Enhanced** - Retrieves latest execution results for a Studio
