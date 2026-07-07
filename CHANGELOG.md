@@ -5,6 +5,28 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.6.0 — 2026-07-07
+
+### Added
+
+- `get_test_drifts` can now compare any two arbitrary/non-consecutive test runs via `baseline_test_id`,
+  with configurable join options (`include_baseline_only`, `include_current_only`, `include_no_results`).
+  Each drift carries inline attack identity, and run-exclusive simulations are summarized per attack. (SAF-33124)
+- `get_test_details` now surfaces the security-event correlation phase in test status. (SAF-32063)
+
+### Changed
+
+- `get_test_drifts`: `total_drifts` now counts genuine status transitions only (run-exclusive simulations
+  no longer inflate the headline), and no-result/internal_fail transitions are included by default. (SAF-33124)
+- Per-agent concurrency limiting is now keyed per-JWT instead of per shared mcp-session-id. (SAF-31903)
+- Scenario guidance now steers agents to run non-ready scenarios via `step_overrides` / `ready_to_run_filter`
+  rather than concluding none are runnable. (SAF-32210)
+
+### Fixed
+
+- Corrected stale running-test simulation counts in `get_test_details`. (SAF-32018)
+- Fixed playbook attack id/name simulation filters (wrong key and int/str type mismatch). (SAF-32805)
+
 ## 1.5.0 — 2026-06-21
 
 ### Added
