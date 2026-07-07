@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-agent concurrency limiting is now keyed per-JWT instead of per shared mcp-session-id. (SAF-31903)
 - Scenario guidance now steers agents to run non-ready scenarios via `step_overrides` / `ready_to_run_filter`
   rather than concluding none are runnable. (SAF-32210)
+- Renamed run semantics for clarity: the `dry_run` parameter is now `evaluate` (previewed runs report an
+  `evaluating` status), and the `run_adhoc_scenario` tool is now `quick_run`.
 
 ### Fixed
 
