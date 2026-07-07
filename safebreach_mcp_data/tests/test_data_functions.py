@@ -2362,50 +2362,63 @@ class TestDataFunctions:
             return []
         
         mock_get_sims.side_effect = mock_simulations_side_effect
-        
-        # Execute the function
-        result = sb_get_test_drifts('test-current-123', 'test-console')
-        
+
+        # Execute the function — opt into the outer sides so exclusive sims are surfaced
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console',
+            include_baseline_only=True, include_current_only=True
+        )
+
         # Verify the result structure
         assert isinstance(result, dict)
         assert 'total_drifts' in result
         assert 'drifts' in result
         assert '_metadata' in result
-        
-        # Verify drift counts
-        assert result['total_drifts'] == 3  # 1 status drift + 1 baseline-only + 1 current-only
-        
-        # Verify exclusive simulations (now in metadata)
-        metadata = result['_metadata']
-        assert metadata['simulations_exclusive_to_baseline'] == ['sim-baseline-3']  # Only in baseline
-        assert metadata['simulations_exclusive_to_current'] == ['sim-current-4']    # Only in current
-        
+
+        # total_drifts counts genuine status transitions ONLY (not scope changes)
+        assert result['total_drifts'] == 1
+
+        # Exclusive simulations are summarized under exclusive_simulations (opted in via flags)
+        excl = result['exclusive_simulations']
+        baseline_sample_ids = [s['simulation_id'] for s in excl['baseline_only']['sample_simulations']]
+        current_sample_ids = [s['simulation_id'] for s in excl['current_only']['sample_simulations']]
+        assert baseline_sample_ids == ['sim-baseline-3']  # Only in baseline
+        assert current_sample_ids == ['sim-current-4']     # Only in current
+        assert excl['baseline_only']['count'] == 1
+        assert excl['current_only']['count'] == 1
+
         # Verify status drifts - drifts is a dictionary organized by drift type
         assert len(result['drifts']) == 1
         assert 'missed-logged' in result['drifts']
-        
+
         drift_info = result['drifts']['missed-logged']
         assert drift_info['drift_type'] == 'missed-logged'
+        assert drift_info['former_status'] == 'missed'
+        assert drift_info['current_status'] == 'logged'
         assert drift_info['security_impact'] == 'positive'
         assert len(drift_info['drifted_simulations']) == 1
-        
+
         drifted_sim = drift_info['drifted_simulations'][0]
         assert drifted_sim['drift_tracking_code'] == 'track-001'
         assert drifted_sim['former_simulation_id'] == 'sim-baseline-1'
         assert drifted_sim['current_simulation_id'] == 'sim-current-1'
-        
-        # Verify metadata
+
+        # Verify summary (stable counts, filter-independent totals)
+        summary = result['summary']
+        assert summary['status_drifts'] == 1
+        assert summary['baseline_only_count'] == 1
+        assert summary['current_only_count'] == 1
+        assert summary['shared_simulations'] == 2
+        assert summary['baseline_total_simulations'] == 3
+        assert summary['current_total_simulations'] == 3
+
+        # Verify metadata (identity + provenance)
         metadata = result['_metadata']
         assert metadata['console'] == 'test-console'
         assert metadata['current_test_id'] == 'test-current-123'
         assert metadata['baseline_test_id'] == 'test-baseline-456'
         assert metadata['test_name'] == 'Weekly Security Test'
-        assert metadata['baseline_simulations_count'] == 3
-        assert metadata['current_simulations_count'] == 3
-        assert metadata['shared_drift_codes'] == 2
-        assert len(metadata['simulations_exclusive_to_baseline']) == 1
-        assert len(metadata['simulations_exclusive_to_current']) == 1
-        assert metadata['status_drifts'] == 1
+        assert metadata['applied_filters']['baseline_selection'] == 'auto'
 
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     @patch('safebreach_mcp_data.data_functions.sb_get_tests')
@@ -2584,12 +2597,13 @@ class TestDataFunctions:
         assert result['total_drifts'] == 0
         assert result['drifts'] == {}             # No status drifts
         
-        # Verify metadata shows analysis was performed
-        metadata = result['_metadata']
-        assert metadata['shared_drift_codes'] == 2
-        assert len(metadata['simulations_exclusive_to_baseline']) == 0
-        assert len(metadata['simulations_exclusive_to_current']) == 0
-        assert metadata['status_drifts'] == 0
+        # Verify summary shows analysis was performed; exclusive_simulations only appears with flags
+        summary = result['summary']
+        assert summary['shared_simulations'] == 2
+        assert summary['baseline_only_count'] == 0
+        assert summary['current_only_count'] == 0
+        assert summary['status_drifts'] == 0
+        assert 'exclusive_simulations' not in result
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     @patch('safebreach_mcp_data.data_functions.sb_get_tests')
@@ -2680,11 +2694,11 @@ class TestDataFunctions:
         assert result['total_drifts'] == 0  # Same status for track-001
         assert result['drifts'] == {}
         
-        # Verify metadata counts only simulations with drift codes
-        metadata = result['_metadata']
-        assert metadata['baseline_simulations_count'] == 2  # Total simulations
-        assert metadata['current_simulations_count'] == 2   # Total simulations
-        assert metadata['shared_drift_codes'] == 1          # Only track-001
+        # Verify summary counts: totals include all sims, shared counts only those with drift codes
+        summary = result['summary']
+        assert summary['baseline_total_simulations'] == 2  # Total simulations
+        assert summary['current_total_simulations'] == 2   # Total simulations
+        assert summary['shared_simulations'] == 1          # Only track-001
     
     @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
     def test_sb_get_test_drifts_api_error(self, mock_get_details):
@@ -2694,6 +2708,189 @@ class TestDataFunctions:
 
         with pytest.raises(Exception, match="API connection failed"):
             sb_get_test_drifts('test-123', 'test-console')
+
+    # SAF-33124: explicit baseline_test_id + join options (include_baseline_only /
+    # include_current_only / include_no_results)
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
+    @patch('safebreach_mcp_data.data_functions._find_previous_test_by_name')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_explicit_baseline_skips_auto_selection(
+        self, mock_get_sims, mock_fallback, mock_get_tests, mock_get_details
+    ):
+        """When baseline_test_id is provided, auto-selection (name search + fallback) is skipped."""
+        mock_get_details.return_value = {
+            'name': 'Current Test',
+            'start_time': 1640998800,
+            'test_id': 'test-current-123'
+        }
+
+        def mock_simulations_side_effect(test_id, console):
+            if test_id == 'explicit-baseline-999':
+                return [{'simulation_id': 'sim-b1', 'status': 'missed', 'drift_tracking_code': 'track-001'}]
+            if test_id == 'test-current-123':
+                return [{'simulation_id': 'sim-c1', 'status': 'prevented', 'drift_tracking_code': 'track-001'}]
+            return []
+
+        mock_get_sims.side_effect = mock_simulations_side_effect
+
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console', baseline_test_id='explicit-baseline-999'
+        )
+
+        # Auto-selection paths must not be touched
+        mock_get_tests.assert_not_called()
+        mock_fallback.assert_not_called()
+
+        metadata = result['_metadata']
+        assert metadata['baseline_test_id'] == 'explicit-baseline-999'
+        assert metadata['current_test_id'] == 'test-current-123'
+        assert metadata['applied_filters']['baseline_selection'] == 'explicit'
+        # Shared code with differing status → 1 status drift (inner join)
+        assert result['total_drifts'] == 1
+        assert 'missed-prevented' in result['drifts']
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_default_excludes_outer_sides(
+        self, mock_get_sims, mock_get_tests, mock_get_details
+    ):
+        """Default (inner join) excludes exclusive sims and does not count them in total_drifts."""
+        mock_get_details.return_value = {
+            'name': 'T', 'start_time': 1640998800, 'test_id': 'test-current-123'
+        }
+        mock_get_tests.return_value = {'tests_in_page': [{'test_id': 'test-baseline-456'}]}
+
+        def side_effect(test_id, console):
+            if test_id == 'test-baseline-456':
+                return [{'simulation_id': 'b-only', 'status': 'prevented', 'drift_tracking_code': 'only-baseline'}]
+            if test_id == 'test-current-123':
+                return [{'simulation_id': 'c-only', 'status': 'missed', 'drift_tracking_code': 'only-current'}]
+            return []
+
+        mock_get_sims.side_effect = side_effect
+
+        result = sb_get_test_drifts('test-current-123', 'test-console')
+
+        # No shared codes → no status drifts; exclusive sides excluded by default
+        assert result['total_drifts'] == 0
+        summary = result['summary']
+        assert summary['baseline_only_count'] == 1
+        assert summary['current_only_count'] == 1
+        assert 'exclusive_simulations' not in result
+        # Hint should guide the agent to widen
+        assert 'include_baseline_only=True' in result['hint_to_agent']
+        assert 'include_current_only=True' in result['hint_to_agent']
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_include_outer_flags(
+        self, mock_get_sims, mock_get_tests, mock_get_details
+    ):
+        """include_baseline_only / include_current_only surface exclusive sims (not counted as drifts)."""
+        mock_get_details.return_value = {
+            'name': 'T', 'start_time': 1640998800, 'test_id': 'test-current-123'
+        }
+        mock_get_tests.return_value = {'tests_in_page': [{'test_id': 'test-baseline-456'}]}
+
+        def side_effect(test_id, console):
+            if test_id == 'test-baseline-456':
+                return [{'simulation_id': 'b-only', 'status': 'prevented', 'drift_tracking_code': 'only-baseline'}]
+            if test_id == 'test-current-123':
+                return [{'simulation_id': 'c-only', 'status': 'missed', 'drift_tracking_code': 'only-current'}]
+            return []
+
+        mock_get_sims.side_effect = side_effect
+
+        # baseline-only only — total_drifts stays 0 (no status transitions); exclusive block surfaced
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console', include_baseline_only=True
+        )
+        assert result['total_drifts'] == 0
+        assert result['summary']['baseline_only_count'] == 1
+        excl = result['exclusive_simulations']
+        assert [s['simulation_id'] for s in excl['baseline_only']['sample_simulations']] == ['b-only']
+        assert 'current_only' not in excl
+
+        # both sides
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console',
+            include_baseline_only=True, include_current_only=True
+        )
+        assert result['total_drifts'] == 0  # still no genuine status drifts
+        assert result['summary']['baseline_only_count'] == 1
+        assert result['summary']['current_only_count'] == 1
+        excl = result['exclusive_simulations']
+        assert [s['simulation_id'] for s in excl['baseline_only']['sample_simulations']] == ['b-only']
+        assert [s['simulation_id'] for s in excl['current_only']['sample_simulations']] == ['c-only']
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions.sb_get_tests')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_no_result_filtering(
+        self, mock_get_sims, mock_get_tests, mock_get_details
+    ):
+        """No-result / internal_fail sims are filtered by default and included when opted in."""
+        mock_get_details.return_value = {
+            'name': 'T', 'start_time': 1640998800, 'test_id': 'test-current-123'
+        }
+        mock_get_tests.return_value = {'tests_in_page': [{'test_id': 'test-baseline-456'}]}
+
+        def side_effect(test_id, console):
+            if test_id == 'test-baseline-456':
+                return [
+                    {'simulation_id': 'b1', 'status': 'INTERNAL_FAIL', 'drift_tracking_code': 'track-001'},
+                    {'simulation_id': 'b2', 'status': 'prevented', 'drift_tracking_code': 'track-002'},
+                ]
+            if test_id == 'test-current-123':
+                return [
+                    {'simulation_id': 'c1', 'status': 'prevented', 'drift_tracking_code': 'track-001'},
+                    {'simulation_id': 'c2', 'status': 'no-result', 'drift_tracking_code': 'track-002'},
+                ]
+            return []
+
+        mock_get_sims.side_effect = side_effect
+
+        # Default (include_no_results=True): both codes shared with a no-result transition → 2 drifts.
+        result = sb_get_test_drifts('test-current-123', 'test-console')
+        assert result['total_drifts'] == 2
+        assert result['summary']['hidden_no_result_drift_count'] == 0
+        assert result['summary']['no_result_filtered_count'] == 0
+        # Stable totals are independent of the no-result filter
+        assert result['summary']['baseline_total_simulations'] == 2
+        assert result['summary']['current_total_simulations'] == 2
+
+        # Opt out: the no-result transitions are hidden but counted (never silently truncated).
+        result = sb_get_test_drifts(
+            'test-current-123', 'test-console', include_no_results=False
+        )
+        assert result['total_drifts'] == 0
+        assert result['summary']['hidden_no_result_drift_count'] == 2
+        assert 'include_no_results=True' in result['hint_to_agent']
+        assert 'HIDDEN' in result['hint_to_agent']
+        # Stable totals unchanged regardless of the flag
+        assert result['summary']['baseline_total_simulations'] == 2
+        assert result['summary']['current_total_simulations'] == 2
+
+    @patch('safebreach_mcp_data.data_functions.sb_get_test_details')
+    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    def test_sb_get_test_drifts_same_id_twice(self, mock_get_sims, mock_get_details):
+        """Comparing a test against itself yields no drifts (all statuses identical)."""
+        mock_get_details.return_value = {
+            'name': 'T', 'start_time': 1640998800, 'test_id': 'test-x'
+        }
+        mock_get_sims.return_value = [
+            {'simulation_id': 's1', 'status': 'prevented', 'drift_tracking_code': 'track-001'}
+        ]
+
+        result = sb_get_test_drifts('test-x', 'test-console', baseline_test_id='test-x')
+
+        assert result['total_drifts'] == 0
+        assert result['drifts'] == {}
+        assert result['summary']['shared_simulations'] == 1
 
     # Execution History Details Tests
 

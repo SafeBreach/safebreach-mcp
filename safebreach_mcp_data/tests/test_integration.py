@@ -1115,18 +1115,23 @@ class TestDriftAnalysisIntegration:
         mock_get.side_effect = mock_response_selector
         mock_post.side_effect = mock_post_response_selector
         
-        # Execute drift analysis
-        result = sb_get_test_drifts('test-current-123', 'integration-console')
-        
-        # Verify comprehensive results
+        # Execute drift analysis — opt into the outer sides to exercise the full comparison
+        result = sb_get_test_drifts(
+            'test-current-123', 'integration-console',
+            include_baseline_only=True, include_current_only=True
+        )
+
+        # Verify comprehensive results — total_drifts counts genuine status transitions only
         assert isinstance(result, dict)
         assert 'total_drifts' in result
-        assert result['total_drifts'] == 3  # 1 status drift + 1 exclusive baseline + 1 exclusive current
-        
-        # Verify exclusive simulations (now in metadata)
-        metadata = result['_metadata'] 
-        assert len(metadata['simulations_exclusive_to_baseline']) == 1  # sim-baseline-003 only in baseline
-        assert len(metadata['simulations_exclusive_to_current']) == 1   # sim-current-004 only in current
+        assert result['total_drifts'] == 1  # 1 status drift (exclusive sims are NOT drifts)
+
+        # Verify exclusive simulations (summarized under exclusive_simulations when flags set)
+        excl = result['exclusive_simulations']
+        assert excl['baseline_only']['count'] == 1  # sim-baseline-003 only in baseline
+        assert excl['current_only']['count'] == 1   # sim-current-004 only in current
+        assert result['summary']['baseline_only_count'] == 1
+        assert result['summary']['current_only_count'] == 1
         
         # Verify status drifts (now grouped by drift type)
         assert 'drifts' in result
@@ -1147,9 +1152,10 @@ class TestDriftAnalysisIntegration:
         metadata = result['_metadata']
         assert metadata['console'] == 'integration-console'
         assert metadata['test_name'] == 'Weekly Security Assessment'
-        assert metadata['baseline_simulations_count'] == 3
-        assert metadata['current_simulations_count'] == 3
         assert 'analyzed_at' in metadata
+        # Stable simulation totals live in the summary block
+        assert result['summary']['baseline_total_simulations'] == 3
+        assert result['summary']['current_total_simulations'] == 3
         
         # Verify API calls were made correctly
         assert mock_get.call_count >= 2  # test details + tests history

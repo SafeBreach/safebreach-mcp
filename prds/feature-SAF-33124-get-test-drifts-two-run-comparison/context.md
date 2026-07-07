@@ -1,0 +1,188 @@
+# Context: SAF-33124 — get_test_drifts two-run comparison + join options
+
+**Status:** Implemented + v2 refinement from field feedback — all unit/integration + E2E green
+
+## v2 refinement (Claude Desktop field feedback, at-scale use)
+
+Triaged feedback from a live at-scale session. In-scope fixes applied to the two-run feature:
+- **total_drifts = genuine status transitions ONLY** — exclusive (scope-change) sims no longer inflate
+  the headline (was 6,826 vs 27 real). They live under `summary`/`exclusive_simulations`.
+- **Inline attack identity** — each drifted simulation now carries `attack_id` + `attack_name` (data was
+  already on the reduced sim via `moveId`/`moveName`); each transition group carries
+  `former_status`/`current_status`. Removes the per-sim follow-up round-trips.
+- **Stable `summary` block** — filter-independent `baseline_total_simulations`/`current_total_simulations`
+  plus `*_considered`, `shared_simulations`, and the three exclusion counts. Answers "how many ran"
+  unambiguously regardless of flags.
+- **Exclusive lists summarized, not dumped** — `exclusive_simulations.{baseline_only,current_only}` gives
+  a per-attack breakdown + capped sample (`_EXCLUSIVE_SIM_SAMPLE_CAP=50`) + pointer to
+  `get_test_simulations`, instead of a flat multi-thousand ID dump (payload scale fix).
+
+### v2.1 — default flip (2nd round of field feedback)
+
+A re-test surfaced that excluding no-results by default hid ~88% of genuine status drifts (27 shown vs
+215 total in one env), incl. critical `prevented→no_result` loss-of-visibility transitions. Decision
+(reverses the earlier ticket-approved default): **`include_no_results` now defaults to True.** No-result
+sims are always correlated; passing `include_no_results=False` excludes them but always reports
+`summary.hidden_no_result_drift_count` with a loud hint (never silent). Removed the `*_considered`
+counts (we no longer pre-filter). JIRA updated via comment.
+
+Deferred (pre-existing / global, not SAF-33124 regressions): #4 `console="default"` discovery error
+(cross-cutting across all 20+ tools) and #5 `stopped→no_result` = "negative" taxonomy label
+(`drifts_metadata.py`, product judgment; less prominent now that no-results are excluded by default).
+
+## Implementation (complete)
+
+## Implementation (complete)
+
+- `data_functions.py` `sb_get_test_drifts`: added `baseline_test_id`, `include_baseline_only`,
+  `include_current_only`, `include_no_results`. Explicit `baseline_test_id` skips auto-selection.
+  Added `_NO_RESULT_STATUS_TOKENS` + `_is_no_result_status` helper (matches `no-result`/`no_result`/
+  `INTERNAL_FAIL`). No-result filter applied pre-correlation. Exclusive sides gated + counted only when
+  their flag is set. New `hint_to_agent` + `_metadata` counts (`baseline_only_count`,
+  `current_only_count`, `no_result_filtered_count`, `applied_filters`); exclusive ID lists surfaced
+  only when the include flag is on.
+- `data_server.py` `get_test_drifts_tool`: threaded the four params + rewrote description.
+- Tests: updated `_success`, `_no_drifts`, and the integration workflow test to the new defaults;
+  added 5 tests (explicit baseline skips auto-select, default excludes outer, include-outer flags,
+  no-result filtering, same-id-twice). `CLAUDE.md` updated.
+- Verified: data suite 504 passed; full cross-server 1242 passed (config/data/utilities/playbook/studio),
+  0 failures, e2e deselected.
+
+**Status (original):** Phase 5: Problem Analysis Complete
+**Mode:** Improve existing ticket
+**Ticket:** [SAF-33124](https://safebreach.atlassian.net/browse/SAF-33124) — Task, Medium, Reporter: Yossi Attas
+**Branch:** `feature/SAF-33124-get-test-drifts-two-run-comparison`
+**Repo:** `/Users/yossiattas/Public/safebreach-mcp` (Data Server)
+**Scope decision (user):** Extend the existing `get_test_drifts` tool (backward-compatible), not a new tool.
+
+## Ticket Ask
+
+`get_test_drifts` should support comparing **any two arbitrary test run IDs** with comparison
+(join) options. Motivated by a Travelers support case where the agent burned tokens manually
+traversing simulation results to compare two non-consecutive runs.
+
+Proposed options:
+1. `include_outer_left` (default False) — simulations only in the first test run
+2. `include_outer_right` (default False) — simulations only in the second test run
+3. `include_no_results` (default False) — simulations with internal_fail (no-result) status
+
+Default = inner join (only matching `original_tracking_id` across both runs), excluding no-results.
+
+## Investigation Findings (Data Server)
+
+### Tool definition
+- `safebreach_mcp_data/data_server.py:297–316` — `@self.mcp.tool`, `readOnlyHint=True`.
+  Handler `get_test_drifts_tool(test_id, console="default")` → calls `sb_get_test_drifts`.
+  **No second test-id param, no join params today.**
+
+### Business logic — `sb_get_test_drifts` (`data_functions.py:1738–1923`)
+- Baseline is **auto-selected**: fetch current test details (`sb_get_test_details`) for
+  `test_name` + `current_start_time`, then `sb_get_tests(name_filter, end_date=current_start_time,
+  order desc)` → take `[0]`; fallback `_find_previous_test_by_name` linear scan (`:405–440`).
+- **No explicit second-test-id path exists** — always most-recent prior run with same name.
+- Simulations fetched via `_get_all_simulations_from_cache_or_api` → `POST
+  /api/data/v1/accounts/{account_id}/executionsHistoryResults` (`:807–827`), called twice.
+
+### Join / matching logic (`data_functions.py:1836–1890`)
+- Correlation key = `drift_tracking_code` (mapped from raw `originalExecutionId`,
+  `data_types.py:36`).
+- Sims **without** a `drift_tracking_code` are silently dropped (`if drift_code:` gate `:1840,1845`).
+- Set ops: `baseline_only`, `current_only` (outer), `shared` (inner). **Today outer sims are
+  ALWAYS collected** into `_metadata.simulations_exclusive_to_baseline/current` — no opt-in.
+- Status comparison only on `shared` codes; differing statuses → `drift_key` grouped via
+  `drifts_metadata.drift_types_mapping`.
+- **No-result / internal_fail: no filtering today** — passes through like any status;
+  `drifts_metadata.py` has explicit `*-no_result` / `no_result-*` transition entries.
+
+### Data transforms (`data_types.py`)
+- `reduced_simulation_results_mapping:27–37`: `status`←`finalStatus`, `drift_tracking_code`←`originalExecutionId`.
+- `group_and_enrich_drift_records:820–910` used by the **time-window** tools, not by `sb_get_test_drifts`
+  (which does its own inline grouping).
+
+### Related tools (different mechanism — not reusable directly)
+- `sb_get_simulation_result_drifts` (`:2763`) and `sb_get_simulation_status_drifts` (`:2849`) are
+  **time-window** based (`POST .../drift/simulationStatus`), not test-id based. No two-test/join semantics.
+
+### Tests (`tests/test_data_functions.py:2295–2592+`)
+- 8 tests for `sb_get_test_drifts`, all auto-baseline. Mock `sb_get_test_details`, `sb_get_tests`,
+  `_find_previous_test_by_name`, `_get_all_simulations_from_cache_or_api`.
+- None exercise explicit second test id, join options, or no-result scenarios.
+- `test_drift_tools.py` covers only the time-window tools.
+
+### Caching
+- `simulations_cache` (maxsize=3, ttl=600), key `simulations_{console}_{test_id}{user_suffix}`
+  (`:793`). Raw per-test sim lists cached; the drift join result is not cached.
+
+## Problem Analysis
+
+### Problem scope
+Two coupled gaps: (a) **no way to pick the second run** — baseline is always auto-derived as the
+most-recent prior same-name run, so comparing two *specific* / non-consecutive runs is impossible
+via the tool; (b) **no control over join breadth** — outer (exclusive) sims are always emitted and
+no-result sims are never filtered, so callers can't scope noise down to a clean inner join.
+
+### Affected areas
+- `data_server.py` tool signature + docstring (new optional params).
+- `data_functions.py` `sb_get_test_drifts` — baseline resolution branch + join-emission gates.
+- Tests in `test_data_functions.py`.
+- `CLAUDE.md` tool docs (§ Drift Analysis / Data Server tool list).
+
+### Key design tensions / risks
+1. **Default behavior change.** Ticket wants default = inner join, exclude outer + no-results.
+   Today the tool *always* includes outer sims and never filters no-results. Honoring the ticket
+   defaults **changes existing output** for current single-arg callers (outer lists disappear,
+   no-result transitions drop). Backward-compat call *signature* is preserved, but *response
+   content* shifts. Needs explicit decision: adopt ticket defaults (behavior change) vs. keep
+   current always-include behavior as default and treat flags purely additively.
+2. **Param naming: first/second vs. baseline/current.** New second-test-id param name and
+   which is "left"/"right" (outer_left = first, outer_right = second) must map cleanly onto the
+   existing baseline(=left/first) vs current(=right/second) mental model. Ticket says "first" =
+   the earlier/baseline, "second" = current.
+3. **Optional second id + backward compat.** When second id omitted → keep auto-baseline
+   behavior. When provided → skip auto-selection entirely (no name match, no time ordering
+   assumptions — arbitrary runs may have different names).
+4. **`include_no_results` semantics.** Confirm "no-result" = `internal_fail` status
+   (ticket says so) and how it maps to normalized statuses (`no_result`/`internal_fail`). Decide
+   whether it filters outer sims, inner sims, or both.
+5. **Sims dropped for missing tracking code** — already silent; document, don't regress.
+
+### Edge cases
+- Two runs with different test names (allowed once id is explicit).
+- Same id passed twice (degenerate — all shared, no drift).
+- Second id older than first (which is "left"? define left=first-arg regardless of time).
+- Second id nonexistent / different console.
+- No-result-only differences vanishing when `include_no_results=False`.
+
+### Dependencies
+- None external; self-contained in Data Server. Reuses existing sim-fetch + cache path.
+
+## Parameter Convention Audit (cross-tool)
+
+Audited param naming/semantics across all `*_server.py` / `*_functions.py` to keep the new params
+consistent. Findings:
+
+- **Boolean toggles**: universally `include_<noun>`, default `False` (e.g. `include_drift_count`
+  `data_server.py:114`, `include_mitre_techniques` `:186`, `include_drift_info` `:188`,
+  `include_basic_attack_logs` `:187`). Only `include_logs` defaults True.
+- **Two-id comparison**: `get_test_drifts` is the ONLY two-test comparison; today it exposes just
+  `test_id` (= *current*) and auto-discovers baseline. Internal vars are `baseline_test_id` /
+  `current_test_id` (`data_functions.py:1826,1834`); output keys `simulations_exclusive_to_baseline`
+  / `_to_current` (`:1911–1912`); drift direction `drift_from`(baseline)→`drift_to`(current)
+  (`:1760–1761`). **No `_a/_b`, no `from_test_id/to_test_id`, no `left/right` anywhere.**
+- **Transition params (time-window tools)** use `from_*`/`to_*` (`from_status`/`to_status` `:531`,
+  `from_final_status`/`to_final_status` `:617`) — that's for *status* transitions, not test ids.
+- **no-result terminology**: status string `"no-result"` (hyphen) in output/API (`data_types.py:125,129`);
+  `"no_result"` (underscore) in drift keys (`drifts_metadata.py`). No existing no-result inclusion param.
+- **Filters** use `_filter` suffix; include/exclude filter pair precedent = `include_test_ids_filter` /
+  `exclude_test_ids_filter` (`data_server.py:869–870`).
+
+### Reconciliation applied to this ticket
+| Original proposal | Issue vs conventions | Final name |
+|---|---|---|
+| `second_test_id` | no two-id precedent; `baseline/current` is the established vocab; `test_id` is already *current* | `baseline_test_id` |
+| `include_outer_left` | no `left/right` suffix in repo | `include_baseline_only` |
+| `include_outer_right` | no `left/right` suffix in repo | `include_current_only` |
+| `include_no_results` | already matches `include_<plural_noun>`/default False | `include_no_results` (kept) |
+
+**Semantic correction**: `test_id` stays the *current* (later) run — earlier draft wrongly framed it as
+"first/left". `baseline_test_id` is the run compared against, preserving `drift_from`→`drift_to` direction.
