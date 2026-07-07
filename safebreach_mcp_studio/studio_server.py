@@ -26,7 +26,7 @@ from .studio_functions import (
     sb_get_studio_attack_boilerplate,
     sb_set_studio_attack_status,
     sb_run_scenario,
-    sb_run_adhoc_scenario,
+    sb_quick_run,
     sb_manage_test,
 )
 
@@ -1029,7 +1029,7 @@ set_studio_attack_status(attack_id=10000298, new_status="draft", console="demo")
             description="""Executes a ready-to-run SafeBreach scenario on the platform.
 
 Use this when you have an EXISTING scenario ID from get_scenarios. For running specific
-playbook attack IDs without a pre-existing scenario, use run_adhoc_scenario instead.
+playbook attack IDs without a pre-existing scenario, use quick_run instead.
 
 IMPORTANT: This tool triggers REAL attack simulations on simulators. Ensure the correct
 scenario_id before calling. Use get_scenarios (Config Server) to discover available scenarios
@@ -1070,10 +1070,10 @@ Parameters:
   it does NOT merge with partially-ready steps that already have one filter side set.
 
   Format: '{"default": {"targetFilter": {...}, "attackerFilter": {...}}, "8": {"attackerFilter": {...}}}'
-- dry_run (optional, bool, default False): If True, predict simulation counts per step
-  without actually queuing the test. Use this to preview what would happen before committing
-  to a real execution. Shows resolved attacks per step and constraint diagnostics.
-- verbose_failures (optional, bool, default False): When True with dry_run, show per-attack
+- evaluate (optional, bool, default False): If True, evaluate the test — predict simulation
+  counts per step without actually queuing it. Use this to preview what would happen before
+  committing to a real execution. Shows resolved attacks per step and constraint diagnostics.
+- verbose_failures (optional, bool, default False): When True with evaluate, show per-attack
   constraint detail even for steps that produce some simulations (default: aggregated summary
   for partial steps, per-attack for zero steps).
 
@@ -1088,12 +1088,12 @@ info showing missing filters per step (when not ready).
 Example (ready scenario):
 run_scenario(scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5", console="demo")
 
-Example (dry_run preview — no test queued):
-run_scenario(scenario_id="3b8eade5-...", console="demo", dry_run=True)
+Example (evaluate preview — no test queued):
+run_scenario(scenario_id="3b8eade5-...", console="demo", evaluate=True)
 
 Example (3-turn workflow for non-ready scenarios):
   1. run_scenario(scenario_id="abc-123", console="demo")  # returns diagnostic
-  2. run_scenario(scenario_id="abc-123", step_overrides='{"default": {"targetFilter": ...}, "8": {"attackerFilter": ...}}', dry_run=True)  # preview
+  2. run_scenario(scenario_id="abc-123", step_overrides='{"default": {"targetFilter": ...}, "8": {"attackerFilter": ...}}', evaluate=True)  # preview
   3. run_scenario(scenario_id="abc-123", step_overrides='...')  # execute"""
         )
         def run_scenario(
@@ -1102,10 +1102,10 @@ Example (3-turn workflow for non-ready scenarios):
             test_name: str = None,
             allow_partial_steps: bool = False,
             step_overrides: str = None,
-            dry_run: bool = False,
+            evaluate: bool = False,
             verbose_failures: bool = False,
         ) -> str:
-            """Execute a scenario, return diagnostic, or preview with dry_run."""
+            """Execute a scenario, return diagnostic, or preview with evaluate."""
             try:
                 # Single-tenant console auto-resolve
                 from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
@@ -1120,7 +1120,7 @@ Example (3-turn workflow for non-ready scenarios):
                     test_name=test_name,
                     allow_partial_steps=allow_partial_steps,
                     step_overrides=step_overrides,
-                    dry_run=dry_run,
+                    evaluate=evaluate,
                     verbose_failures=verbose_failures,
                 )
 
@@ -1216,15 +1216,15 @@ Example (3-turn workflow for non-ready scenarios):
 
                     return "\n".join(parts)
 
-                # Handle dry_run prediction response
-                if result.get('status') == 'dry_run':
+                # Handle evaluate prediction response
+                if result.get('status') == 'evaluating':
                     predicted_per_step = result.get('predicted_per_step', [])
                     step_stats = result.get('step_stats', [])
                     predicted_total = result.get('predicted_simulations', 0)
                     empty_steps = result.get('empty_steps', [])
 
                     parts = [
-                        "## Dry Run — Simulation Prediction",
+                        "## Evaluating Test — Simulation Prediction",
                         "",
                         f"**Scenario:** {result.get('scenario_name')} "
                         f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
@@ -1334,7 +1334,7 @@ Example (3-turn workflow for non-ready scenarios):
                         elif count == 0 and not stats.get('constraint_summary'):
                             parts.append(
                                 "  - **0 viable pairings** — rerun with "
-                                "`dry_run=True` for constraint details"
+                                "`evaluate=True` for constraint details"
                             )
 
                     if empty_steps:
@@ -1347,7 +1347,7 @@ Example (3-turn workflow for non-ready scenarios):
                     parts.extend([
                         "",
                         "**No test was queued.** To execute, call again "
-                        "without `dry_run=True`.",
+                        "without `evaluate=True`.",
                     ])
 
                     return "\n".join(parts)
@@ -1411,18 +1411,18 @@ Example (3-turn workflow for non-ready scenarios):
                 logger.error(f"Error in run_scenario: {e}")
                 return f"Error running scenario: {str(e)}"
 
-        # ----- run_adhoc_scenario (SAF-31295) -----
+        # ----- quick_run (SAF-31295) -----
 
         @self.mcp.tool(
-            name="run_adhoc_scenario",
+            name="quick_run",
             annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
-            description="""Execute an ad-hoc scenario from explicit playbook attack IDs.
+            description="""Quick Run — execute a test from explicit playbook attack IDs.
 
 Use this when you have SPECIFIC playbook attack IDs to run without a pre-existing scenario.
 For running an existing OOB or custom scenario by ID, use run_scenario instead.
 
 Constructs one step per attack, predicts simulation counts via the statistics API,
-and presents a dry-run preview before execution. Use get_playbook_attacks to discover
+and evaluates the test before execution. Use get_playbook_attacks to discover
 attack IDs beforehand.
 
 Parameters:
@@ -1438,27 +1438,27 @@ Parameters:
   **How to get simulator UUIDs:**
   - From get_simulation_details: use attacker_node_id and target_node_id fields (rerun workflow)
   - From get_console_simulators: use the simulator id field (discovery workflow)
-- dry_run (optional, bool, default True): Preview without queuing. The agent MUST
-  present the preview to the user and get confirmation before calling with dry_run=False.
+- evaluate (optional, bool, default True): Evaluate the test without queuing. The agent MUST
+  present the evaluation to the user and get confirmation before calling with evaluate=False.
 
-Returns: Markdown summary with predicted simulation counts (dry_run) or test_id (queued).
+Returns: Markdown summary with predicted simulation counts (evaluate) or test_id (queued).
 
-Example (preview):
-  run_adhoc_scenario(attack_ids="8849,217", console="demo")
-Example (execute after preview):
-  run_adhoc_scenario(attack_ids="8849,217", console="demo", dry_run=False)
+Example (evaluate):
+  quick_run(attack_ids="8849,217", console="demo")
+Example (execute after evaluation):
+  quick_run(attack_ids="8849,217", console="demo", evaluate=False)
 Example (rerun with exact simulators from a previous simulation):
-  run_adhoc_scenario(attack_ids="8849", simulator_overrides='{"8849": {"target": ["target-node-id"], "attacker": ["attacker-node-id"]}}', console="demo")"""
+  quick_run(attack_ids="8849", simulator_overrides='{"8849": {"target": ["target-node-id"], "attacker": ["attacker-node-id"]}}', console="demo")"""
         )
-        def run_adhoc_scenario(
+        def quick_run(
             attack_ids: str,
             console: str = "default",
             test_name: str = None,
             all_connected: bool = False,
             simulator_overrides: str = None,
-            dry_run: bool = True,
+            evaluate: bool = True,
         ) -> str:
-            """Execute an ad-hoc scenario from playbook attack IDs."""
+            """Execute a Quick Run test from playbook attack IDs."""
             try:
                 # Single-tenant console auto-resolve
                 from safebreach_mcp_core.environments_metadata import (
@@ -1469,23 +1469,23 @@ Example (rerun with exact simulators from a previous simulation):
                     if console_name != 'default' and console not in safebreach_envs:
                         console = console_name
 
-                result = sb_run_adhoc_scenario(
+                result = sb_quick_run(
                     attack_ids=attack_ids,
                     console=console,
                     test_name=test_name,
                     all_connected=all_connected,
                     simulator_overrides=simulator_overrides,
-                    dry_run=dry_run,
+                    evaluate=evaluate,
                 )
 
-                # Format dry_run response
-                if result.get('status') == 'dry_run':
+                # Format evaluate response
+                if result.get('status') == 'evaluating':
                     predicted_per_step = result.get('predicted_per_step', [])
                     steps = result.get('steps', [])
                     empty_steps = result.get('empty_steps', [])
 
                     parts = [
-                        "## Ad-hoc Scenario — Dry Run Preview",
+                        "## Quick Run — Test Evaluation",
                         "",
                         f"**Attacks:** {len(steps)} attacks, "
                         f"{result.get('predicted_simulations', 0):,} predicted simulations",
@@ -1512,7 +1512,7 @@ Example (rerun with exact simulators from a previous simulation):
                     parts.extend([
                         "",
                         "**No test was queued.** "
-                        + result.get('hint_to_agent', 'To execute, call again with dry_run=False.'),
+                        + result.get('hint_to_agent', 'To execute, call again with evaluate=False.'),
                     ])
 
                     return "\n".join(parts)
@@ -1521,7 +1521,7 @@ Example (rerun with exact simulators from a previous simulation):
                 skipped = result.get('skipped_attacks', [])
 
                 parts = [
-                    "## Ad-hoc Scenario Queued",
+                    "## Quick Run Queued",
                     "",
                     f"**Test ID:** `{result.get('test_id')}`",
                     f"**Test Name:** {result.get('test_name')}",
@@ -1544,11 +1544,11 @@ Example (rerun with exact simulators from a previous simulation):
                 return "\n".join(parts)
 
             except ValueError as e:
-                logger.error(f"Ad-hoc scenario error: {e}")
-                return f"Ad-hoc Scenario Error: {str(e)}"
+                logger.error(f"Quick Run error: {e}")
+                return f"Quick Run Error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error in run_adhoc_scenario: {e}")
-                return f"Error running ad-hoc scenario: {str(e)}"
+                logger.error(f"Error in quick_run: {e}")
+                return f"Error running Quick Run: {str(e)}"
 
         # ----- manage_test (SAF-29969) -----
 
