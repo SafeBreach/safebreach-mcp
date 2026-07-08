@@ -5,6 +5,14 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.7.0 — 2026-07-08
+
+### Fixed
+
+- Concurrency limiter no longer lets one caller starve every MCP server at once: the per-caller limit bucket is now
+  namespaced per server, so heavy load (or a tool-refresh fan-out) on one server no longer rate-limits the others. The
+  long-lived streamable-HTTP GET stream is also no longer counted against the limit.
+
 ## 1.6.0 — 2026-07-07
 
 ### Added
