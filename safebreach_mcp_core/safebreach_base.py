@@ -606,6 +606,13 @@ class SafeBreachMCPBase:
         logger.warning("🔒 HTTP Authorization required for external connections")
         logger.warning("🔑 Set SAFEBREACH_MCP_AUTH_TOKEN environment variable for authentication")
 
+    def _bucket_key(self, bundle: Optional[Dict[str, str]], session_id: Optional[str]) -> Optional[str]:
+        """Per-server-namespaced concurrency bucket key, or None when no identity is present."""
+        base_key = _concurrency_key(bundle, session_id)
+        if base_key is None:
+            return None
+        return f"{self.server_name}::{base_key}"
+
     def _create_concurrency_limited_app(self, original_app, transport: str = "sse", endpoint_path: str = "/sse"):
         """Create an ASGI wrapper that limits concurrent requests per MCP session."""
 
@@ -713,13 +720,13 @@ class SafeBreachMCPBase:
                                 f"🔑 Auth from session store for {session_id[:8]}..."
                             )
 
-                    conc_key = _concurrency_key(bundle, session_id)
+                    conc_key = self._bucket_key(bundle, session_id)
                     if conc_key not in _session_semaphores:
                         _session_semaphores[conc_key] = (
                             asyncio.Semaphore(_concurrency_limit), time.time()
                         )
                         logger.info(
-                            f"🆔 Concurrency bucket registered: {conc_key[:12]}..."
+                            f"🆔 Concurrency bucket registered: {conc_key[:24]}..."
                         )
 
                     sem, _ = _session_semaphores[conc_key]
@@ -750,11 +757,14 @@ class SafeBreachMCPBase:
                     # Initialize request — no session yet, pass through
                     return await original_app(scope, receive, send)
 
-                conc_key = _concurrency_key(bundle, session_id)
+                if scope.get("method") != "POST":
+                    return await original_app(scope, receive, send)
+
+                conc_key = self._bucket_key(bundle, session_id)
                 if conc_key not in _session_semaphores:
                     _session_semaphores[conc_key] = (asyncio.Semaphore(_concurrency_limit), time.time())
                     logger.info(
-                        f"🆔 New concurrency bucket: {conc_key[:12]}... "
+                        f"🆔 New concurrency bucket: {conc_key[:24]}... "
                         f"(limit={_concurrency_limit}, active_buckets={len(_session_semaphores)})"
                     )
 
