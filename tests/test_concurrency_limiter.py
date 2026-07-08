@@ -94,7 +94,7 @@ class TestConcurrencyLimiter:
             # Create a session with limit=1
             session_id = "test-session-429"
             sem = asyncio.Semaphore(1)
-            _session_semaphores[session_id] = (sem, time.time())
+            _session_semaphores[f"test-server::{session_id}"] = (sem, time.time())
             _mcp_session_id.set(session_id)
             # Exhaust the semaphore
             await sem.acquire()
@@ -120,8 +120,8 @@ class TestConcurrencyLimiter:
             session_b = "session-b"
             sem_a = asyncio.Semaphore(1)
             sem_b = asyncio.Semaphore(1)
-            _session_semaphores[session_a] = (sem_a, time.time())
-            _session_semaphores[session_b] = (sem_b, time.time())
+            _session_semaphores[f"test-server::{session_a}"] = (sem_a, time.time())
+            _session_semaphores[f"test-server::{session_b}"] = (sem_b, time.time())
             # Exhaust session A
             await sem_a.acquire()
             # Session B should still work
@@ -177,7 +177,7 @@ class TestConcurrencyLimiter:
             app, _ = _make_app()
             session_id = "test-retry"
             sem = asyncio.Semaphore(1)
-            _session_semaphores[session_id] = (sem, time.time())
+            _session_semaphores[f"test-server::{session_id}"] = (sem, time.time())
             _mcp_session_id.set(session_id)
             await sem.acquire()
             send = AsyncMock()
@@ -301,7 +301,7 @@ class TestConcurrencyLimiterSAF28585:
             # Manually register a session with an exhausted semaphore
             session_id = "test-qs-session"
             sem = asyncio.Semaphore(1)
-            _session_semaphores[session_id] = (sem, time.time())
+            _session_semaphores[f"test-server::{session_id}"] = (sem, time.time())
             await sem.acquire()
 
             # POST with session_id in query string (as FastMCP clients actually send)
@@ -344,7 +344,7 @@ class TestConcurrencyLimiterSAF28585:
                     return await super().acquire()
 
             sem = TrackingSemaphore(_concurrency_limit)
-            _session_semaphores[session_id] = (sem, time.time())
+            _session_semaphores[f"test-server::{session_id}"] = (sem, time.time())
 
             # POST with session_id in query string
             msg_scope = make_scope(
@@ -534,7 +534,7 @@ class TestPerJwtConcurrency:
             )
             session_id = "shared-session"
             # Saturate JWT A's bucket (limit 1, no release)
-            key_a = _concurrency_key({"x-token": "tokenA"}, session_id)
+            key_a = base._bucket_key({"x-token": "tokenA"}, session_id)
             sem_a = asyncio.Semaphore(1)
             await sem_a.acquire()
             _session_semaphores[key_a] = (sem_a, time.time())
@@ -561,7 +561,7 @@ class TestPerJwtConcurrency:
                 original, transport="streamable-http", endpoint_path="/mcp"
             )
             # Saturate the JWT's bucket, computed with one session id
-            key = _concurrency_key({"x-token": "tok"}, "session-1")
+            key = base._bucket_key({"x-token": "tok"}, "session-1")
             sem = asyncio.Semaphore(1)
             await sem.acquire()
             _session_semaphores[key] = (sem, time.time())
@@ -573,4 +573,106 @@ class TestPerJwtConcurrency:
             original.assert_not_awaited()
 
             sem.release()
+        asyncio.run(run())
+
+
+class TestPerServerConcurrencyBucket:
+    """SAF-33239: servers in one process must not share a concurrency bucket."""
+
+    def test_bucket_key_namespaced_per_server(self):
+        studio = SafeBreachMCPBase("studio")
+        playbook = SafeBreachMCPBase("playbook")
+        bundle = {"x-token": "svc"}
+        assert studio._bucket_key(bundle, "s") != playbook._bucket_key(bundle, "s")
+        assert studio._bucket_key(bundle, "s").startswith("studio::")
+        assert studio._bucket_key(None, None) is None
+
+    def test_servers_do_not_share_a_bucket_under_one_token(self):
+        """The regression: one service token that starves studio must not starve playbook."""
+        async def run():
+            studio = SafeBreachMCPBase("studio")
+            playbook = SafeBreachMCPBase("playbook")
+            orig_p = AsyncMock()
+            app_s = studio._create_concurrency_limited_app(
+                AsyncMock(), transport="streamable-http", endpoint_path="/mcp"
+            )
+            app_p = playbook._create_concurrency_limited_app(
+                orig_p, transport="streamable-http", endpoint_path="/mcp"
+            )
+            token = "service-token"
+            sem = asyncio.Semaphore(1)
+            await sem.acquire()
+            _session_semaphores[studio._bucket_key({"x-token": token}, "sess-studio")] = (sem, time.time())
+
+            send_s = AsyncMock()
+            await app_s(_sh_scope("sess-studio", token), AsyncMock(), send_s)
+            assert send_s.call_args_list[0][0][0]["status"] == 429
+
+            send_p = AsyncMock()
+            await app_p(_sh_scope("sess-pb", token), AsyncMock(), send_p)
+            orig_p.assert_awaited_once()
+            assert send_p.await_count == 0
+
+            sem.release()
+        asyncio.run(run())
+
+    def test_streamable_get_channel_does_not_hold_a_slot(self):
+        """A long-lived GET SSE channel passes through even when the bucket is saturated."""
+        async def run():
+            base = SafeBreachMCPBase("studio")
+            original = AsyncMock()
+            app = base._create_concurrency_limited_app(
+                original, transport="streamable-http", endpoint_path="/mcp"
+            )
+            token = "tok"
+            sem = asyncio.Semaphore(1)
+            await sem.acquire()
+            _session_semaphores[base._bucket_key({"x-token": token}, "s1")] = (sem, time.time())
+
+            get_scope = {**_sh_scope("s1", token), "method": "GET"}
+            send = AsyncMock()
+            await app(get_scope, AsyncMock(), send)
+            original.assert_awaited_once()
+            assert send.await_count == 0
+
+            sem.release()
+        asyncio.run(run())
+
+    def test_refresh_across_servers_under_one_token_no_429(self):
+        """Reproduces breach-genie refreshing tools across every server under one token."""
+        async def run():
+            names = ["configuration", "data", "playbook", "studio"]
+            gate = asyncio.Event()
+
+            async def original(scope, receive, send):
+                if scope.get("method") == "GET":
+                    await gate.wait()
+
+            apps = {
+                n: SafeBreachMCPBase(n)._create_concurrency_limited_app(
+                    original, transport="streamable-http", endpoint_path="/mcp"
+                )
+                for n in names
+            }
+            token = "service-token"
+            gets = [
+                asyncio.create_task(
+                    apps[n]({**_sh_scope(f"sess-{n}", token), "method": "GET"}, AsyncMock(), AsyncMock())
+                )
+                for n in names
+            ]
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+            sends = {}
+            for n in names:
+                sends[n] = AsyncMock()
+                await apps[n](_sh_scope(f"sess-{n}", token), AsyncMock(), sends[n])
+
+            for n in names:
+                statuses = [c[0][0].get("status") for c in sends[n].call_args_list if c[0]]
+                assert 429 not in statuses, f"{n} unexpectedly rate-limited: {statuses}"
+
+            gate.set()
+            await asyncio.gather(*gets)
         asyncio.run(run())
