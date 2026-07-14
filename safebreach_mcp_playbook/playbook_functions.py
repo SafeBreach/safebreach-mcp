@@ -287,6 +287,59 @@ def sb_get_playbook_attack_details(
         raise ValueError(f"Failed to get attack details: {str(e)}") from e
 
 
+def sb_get_playbook_attacks_by_tags(
+    console: str = "default",
+    tags: Optional[str] = None,
+    page_number: int = 0
+) -> Dict[str, Any]:
+    """
+    Get playbook attacks filtered by one or more custom tags.
+
+    Args:
+        console: SafeBreach console name
+        tags: Comma-separated tag values (OR logic, case-insensitive exact match per tag token)
+        page_number: Page number (0-based)
+
+    Returns:
+        Dict containing paginated attacks (each carrying its `tags` list) and metadata
+
+    Raises:
+        ValueError: If no tags are provided, page_number is negative, or the API call fails
+    """
+    # Validate tags - at least one non-empty tag is required (single-purpose tool)
+    if not tags or not [v for v in tags.split(',') if v.strip()]:
+        raise ValueError("At least one tag must be provided in 'tags' (comma-separated).")
+
+    # Validate page_number parameter
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+
+    try:
+        # Get all attacks from cache or API
+        all_attacks = _get_all_attacks_from_cache_or_api(console)
+
+        # Transform to reduced format, exposing the normalized tags for filtering
+        reduced_attacks = [
+            transform_reduced_playbook_attack(attack, include_tags=True)
+            for attack in all_attacks
+        ]
+
+        # Apply the tag filter
+        filtered_attacks = filter_attacks_by_criteria(reduced_attacks, tag_filter=tags)
+
+        # Paginate results
+        paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
+        paginated_result['applied_filters'] = {'tags': tags}
+
+        return paginated_result
+
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error("Unexpected error in sb_get_playbook_attacks_by_tags: %s", e)
+        raise ValueError(f"Failed to get playbook attacks by tags: {str(e)}") from e
+
+
 def clear_playbook_cache():
     """Clear all playbook caches. Useful for testing."""
     playbook_cache.clear()

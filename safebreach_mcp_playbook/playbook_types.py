@@ -285,13 +285,15 @@ def get_full_playbook_attack_mapping() -> Dict[str, str]:
 
 
 def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
-                                      include_mitre_techniques: bool = False) -> Dict[str, Any]:
+                                      include_mitre_techniques: bool = False,
+                                      include_tags: bool = False) -> Dict[str, Any]:
     """
     Transform a playbook attack to reduced format.
 
     Args:
         attack_data: Raw attack data from SafeBreach API
         include_mitre_techniques: Whether to include MITRE ATT&CK data
+        include_tags: Whether to include the normalized custom `tags` list (used for tag filtering)
 
     Returns:
         Transformed attack data in reduced format
@@ -321,6 +323,9 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))
         result.update(mitre_data)
+
+    if include_tags:
+        result['tags'] = _transform_tags(attack_data.get('tags', []))
 
     return result
 
@@ -378,7 +383,8 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                mitre_technique_filter: Optional[str] = None,
                                mitre_tactic_filter: Optional[str] = None,
                                attacker_platform_filter: Optional[str] = None,
-                               target_platform_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                               target_platform_filter: Optional[str] = None,
+                               tag_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
 
@@ -494,7 +500,30 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             if _attack_matches_platform(attack.get('target_platform'), filter_values)
         ]
 
+    # Filter by custom tag (comma-separated OR logic, case-insensitive EXACT match on each tag token)
+    if tag_filter:
+        filter_values = [v.strip().lower() for v in tag_filter.split(',') if v.strip()]
+        filtered_attacks = [
+            attack for attack in filtered_attacks
+            if _attack_matches_tag(attack, filter_values)
+        ]
+
     return filtered_attacks
+
+
+def _attack_matches_tag(attack: Dict[str, Any], filter_values: List[str]) -> bool:
+    """
+    Check if an attack matches any of the tag filter values.
+
+    Matching is case-insensitive and EXACT per tag token (tags are discrete tokens like
+    "network" or "sector:Banking"), so a filter of "net" does NOT match a tag "network".
+    Attacks with no tags never match a non-empty filter.
+    """
+    tags = attack.get('tags', [])
+    if not tags:
+        return False
+    tags_lower = {str(t).lower() for t in tags}
+    return any(fv in tags_lower for fv in filter_values)
 
 
 def _attack_matches_mitre_technique(attack: Dict[str, Any], filter_values: List[str]) -> bool:

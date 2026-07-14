@@ -872,6 +872,111 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
         raise
 
 
+def _get_simulation_results_by_tags_from_api(tag_values: List[str], console: str) -> List[Dict[str, Any]]:
+    """
+    Fetch simulation results carrying any of the given tags (account-wide), via the
+    executionsHistoryResults Lucene query. Tags are matched against the `labels` field
+    and are upper-cased (sim-result labels are stored upper-cased server-side).
+
+    Args:
+        tag_values: Non-empty list of tag values (OR-combined)
+        console: SafeBreach console name
+
+    Returns:
+        List of reduced simulation result entities
+    """
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    labels_clause = " OR ".join(f"labels:{tag.upper()}" for tag in tag_values)
+    query = f"!labels:Ignore AND (!labels:Draft) AND ({labels_clause})"
+
+    all_results = []
+    page = 1
+    page_size = 100
+
+    while True:
+        data = {
+            "query": query,
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": "desc",
+            "sortBy": "executionTime"
+        }
+        response = requests.post(api_url, headers=headers, json=data, timeout=120)
+        check_rbac_response(response)
+
+        try:
+            response_data = response.json()
+            page_simulations = response_data.get("simulations", [])
+        except ValueError as e:
+            logger.error("Failed to parse simulation-results-by-tags response on page %d for console %s: %s", page, console, str(e))
+            break
+
+        if not page_simulations:
+            break
+
+        all_results.extend(page_simulations)
+
+        if len(page_simulations) < page_size:
+            break
+
+        page += 1
+
+    return [get_reduced_simulation_result_entity(s) for s in all_results]
+
+
+def sb_get_simulation_results_by_tags(
+    console: str = "default",
+    tags: Optional[str] = None,
+    page_number: int = 0
+) -> Dict[str, Any]:
+    """
+    Get simulation results filtered by one or more custom tags (labels).
+
+    Args:
+        console: SafeBreach console name
+        tags: Comma-separated tag values (OR logic). Matched case-insensitively against sim-result labels.
+        page_number: Page number (0-based)
+
+    Returns:
+        Dict containing paginated simulation results and metadata
+
+    Raises:
+        ValueError: If no tags are provided or page_number is negative
+    """
+    tag_values = [v.strip() for v in tags.split(',')] if tags else []
+    tag_values = [v for v in tag_values if v]
+    if not tag_values:
+        raise ValueError("At least one tag must be provided in 'tags' (comma-separated).")
+
+    if page_number < 0:
+        raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+
+    all_results = _get_simulation_results_by_tags_from_api(tag_values, console)
+
+    total_simulations = len(all_results)
+    total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE
+    start_index = page_number * PAGE_SIZE
+    page_simulations = all_results[start_index:start_index + PAGE_SIZE]
+
+    hint = None
+    if page_number + 1 < total_pages:
+        hint = f"You can scan next page by specifying page_number={page_number + 1}"
+
+    return {
+        "page_number": page_number,
+        "total_pages": total_pages,
+        "total_simulations": total_simulations,
+        "simulations_in_page": page_simulations,
+        "applied_filters": {"tags": tags},
+        "hint_to_agent": hint
+    }
+
+
 def _apply_simulation_filters(
     simulations: List[Dict[str, Any]],
     status_filter: Optional[str] = None,

@@ -160,10 +160,43 @@ rate_limiter, get_caller_identity`.
 
 **GAP — tag WRITE endpoint not present in safebreach-mcp.** grep for
 `add_tag|attack_tag|by_tag|userTag|customTag|moveTag` → no matches; playbook/data have no
-`readOnlyHint=False` tools; no SAF-29870 PRD in the repo. The move-tag write endpoint (configuration
-repo exposes `POST/DELETE /content/v3/accounts/{accountId}/moves/{moveId}/tags`) must be reached via
-the gateway — the correct `get_api_base_url` token (`'moves'` [currently unused] vs `'config'` vs
-`'playbook'`) and reachability/OPA coverage must be pinned in Phase A.
+`readOnlyHint=False` tools; no SAF-29870 PRD in the repo. The move-tag write endpoint lives in the
+**configuration** repo and is pinned in the Phase A section below.
+
+### Phase A verification — endpoint pinned (CODE-DERIVED; live OPA check still pending)
+
+Investigated `configuration`, `content-manager`, and safebreach-mcp routing locally (2026-07-14).
+
+**Move-tag write endpoint (configuration service, single-move):**
+- **ADD**: `POST /api/content/v3/accounts/{accountId}/moves/{moveId}/tags`, body `{"values":["<tag>"]}`
+  (array of strings) → handler `addMoveTags` (`configuration/src/server/newControllers/movesController.js:677`;
+  swagger `src/server/REST/swagger.json:8210`, basePath `/api` at `:9`). Returns 201 with the updated tags.
+- **REMOVE**: `DELETE /api/content/v3/accounts/{accountId}/moves/{moveId}/tags?values=<tag>` —
+  `collectionFormat: pipes` so multiple = `?values=a|b` → handler `deleteMoveTags` (`movesController.js:753`;
+  swagger `:8270`). Returns 200 with remaining tags. `moveId` = the attack id (same id space as the kb read).
+- Routing is swagger-operationId dispatch (`x-swagger-router-controller: swaggerApi`, mounted in
+  `configuration/src/server/Context.js:491`); config service listens on `CONFIGURATION_PORT` (`Context.js:139`).
+- **AVOID bulk**: `/content/v3/accounts/{accountId}/moves/tags` `{moveIds:[...]}` (`movesController.js:793,803`;
+  swagger `:8384`) — the no-bulk requirement.
+
+**Base-URL token — RESOLVED = `'config'`** (supersedes the earlier "'moves' vs 'config' vs 'playbook'" open
+question). `/content/v3` is on the configuration service; the MCP config tools already hit it with
+`get_api_base_url(console,'config')` + `/api/config/v1/...` (`config_functions.py:158`). The `'moves'` token
+is enum-only and **never routed** in MCP code — do NOT use it. `'playbook'` is the KB service (`:5100`,
+`/api/kb/...`) — wrong for writes. Build: `f"{get_api_base_url(console,'config')}/api/content/v3/accounts/{account_id}/moves/{move_id}/tags"`.
+
+**content-manager**: no single-move tag write (only GET `moves`/`tags`); the write lives in configuration only.
+
+**OPA**: NO auth/OPA/permission middleware on these routes in the configuration repo (only
+helmet/bodyParser/audit/swagger — `Context.js:458-510`). Enforcement is upstream at the gateway/ui-server
+(not local), so the role-behavior check (privileged 2xx / non-privileged 403) is a **live-env** item.
+
+**Remaining Phase-A items (need a live dev env + tokens):**
+1. Smoke-test ADD then REMOVE against a live env (reversible) — confirm 201/200 + response shape.
+2. OPA role behavior — privileged succeeds, non-privileged → 403. Needs a NON-privileged token (only admin
+   tokens are configured locally).
+3. Confirm the `labels:` Lucene query on `executionsHistoryResults` returns tagged sim-results (code-known;
+   quick live sanity).
 
 **Tests: pytest + unittest.mock.** Per-package `tests/` dirs + root `tests/` + root `conftest.py`.
 Unit tests patch module-level `requests.*` / `get_api_base_url` / `get_api_account_id` inside the

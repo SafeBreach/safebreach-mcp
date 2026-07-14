@@ -29,9 +29,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-07-14 09:00 |
+| **Last Updated** | 2026-07-14 14:30 |
 | **Owner** | Dan Almog (AI-assisted) |
-| **Current Phase** | N/A (not started) |
+| **Current Phase** | Phase C complete (retrieval tools shipped); next: Phase B (write tools) / Phase D (release) |
 
 > Revised after cloning and investigating `safebreach-mcp` locally (v1.7.0). Grounding for every
 > file:line reference below is recorded in `context.md` → "### safebreach-mcp (tool implementation repo)".
@@ -84,10 +84,13 @@ the no-bulk requirement, and avoid backend changes the current scale does not ju
 ## Section 3: Core Feature Components
 
 **Component A — Playbook attack tag write tools (safebreach-mcp, playbook server) [new — first write tools here]**
-- **Purpose**: Let the AI Agent add or remove a custom tag on a single playbook attack (move).
+- **Purpose**: Let the AI Agent add, remove, or rename a custom tag on a single playbook attack (move).
 - **Proposed tools** (names TBD with team; may be a single `manage_playbook_attack_tag(action=…)`
-  mirroring `manage_test`): `add_playbook_attack_tag(attack_id, tag_value, console)` and
-  `remove_playbook_attack_tag(attack_id, tag_value, console)`.
+  mirroring `manage_test`): `add_playbook_attack_tag(attack_id, tag_value, console)`,
+  `remove_playbook_attack_tag(attack_id, tag_value, console)`, and
+  `rename_playbook_attack_tag(attack_id, old_value, new_value, console)` (rename/update — added to scope
+  2026-07-14; backend `updateMoveTags` `PUT .../moves/{moveId}/tags` body `{oldValue,newValue}`,
+  `movesController.js:725`, swagger `:8323`).
 - **Key Features / requirements**:
   - Annotated `ToolAnnotations(readOnlyHint=False, destructiveHint=False)` (tagging is non-destructive)
     → auto-hidden from `tools/list` when the AI-actions gate is closed.
@@ -151,14 +154,16 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
    - safebreach-mcp `data_functions.py:807-830`; payload includes a Lucene `"query"` string; tag field
      on results is `labels` → filter `labels:<tag>`.
 
-3. **Add / remove a custom tag on a single move (WRITE — endpoint to confirm in Phase A)**
-   - configuration exposes `POST addMoveTags` / `DELETE deleteMoveTags` at
-     `/content/v3/accounts/{accountId}/moves/{moveId}/tags` (configuration
-     `src/server/newControllers/movesController.js:677,753`; body `{"values":["<tag>"]}`, delete query
-     `?values=`).
-   - **Open item**: safebreach-mcp has no move-tag write today and reads moves via the `kb` API, not
-     `/content/v3`. Phase A must confirm the exact endpoint reachable via the MCP gateway and the
-     correct `get_api_base_url` token (`'moves'` [currently unused] vs `'config'` vs `'playbook'`).
+3. **Add / remove a custom tag on a single move (WRITE — endpoint pinned in Phase A)**
+   - ADD: `POST /api/content/v3/accounts/{accountId}/moves/{moveId}/tags`, body `{"values":["<tag>"]}` →
+     `addMoveTags` (configuration `src/server/newControllers/movesController.js:677`; swagger `:8210`), 201.
+   - REMOVE: `DELETE /api/content/v3/accounts/{accountId}/moves/{moveId}/tags?values=<tag>`
+     (`collectionFormat: pipes` → `?values=a|b`) → `deleteMoveTags` (`:753`; swagger `:8270`), 200.
+   - **Base-URL token = `config`** (resolved; the configuration service hosts `/content/v3`; `'moves'`
+     token is unused/unrouted, `'playbook'` is the KB service). Build like the config tools:
+     `f"{get_api_base_url(console,'config')}/api/content/v3/accounts/{account_id}/moves/{move_id}/tags"`.
+   - **Still live-pending**: OPA role behavior (privileged 2xx / non-privileged 403) — no auth middleware
+     on these routes in the configuration repo; enforcement is upstream at the gateway/ui-server.
 
 **Bulk endpoints that MUST NOT be wired** (non-functional "no bulk"):
 `/content/v3/accounts/{accountId}/moves/tags` — `addMoveTagsBulk` / `deleteMoveTagsBulk` /
@@ -199,8 +204,8 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
 **Core Functionality**
 - [ ] Add a custom tag to a single playbook attack via MCP (one attack id + one tag value).
 - [ ] Remove a custom tag from a single playbook attack via MCP.
-- [ ] Retrieve playbook attacks filtered by one or more given tags (client-side filter on `move.tags`).
-- [ ] Retrieve simulation results filtered by one or more given tags (`labels:` Lucene on `executionsHistoryResults`).
+- [x] Retrieve playbook attacks filtered by one or more given tags (client-side filter on `move.tags`). *(Phase C)*
+- [x] Retrieve simulation results filtered by one or more given tags (`labels:` Lucene on `executionsHistoryResults`). *(Phase C)*
 
 **Quality Gates**
 - [ ] Write tools annotated `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`; hidden when
@@ -211,7 +216,7 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
 - [ ] All four actions permitted only for the SAF-31410 roles, rejected (403) for others — live env.
 - [ ] No-bulk enforced: single attack id only; array-of-ids rejected; bulk endpoints not wired.
 - [ ] Tag-value case handling consistent between write and query paths.
-- [ ] safebreach-mcp unit tests pass (`uv run pytest safebreach_mcp_playbook/tests safebreach_mcp_data/tests -m "not e2e"`).
+- [x] safebreach-mcp unit tests pass (`uv run pytest safebreach_mcp_playbook/tests safebreach_mcp_data/tests -m "not e2e"`) — 698 passed incl. 42 new. *(Phase C; re-verify after Phase B)*
 - [ ] mcp-proxy regression tests assert the write tools join `DISABLE_TOOL_LIST` when the gate is closed.
 
 **Deployment Readiness**
@@ -258,9 +263,9 @@ before starting. Each code change → verify (test/lint) → commit.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase A: Backend + OPA verification (no code) | ⏳ Pending | - | - | pin the write endpoint + gateway token |
+| Phase A: Backend + OPA verification (no code) | ✅ Complete | 2026-07-14 | - | endpoint pinned from code (token=`config`); OPA role check folded into Phase F (E2E) |
 | Phase B: safebreach-mcp — playbook write tools (rate-limited) | ⏳ Pending | - | - | first write tools in playbook |
-| Phase C: safebreach-mcp — retrieval tools | ⏳ Pending | - | - | `readOnlyHint=True` |
+| Phase C: safebreach-mcp — retrieval tools | ✅ Complete | 2026-07-14 | - | `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`; 42 tests, 698 suite green |
 | Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog |
 | Phase E: mcp-proxy pin bump + gate regression tests | ⏳ Pending | - | - | this branch; pin `@1.8.0` |
 | Phase F: E2E verification on live env | ⏳ Pending | - | - | roles/gate/no-bulk/rate |
@@ -279,10 +284,12 @@ before starting. Each code change → verify (test/lint) → commit.
 - **Git Commit**: `docs(SAF-29870): record backend + OPA verification for tag endpoints`
 
 ### Phase B — safebreach-mcp playbook write tools (rate-limited)
-- **Semantic Change**: Add the add/remove-attack-tag write tools to the playbook server (its first).
-- **Functions**: `sb_add_playbook_attack_tag(console, attack_id, tag_value)` and
-  `sb_remove_playbook_attack_tag(...)` in `playbook_functions.py`; thin `@self.mcp.tool(...)` wrappers
-  in `playbook_server.py` with `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`.
+- **Semantic Change**: Add the add/remove/rename-attack-tag write tools to the playbook server (its first).
+- **Functions**: `sb_add_playbook_attack_tag(console, attack_id, tag_value)`,
+  `sb_remove_playbook_attack_tag(...)`, and `sb_rename_playbook_attack_tag(console, attack_id, old_value,
+  new_value)` (rename via `PUT .../moves/{moveId}/tags` `{oldValue,newValue}`) in `playbook_functions.py`;
+  thin `@self.mcp.tool(...)` wrappers in `playbook_server.py` with
+  `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`. All three rate-limited.
 - **I/O**: input single `attack_id` (moveId) + single `tag_value`; output success/failure dict with a
   `hint_to_agent`. Reject list/array id input.
 - **Steps**: validate single-item input → `caller_id = get_caller_identity()` →
@@ -347,8 +354,9 @@ before starting. Each code change → verify (test/lint) → commit.
 ## Section 10: Risks and Assumptions
 
 **Technical Risks**
-- **Tag-write backend endpoint unconfirmed** (Impact: High). safebreach-mcp has no move-tag write today
-  and reads via `kb`, not `/content/v3`. Mitigation: Phase A pins the endpoint + gateway token before B.
+- **Tag-write backend endpoint** (Impact: High → **mitigated**). Pinned in Phase A: configuration
+  `POST`/`DELETE /api/content/v3/accounts/{accountId}/moves/{moveId}/tags`, base-URL token `config`.
+  Residual: OPA role coverage still needs live verification before B ships.
 - **`readOnlyHint` mis-annotation leaks a write action** (Impact: High). Mitigation: explicit
   `readOnlyHint=False` + mcp-proxy regression test (Phase E).
 - **Missing rate-limit gates on a write tool** (Impact: Medium; violates repo rule). Mitigation:
@@ -411,3 +419,5 @@ default but wired.
 |------|-------------------|
 | 2026-07-13 16:43 | PRD created — initial draft |
 | 2026-07-14 09:00 | Revised after local safebreach-mcp (v1.7.0) investigation: corrected server placement (writes model = studio; playbook's first write tools), added mandatory rate-limiting, `kb` read path + client-side tag filter, `labels:` Lucene, cache invalidation, concrete file/function detail per phase, Minor-bump/em-dash-changelog release flow, and flagged the tag-write endpoint as the Phase-A open item |
+| 2026-07-14 12:00 | Phase A started — pinned the move-tag write endpoint from code (configuration `POST`/`DELETE /api/content/v3/.../moves/{moveId}/tags`, base-URL token `config`, single-move only); OPA role behavior remains a live-env item |
+| 2026-07-14 14:30 | Phase A closed (endpoint pinned; OPA→Phase F). Phase C implemented via TDD — `get_playbook_attacks_by_tags` (playbook, client-side tag filter) + `get_simulation_results_by_tags` (data, `labels:` Lucene), both `readOnlyHint=True`; added `tag_filter`/`include_tags` to playbook types; 42 new tests, full 698-test suite green. Rename/update tool added to Phase B scope |

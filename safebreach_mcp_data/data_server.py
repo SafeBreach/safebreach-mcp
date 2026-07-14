@@ -33,6 +33,7 @@ from .data_functions import (
     sb_get_security_control_drifts,
     sb_get_simulation_lineage,
     sb_get_peer_benchmark_score,
+    sb_get_simulation_results_by_tags,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,26 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
                 playbook_attack_name_filter=playbook_attack_name_filter,
                 drifted_only=drifted_only
             )
-        
+
+        @self.mcp.tool(
+            name="get_simulation_results_by_tags",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered and paginated list of simulation results (account-wide) that carry any of the given tags.
+Tags are matched against the simulation-result labels via a Lucene query and are treated case-insensitively.
+Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0).
+Results are paginated with 10 items per page, ordered by execution time (newest first)."""
+        )
+        async def get_simulation_results_by_tags_tool(
+            tags: str,
+            console: str = "default",
+            page_number: int = 0
+        ) -> dict:
+            return sb_get_simulation_results_by_tags(
+                tags=tags,
+                console=console,
+                page_number=page_number
+            )
+
         @self.mcp.tool(
             name="get_test_simulation_details",
             annotations=ToolAnnotations(readOnlyHint=True),

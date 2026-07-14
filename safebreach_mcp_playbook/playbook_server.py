@@ -16,7 +16,8 @@ from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from .playbook_functions import (
     sb_get_playbook_attacks,
-    sb_get_playbook_attack_details
+    sb_get_playbook_attack_details,
+    sb_get_playbook_attacks_by_tags
 )
 
 logger = logging.getLogger(__name__)
@@ -272,10 +273,72 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
                                 )
 
                 return "\n".join(response_parts)
-                
+
             except Exception as e:
                 logger.error(f"Error in get_playbook_attack_details: {e}")
                 return f"Error getting attack details: {str(e)}"
+
+        @self.mcp.tool(
+            name="get_playbook_attacks_by_tags",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered and paginated list of SafeBreach playbook attacks that carry any of the given custom tags.
+Tag matching is case-insensitive and exact per tag token (a filter of "net" does NOT match a tag "network").
+Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0).
+Results are paginated with 10 items per page; each attack includes its normalized tags list."""
+        )
+        def get_playbook_attacks_by_tags(
+            console: str = "default",
+            tags: Optional[str] = None,
+            page_number: int = 0
+        ) -> str:
+            """Get playbook attacks filtered by one or more custom tags."""
+            try:
+                result = sb_get_playbook_attacks_by_tags(
+                    console=console,
+                    tags=tags,
+                    page_number=page_number
+                )
+
+                if 'error' in result:
+                    return f"Error: {result['error']}"
+
+                attacks = result['attacks_in_page']
+                total_attacks = result['total_attacks']
+                page_number = result['page_number']
+                total_pages = result['total_pages']
+                applied_filters = result.get('applied_filters', {})
+
+                response_parts = [
+                    f"## Playbook Attacks by Tags - Page {page_number + 1} of {total_pages}",
+                    f"**Total attacks matching tags: {total_attacks}**"
+                ]
+
+                if applied_filters:
+                    filter_strs = [f"{key}={value}" for key, value in applied_filters.items()]
+                    response_parts.append(f"**Applied filters:** {', '.join(filter_strs)}")
+
+                response_parts.append("")
+
+                for attack in attacks:
+                    response_parts.extend([
+                        f"### {attack.get('name', 'Unknown')} (ID: {attack.get('id', 'Unknown')})",
+                        f"**Tags:** {', '.join(attack.get('tags', []))}"
+                    ])
+                    description = str(attack.get('description', '') or '')
+                    if description:
+                        response_parts.append(
+                            f"**Description:** {description[:200]}{'...' if len(description) > 200 else ''}"
+                        )
+                    response_parts.append("")
+
+                if result.get('hint_to_agent'):
+                    response_parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+                return "\n".join(response_parts)
+
+            except Exception as e:
+                logger.error(f"Error in get_playbook_attacks_by_tags: {e}")
+                return f"Error getting playbook attacks by tags: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:
