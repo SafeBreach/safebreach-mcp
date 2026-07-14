@@ -29,9 +29,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-07-14 14:30 |
+| **Last Updated** | 2026-07-14 15:30 |
 | **Owner** | Dan Almog (AI-assisted) |
-| **Current Phase** | Phase C complete (retrieval tools shipped); next: Phase B (write tools) / Phase D (release) |
+| **Current Phase** | Phases B & C complete (all tag tools built); next: Phase D (release 1.8.0) → E → F |
 
 > Revised after cloning and investigating `safebreach-mcp` locally (v1.7.0). Grounding for every
 > file:line reference below is recorded in `context.md` → "### safebreach-mcp (tool implementation repo)".
@@ -202,21 +202,23 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
 ## Section 7: Definition of Done
 
 **Core Functionality**
-- [ ] Add a custom tag to a single playbook attack via MCP (one attack id + one tag value).
-- [ ] Remove a custom tag from a single playbook attack via MCP.
+- [x] Add a custom tag to a single playbook attack via MCP (one attack id + one tag value). *(Phase B)*
+- [x] Remove a custom tag from a single playbook attack via MCP. *(Phase B)*
+- [x] Rename a custom tag on a single playbook attack via MCP (scope addition 2026-07-14). *(Phase B)*
 - [x] Retrieve playbook attacks filtered by one or more given tags (client-side filter on `move.tags`). *(Phase C)*
 - [x] Retrieve simulation results filtered by one or more given tags (`labels:` Lucene on `executionsHistoryResults`). *(Phase C)*
 
 **Quality Gates**
-- [ ] Write tools annotated `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`; hidden when
-      the gate is closed, visible when open. Retrieval tools `readOnlyHint=True`, always visible.
-- [ ] Write tools add `rate_limiter.check_limit` (pre-mutate) + `record_action` (post-success) gates;
-      ordering covered by a test (per the studio `test_rate_limiting.py` model).
-- [ ] Playbook cache invalidated (`clear_playbook_cache()`) after a successful tag write.
+- [x] Write tools annotated `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`; retrieval tools
+      `readOnlyHint=True`. *(Phase B/C — annotations done + tested; the gate hides them from `tools/list`
+      when closed, re-verified in Phase E/F)*
+- [x] Write tools add `rate_limiter.check_limit` (pre-mutate) + `record_action` (post-success) gates;
+      ordering covered by a test (per the studio `test_rate_limiting.py` model). *(Phase B)*
+- [x] Playbook cache invalidated (`clear_playbook_cache()`) after a successful tag write. *(Phase B)*
 - [ ] All four actions permitted only for the SAF-31410 roles, rejected (403) for others — live env.
 - [ ] No-bulk enforced: single attack id only; array-of-ids rejected; bulk endpoints not wired.
 - [ ] Tag-value case handling consistent between write and query paths.
-- [x] safebreach-mcp unit tests pass (`uv run pytest safebreach_mcp_playbook/tests safebreach_mcp_data/tests -m "not e2e"`) — 698 passed incl. 42 new. *(Phase C; re-verify after Phase B)*
+- [x] safebreach-mcp unit tests pass (`uv run pytest safebreach_mcp_playbook/tests safebreach_mcp_data/tests -m "not e2e"`) — 734 passed incl. 42 (Phase C) + 36 (Phase B) new.
 - [ ] mcp-proxy regression tests assert the write tools join `DISABLE_TOOL_LIST` when the gate is closed.
 
 **Deployment Readiness**
@@ -264,7 +266,7 @@ before starting. Each code change → verify (test/lint) → commit.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase A: Backend + OPA verification (no code) | ✅ Complete | 2026-07-14 | - | endpoint pinned from code (token=`config`); OPA role check folded into Phase F (E2E) |
-| Phase B: safebreach-mcp — playbook write tools (rate-limited) | ⏳ Pending | - | - | first write tools in playbook |
+| Phase B: safebreach-mcp — playbook write tools (rate-limited) | ✅ Complete | 2026-07-14 | - | add/remove/rename attack tag; rate-limited; 36 tests; 734 suite green |
 | Phase C: safebreach-mcp — retrieval tools | ✅ Complete | 2026-07-14 | - | `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`; 42 tests, 698 suite green |
 | Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog |
 | Phase E: mcp-proxy pin bump + gate regression tests | ⏳ Pending | - | - | this branch; pin `@1.8.0` |
@@ -421,3 +423,4 @@ default but wired.
 | 2026-07-14 09:00 | Revised after local safebreach-mcp (v1.7.0) investigation: corrected server placement (writes model = studio; playbook's first write tools), added mandatory rate-limiting, `kb` read path + client-side tag filter, `labels:` Lucene, cache invalidation, concrete file/function detail per phase, Minor-bump/em-dash-changelog release flow, and flagged the tag-write endpoint as the Phase-A open item |
 | 2026-07-14 12:00 | Phase A started — pinned the move-tag write endpoint from code (configuration `POST`/`DELETE /api/content/v3/.../moves/{moveId}/tags`, base-URL token `config`, single-move only); OPA role behavior remains a live-env item |
 | 2026-07-14 14:30 | Phase A closed (endpoint pinned; OPA→Phase F). Phase C implemented via TDD — `get_playbook_attacks_by_tags` (playbook, client-side tag filter) + `get_simulation_results_by_tags` (data, `labels:` Lucene), both `readOnlyHint=True`; added `tag_filter`/`include_tags` to playbook types; 42 new tests, full 698-test suite green. Rename/update tool added to Phase B scope |
+| 2026-07-14 15:30 | Phase B implemented via TDD — `add`/`remove`/`rename_playbook_attack_tag` (playbook, first write tools; `readOnlyHint=False, destructiveHint=False`) calling configuration `/api/content/v3/.../moves/{id}/tags` (POST/DELETE/PUT) with mandatory `rate_limiter` check/record gates + `clear_playbook_cache()` on success; 36 new tests (incl. gate-ordering + record-not-on-failure), full 734-test suite green |

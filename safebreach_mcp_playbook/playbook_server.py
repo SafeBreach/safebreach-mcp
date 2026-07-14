@@ -17,7 +17,10 @@ from safebreach_mcp_core import SafeBreachMCPBase
 from .playbook_functions import (
     sb_get_playbook_attacks,
     sb_get_playbook_attack_details,
-    sb_get_playbook_attacks_by_tags
+    sb_get_playbook_attacks_by_tags,
+    sb_add_playbook_attack_tag,
+    sb_remove_playbook_attack_tag,
+    sb_rename_playbook_attack_tag
 )
 
 logger = logging.getLogger(__name__)
@@ -339,6 +342,58 @@ Results are paginated with 10 items per page; each attack includes its normalize
             except Exception as e:
                 logger.error(f"Error in get_playbook_attacks_by_tags: {e}")
                 return f"Error getting playbook attacks by tags: {str(e)}"
+
+        @self.mcp.tool(
+            name="add_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Adds a custom tag to a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), tag_value (required, a single tag)."""
+        )
+        def add_playbook_attack_tag(console: str = "default", attack_id: int = None, tag_value: str = None) -> str:
+            """Add a custom tag to a single playbook attack."""
+            try:
+                result = sb_add_playbook_attack_tag(console=console, attack_id=attack_id, tag_value=tag_value)
+                return f"✅ Added tag '{result['tag_value']}' to playbook attack {result['attack_id']}."
+            except Exception as e:
+                logger.error(f"Error in add_playbook_attack_tag: {e}")
+                return f"Error adding tag to playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="remove_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Removes a custom tag from a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), tag_value (required, a single tag)."""
+        )
+        def remove_playbook_attack_tag(console: str = "default", attack_id: int = None, tag_value: str = None) -> str:
+            """Remove a custom tag from a single playbook attack."""
+            try:
+                result = sb_remove_playbook_attack_tag(console=console, attack_id=attack_id, tag_value=tag_value)
+                return f"✅ Removed tag '{result['tag_value']}' from playbook attack {result['attack_id']}."
+            except Exception as e:
+                logger.error(f"Error in remove_playbook_attack_tag: {e}")
+                return f"Error removing tag from playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="rename_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Renames a custom tag on a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), old_value (required), new_value (required)."""
+        )
+        def rename_playbook_attack_tag(console: str = "default", attack_id: int = None,
+                                       old_value: str = None, new_value: str = None) -> str:
+            """Rename a custom tag on a single playbook attack."""
+            try:
+                result = sb_rename_playbook_attack_tag(
+                    console=console, attack_id=attack_id, old_value=old_value, new_value=new_value
+                )
+                return (f"✅ Renamed tag '{result['old_value']}' to '{result['new_value']}' "
+                        f"on playbook attack {result['attack_id']}.")
+            except Exception as e:
+                logger.error(f"Error in rename_playbook_attack_tag: {e}")
+                return f"Error renaming tag on playbook attack: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

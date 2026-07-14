@@ -13,7 +13,8 @@ from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
 from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_headers_for_console, check_rbac_response
 from safebreach_mcp_core.token_context import get_cache_user_suffix
-from safebreach_mcp_core.environments_metadata import get_api_base_url
+from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from .playbook_types import (
     transform_reduced_playbook_attack,
     transform_full_playbook_attack,
@@ -338,6 +339,151 @@ def sb_get_playbook_attacks_by_tags(
     except Exception as e:
         logger.error("Unexpected error in sb_get_playbook_attacks_by_tags: %s", e)
         raise ValueError(f"Failed to get playbook attacks by tags: {str(e)}") from e
+
+
+def _build_move_tags_request(console: str, attack_id: int):
+    """Build the (url, headers, account_id) for a single-move tags write request."""
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+    url = f"{base_url}/api/content/v3/accounts/{account_id}/moves/{attack_id}/tags"
+    headers = {
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
+    }
+    return url, headers
+
+
+def sb_add_playbook_attack_tag(
+    console: str = "default",
+    attack_id: int = None,
+    tag_value: str = None
+) -> Dict[str, Any]:
+    """
+    Add a custom tag to a single playbook attack (move).
+
+    Args:
+        console: SafeBreach console name
+        attack_id: Playbook attack (move) ID
+        tag_value: Single tag value to add
+
+    Returns:
+        Dict with the action result and a hint_to_agent
+
+    Raises:
+        ValueError: If tag_value is empty/missing
+        PermissionError / HTTPError: If the backend rejects the write
+    """
+    if not tag_value or not str(tag_value).strip():
+        raise ValueError("A non-empty 'tag_value' is required.")
+
+    url, headers = _build_move_tags_request(console, attack_id)
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "add_playbook_attack_tag")
+
+    response = requests.post(url, headers=headers, json={"values": [tag_value]}, timeout=120)
+    check_rbac_response(response)
+
+    clear_playbook_cache()
+    rate_limiter.record_action(caller_id, "add_playbook_attack_tag")
+
+    return {
+        "success": True,
+        "attack_id": attack_id,
+        "tag_value": tag_value,
+        "action": "added",
+        "hint_to_agent": f"Tag '{tag_value}' added to playbook attack {attack_id}."
+    }
+
+
+def sb_remove_playbook_attack_tag(
+    console: str = "default",
+    attack_id: int = None,
+    tag_value: str = None
+) -> Dict[str, Any]:
+    """
+    Remove a custom tag from a single playbook attack (move).
+
+    Args:
+        console: SafeBreach console name
+        attack_id: Playbook attack (move) ID
+        tag_value: Single tag value to remove
+
+    Returns:
+        Dict with the action result and a hint_to_agent
+
+    Raises:
+        ValueError: If tag_value is empty/missing
+        PermissionError / HTTPError: If the backend rejects the write
+    """
+    if not tag_value or not str(tag_value).strip():
+        raise ValueError("A non-empty 'tag_value' is required.")
+
+    url, headers = _build_move_tags_request(console, attack_id)
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "remove_playbook_attack_tag")
+
+    response = requests.delete(url, headers=headers, params={"values": tag_value}, timeout=120)
+    check_rbac_response(response)
+
+    clear_playbook_cache()
+    rate_limiter.record_action(caller_id, "remove_playbook_attack_tag")
+
+    return {
+        "success": True,
+        "attack_id": attack_id,
+        "tag_value": tag_value,
+        "action": "removed",
+        "hint_to_agent": f"Tag '{tag_value}' removed from playbook attack {attack_id}."
+    }
+
+
+def sb_rename_playbook_attack_tag(
+    console: str = "default",
+    attack_id: int = None,
+    old_value: str = None,
+    new_value: str = None
+) -> Dict[str, Any]:
+    """
+    Rename a custom tag on a single playbook attack (move).
+
+    Args:
+        console: SafeBreach console name
+        attack_id: Playbook attack (move) ID
+        old_value: Existing tag value
+        new_value: New tag value
+
+    Returns:
+        Dict with the action result and a hint_to_agent
+
+    Raises:
+        ValueError: If either value is empty/missing, or if old_value == new_value (no-op)
+        PermissionError / HTTPError: If the backend rejects the write
+    """
+    if not old_value or not str(old_value).strip():
+        raise ValueError("A non-empty 'old_value' is required.")
+    if not new_value or not str(new_value).strip():
+        raise ValueError("A non-empty 'new_value' is required.")
+    if old_value == new_value:
+        raise ValueError("'old_value' and 'new_value' must differ (no-op rename).")
+
+    url, headers = _build_move_tags_request(console, attack_id)
+    caller_id = get_caller_identity()
+    rate_limiter.check_limit(caller_id, "rename_playbook_attack_tag")
+
+    response = requests.put(url, headers=headers, json={"oldValue": old_value, "newValue": new_value}, timeout=120)
+    check_rbac_response(response)
+
+    clear_playbook_cache()
+    rate_limiter.record_action(caller_id, "rename_playbook_attack_tag")
+
+    return {
+        "success": True,
+        "attack_id": attack_id,
+        "old_value": old_value,
+        "new_value": new_value,
+        "action": "renamed",
+        "hint_to_agent": f"Tag '{old_value}' renamed to '{new_value}' on playbook attack {attack_id}."
+    }
 
 
 def clear_playbook_cache():
