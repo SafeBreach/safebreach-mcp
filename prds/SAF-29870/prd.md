@@ -31,7 +31,7 @@
 | **PRD Status** | Draft |
 | **Last Updated** | 2026-07-14 15:30 |
 | **Owner** | Dan Almog (AI-assisted) |
-| **Current Phase** | Phases B & C complete (all tag tools built); next: Phase D (release 1.8.0) → E → F |
+| **Current Phase** | B & C code-complete; reads live-verified; write endpoint confirmed (config PR #1801). Next: Phase D (release 1.8.0) → E → F (incl. live write on a populated console) |
 
 > Revised after cloning and investigating `safebreach-mcp` locally (v1.7.0). Grounding for every
 > file:line reference below is recorded in `context.md` → "### safebreach-mcp (tool implementation repo)".
@@ -266,7 +266,7 @@ before starting. Each code change → verify (test/lint) → commit.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase A: Backend + OPA verification (no code) | ✅ Complete | 2026-07-14 | - | endpoint pinned from code (token=`config`); OPA role check folded into Phase F (E2E) |
-| Phase B: safebreach-mcp — playbook write tools (rate-limited) | ✅ Complete | 2026-07-14 | - | add/remove/rename attack tag; rate-limited; 36 tests; 734 suite green |
+| Phase B: safebreach-mcp — playbook write tools (rate-limited) | ✅ Complete (code + endpoint confirmed) | 2026-07-14 | 016a567 | add/remove/rename built + unit-tested (36 tests); endpoint = configuration PR #1801/SAF-28429, confirmed deployed. Live *write* demo pending a populated console (→ Phase F) |
 | Phase C: safebreach-mcp — retrieval tools | ✅ Complete | 2026-07-14 | - | `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`; 42 tests, 698 suite green |
 | Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog |
 | Phase E: mcp-proxy pin bump + gate regression tests | ⏳ Pending | - | - | this branch; pin `@1.8.0` |
@@ -356,9 +356,15 @@ before starting. Each code change → verify (test/lint) → commit.
 ## Section 10: Risks and Assumptions
 
 **Technical Risks**
-- **Tag-write backend endpoint** (Impact: High → **mitigated**). Pinned in Phase A: configuration
-  `POST`/`DELETE /api/content/v3/accounts/{accountId}/moves/{moveId}/tags`, base-URL token `config`.
-  Residual: OPA role coverage still needs live verification before B ships.
+- **Tag-write backend endpoint** (Impact: High → **RESOLVED — endpoint confirmed correct**). The write
+  tools target configuration PR **#1801 / SAF-28429** ("Add API for managing custom attack tags", merged
+  to develop; follow-up #1868, bugfix SAF-29441): single-move `/content/v3/accounts/{accountId}/moves/{moveId}/tags`
+  — `POST` add `{"values":[tag]}`, `PUT` rename `{oldValue,newValue}`, `DELETE` remove `?values=` — which is
+  exactly what the Phase-B tools call. Verified deployed on saf-32826 (GET returns the app's structured
+  `sbcode:707` "move not found", not a generic 404). The live-write 404 there was an **environment data
+  condition** — that account's `/content/v3` move store is empty, so move 1027 has no base row; the handler
+  requires the move to exist (`SafeBreachResourceNotFoundError`). **Residual:** demonstrate a live write on a
+  console whose move store is populated (the PR's own E2E used `apricot-jellyfish`, 14/14) — folded into Phase F.
 - **`readOnlyHint` mis-annotation leaks a write action** (Impact: High). Mitigation: explicit
   `readOnlyHint=False` + mcp-proxy regression test (Phase E).
 - **Missing rate-limit gates on a write tool** (Impact: Medium; violates repo rule). Mitigation:
@@ -424,3 +430,5 @@ default but wired.
 | 2026-07-14 12:00 | Phase A started — pinned the move-tag write endpoint from code (configuration `POST`/`DELETE /api/content/v3/.../moves/{moveId}/tags`, base-URL token `config`, single-move only); OPA role behavior remains a live-env item |
 | 2026-07-14 14:30 | Phase A closed (endpoint pinned; OPA→Phase F). Phase C implemented via TDD — `get_playbook_attacks_by_tags` (playbook, client-side tag filter) + `get_simulation_results_by_tags` (data, `labels:` Lucene), both `readOnlyHint=True`; added `tag_filter`/`include_tags` to playbook types; 42 new tests, full 698-test suite green. Rename/update tool added to Phase B scope |
 | 2026-07-14 15:30 | Phase B implemented via TDD — `add`/`remove`/`rename_playbook_attack_tag` (playbook, first write tools; `readOnlyHint=False, destructiveHint=False`) calling configuration `/api/content/v3/.../moves/{id}/tags` (POST/DELETE/PUT) with mandatory `rate_limiter` check/record gates + `clear_playbook_cache()` on success; 36 new tests (incl. gate-ordering + record-not-on-failure), full 734-test suite green |
+| 2026-07-14 16:00 | LIVE functional test on saf-32826 (standalone). Reads verified end-to-end: `get_playbook_attacks` (9560), `get_playbook_attacks_by_tags`, `get_simulation_results_by_tags`. WRITE tools 404 live on move 1027 |
+| 2026-07-14 16:30 | Investigated configuration PR #1801/SAF-28429 (per user): the tag CRUD backend = single-move `/content/v3/.../moves/{moveId}/tags` GET/POST/PUT/DELETE — exactly what the Phase-B tools call. Confirmed the route is DEPLOYED on saf-32826 (structured `sbcode:707` move-not-found, not a generic 404); the 404 was an empty-move-store data condition, not a code bug. Phase B reclassified: endpoint CONFIRMED correct; live-write demo deferred to Phase F on a populated console |
