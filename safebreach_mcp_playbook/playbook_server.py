@@ -361,7 +361,7 @@ Parameters: console (required), attack_id (required, the playbook attack/move ID
 
         @self.mcp.tool(
             name="remove_playbook_attack_tag",
-            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             description="""Removes a custom tag from a single SafeBreach playbook attack.
 This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
 Parameters: console (required), attack_id (required, the playbook attack/move ID), tag_value (required, a single tag)."""

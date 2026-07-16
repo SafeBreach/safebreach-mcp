@@ -271,13 +271,15 @@ class TestWriteToolWrappers:
         server = SafeBreachPlaybookServer()
         return server, server.mcp._tool_manager._tools[name]
 
-    @pytest.mark.parametrize("name", [
-        "add_playbook_attack_tag", "remove_playbook_attack_tag", "rename_playbook_attack_tag",
+    @pytest.mark.parametrize("name,expected_destructive", [
+        ("add_playbook_attack_tag", False),
+        ("remove_playbook_attack_tag", True),   # remove deletes data → destructive (matches manage_test)
+        ("rename_playbook_attack_tag", False),  # update semantics, like update_studio_attack_draft
     ])
-    def test_registered_and_write_annotations(self, name):
+    def test_registered_and_write_annotations(self, name, expected_destructive):
         _, tool = self._tool(name)
         assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.destructiveHint is expected_destructive
 
     @patch("safebreach_mcp_playbook.playbook_server.sb_add_playbook_attack_tag")
     def test_add_wrapper_delegates_and_markdown(self, mock_sb):
