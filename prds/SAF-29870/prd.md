@@ -17,7 +17,7 @@
   1. AI Agent can organize and retrieve content by tag without leaving the MCP surface.
   2. Reuses the existing OPA role gate (SAF-31410), the AI-actions write gate, and the in-repo
      rate limiter — minimal new enforcement plumbing.
-  3. Single-item, no-bulk scope keeps the blast radius of agent-driven tagging small and auditable.
+  3. Write actions are gated (readOnlyHint + rate limiter) and — for bulk (req 4) — guardrailed with hard size caps so agent-driven tagging can't crash the console/Helm.
 - **Business Alignment**: Part of epic SAF-29873 ("MCP and BG Actions and Guardrails"), the second
   action set after the part-1 basic actions (SAF-29859, Done).
 - **Originating Request**: JIRA **SAF-29870** (Story, In Progress), reporter Tal Rotem, assignee Dan Almog.
@@ -29,12 +29,31 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-07-14 15:30 |
+| **Last Updated** | 2026-07-16 |
 | **Owner** | Dan Almog (AI-assisted) |
-| **Current Phase** | B & C code-complete; reads live-verified; write endpoint confirmed (config PR #1801). Next: Phase D (release 1.8.0) → E → F (incl. live write on a populated console) |
+| **Current Phase** | Reqs 1–2 done + live-verified through mcp-proxy on saf-32826. Ticket re-refined 2026-07-15 (see §1.6): NEW work = get-tags-on-attack (req 3), **bulk** (req 4), Helm approval (req 5) + guardrails. Next: Phases G → H → I, then D/E release. |
 
 > Revised after cloning and investigating `safebreach-mcp` locally (v1.7.0). Grounding for every
 > file:line reference below is recorded in `context.md` → "### safebreach-mcp (tool implementation repo)".
+
+---
+
+## Section 1.6: Updated Requirements (JIRA refinement 2026-07-15, Shahaf Raviv) — SUPERSEDES older "no-bulk" text below
+
+The ticket was re-refined. The scope **grew** — most notably **bulk is now REQUIRED** (previously
+explicitly out of scope). Current functional requirements and our status:
+
+| # | Requirement | Status |
+|---|---|---|
+| 1 | Add, Remove, **or Update** a custom tag on a single playbook attack | ✅ **Done** — `add`/`remove`/`rename_playbook_attack_tag` built, unit-tested, live-verified (Update was newly added to the ticket; we already have it) |
+| 2 | Retrieve playbook attacks OR simulation results by given tags | ✅ **Done** — `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`, live-verified |
+| 3 | **Retrieve tags on a given attack** | ❌ **New — gap.** Need `get_playbook_attack_tags(attack_id)` backed by configuration `GET /content/v3/.../moves/{moveId}/tags` (`getMoveTags`). (`get_playbook_attack_details(include_tags=True)` partially overlaps but is not a dedicated tag-read.) |
+| 4 | **Bulk actions** — (a) one tag on many attacks, (b) many tags on one attack, (c) many tags on many attacks | ❌ **New — gap; REVERSES the old no-bulk constraint.** Need bulk write tools wired to the configuration **bulk** endpoints `/content/v3/accounts/{accountId}/moves/tags` (`addMoveTagsBulk`/`deleteMoveTagsBulk`/`updateMoveTagsBulk`, body `{moveIds:[...], values:[...]}`). Our single-item tools currently reject arrays — that constraint is inverted. |
+| 5 | **Helm must get explicit user approval before ANY write action** — present the exact action + expected impact before executing | ⚠️ **Partial.** Our side: all write tools are `readOnlyHint=False` (+ `destructiveHint` on remove) so the client is signalled to confirm. The actual "present action + impact, get approval" prompt is **Helm(client)-side** — needs confirmation/coordination with the Helm team that it honors these hints for both single and bulk writes. |
+
+**Non-Functional (new):** guardrails so a user/agent can't craft an operation that **crashes the console or Helm** — for bulk this means hard caps (max attacks per call, max tags per call), plus the existing rate limiter, plus partial-failure handling. **DoD additions:** bulk tested + verified safe against console/Helm; **Product review**.
+
+**Net remaining work (see revised Phases G–I):** (3) get-tags-on-attack read tool; (4) bulk add/remove/update tools + guardrails; (5) confirm Helm approval UX; plus bulk-safety testing and product review. The single-item + retrieval half (reqs 1–2) is done and live-verified.
 
 ---
 
@@ -165,7 +184,7 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
    - **Still live-pending**: OPA role behavior (privileged 2xx / non-privileged 403) — no auth middleware
      on these routes in the configuration repo; enforcement is upstream at the gateway/ui-server.
 
-**Bulk endpoints that MUST NOT be wired** (non-functional "no bulk"):
+**Bulk endpoints — NOW REQUIRED (req 4, per 2026-07-15 refinement; see §1.6). Wire these in Phase H with size-cap guardrails:**
 `/content/v3/accounts/{accountId}/moves/tags` — `addMoveTagsBulk` / `deleteMoveTagsBulk` /
 `updateMoveTagsBulk` (configuration `movesController.js:793,803,797`, body `{moveIds:[...], values:[...]}`).
 
@@ -216,7 +235,12 @@ gateway URL via `SAFEBREACH_LOCAL_ENV`, so all calls route through OPA.
       ordering covered by a test (per the studio `test_rate_limiting.py` model). *(Phase B)*
 - [x] Playbook cache invalidated (`clear_playbook_cache()`) after a successful tag write. *(Phase B)*
 - [ ] All four actions permitted only for the SAF-31410 roles, rejected (403) for others — live env.
-- [ ] No-bulk enforced: single attack id only; array-of-ids rejected; bulk endpoints not wired.
+- [x] Single-item write tools accept exactly one attack id + one tag value. *(Phase B — bulk is a separate tool surface, req 4/Phase H)*
+- [ ] **Bulk (req 4)**: tag N attacks / N tags on 1 attack / N tags on N attacks, via the bulk endpoints, with hard size caps + partial-failure reporting. *(Phase H)*
+- [ ] **Retrieve tags on a given attack (req 3)** via `get_playbook_attack_tags`. *(Phase G)*
+- [ ] **Guardrails (NFR)**: a bulk op cannot crash the console/Helm — size caps + rate limit, verified. *(Phase H/I)*
+- [ ] **Helm approval (req 5)**: write actions present action+impact and require explicit user approval. *(Phase I — client-side; annotations in place)*
+- [ ] **Product review** of the tag action set. *(Phase I / DoD)*
 - [ ] Tag-value case handling consistent between write and query paths.
 - [x] safebreach-mcp unit tests pass (`uv run pytest safebreach_mcp_playbook/tests safebreach_mcp_data/tests -m "not e2e"`) — 734 passed incl. 42 (Phase C) + 36 (Phase B) new.
 - [ ] mcp-proxy regression tests assert the write tools join `DISABLE_TOOL_LIST` when the gate is closed.
@@ -266,11 +290,14 @@ before starting. Each code change → verify (test/lint) → commit.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase A: Backend + OPA verification (no code) | ✅ Complete | 2026-07-14 | - | endpoint pinned from code (token=`config`); OPA role check folded into Phase F (E2E) |
-| Phase B: safebreach-mcp — playbook write tools (rate-limited) | ✅ Complete (code + endpoint confirmed) | 2026-07-14 | 016a567 | add/remove/rename built + unit-tested (36 tests); endpoint = configuration PR #1801/SAF-28429, confirmed deployed. Live *write* demo pending a populated console (→ Phase F) |
-| Phase C: safebreach-mcp — retrieval tools | ✅ Complete | 2026-07-14 | - | `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`; 42 tests, 698 suite green |
-| Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog |
-| Phase E: mcp-proxy pin bump + gate regression tests | ⏳ Pending | - | - | this branch; pin `@1.8.0` |
-| Phase F: E2E verification on live env | ⏳ Pending | - | - | roles/gate/no-bulk/rate |
+| Phase B: safebreach-mcp — playbook single-item write tools (rate-limited) | ✅ Complete + live-verified | 2026-07-14 | 016a567 | add/remove/rename; endpoint = configuration PR #1801/SAF-28429. **Live write round-trip verified on saf-32826 move 1027** after the SAF-33550 clone-on-missing fix |
+| Phase C: safebreach-mcp — retrieval tools (attacks/sim-results by tag) | ✅ Complete + live-verified | 2026-07-14 | 5d6d931 | `get_playbook_attacks_by_tags` (custom-tags-only) + `get_simulation_results_by_tags`; live-verified through mcp-proxy on saf-32826 |
+| Phase G: safebreach-mcp — get-tags-on-attack (req 3) | ⏳ Pending | - | - | NEW. `get_playbook_attack_tags(attack_id)` → configuration `GET .../moves/{id}/tags` |
+| Phase H: safebreach-mcp — BULK tag tools + guardrails (req 4 + NFR) | ⏳ Pending | - | - | NEW. bulk add/remove/update (3 modes) via `/moves/tags` bulk endpoints; hard size caps + rate limit + partial-failure handling |
+| Phase I: Helm approval + bulk-safety + product review (req 5 + DoD) | ⏳ Pending | - | - | NEW. confirm Helm presents action+impact & gets approval; test bulk can't crash console/Helm; product review |
+| Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog — after G/H land |
+| Phase E: mcp-proxy pin bump + gate regression tests | 🔄 In Progress | - | ed85be0 | Branch-ref build (`feature/SAF-29870-mcp-tag-tools`) built + deployed to saf-32826, verified through mcp-proxy. Proper `@1.8.0` pin + gate regression tests still pending |
+| Phase F: E2E verification on live env | 🔄 Partial | - | - | Reads + gate-hiding (writes HIDDEN when gate closed) verified live through mcp-proxy. Remaining: non-privileged-role OPA 403; bulk-safety |
 
 ### Phase A — Backend + OPA verification (no code)
 - **Semantic Change**: Pin the move-tag write endpoint and confirm the three backends + OPA behavior.
@@ -432,3 +459,5 @@ default but wired.
 | 2026-07-14 15:30 | Phase B implemented via TDD — `add`/`remove`/`rename_playbook_attack_tag` (playbook, first write tools; `readOnlyHint=False, destructiveHint=False`) calling configuration `/api/content/v3/.../moves/{id}/tags` (POST/DELETE/PUT) with mandatory `rate_limiter` check/record gates + `clear_playbook_cache()` on success; 36 new tests (incl. gate-ordering + record-not-on-failure), full 734-test suite green |
 | 2026-07-14 16:00 | LIVE functional test on saf-32826 (standalone). Reads verified end-to-end: `get_playbook_attacks` (9560), `get_playbook_attacks_by_tags`, `get_simulation_results_by_tags`. WRITE tools 404 live on move 1027 |
 | 2026-07-14 16:30 | Investigated configuration PR #1801/SAF-28429 (per user): the tag CRUD backend = single-move `/content/v3/.../moves/{moveId}/tags` GET/POST/PUT/DELETE — exactly what the Phase-B tools call. Confirmed the route is DEPLOYED on saf-32826 (structured `sbcode:707` move-not-found, not a generic 404); the 404 was an empty-move-store data condition, not a code bug. Phase B reclassified: endpoint CONFIRMED correct; live-write demo deferred to Phase F on a populated console |
+| 2026-07-16 | Live E2E on saf-32826: SAF-33550 (clone-on-missing) fix deployed → Phase B write round-trip verified on move 1027; read-by-tags fixed (custom-tags-only) + verified. Built an mcp-proxy branch (`feature/SAF-29870-mcp-tag-tools`) pinned to the safebreach-mcp branch, Jenkins build #2 SUCCESS, deployed to saf-32826 → verified through mcp-proxy (reads visible, writes correctly hidden while AI-actions gate closed). |
+| 2026-07-16 | **Requirements re-refined in JIRA (2026-07-15, Shahaf Raviv) — see §1.6.** Scope grew: Update/rename now required (already built); NEW = retrieve-tags-on-attack (req 3), **BULK actions** (req 4, reverses old no-bulk), Helm explicit-approval-before-write (req 5), and guardrails against crashing console/Helm (NFR). Added Phases G (get-tags), H (bulk+guardrails), I (Helm approval + bulk-safety + product review). Old "no-bulk" text superseded by §1.6. |
