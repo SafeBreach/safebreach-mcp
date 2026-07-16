@@ -117,6 +117,38 @@ def _transform_tags(tags_data: Any) -> List[str]:
     return formatted_tags
 
 
+# Name of the tag group that holds user-assigned custom tags (configuration OVERLAY_SOURCE
+# custom-tags group; content-manager merges it onto the move's tags array on read).
+CUSTOM_TAG_GROUP_NAME = 'Tags'
+
+
+def _extract_custom_tag_values(tags_data: Any) -> List[str]:
+    """
+    Extract the bare custom-tag values from a move's tags array.
+
+    Custom (user/agent-assigned) tags live in a tag group named 'Tags'. Classification groups
+    (sector, MITRE_*, protocol, ...) are NOT custom tags and are ignored here — those are filtered
+    via their own dedicated parameters on get_playbook_attacks.
+
+    Returns a flat list of custom tag values, e.g. ["dani", "prod"].
+    """
+    if not tags_data or not isinstance(tags_data, list):
+        return []
+
+    values = []
+    for tag_item in tags_data:
+        if not isinstance(tag_item, dict) or tag_item.get('name') != CUSTOM_TAG_GROUP_NAME:
+            continue
+        for value_obj in tag_item.get('values', []):
+            if isinstance(value_obj, dict):
+                val = value_obj.get('value') or value_obj.get('displayName')
+                if val:
+                    values.append(val)
+            elif isinstance(value_obj, str):
+                values.append(value_obj)
+    return values
+
+
 def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
     """
     Extract MITRE ATT&CK data from the tags array.
@@ -293,7 +325,7 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
     Args:
         attack_data: Raw attack data from SafeBreach API
         include_mitre_techniques: Whether to include MITRE ATT&CK data
-        include_tags: Whether to include the normalized custom `tags` list (used for tag filtering)
+        include_tags: Whether to include the bare custom `tags` list (the 'Tags' group values, used for tag filtering)
 
     Returns:
         Transformed attack data in reduced format
@@ -325,7 +357,7 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
         result.update(mitre_data)
 
     if include_tags:
-        result['tags'] = _transform_tags(attack_data.get('tags', []))
+        result['tags'] = _extract_custom_tag_values(attack_data.get('tags', []))
 
     return result
 

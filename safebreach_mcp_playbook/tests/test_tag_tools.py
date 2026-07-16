@@ -25,16 +25,25 @@ from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
 # --------------------------------------------------------------------------- #
 # Fixtures — raw API-shaped attacks (what _get_all_attacks_from_cache_or_api returns)
 # --------------------------------------------------------------------------- #
+def _custom_tags(*values):
+    """Build a move `tags` array holding a custom-tag ('Tags') group with the given values."""
+    return [{"id": 99, "name": "Tags",
+             "values": [{"id": i + 1, "value": v, "sort": -1} for i, v in enumerate(values)]}]
+
+
 @pytest.fixture
 def raw_attacks_with_tags():
     return [
+        # custom tags network, dns
         {"id": 1027, "name": "DNS queries of malicious URLs", "description": "dns test",
          "modifiedDate": "2024-10-07T07:28:05.000Z", "publishedDate": "2019-05-29T15:18:44.000Z",
-         "tags": ["network", "dns"], "content": {}},
+         "tags": _custom_tags("network", "dns"), "content": {}},
+        # custom tags file, http
         {"id": 2048, "name": "File transfer via HTTP", "description": "http test",
          "modifiedDate": "2024-01-15T10:30:00.000Z", "publishedDate": "2020-03-10T12:00:00.000Z",
-         "tags": ["file", "http"], "content": {}},
-        {"id": 3099, "name": "Banking sector attack", "description": "sector test",
+         "tags": _custom_tags("file", "http"), "content": {}},
+        # ONLY a classification (sector) group, NO custom tags — must never match a tag query
+        {"id": 3099, "name": "Banking sector attack", "description": "classification only",
          "modifiedDate": "2024-02-20T09:00:00.000Z", "publishedDate": "2021-06-01T00:00:00.000Z",
          "tags": [{"id": 14, "name": "sector",
                    "values": [{"id": 1, "value": "Banking", "displayName": "Banking"}]}],
@@ -50,13 +59,14 @@ class TestReducedTransformIncludesTags:
         reduced = transform_reduced_playbook_attack(raw_attacks_with_tags[0])
         assert "tags" not in reduced
 
-    def test_include_tags_simple_list(self, raw_attacks_with_tags):
+    def test_include_tags_extracts_custom_values(self, raw_attacks_with_tags):
         reduced = transform_reduced_playbook_attack(raw_attacks_with_tags[0], include_tags=True)
         assert reduced["tags"] == ["network", "dns"]
 
-    def test_include_tags_nested_normalized(self, raw_attacks_with_tags):
+    def test_include_tags_ignores_classification(self, raw_attacks_with_tags):
+        # move 3099 has only a 'sector' classification group and no custom 'Tags' group
         reduced = transform_reduced_playbook_attack(raw_attacks_with_tags[2], include_tags=True)
-        assert reduced["tags"] == ["sector:Banking"]
+        assert reduced["tags"] == []
 
     def test_include_tags_missing_tags_is_empty_list(self):
         reduced = transform_reduced_playbook_attack({"id": 1, "name": "x"}, include_tags=True)
@@ -142,11 +152,11 @@ class TestGetPlaybookAttacksByTags:
         assert {a["id"] for a in result["attacks_in_page"]} == {1027, 2048}
 
     @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
-    def test_nested_tag_value_match(self, mock_get_all, raw_attacks_with_tags):
+    def test_classification_tag_not_matched(self, mock_get_all, raw_attacks_with_tags):
+        # 'Banking' is a classification (sector) tag, not a custom tag → must not match
         mock_get_all.return_value = raw_attacks_with_tags
-        result = sb_get_playbook_attacks_by_tags(tags="sector:Banking")
-        assert result["total_attacks"] == 1
-        assert result["attacks_in_page"][0]["id"] == 3099
+        result = sb_get_playbook_attacks_by_tags(tags="Banking")
+        assert result["total_attacks"] == 0
 
     @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
     def test_case_insensitivity(self, mock_get_all, raw_attacks_with_tags):
@@ -189,7 +199,7 @@ class TestGetPlaybookAttacksByTags:
     @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
     def test_pagination_shape(self, mock_get_all):
         mock_get_all.return_value = [
-            {"id": i, "name": f"attack-{i}", "description": "d", "tags": ["bulk"], "content": {}}
+            {"id": i, "name": f"attack-{i}", "description": "d", "tags": _custom_tags("bulk"), "content": {}}
             for i in range(12)
         ]
         result = sb_get_playbook_attacks_by_tags(tags="bulk", page_number=0)
