@@ -578,12 +578,24 @@ def _bulk_tags_request(console: str):
 
 
 def _bulk_result_summary(response, attack_ids: List[int], action: str, **extra) -> Dict[str, Any]:
-    """Summarize a bulk response. The backend returns a per-move list (fulfilled / {status:'rejected'})."""
+    """
+    Summarize a bulk response. The backend returns per-move results (fulfilled / {status:'rejected'})
+    nested as {"data": {"results": [...]}} (with fallbacks for a bare list or top-level {"results": [...]}).
+    """
     try:
         data = response.json()
     except Exception:  # noqa: BLE001 - defensive; some backends return empty body
         data = None
-    results = data if isinstance(data, list) else (data.get('results') if isinstance(data, dict) else None)
+
+    results = None
+    if isinstance(data, list):
+        results = data
+    elif isinstance(data, dict):
+        inner = data.get('data')
+        if isinstance(inner, dict) and isinstance(inner.get('results'), list):
+            results = inner['results']
+        elif isinstance(data.get('results'), list):
+            results = data['results']
 
     failures = []
     succeeded = None

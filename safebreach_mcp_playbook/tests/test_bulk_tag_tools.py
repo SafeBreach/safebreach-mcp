@@ -117,9 +117,10 @@ class TestBulkAdd:
         clear.assert_called_once()
 
     def test_partial_failure_surfaced(self, infra):
-        results = [{"moveId": 1, "tag": "x"},
+        # real backend shape: {"data": {"results": [ ... per-move ... ]}}
+        results = [{"moveId": 1, "status": "fulfilled"},
                    {"moveId": 2, "status": "rejected", "reason": "Move 2 not found"}]
-        with patch(f"{MOD}.requests.post", return_value=_resp(results)):
+        with patch(f"{MOD}.requests.post", return_value=_resp({"data": {"results": results}})):
             r = sb_bulk_add_playbook_attack_tags(console="c", attack_ids="1,2", tag_values="x")
         assert r["succeeded"] == 1
         assert r["failed_count"] == 1
