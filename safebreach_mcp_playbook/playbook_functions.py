@@ -523,7 +523,7 @@ def sb_get_playbook_attack_tags(
 
 # ---- Bulk tag operations (SAF-29870 req 4) -------------------------------- #
 # Guardrails (non-functional req): hard caps so a bulk op cannot overload/crash the console or Helm.
-MAX_BULK_ATTACK_IDS = 100
+MAX_BULK_ATTACK_IDS = 50
 MAX_BULK_TAG_VALUES = 20
 
 
