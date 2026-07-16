@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from safebreach_mcp_playbook.playbook_functions import (
     sb_get_playbook_attacks_by_tags,
+    sb_get_playbook_attack_tags,
     clear_playbook_cache,
 )
 from safebreach_mcp_playbook.playbook_types import (
@@ -248,3 +249,59 @@ class TestGetPlaybookAttacksByTagsTool:
         out = self._fn(server)(tags="network")
         assert isinstance(out, str)
         assert out.startswith("Error")
+
+
+# --------------------------------------------------------------------------- #
+# get_playbook_attack_tags (Phase G — retrieve tags on a given attack, req 3)
+# --------------------------------------------------------------------------- #
+class TestGetPlaybookAttackTags:
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
+    def test_returns_custom_tags(self, mock_get_all, raw_attacks_with_tags):
+        mock_get_all.return_value = raw_attacks_with_tags
+        r = sb_get_playbook_attack_tags(console="default", attack_id=1027)
+        assert r["attack_id"] == 1027
+        assert r["tags"] == ["network", "dns"]
+        assert r["hint_to_agent"]
+
+    @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
+    def test_classification_only_returns_empty(self, mock_get_all, raw_attacks_with_tags):
+        mock_get_all.return_value = raw_attacks_with_tags
+        r = sb_get_playbook_attack_tags(console="default", attack_id=3099)
+        assert r["tags"] == []
+
+    def test_missing_attack_id_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_playbook_attack_tags(console="default", attack_id=None)
+
+    @patch("safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api")
+    def test_attack_not_found_raises(self, mock_get_all, raw_attacks_with_tags):
+        mock_get_all.return_value = raw_attacks_with_tags
+        with pytest.raises(ValueError):
+            sb_get_playbook_attack_tags(console="default", attack_id=999999)
+
+    def test_tool_registered_read_only(self):
+        server = SafeBreachPlaybookServer()
+        tool = server.mcp._tool_manager._tools["get_playbook_attack_tags"]
+        assert tool.annotations.readOnlyHint is True
+
+    @patch("safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_tags")
+    def test_wrapper_delegates(self, mock_sb):
+        mock_sb.return_value = {"attack_id": 1027, "tags": ["network"], "hint_to_agent": "ok"}
+        server = SafeBreachPlaybookServer()
+        out = server.mcp._tool_manager._tools["get_playbook_attack_tags"].fn(attack_id=1027)
+        assert mock_sb.call_args.kwargs["attack_id"] == 1027
+        assert isinstance(out, str)
+        assert "network" in out
