@@ -18,7 +18,7 @@ from typing import Dict, Any
 from safebreach_mcp_data.data_functions import (
     sb_get_tests,
     sb_get_test_details,
-    sb_get_test_simulations,
+    sb_get_simulations,
     sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
@@ -70,7 +70,7 @@ def sample_simulation_id(e2e_console, sample_test_id):
     """
     # Try statuses most likely to have execution logs first
     for status in ["stopped", "prevented", "detected", "missed", None]:
-        simulations_response = sb_get_test_simulations(
+        simulations_response = sb_get_simulations(
             sample_test_id, console=e2e_console, page_number=0,
             status_filter=status,
         )
@@ -233,9 +233,9 @@ class TestDataServerE2E:
         assert len(stats) == 7  # 7 status entries, no drift entry
 
     @pytest.mark.e2e
-    def test_get_test_simulations_e2e(self, e2e_console, sample_test_id):
+    def test_get_simulations_e2e(self, e2e_console, sample_test_id):
         """Test getting real test simulations from SafeBreach console."""
-        result = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
+        result = sb_get_simulations(sample_test_id, console=e2e_console, page_number=0)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -392,7 +392,7 @@ class TestDataServerE2E:
     def test_attack_logs_across_multiple_simulations_e2e(self, e2e_console, sample_test_id):
         """Test attack logs functionality across multiple simulations to ensure broad compatibility."""
         # Get simulations from the test
-        simulations_result = sb_get_test_simulations(
+        simulations_result = sb_get_simulations(
             sample_test_id,
             console=e2e_console,
             page_number=0

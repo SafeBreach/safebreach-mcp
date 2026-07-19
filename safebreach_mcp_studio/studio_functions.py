@@ -1567,7 +1567,7 @@ def sb_get_studio_attack_latest_result(
                             f"summary and may lag the live results while the test runs. For exact "
                             f"live counts, call get_test_details(test_id='{resolved_test_id}', "
                             f"console='{console}') on the Data Server (it returns live counts for "
-                            f"running tests), or get_test_simulations with a status_filter. "
+                            f"running tests), or get_simulations with a status_filter. "
                             f"Poll this tool again in ~30 seconds for updated totals."
                         )
                 except Exception as e:

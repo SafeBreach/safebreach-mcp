@@ -29,9 +29,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-07-16 |
+| **Last Updated** | 2026-07-19 |
 | **Owner** | Dan Almog (AI-assisted) |
-| **Current Phase** | Reqs 1–3 + bulk (4) **code-complete** (767 tests green); reqs 1–2 live-verified through mcp-proxy. Remaining: Phase I (Helm approval + live bulk-safety + product review), then D/E release. Bulk clone-on-missing dependency to verify. |
+| **Current Phase** | Reqs 1–4 **code-complete**; reqs 1–2 live-verified through mcp-proxy. **Phase J DONE** — the two sim tools merged into a single `get_simulations` with all filters server-side (account-wide + within-test); 48 new tests, **full suite 1371 green**; live-verify pending. Remaining: Phase I (Helm approval + live bulk-safety + product review), then D/E release. |
 
 > Revised after cloning and investigating `safebreach-mcp` locally (v1.7.0). Grounding for every
 > file:line reference below is recorded in `context.md` → "### safebreach-mcp (tool implementation repo)".
@@ -46,7 +46,7 @@ explicitly out of scope). Current functional requirements and our status:
 | # | Requirement | Status |
 |---|---|---|
 | 1 | Add, Remove, **or Update** a custom tag on a single playbook attack | ✅ **Done** — `add`/`remove`/`rename_playbook_attack_tag` built, unit-tested, live-verified (Update was newly added to the ticket; we already have it) |
-| 2 | Retrieve playbook attacks OR simulation results by given tags | ✅ **Done** — `get_playbook_attacks_by_tags` + `get_simulation_results_by_tags`, live-verified |
+| 2 | Retrieve playbook attacks OR simulation results by given tags | ✅ **Done** — `get_playbook_attacks_by_tags` (playbook) live-verified. **Sim-results-by-tag now delivered via the merged `get_simulations`** (Phase J, code-complete + unit-tested): tag search is one optional filter, usable account-wide or within a test; live-verify pending. |
 | 3 | **Retrieve tags on a given attack** | ✅ **Code-complete (unit-tested; Phase G).** `get_playbook_attack_tags(attack_id)` returns the attack's custom tag values. Live-verify pending. |
 | 4 | **Bulk actions** — (a) one tag on many attacks, (b) many tags on one attack, (c) many tags on many attacks | ✅ **Code-complete (unit-tested; Phase H).** `bulk_add`/`bulk_remove`/`bulk_rename_playbook_attack_tag(s)` wired to the configuration bulk endpoints (`addMoveTagsBulk` POST `{moveIds,values}`, `deleteMoveTagsBulk` DELETE `?moveIds=|values=` pipes, `updateMoveTagsBulk` PUT `{moveIds,oldValue,newValue}`). A single tool per op covers all 3 modes. Guardrail caps (≤50 attacks, ≤20 tags) + rate limiting + partial-failure surfaced. **Live bulk-safety test pending (Phase I).** |
 | 5 | **Helm must get explicit user approval before ANY write action** — present the exact action + expected impact before executing | ⚠️ **Partial.** Our side: all write tools are `readOnlyHint=False` (+ `destructiveHint` on remove) so the client is signalled to confirm. The actual "present action + impact, get approval" prompt is **Helm(client)-side** — needs confirmation/coordination with the Helm team that it honors these hints for both single and bulk writes. |
@@ -291,13 +291,14 @@ before starting. Each code change → verify (test/lint) → commit.
 |-------|--------|-----------|------------|-------|
 | Phase A: Backend + OPA verification (no code) | ✅ Complete | 2026-07-14 | - | endpoint pinned from code (token=`config`); OPA role check folded into Phase F (E2E) |
 | Phase B: safebreach-mcp — playbook single-item write tools (rate-limited) | ✅ Complete + live-verified | 2026-07-14 | 016a567 | add/remove/rename; endpoint = configuration PR #1801/SAF-28429. **Live write round-trip verified on saf-32826 move 1027** after the SAF-33550 clone-on-missing fix |
-| Phase C: safebreach-mcp — retrieval tools (attacks/sim-results by tag) | ✅ Complete + live-verified | 2026-07-14 | 5d6d931 | `get_playbook_attacks_by_tags` (custom-tags-only) + `get_simulation_results_by_tags`; live-verified through mcp-proxy on saf-32826 |
+| Phase C: safebreach-mcp — retrieval tools (attacks/sim-results by tag) | ✅ Complete + live-verified | 2026-07-14 | 5d6d931 | `get_playbook_attacks_by_tags` (custom-tags-only) + `get_simulation_results_by_tags`; live-verified through mcp-proxy on saf-32826. **Note: `get_simulation_results_by_tags` is superseded by Phase J** (merged into `get_simulations`). |
 | Phase G: safebreach-mcp — get-tags-on-attack (req 3) | ✅ Code-complete (unit-tested) | 2026-07-16 | - | `get_playbook_attack_tags(attack_id)` → custom-tag values; 6 tests. Live-verify pending. |
 | Phase H: safebreach-mcp — BULK tag tools + guardrails (req 4 + NFR) | ✅ Code-complete (unit-tested) | 2026-07-16 | - | `bulk_add`/`bulk_remove`/`bulk_rename` via `/moves/tags` bulk endpoints (all 3 modes); guardrail caps (≤50 attacks, ≤20 tags) + rate limit + partial-failure surfaced; 27 tests. **Live bulk-safety test → Phase I/F.** |
 | Phase I: Helm approval + bulk-safety + product review (req 5 + DoD) | ⏳ Pending | - | - | NEW. confirm Helm presents action+impact & gets approval; test bulk can't crash console/Helm; product review |
 | Phase D: safebreach-mcp release (1.8.0) | ⏳ Pending | - | - | Minor bump + changelog — after G/H land |
 | Phase E: mcp-proxy pin bump + gate regression tests | 🔄 In Progress | - | ed85be0 | Branch-ref build (`feature/SAF-29870-mcp-tag-tools`) built + deployed to saf-32826, verified through mcp-proxy. Proper `@1.8.0` pin + gate regression tests still pending |
 | Phase F: E2E verification on live env | 🔄 Partial | - | - | Reads + gate-hiding (writes HIDDEN when gate closed) verified live through mcp-proxy. Remaining: non-privileged-role OPA 403; bulk-safety |
+| Phase J: data — merge sim tools into `get_simulations` + server-side filters | ✅ Code-complete (unit-tested) | 2026-07-19 | - | Renamed `get_test_simulations`→`get_simulations` (`test_id` optional, added `tags`); ALL filters pushed into the `executionsHistoryResults` Lucene query (account-wide + within-test); deleted `get_simulation_results_by_tags` + `_apply_simulation_filters`; require ≥1 filter, Lucene escaping, wildcard attack-name; SAF-32018/32805 hints preserved (within-test). **48 new tests; full suite 1371 green.** Live-verify pending. Design sent to Yossi Attas |
 
 ### Phase A — Backend + OPA verification (no code)
 - **Semantic Change**: Pin the move-tag write endpoint and confirm the three backends + OPA behavior.
@@ -377,6 +378,41 @@ before starting. Each code change → verify (test/lint) → commit.
 - **Deliverables**: note covering gate open/closed visibility, role gating (403 for non-privileged on
   all four actions), tag→query propagation, no-bulk rejection, and rate-limit gate behavior.
 - **Git Commit**: `docs(SAF-29870): record E2E verification results`
+
+### Phase J — data: merge sim tools into `get_simulations` + server-side filters
+- **Semantic Change**: Replace `get_test_simulations` (per-test, client-side filters) and
+  `get_simulation_results_by_tags` (account-wide, tags-only) with a single `get_simulations` tool whose
+  every filter is pushed into the `executionsHistoryResults` Lucene query — working account-wide
+  (`test_id` omitted) or scoped to a test, in any filter combination (incl. by-tag search within a test).
+- **Why**: the two tools already hit the same `executionsHistoryResults` endpoint and return the same
+  reduced entity — they differ only by Lucene clause (`runId:` vs `labels:`). Account-wide filtering is
+  **only** possible server-side (no test to fetch-then-filter), so this both removes a duplicate tool/path
+  and unlocks account-wide filtering by every attribute.
+- **Confirmed design decisions** (Dan, 2026-07-19; proposal sent to Yossi Attas, awaiting feedback):
+  1. **Clean rename** (no deprecated alias) — `get_test_simulations` → `get_simulations`; update the
+     ~36 agent-facing hint strings that route to the old name (data + studio servers).
+  2. **Require ≥1 filter when `test_id` is omitted** — guard against a whole-account dump.
+  3. **Attack-name = lowercased wildcard substring** (`moveName:*term*`) to preserve today's
+     case-insensitive substring semantics on the analyzed `text` field.
+  4. **Server-side pagination** — the API paginates; account-wide results can be large, so no fetch-all.
+  5. **Lucene special-char escaping** on all user-supplied filter values (also hardens today's `tags`
+     interpolation). Account scoping is enforced server-side, so this is injection hardening, not a
+     tenant-leak fix.
+- **Field mapping** (all confirmed indexed/queryable in the `data` repo — `fieldMapper.js` +
+  `executionsHistoryIndexTemplate.json`): status → `finalStatus.keyword`; attack id → `moveId`;
+  attack name → `moveName` (wildcard); time window → `executionTime:[start TO end]`; drift →
+  `driftType:* AND NOT driftType:no_drift`; tags → `labels.keyword`; test scope → `runId`.
+- **Changes**:
+  | File (safebreach-mcp) | Description |
+  |---|---|
+  | `safebreach_mcp_data/data_functions.py` | generalize the query builder into one fn building AND-combined **optional** clauses + server-side pagination + a Lucene-escape helper; rename `sb_get_test_simulations` → `sb_get_simulations` (`test_id=None`, `tags=None`, require ≥1 filter); **delete** `_get_simulation_results_by_tags_from_api` + `sb_get_simulation_results_by_tags` + the now-unused client-side `_apply_simulation_filters` |
+  | `safebreach_mcp_data/data_server.py` | rename tool `get_test_simulations` → `get_simulations` with a new description covering account-wide + within-test + by-tag modes; **remove** the `get_simulation_results_by_tags` registration; update hint strings |
+  | `safebreach_mcp_data/__init__.py`, `safebreach_mcp_studio/*` | update exports + ~36 agent-facing references to the new tool name |
+  | `safebreach_mcp_data/tests/` | rename/merge `test_sim_results_by_tags.py`; update `get_test_simulations` tests; add account-wide, filter-combination, require-≥1-filter, wildcard-name, and Lucene-escaping tests |
+- **What can go wrong**: missing a hint string → dangling tool reference for the agent; wildcard-on-text
+  quirks; `finalStatus` enum value spelling (`no-result` vs `no_result`) — verify against live/data repo;
+  cache key must include the full filter combo.
+- **Git Commit**: `feat(data): merge sim tools into get_simulations with server-side filters (SAF-29870)`
 
 ---
 
