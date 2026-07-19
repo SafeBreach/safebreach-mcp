@@ -4431,17 +4431,17 @@ class TestGetTestSimulationsRunningHint:
     """SAF-32018: get_simulations flags that results are partial/point-in-time while running."""
 
     @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=True)
-    @patch('safebreach_mcp_data.data_functions._fetch_simulations_by_query')
+    @patch('safebreach_mcp_data.data_functions._fetch_simulations_page')
     def test_running_adds_partial_hint(self, mock_sims, mock_nonterminal):
-        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
+        mock_sims.return_value = ([{"status": "missed", "simulation_id": "s1"}], 1)
         result = sb_get_simulations("t1", "c", page_number=0)
         hint = (result.get("hint_to_agent") or "").lower()
         assert "still running" in hint
         assert "partial" in hint or "point-in-time" in hint
 
     @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=False)
-    @patch('safebreach_mcp_data.data_functions._fetch_simulations_by_query')
+    @patch('safebreach_mcp_data.data_functions._fetch_simulations_page')
     def test_terminal_no_partial_hint(self, mock_sims, mock_nonterminal):
-        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
+        mock_sims.return_value = ([{"status": "missed", "simulation_id": "s1"}], 1)
         result = sb_get_simulations("t1", "c", page_number=0)
         assert "still running" not in (result.get("hint_to_agent") or "").lower()

@@ -31,12 +31,12 @@ from safebreach_mcp_data import data_functions as df
 from safebreach_mcp_data.data_functions import simulations_cache
 
 
-def _resp(rows):
-    """Build a mock requests response whose .json() returns {'simulations': rows}."""
+def _resp(rows, total=None):
+    """Build a mock requests response whose .json() returns {'simulations': rows, 'total': N}."""
     r = MagicMock()
     r.status_code = 200
     r.raise_for_status.return_value = None
-    r.json.return_value = {"simulations": rows}
+    r.json.return_value = {"simulations": rows, "total": len(rows) if total is None else total}
     return r
 
 
@@ -52,9 +52,9 @@ def _raw_row(sim_id, labels=None):
     }
 
 
-# One filtered page then an empty page ends the fetch loop.
-def _one_page(rows):
-    return [_resp(rows), _resp([])]
+# A single server-side page response (one request per query now — no fetch-all loop).
+def _one_page(rows, total=None):
+    return [_resp(rows, total)]
 
 
 _GUARD = "!labels:Ignore AND (!labels:Draft)"
@@ -295,23 +295,40 @@ class TestLuceneEscapeHelper:
 @patch("safebreach_mcp_data.data_functions.get_api_base_url", return_value="https://test.com")
 @patch("safebreach_mcp_data.data_functions.requests.post")
 class TestGetSimulationsPagination(_Base):
-    def test_page_size_and_slice(self, mock_post, *_):
-        mock_post.side_effect = [_resp([_raw_row(f"sim{i}") for i in range(12)]), _resp([])]
+    def test_page_and_total_from_server(self, mock_post, *_):
+        # server returns the 10-row page 0 and the exact total (12)
+        mock_post.return_value = _resp([_raw_row(f"sim{i}") for i in range(10)], total=12)
         result = df.sb_get_simulations(tags="production", page_number=0)
         assert len(result["simulations_in_page"]) == 10
-        assert result["total_pages"] == 2
         assert result["total_simulations"] == 12
+        assert result["total_pages"] == 2
         assert "page_number=1" in (result["hint_to_agent"] or "")
 
-    def test_multipage_fetch_aggregates(self, mock_post, *_):
-        full = [_raw_row(f"sim{i}") for i in range(100)]
-        mock_post.side_effect = [_resp(full), _resp([_raw_row("tail1")]), _resp([])]
-        result = df.sb_get_simulations(tags="production")
-        assert result["total_simulations"] == 101
+    def test_total_comes_from_response_not_row_count(self, mock_post, *_):
+        # only 10 rows on the page, but the server total is 999 → drives total_pages
+        mock_post.return_value = _resp([_raw_row(f"sim{i}") for i in range(10)], total=999)
+        result = df.sb_get_simulations(status_filter="missed", page_number=0)
+        assert result["total_simulations"] == 999
+        assert result["total_pages"] == 100
+
+    def test_server_side_page_param(self, mock_post, *_):
+        # page_number (0-based) maps to the API's 1-based page; single request, no fetch-all
+        mock_post.return_value = _resp([_raw_row("s")], total=30)
+        df.sb_get_simulations(status_filter="missed", page_number=2)
+        body = _body(mock_post)
+        assert body["page"] == 3
+        assert body["pageSize"] == 10
+        assert mock_post.call_count == 1
 
     def test_negative_page_raises(self, mock_post, *_):
         with pytest.raises(ValueError):
             df.sb_get_simulations(tags="production", page_number=-1)
+        mock_post.assert_not_called()
+
+    def test_deep_pagination_guard(self, mock_post, *_):
+        # beyond the Elasticsearch 10k from+size window → clear error, no request issued
+        with pytest.raises(ValueError):
+            df.sb_get_simulations(status_filter="missed", page_number=1000)
         mock_post.assert_not_called()
 
 
@@ -371,20 +388,19 @@ class TestGetSimulationsResultMapping(_Base):
 @patch("safebreach_mcp_data.data_functions.requests.post")
 class TestGetSimulationsFalseEmptyGuard(_Base):
     def test_within_test_zero_matches_but_test_has_sims_warns(self, mock_post, *_):
-        # 1st (filtered) query → empty; 2nd (unfiltered, runId only) → the test has sims
+        # 1st (filtered) page → total 0; 2nd (population, runId-only count) → total 2 → warn
         mock_post.side_effect = [
-            _resp([]),                                   # filtered: 0 matches
-            _resp([_raw_row("s1"), _raw_row("s2")]), _resp([]),   # unfiltered test population
+            _resp([], total=0),                # filtered: 0 matches
+            _resp([_raw_row("s1")], total=2),  # population count for the test
         ]
         result = df.sb_get_simulations(test_id="123", status_filter="missed")
         assert result["total_simulations"] == 0
-        hint = result["hint_to_agent"] or ""
-        assert "0 of" in hint or "matched" in hint
-        assert mock_post.call_count >= 2  # extra population query issued
+        assert "0 of 2" in (result["hint_to_agent"] or "")
+        assert mock_post.call_count == 2  # filtered page + population count
 
     def test_account_wide_zero_matches_no_population_query(self, mock_post, *_):
-        # account-wide (no test_id) → no second population query, generic empty hint
-        mock_post.side_effect = [_resp([])]
+        # account-wide (no test_id) → no second population query, generic empty
+        mock_post.side_effect = [_resp([], total=0)]
         result = df.sb_get_simulations(tags="nope")
         assert result["total_simulations"] == 0
         assert mock_post.call_count == 1

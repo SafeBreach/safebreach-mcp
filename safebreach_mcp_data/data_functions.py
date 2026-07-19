@@ -719,40 +719,41 @@ def _build_simulations_query(
     return _SIMULATIONS_QUERY_GUARD + " AND " + " AND ".join(clauses)
 
 
-def _fetch_simulations_by_query(query: str, console: str) -> List[Dict[str, Any]]:
-    """Fetch ALL simulation-result rows matching a Lucene query (paged at 100), reduced-mapped."""
+# Elasticsearch from+size deep-pagination window for the executionsHistoryResults endpoint.
+_ES_MAX_WINDOW = 10000
+
+
+def _fetch_simulations_page(query: str, console: str, page: int, page_size: int):
+    """Fetch ONE server-side page for a Lucene query.
+
+    Returns (reduced_rows, total_matching). `page` is 1-based (API convention); the endpoint maps it
+    to ES from=(page-1)*page_size / size=page_size and returns the exact `total` (track_total_hits),
+    so pagination is fully server-side — no fetch-all.
+    """
     base_url = get_api_base_url(console, 'data')
     account_id = get_api_account_id(console)
     api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
     headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
-    all_rows: List[Dict[str, Any]] = []
-    page = 1
-    page_size = 100
-    while True:
-        data = {
-            "query": query,
-            "page": page,
-            "pageSize": page_size,
-            "orderBy": "desc",
-            "sortBy": "executionTime",
-        }
-        response = requests.post(api_url, headers=headers, json=data, timeout=120)
-        check_rbac_response(response)
-        try:
-            rows = response.json().get("simulations", [])
-        except ValueError as e:
-            logger.error("Failed to parse get_simulations response on page %d for console %s: %s",
-                         page, console, str(e))
-            break
-        if not rows:
-            break
-        all_rows.extend(rows)
-        if len(rows) < page_size:
-            break
-        page += 1
+    data = {
+        "query": query,
+        "page": page,
+        "pageSize": page_size,
+        "orderBy": "desc",
+        "sortBy": "executionTime",
+    }
+    response = requests.post(api_url, headers=headers, json=data, timeout=120)
+    check_rbac_response(response)
+    body = response.json()
+    rows = body.get("simulations", [])
+    total = body.get("total", len(rows))
+    return [get_reduced_simulation_result_entity(s) for s in rows], total
 
-    return [get_reduced_simulation_result_entity(s) for s in all_rows]
+
+def _fetch_simulations_total(query: str, console: str) -> int:
+    """Count-only fetch (one row) → exact number of matching simulations."""
+    _, total = _fetch_simulations_page(query, console, 1, 1)
+    return total
 
 
 def sb_get_simulations(
@@ -837,12 +838,18 @@ def sb_get_simulations(
             drifted_only=drifted_only,
             tag_values=tag_values,
         )
-        all_simulations = _fetch_simulations_by_query(query, console)
-
-        total_simulations = len(all_simulations)
-        total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE
         start_index = page_number * PAGE_SIZE
-        page_simulations = all_simulations[start_index:start_index + PAGE_SIZE]
+        if start_index + PAGE_SIZE > _ES_MAX_WINDOW:
+            raise ValueError(
+                f"Cannot page past result {_ES_MAX_WINDOW} (Elasticsearch deep-pagination limit). "
+                "Narrow the filters (status / attack / time window / tags) to reach later results."
+            )
+
+        # Server-side pagination: fetch only the requested page plus the exact total.
+        page_simulations, total_simulations = _fetch_simulations_page(
+            query, console, page_number + 1, PAGE_SIZE
+        )
+        total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE
 
         applied_filters: Dict[str, Any] = {}
         if test_id:
@@ -865,12 +872,12 @@ def sb_get_simulations(
         sim_hints: List[str] = []
         # SAF-32805 (within-test only): filters matched nothing but the test itself has simulations.
         if total_simulations == 0 and test_id:
-            population = _fetch_simulations_by_query(
+            population = _fetch_simulations_total(
                 _SIMULATIONS_QUERY_GUARD + f" AND runId:{_lucene_escape(test_id)}", console
             )
-            if len(population) > 0:
+            if population > 0:
                 sim_hints.append(
-                    f"0 of {len(population)} simulations in this test matched the applied filters. "
+                    f"0 of {population} simulations in this test matched the applied filters. "
                     "Verify the filter values are correct — do not conclude the attack or criteria is "
                     "absent from the test based on this empty result."
                 )
