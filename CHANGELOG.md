@@ -5,6 +5,32 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.0 — 2026-07-20
+
+### Added
+
+- New playbook tag tools: add, remove, and rename a custom tag on a playbook attack
+  (the playbook server's first write tools; rate-limited and consent-gated).
+- Bulk tag tools: add, remove, or rename tags across many attacks in one call, with
+  hard guardrail caps (≤50 attacks, ≤20 tags) and partial-failure reporting.
+- `get_playbook_attack_tags`: retrieve the custom tags on a given playbook attack.
+- `get_playbook_attacks_by_tags`: find playbook attacks filtered by one or more custom tags.
+- Account-wide and by-tag simulation search: `get_simulations` can now search across all
+  tests (omit the test id) and filter by tag.
+
+### Changed
+
+- Renamed `get_test_simulations` to `get_simulations`: the test id is now optional, a `tags`
+  filter was added, and all filters (status, attack id/name, time window, drift, tags) are
+  applied server-side with server-side pagination. The former `get_simulation_results_by_tags`
+  tool is removed (superseded by `get_simulations`).
+- Lowered the bulk tag guardrail cap from 100 to 50 attacks per call.
+
+### Fixed
+
+- `get_studio_attack_latest_result`: the test overview status is now reported in lowercase
+  (e.g. `completed`) to match the documented status values, instead of the backend's raw uppercase.
+
 ## 1.7.0 — 2026-07-08
 
 ### Fixed
