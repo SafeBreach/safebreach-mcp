@@ -67,6 +67,11 @@ version = "{current}" → version = "{next}"
 
 Read back `pyproject.toml` to verify the change took effect.
 
+Then regenerate the lock file to reflect the new version:
+```bash
+uv lock
+```
+
 ## Step 6: Generate Changelog Entries
 
 1. Find the most recent tag:
@@ -144,7 +149,7 @@ Display a summary of everything that will be committed:
 
 - Version bump: `{current}` → `{next}`
 - Branch: `{branch_name}`
-- Files modified: `pyproject.toml`, `CHANGELOG.md`
+- Files modified: `pyproject.toml`, `uv.lock`, `CHANGELOG.md`
 - Changelog entries: (list them)
 
 Ask for final approval via AskUserQuestion:
@@ -153,9 +158,9 @@ Ask for final approval via AskUserQuestion:
 
 ## Step 10: Commit and Push
 
-1. Stage the two modified files:
+1. Stage the modified files:
    ```bash
-   git add pyproject.toml CHANGELOG.md
+   git add pyproject.toml uv.lock CHANGELOG.md
    ```
 2. Commit with HEREDOC:
    ```bash
@@ -221,4 +226,4 @@ Ask for final approval via AskUserQuestion:
 - Merge the PR (user must review and approve)
 - Create git tags or GitHub Releases (GitHub Actions handles this automatically)
 - Handle pre-release or patch versions
-- Modify files beyond `pyproject.toml` and `CHANGELOG.md`
+- Modify files beyond `pyproject.toml`, `uv.lock`, and `CHANGELOG.md`
