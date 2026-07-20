@@ -16,7 +16,15 @@ from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
 from .playbook_functions import (
     sb_get_playbook_attacks,
-    sb_get_playbook_attack_details
+    sb_get_playbook_attack_details,
+    sb_get_playbook_attacks_by_tags,
+    sb_add_playbook_attack_tag,
+    sb_remove_playbook_attack_tag,
+    sb_rename_playbook_attack_tag,
+    sb_get_playbook_attack_tags,
+    sb_bulk_add_playbook_attack_tags,
+    sb_bulk_remove_playbook_attack_tags,
+    sb_bulk_rename_playbook_attack_tag
 )
 
 logger = logging.getLogger(__name__)
@@ -272,10 +280,197 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
                                 )
 
                 return "\n".join(response_parts)
-                
+
             except Exception as e:
                 logger.error(f"Error in get_playbook_attack_details: {e}")
                 return f"Error getting attack details: {str(e)}"
+
+        @self.mcp.tool(
+            name="get_playbook_attacks_by_tags",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered and paginated list of SafeBreach playbook attacks that carry any of the given custom tags.
+Tag matching is case-insensitive and exact per tag token (a filter of "net" does NOT match a tag "network").
+Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0).
+Results are paginated with 10 items per page; each attack includes its normalized tags list."""
+        )
+        def get_playbook_attacks_by_tags(
+            console: str = "default",
+            tags: Optional[str] = None,
+            page_number: int = 0
+        ) -> str:
+            """Get playbook attacks filtered by one or more custom tags."""
+            try:
+                result = sb_get_playbook_attacks_by_tags(
+                    console=console,
+                    tags=tags,
+                    page_number=page_number
+                )
+
+                if 'error' in result:
+                    return f"Error: {result['error']}"
+
+                attacks = result['attacks_in_page']
+                total_attacks = result['total_attacks']
+                page_number = result['page_number']
+                total_pages = result['total_pages']
+                applied_filters = result.get('applied_filters', {})
+
+                response_parts = [
+                    f"## Playbook Attacks by Tags - Page {page_number + 1} of {total_pages}",
+                    f"**Total attacks matching tags: {total_attacks}**"
+                ]
+
+                if applied_filters:
+                    filter_strs = [f"{key}={value}" for key, value in applied_filters.items()]
+                    response_parts.append(f"**Applied filters:** {', '.join(filter_strs)}")
+
+                response_parts.append("")
+
+                for attack in attacks:
+                    response_parts.extend([
+                        f"### {attack.get('name', 'Unknown')} (ID: {attack.get('id', 'Unknown')})",
+                        f"**Tags:** {', '.join(attack.get('tags', []))}"
+                    ])
+                    description = str(attack.get('description', '') or '')
+                    if description:
+                        response_parts.append(
+                            f"**Description:** {description[:200]}{'...' if len(description) > 200 else ''}"
+                        )
+                    response_parts.append("")
+
+                if result.get('hint_to_agent'):
+                    response_parts.append(f"**Hint:** {result['hint_to_agent']}")
+
+                return "\n".join(response_parts)
+
+            except Exception as e:
+                logger.error(f"Error in get_playbook_attacks_by_tags: {e}")
+                return f"Error getting playbook attacks by tags: {str(e)}"
+
+        @self.mcp.tool(
+            name="add_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Adds a custom tag to a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), tag_value (required, a single tag)."""
+        )
+        def add_playbook_attack_tag(console: str = "default", attack_id: int = None, tag_value: str = None) -> str:
+            """Add a custom tag to a single playbook attack."""
+            try:
+                result = sb_add_playbook_attack_tag(console=console, attack_id=attack_id, tag_value=tag_value)
+                return f"✅ Added tag '{result['tag_value']}' to playbook attack {result['attack_id']}."
+            except Exception as e:
+                logger.error(f"Error in add_playbook_attack_tag: {e}")
+                return f"Error adding tag to playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="remove_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+            description="""Removes a custom tag from a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), tag_value (required, a single tag)."""
+        )
+        def remove_playbook_attack_tag(console: str = "default", attack_id: int = None, tag_value: str = None) -> str:
+            """Remove a custom tag from a single playbook attack."""
+            try:
+                result = sb_remove_playbook_attack_tag(console=console, attack_id=attack_id, tag_value=tag_value)
+                return f"✅ Removed tag '{result['tag_value']}' from playbook attack {result['attack_id']}."
+            except Exception as e:
+                logger.error(f"Error in remove_playbook_attack_tag: {e}")
+                return f"Error removing tag from playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="rename_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Renames a custom tag on a single SafeBreach playbook attack.
+This is a WRITE action (rate-limited, hidden unless AI-agent actions are enabled).
+Parameters: console (required), attack_id (required, the playbook attack/move ID), old_value (required), new_value (required)."""
+        )
+        def rename_playbook_attack_tag(console: str = "default", attack_id: int = None,
+                                       old_value: str = None, new_value: str = None) -> str:
+            """Rename a custom tag on a single playbook attack."""
+            try:
+                result = sb_rename_playbook_attack_tag(
+                    console=console, attack_id=attack_id, old_value=old_value, new_value=new_value
+                )
+                return (f"✅ Renamed tag '{result['old_value']}' to '{result['new_value']}' "
+                        f"on playbook attack {result['attack_id']}.")
+            except Exception as e:
+                logger.error(f"Error in rename_playbook_attack_tag: {e}")
+                return f"Error renaming tag on playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="get_playbook_attack_tags",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns the custom tags currently set on a single SafeBreach playbook attack.
+Parameters: console (required), attack_id (required, the playbook attack/move ID)."""
+        )
+        def get_playbook_attack_tags(console: str = "default", attack_id: int = None) -> str:
+            """Get the custom tags on a single playbook attack."""
+            try:
+                result = sb_get_playbook_attack_tags(console=console, attack_id=attack_id)
+                tags = result.get("tags", [])
+                if not tags:
+                    return f"Playbook attack {result['attack_id']} has no custom tags."
+                return (f"## Custom tags on playbook attack {result['attack_id']}\n"
+                        + "\n".join(f"- {t}" for t in tags))
+            except Exception as e:
+                logger.error(f"Error in get_playbook_attack_tags: {e}")
+                return f"Error getting tags for playbook attack: {str(e)}"
+
+        @self.mcp.tool(
+            name="bulk_add_playbook_attack_tags",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Adds one or more custom tags to one or more playbook attacks (BULK write, rate-limited).
+Covers: one tag on many attacks, many tags on one attack, and many tags on many attacks.
+Guardrails: capped per call (max attacks/tags) to protect the console.
+Parameters: console (required), attack_ids (required, comma-separated attack/move IDs), tag_values (required, comma-separated tags)."""
+        )
+        def bulk_add_playbook_attack_tags(console: str = "default", attack_ids: str = None, tag_values: str = None) -> str:
+            """Bulk-add custom tags to playbook attacks."""
+            try:
+                r = sb_bulk_add_playbook_attack_tags(console=console, attack_ids=attack_ids, tag_values=tag_values)
+                return (f"✅ Bulk add: {r.get('succeeded')} succeeded, {r.get('failed_count')} failed "
+                        f"across {len(r['attack_ids'])} attack(s). {r.get('hint_to_agent','')}")
+            except Exception as e:
+                logger.error(f"Error in bulk_add_playbook_attack_tags: {e}")
+                return f"Error bulk-adding tags: {str(e)}"
+
+        @self.mcp.tool(
+            name="bulk_remove_playbook_attack_tags",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
+            description="""Removes one or more custom tags from one or more playbook attacks (BULK write, rate-limited).
+Guardrails: capped per call (max attacks/tags) to protect the console.
+Parameters: console (required), attack_ids (required, comma-separated attack/move IDs), tag_values (required, comma-separated tags)."""
+        )
+        def bulk_remove_playbook_attack_tags(console: str = "default", attack_ids: str = None, tag_values: str = None) -> str:
+            """Bulk-remove custom tags from playbook attacks."""
+            try:
+                r = sb_bulk_remove_playbook_attack_tags(console=console, attack_ids=attack_ids, tag_values=tag_values)
+                return (f"✅ Bulk remove: {r.get('succeeded')} succeeded, {r.get('failed_count')} failed "
+                        f"across {len(r['attack_ids'])} attack(s). {r.get('hint_to_agent','')}")
+            except Exception as e:
+                logger.error(f"Error in bulk_remove_playbook_attack_tags: {e}")
+                return f"Error bulk-removing tags: {str(e)}"
+
+        @self.mcp.tool(
+            name="bulk_rename_playbook_attack_tag",
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+            description="""Renames a custom tag (old_value -> new_value) across one or more playbook attacks (BULK write, rate-limited).
+Guardrails: capped per call (max attacks) to protect the console.
+Parameters: console (required), attack_ids (required, comma-separated attack/move IDs), old_value (required), new_value (required)."""
+        )
+        def bulk_rename_playbook_attack_tag(console: str = "default", attack_ids: str = None,
+                                            old_value: str = None, new_value: str = None) -> str:
+            """Bulk-rename a custom tag across playbook attacks."""
+            try:
+                r = sb_bulk_rename_playbook_attack_tag(console=console, attack_ids=attack_ids,
+                                                       old_value=old_value, new_value=new_value)
+                return (f"✅ Bulk rename '{old_value}'→'{new_value}': {r.get('succeeded')} succeeded, "
+                        f"{r.get('failed_count')} failed across {len(r['attack_ids'])} attack(s).")
+            except Exception as e:
+                logger.error(f"Error in bulk_rename_playbook_attack_tag: {e}")
+                return f"Error bulk-renaming tag: {str(e)}"
 
 
 def parse_external_config(server_type: str) -> bool:

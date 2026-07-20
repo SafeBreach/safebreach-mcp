@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_data.data_functions import (
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
-    sb_get_test_simulations,
+    sb_get_simulations,
     sb_get_simulation_details,
     sb_get_test_drifts,
     sb_get_paginated_simulation_logs,

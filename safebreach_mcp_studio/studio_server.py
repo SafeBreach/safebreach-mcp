@@ -611,7 +611,7 @@ run_studio_attack(attack_id=10000298, all_connected=True, console="demo")"""
                     "",
                     f"1. Wait for the attack to complete execution",
                     f"2. Use `get_studio_attack_latest_result` with attack_id `{result.get('attack_id')}` and test_id `{result.get('test_id')}` to retrieve results",
-                    f"3. Use `get_test_simulations` from the Data Server to see detailed simulation results",
+                    f"3. Use `get_simulations` from the Data Server to see detailed simulation results",
                     "",
                     "**Attack successfully queued for execution!**"
                 ])

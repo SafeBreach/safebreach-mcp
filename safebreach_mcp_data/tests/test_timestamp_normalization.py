@@ -68,15 +68,15 @@ class TestGetTestsTimestampNormalization:
 
 
 class TestGetTestSimulationsTimestampNormalization:
-    """Test ISO 8601 normalization for get_test_simulations wrapper."""
+    """Test ISO 8601 normalization for get_simulations wrapper."""
 
     def test_iso_start_time_normalized(self, server):
         """ISO string start_time is normalized to epoch ms."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_test_simulations"
+            "safebreach_mcp_data.data_server.sb_get_simulations"
         ) as mock_fn:
             mock_fn.return_value = {"simulations": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_test_simulations"]
+            tool = server.mcp._tool_manager._tools["get_simulations"]
             asyncio.run(tool.fn(
                 test_id="test1", console="demo",
                 start_time="2024-03-01T00:00:00Z"
@@ -88,10 +88,10 @@ class TestGetTestSimulationsTimestampNormalization:
     def test_iso_end_time_normalized(self, server):
         """ISO string end_time is normalized to epoch ms."""
         with patch(
-            "safebreach_mcp_data.data_server.sb_get_test_simulations"
+            "safebreach_mcp_data.data_server.sb_get_simulations"
         ) as mock_fn:
             mock_fn.return_value = {"simulations": [], "total_count": 0}
-            tool = server.mcp._tool_manager._tools["get_test_simulations"]
+            tool = server.mcp._tool_manager._tools["get_simulations"]
             asyncio.run(tool.fn(
                 test_id="test1", console="demo",
                 end_time="2024-03-02T00:00:00Z"

@@ -196,7 +196,7 @@ def sb_get_tests(
         
         # SAF-32018: if any test on this page is non-terminal, its simulations_statistics
         # come from the lagging testsummaries.finalStatus aggregate. Warn and route the agent
-        # to the live sources (get_test_details is live for running tests; get_test_simulations
+        # to the live sources (get_test_details is live for running tests; get_simulations
         # with a status_filter gives the exact live count). Per-test live recount across a list
         # is intentionally NOT done here (would require paging every running test).
         terminal_statuses = {'completed', 'canceled', 'failed'}
@@ -210,7 +210,7 @@ def sb_get_tests(
         running_hint = (
             "Some tests on this page are still running; their simulations_statistics come from a "
             "periodically-updated summary and may lag the live results. For live counts call "
-            "get_test_details (live for running tests) or get_test_simulations with a status_filter."
+            "get_test_details (live for running tests) or get_simulations with a status_filter."
         ) if running_in_page else None
         combined_hint = " ".join(h for h in (pagination_hint, running_hint) if h) or None
 
@@ -532,7 +532,7 @@ def sb_get_test_details(test_id: str, console: str = "default",
                 "These simulation counts are refreshed as of now but are point-in-time and will "
                 "keep changing while the test runs — poll again in ~30 seconds with "
                 "get_test_details. For the live filtered grid of a given status, use "
-                "get_test_simulations with the relevant status_filter."
+                "get_simulations with the relevant status_filter."
             )
         elif correlation_pending:
             pct = return_details.get('log_processing_completion_percentage')
@@ -663,8 +663,101 @@ def _count_drifted_simulations(test_id: str, console: str = "default") -> int:
         return 0
 
 
-def sb_get_test_simulations(
-    test_id: str,
+# --- get_simulations: server-side filtered simulation search (SAF-29870, Phase J) --- #
+
+# Lucene query-syntax special characters that must be escaped in user-supplied query values.
+_LUCENE_SPECIAL_CHARS = set('+-&|!(){}[]^"~*?:\\/')
+
+# Base guard shared by every simulations query — drop Ignore/Draft rows.
+_SIMULATIONS_QUERY_GUARD = "!labels:Ignore AND (!labels:Draft)"
+
+
+def _lucene_escape(value: Any) -> str:
+    """Backslash-escape Lucene special characters in a user-supplied query value.
+
+    User values are interpolated into the executionsHistoryResults `query` string, so unescaped
+    special characters could alter the query structure. Account scoping is enforced server-side, so
+    this is injection hardening rather than a tenant-isolation control.
+    """
+    return ''.join('\\' + ch if ch in _LUCENE_SPECIAL_CHARS else ch for ch in str(value))
+
+
+def _build_simulations_query(
+    test_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    playbook_attack_id_filter: Optional[str] = None,
+    playbook_attack_name_filter: Optional[str] = None,
+    drifted_only: bool = False,
+    tag_values: Optional[List[str]] = None,
+) -> str:
+    """Build the executionsHistoryResults Lucene query, AND-combining one clause per supplied filter."""
+    clauses: List[str] = []
+    if test_id:
+        clauses.append(f"runId:{_lucene_escape(test_id)}")
+    if status_filter:
+        clauses.append(f"finalStatus.keyword:{_lucene_escape(status_filter)}")
+    if playbook_attack_id_filter:
+        clauses.append(f"moveId:{_lucene_escape(playbook_attack_id_filter)}")
+    if playbook_attack_name_filter:
+        # analyzed text field → lowercased wildcard preserves case-insensitive substring matching
+        clauses.append(f"moveName:*{_lucene_escape(str(playbook_attack_name_filter).lower())}*")
+    if start_time is not None or end_time is not None:
+        lo = start_time if start_time is not None else '*'
+        hi = end_time if end_time is not None else '*'
+        clauses.append(f"executionTime:[{lo} TO {hi}]")
+    if drifted_only is True:
+        clauses.append("(driftType:* AND NOT driftType:no_drift)")
+    if tag_values:
+        tag_clauses = [f"labels:{_lucene_escape(v.upper())}" for v in tag_values]
+        clauses.append(tag_clauses[0] if len(tag_clauses) == 1
+                       else "(" + " OR ".join(tag_clauses) + ")")
+
+    if not clauses:
+        return _SIMULATIONS_QUERY_GUARD
+    return _SIMULATIONS_QUERY_GUARD + " AND " + " AND ".join(clauses)
+
+
+# Elasticsearch from+size deep-pagination window for the executionsHistoryResults endpoint.
+_ES_MAX_WINDOW = 10000
+
+
+def _fetch_simulations_page(query: str, console: str, page: int, page_size: int):
+    """Fetch ONE server-side page for a Lucene query.
+
+    Returns (reduced_rows, total_matching). `page` is 1-based (API convention); the endpoint maps it
+    to ES from=(page-1)*page_size / size=page_size and returns the exact `total` (track_total_hits),
+    so pagination is fully server-side — no fetch-all.
+    """
+    base_url = get_api_base_url(console, 'data')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/data/v1/accounts/{account_id}/executionsHistoryResults"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    data = {
+        "query": query,
+        "page": page,
+        "pageSize": page_size,
+        "orderBy": "desc",
+        "sortBy": "executionTime",
+    }
+    response = requests.post(api_url, headers=headers, json=data, timeout=120)
+    check_rbac_response(response)
+    body = response.json()
+    rows = body.get("simulations", [])
+    total = body.get("total", len(rows))
+    return [get_reduced_simulation_result_entity(s) for s in rows], total
+
+
+def _fetch_simulations_total(query: str, console: str) -> int:
+    """Count-only fetch (one row) → exact number of matching simulations."""
+    _, total = _fetch_simulations_page(query, console, 1, 1)
+    return total
+
+
+def sb_get_simulations(
+    test_id: Optional[str] = None,
     console: str = "default",
     page_number: int = 0,
     status_filter: Optional[str] = None,
@@ -672,97 +765,131 @@ def sb_get_test_simulations(
     end_time: Optional[int] = None,
     playbook_attack_id_filter: Optional[str] = None,
     playbook_attack_name_filter: Optional[str] = None,
-    drifted_only: bool = False
+    drifted_only: bool = False,
+    tags: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Get filtered and paginated simulations for a test.
-    
+    Search simulation results, filtered server-side via the executionsHistoryResults Lucene query.
+
+    Works ACCOUNT-WIDE (omit test_id) or scoped to a single test (test_id), in any combination of
+    filters — including a by-tag search within a specific test. Supersedes the former per-test and
+    by-tags simulation tools.
+
     Args:
-        console: SafeBreach console name
-        test_id: Test ID
-        page_number: Page number (0-based)
-        status_filter: Filter by simulation status
-        start_time: Start time filter (Unix timestamp)
-        end_time: End time filter (Unix timestamp)
-        playbook_attack_id_filter: Filter by playbook attack ID
-        playbook_attack_name_filter: Filter by playbook attack name
-        drifted_only: Filter to include only drifted simulations
-        
+        test_id: Scope to one test (planRunId). Optional — omit for an account-wide search.
+        console: SafeBreach console name.
+        page_number: Page number (0-based) over the filtered result set.
+        status_filter: Simulation final status (missed/stopped/prevented/detected/logged/inconsistent).
+        start_time / end_time: Execution-time window (epoch). Either bound may be given alone.
+        playbook_attack_id_filter: Exact playbook attack id (moveId).
+        playbook_attack_name_filter: Case-insensitive substring of the attack name (moveName).
+        drifted_only: Only simulations that drifted.
+        tags: Comma-separated tag values (OR logic), matched against sim-result labels.
+
+    At least one filter is required when test_id is omitted (guards against a whole-account dump).
+
     Returns:
-        Dict containing filtered simulations, pagination info, and applied filters
+        Dict with page_number, total_pages, total_simulations, simulations_in_page, applied_filters,
+        hint_to_agent.
+
+    Raises:
+        ValueError: no filter supplied account-wide, negative page, invalid time range, or bad drifted_only.
     """
-    # Validate page_number parameter
+    tag_values = [v.strip() for v in tags.split(',')] if tags else []
+    tag_values = [v for v in tag_values if v]
+
+    # Require at least one narrowing filter when not scoped to a test.
+    has_filter = any([
+        test_id,
+        status_filter,
+        playbook_attack_id_filter,
+        playbook_attack_name_filter,
+        start_time is not None,
+        end_time is not None,
+        bool(tag_values),
+        drifted_only is True,
+    ])
+    if not has_filter:
+        raise ValueError(
+            "get_simulations requires at least one filter: provide test_id to scope to a test, or at "
+            "least one of status_filter / playbook_attack_id_filter / playbook_attack_name_filter / "
+            "start_time / end_time / tags / drifted_only for an account-wide search."
+        )
+
     if page_number < 0:
         raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
-    
-    # Validate time range - start_time should be before end_time
+
     if start_time is not None and end_time is not None and start_time > end_time:
         raise ValueError(f"Invalid time range: start_time ({start_time}) must be before or equal to end_time ({end_time})")
-    
-    # Validate boolean parameter - handle None gracefully
+
     if drifted_only is None:
         drifted_only = False
     elif not isinstance(drifted_only, bool):
         raise ValueError(f"Invalid drifted_only parameter '{drifted_only}'. Must be a boolean value (True/False)")
-    
+
     try:
-        # Get all simulations from cache or API
-        all_simulations = _get_all_simulations_from_cache_or_api(test_id, console)
-        
-        # Apply filters
-        filtered_simulations = _apply_simulation_filters(
-            all_simulations,
+        query = _build_simulations_query(
+            test_id=test_id,
             status_filter=status_filter,
             start_time=start_time,
             end_time=end_time,
             playbook_attack_id_filter=playbook_attack_id_filter,
             playbook_attack_name_filter=playbook_attack_name_filter,
-            drifted_only=drifted_only
+            drifted_only=drifted_only,
+            tag_values=tag_values,
         )
-        
-        # Apply pagination
         start_index = page_number * PAGE_SIZE
-        end_index = start_index + PAGE_SIZE
-        page_simulations = filtered_simulations[start_index:end_index]
-        
-        # Calculate pagination info
-        total_simulations = len(filtered_simulations)
+        if start_index + PAGE_SIZE > _ES_MAX_WINDOW:
+            raise ValueError(
+                f"Cannot page past result {_ES_MAX_WINDOW} (Elasticsearch deep-pagination limit). "
+                "Narrow the filters (status / attack / time window / tags) to reach later results."
+            )
+
+        # Server-side pagination: fetch only the requested page plus the exact total.
+        page_simulations, total_simulations = _fetch_simulations_page(
+            query, console, page_number + 1, PAGE_SIZE
+        )
         total_pages = (total_simulations + PAGE_SIZE - 1) // PAGE_SIZE
-        
-        # Track applied filters
-        applied_filters = {}
+
+        applied_filters: Dict[str, Any] = {}
+        if test_id:
+            applied_filters['test_id'] = test_id
         if status_filter:
             applied_filters['status_filter'] = status_filter
-        if start_time:
-            applied_filters['start_time'] = start_time
-        if end_time:
-            applied_filters['end_time'] = end_time
         if playbook_attack_id_filter:
             applied_filters['playbook_attack_id_filter'] = playbook_attack_id_filter
         if playbook_attack_name_filter:
             applied_filters['playbook_attack_name_filter'] = playbook_attack_name_filter
+        if start_time is not None:
+            applied_filters['start_time'] = start_time
+        if end_time is not None:
+            applied_filters['end_time'] = end_time
         if drifted_only:
-            applied_filters['drifted_only'] = drifted_only
-        
-        # Build hints — multiple can apply; join them.
-        sim_hints = []
-        # SAF-32805: guard against false-empty filter results — filters matched nothing but the test
-        # itself has simulations. Warn rather than let the agent infer the attack/criteria is absent.
-        if applied_filters and total_simulations == 0 and len(all_simulations) > 0:
-            sim_hints.append(
-                f"0 of {len(all_simulations)} simulations in this test matched the applied filters "
-                f"({', '.join(applied_filters)}). Verify the filter values are correct — do not "
-                "conclude the attack or criteria is absent from the test based on this empty result."
+            applied_filters['drifted_only'] = True
+        if tags:
+            applied_filters['tags'] = tags
+
+        sim_hints: List[str] = []
+        # SAF-32805 (within-test only): filters matched nothing but the test itself has simulations.
+        if total_simulations == 0 and test_id:
+            population = _fetch_simulations_total(
+                _SIMULATIONS_QUERY_GUARD + f" AND runId:{_lucene_escape(test_id)}", console
             )
+            if population > 0:
+                sim_hints.append(
+                    f"0 of {population} simulations in this test matched the applied filters. "
+                    "Verify the filter values are correct — do not conclude the attack or criteria is "
+                    "absent from the test based on this empty result."
+                )
         if page_number + 1 < total_pages:
             sim_hints.append(f"You can scan next page by specifying page_number={page_number + 1}")
-        # SAF-32018: for a running test these are the live source but reflect only what has completed
-        # so far — total_simulations is point-in-time, not the final total. Flag it.
-        if _is_test_non_terminal(test_id, console):
+        # SAF-32018: for a running test these are the live source but reflect only what has
+        # completed so far — total_simulations is point-in-time, not the final total.
+        if test_id and _is_test_non_terminal(test_id, console):
             sim_hints.append(
-                "Test is still running — these simulations and total_simulations reflect only "
-                "what has completed so far (partial, point-in-time). Poll again with "
-                "get_test_simulations for updated results."
+                "Test is still running — these simulations and total_simulations reflect only what "
+                "has completed so far (partial, point-in-time). Poll again with get_simulations for "
+                "updated results."
             )
 
         return {
@@ -771,13 +898,12 @@ def sb_get_test_simulations(
             "total_simulations": total_simulations,
             "simulations_in_page": page_simulations,
             "applied_filters": applied_filters,
-            "hint_to_agent": " ".join(sim_hints) if sim_hints else None
+            "hint_to_agent": " ".join(sim_hints) if sim_hints else None,
         }
-        
-    except Exception as e:
-        logger.error("Error getting simulations for test '%s' from console '%s': %s", test_id, console, str(e))
-        raise
 
+    except Exception as e:
+        logger.error("Error getting simulations (test_id=%s) from console '%s': %s", test_id, console, str(e))
+        raise
 
 def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default") -> List[Dict[str, Any]]:
     """
@@ -872,85 +998,6 @@ def _get_all_simulations_from_cache_or_api(test_id: str, console: str = "default
         raise
 
 
-def _apply_simulation_filters(
-    simulations: List[Dict[str, Any]],
-    status_filter: Optional[str] = None,
-    start_time: Optional[int] = None,
-    end_time: Optional[int] = None,
-    playbook_attack_id_filter: Optional[str] = None,
-    playbook_attack_name_filter: Optional[str] = None,
-    drifted_only: bool = False
-) -> List[Dict[str, Any]]:
-    """
-    Apply filters to simulation list.
-    
-    Args:
-        simulations: List of simulation dictionaries
-        status_filter: Status filter
-        start_time: Start time filter
-        end_time: End time filter
-        playbook_attack_id_filter: Playbook attack ID filter
-        playbook_attack_name_filter: Playbook attack name filter
-        drifted_only: Filter to include only drifted simulations
-        
-    Returns:
-        Filtered list of simulations
-    """
-    filtered = simulations
-    
-    # Apply status filter
-    if status_filter:
-        filtered = [s for s in filtered 
-                   if s.get('status', '').lower() == status_filter.lower()]
-    
-    # Apply time filters with safe type conversion
-    if start_time:
-        filtered = [s for s in filtered 
-                   if _safe_time_compare(s, start_time, lambda x, y: x >= y)]
-    if end_time:
-        filtered = [s for s in filtered 
-                   if _safe_time_compare(s, end_time, lambda x, y: x <= y)]
-    
-    # Apply playbook attack ID filter. Reduced entities key this as 'playbook_attack_id'
-    # (from moveId, an int); the filter param is a string — compare as strings.
-    if playbook_attack_id_filter:
-        filtered = [s for s in filtered
-                   if str(s.get('playbook_attack_id')) == str(playbook_attack_id_filter)]
-
-    # Apply playbook attack name filter ('playbook_attack_name' on the reduced entity)
-    if playbook_attack_name_filter:
-        filtered = [s for s in filtered
-                   if playbook_attack_name_filter.lower() in (s.get('playbook_attack_name') or '').lower()]
-    
-    # Apply drift filter
-    if drifted_only:
-        filtered = [s for s in filtered 
-                   if s.get('is_drifted', False) is True]
-    
-    return filtered
-
-
-def _safe_time_compare(simulation: Dict[str, Any], compare_time: int, operator) -> bool:
-    """
-    Safely compare simulation time with safe type conversion.
-    
-    Args:
-        simulation: Simulation dictionary
-        compare_time: Time to compare against
-        operator: Comparison operator function
-        
-    Returns:
-        Boolean comparison result
-    """
-    end_time_val = simulation.get('end_time', 0)
-    if isinstance(end_time_val, str):
-        try:
-            end_time_val = int(end_time_val)
-        except (ValueError, TypeError):
-            end_time_val = 0
-    return operator(end_time_val, compare_time)
-
-
 def sb_get_simulation_details(
     simulation_id: str,
     console: str = "default",
@@ -1015,7 +1062,7 @@ def sb_get_simulation_details(
                 "simulation_id": simulation_id,
                 "hint_to_agent": (
                     "No simulation with this id exists on this console. Verify the simulation_id and the console "
-                    "(simulation ids are console-specific) via get_test_simulations."
+                    "(simulation ids are console-specific) via get_simulations."
                 ),
             }
         list_row = simulations_list[0]
@@ -1747,7 +1794,7 @@ def _is_no_result_status(status: Any) -> bool:
 
 
 # Cap on the number of exclusive simulations echoed inline before pointing the caller at
-# get_test_simulations for the full enumerable list. Keeps the payload bounded at scale.
+# get_simulations for the full enumerable list. Keeps the payload bounded at scale.
 _EXCLUSIVE_SIM_SAMPLE_CAP = 50
 
 
@@ -1757,7 +1804,7 @@ def _summarize_exclusive_sims(codes, by_drift_code, source_test_id: str) -> Dict
     A flat dump of thousands of raw simulation IDs does not scale and is not actionable
     without attack identity. Instead we return: a total count, a per-attack-name breakdown
     (sorted by frequency), a capped sample carrying attack identity, a truncated flag, and a
-    hint routing to get_test_simulations for the full list.
+    hint routing to get_simulations for the full list.
     """
     sims = [by_drift_code[code] for code in codes]
     by_attack: Dict[str, int] = {}
@@ -1782,7 +1829,7 @@ def _summarize_exclusive_sims(codes, by_drift_code, source_test_id: str) -> Dict
         "sample_simulations": sample,
         "truncated": len(sims) > _EXCLUSIVE_SIM_SAMPLE_CAP,
         "hint_to_agent": (
-            f"Full list available via get_test_simulations(test_id='{source_test_id}'); "
+            f"Full list available via get_simulations(test_id='{source_test_id}'); "
             "sample capped at "
             f"{_EXCLUSIVE_SIM_SAMPLE_CAP}."
         ),
@@ -2025,7 +2072,7 @@ def sb_get_test_drifts(
 
         # Exclusive (outer) sides: summarized with an attack breakdown + capped sample instead of a
         # raw ID dump, which does not scale (thousands of IDs). Only surfaced when opted in; the
-        # full enumerable list lives in get_test_simulations for the corresponding run.
+        # full enumerable list lives in get_simulations for the corresponding run.
         exclusive_simulations = {}
         if include_baseline_only:
             exclusive_simulations["baseline_only"] = _summarize_exclusive_sims(

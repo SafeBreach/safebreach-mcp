@@ -18,7 +18,7 @@ from safebreach_mcp_core.datetime_utils import normalize_timestamp
 from .data_functions import (
     sb_get_tests,
     sb_get_test_details,
-    sb_get_test_simulations,
+    sb_get_simulations,
     sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
@@ -116,22 +116,29 @@ WARNING: include_drift_count=True may take a significant amount of time for larg
             return sb_get_test_details(test_id, console, include_drift_count)
         
         @self.mcp.tool(
-            name="get_test_simulations",
+            name="get_simulations",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns a filtered and paged listing of simulations executed in the context of a specific test by id on a given Safebreach management console.
-Supports filtering by status, time windows, playbook attack ID, playbook attack name patterns, and drift analysis. Results are ordered by execution time (newest first) by default.
+            description="""Search simulation results on a SafeBreach management console, filtered server-side.
+
+Two modes, selected by whether test_id is given:
+  • Scoped to a test — pass test_id to list the simulations executed in that test (planRunId).
+  • Account-wide — omit test_id and pass at least one filter to search simulations across the whole \
+account (e.g. by tag, status, attack, or time window).
+All filters combine (AND), so you can also do a by-tag search within a specific test (test_id + tags).
+
+Filters: status_filter (final status: missed/stopped/prevented/detected/logged/inconsistent), \
+tags (comma-separated tag values, OR logic), playbook_attack_id_filter (exact moveId), \
+playbook_attack_name_filter (case-insensitive substring of the attack name), \
+start_time / end_time (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'; either bound may be given alone), \
+drifted_only (bool, default False, only drifted simulations).
+At least one filter is REQUIRED when test_id is omitted (guards against returning the whole account).
 Each simulation includes a drift_tracking_code — a lineage identifier grouping all executions of the same \
-attack configuration across test runs. Pass it to get_simulation_lineage to trace how results changed over time.
-Parameters: console (required), test_id (required), page_number (default 0), status_filter (simulation status), \
-start_time (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
-end_time (epoch ms/seconds or ISO 8601 string),
-playbook_attack_id_filter (exact match), playbook_attack_name_filter (partial name match), drifted_only (bool, default False, filter only drifted simulations).
-Accepts both epoch timestamps and ISO 8601 strings for time parameters.
-For broader drift analysis across a time window (not limited to a single test), see \
-get_simulation_result_drifts and get_simulation_status_drifts."""
+attack configuration across test runs; pass it to get_simulation_lineage to trace how results changed over time.
+Results are paginated (10 per page, page_number default 0), ordered by execution time (newest first).
+For broader drift analysis across a time window, see get_simulation_result_drifts and get_simulation_status_drifts."""
         )
-        async def get_test_simulations_tool(
-            test_id: str,
+        async def get_simulations_tool(
+            test_id: Optional[str] = None,
             console: str = "default",
             page_number: int = 0,
             status_filter: Optional[str] = None,
@@ -139,11 +146,12 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
             end_time: Optional[str | int] = None,
             playbook_attack_id_filter: Optional[str] = None,
             playbook_attack_name_filter: Optional[str] = None,
-            drifted_only: bool = False
+            drifted_only: bool = False,
+            tags: Optional[str] = None
         ) -> dict:
             start_time = normalize_timestamp(start_time) if start_time is not None else None
             end_time = normalize_timestamp(end_time) if end_time is not None else None
-            return sb_get_test_simulations(
+            return sb_get_simulations(
                 test_id=test_id,
                 console=console,
                 page_number=page_number,
@@ -152,9 +160,10 @@ get_simulation_result_drifts and get_simulation_status_drifts."""
                 end_time=end_time,
                 playbook_attack_id_filter=playbook_attack_id_filter,
                 playbook_attack_name_filter=playbook_attack_name_filter,
-                drifted_only=drifted_only
+                drifted_only=drifted_only,
+                tags=tags
             )
-        
+
         @self.mcp.tool(
             name="get_test_simulation_details",
             annotations=ToolAnnotations(readOnlyHint=True),
@@ -316,7 +325,7 @@ simulation carries attack_id + attack_name so it is actionable without a follow-
 former_status/current_status/security_impact); summary (stable filter-independent counts: status_drifts, \
 hidden_no_result_drift_count, baseline_only_count, current_only_count, no_result_filtered_count, \
 baseline_total_simulations, current_total_simulations, shared_simulations); exclusive_simulations (only when the \
-corresponding flag is set — a per-attack breakdown + capped sample + pointer to get_test_simulations for the full \
+corresponding flag is set — a per-attack breakdown + capped sample + pointer to get_simulations for the full \
 list, NOT a raw ID dump); hint_to_agent; _metadata (identity + applied_filters).
             Each drifted simulation includes a drift_tracking_code — use get_simulation_lineage to trace its full history across all test runs.
             Parameters: test_id (required - the current test), console, baseline_test_id (optional explicit baseline), \
@@ -524,7 +533,7 @@ get_simulation_lineage for the full execution history of that simulation lineage
 
 DON'T USE FOR:
   - Comparing two specific test runs (use get_test_drifts instead).
-  - Filtering drifted simulations within a single test (use get_test_simulations with drifted_only=True).
+  - Filtering drifted simulations within a single test (use get_simulations with drifted_only=True).
   - Getting drift details for a single simulation (use get_test_simulation_details with include_drift_info=True).
   - Analyzing security control final status transitions like prevented→logged (use get_simulation_status_drifts).
 
@@ -608,7 +617,7 @@ get_simulation_lineage for the full execution history of that simulation lineage
 
 DON'T USE FOR:
   - Comparing two specific test runs (use get_test_drifts instead).
-  - Filtering drifted simulations within a single test (use get_test_simulations with drifted_only=True).
+  - Filtering drifted simulations within a single test (use get_simulations with drifted_only=True).
   - Getting drift details for a single simulation (use get_test_simulation_details with include_drift_info=True).
   - Analyzing blocked/not-blocked result transitions (use get_simulation_result_drifts).
 
@@ -821,7 +830,7 @@ Start with a narrow window (1-2 days) and widen only if needed."""
 test runs, identified by its drift_tracking_code.
 
 The drift_tracking_code is a lineage identifier that groups all executions of the same attack \
-configuration across test runs. Every simulation record returned by get_test_simulations, \
+configuration across test runs. Every simulation record returned by get_simulations, \
 get_test_simulation_details (with include_drift_info=True), get_simulation_result_drifts, \
 get_simulation_status_drifts, and get_security_control_drifts includes a drift_tracking_code field.
 

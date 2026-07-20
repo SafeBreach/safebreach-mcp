@@ -1549,7 +1549,10 @@ def sb_get_studio_attack_latest_result(
                     total_simulations = sum(entry['count'] for entry in simulation_status_counts)
 
                     test_overview = {
-                        'status': summary_data.get('status', ''),
+                        # Normalize casing: the summary API returns an uppercase status
+                        # (e.g. "COMPLETED"), but the documented/unit-tested contract is
+                        # lowercase (running/completed/canceled/failed/queued).
+                        'status': (summary_data.get('status') or '').lower(),
                         'start_time': summary_data.get('startTime'),
                         'end_time': summary_data.get('endTime'),
                         'duration': summary_data.get('duration'),
@@ -1567,7 +1570,7 @@ def sb_get_studio_attack_latest_result(
                             f"summary and may lag the live results while the test runs. For exact "
                             f"live counts, call get_test_details(test_id='{resolved_test_id}', "
                             f"console='{console}') on the Data Server (it returns live counts for "
-                            f"running tests), or get_test_simulations with a status_filter. "
+                            f"running tests), or get_simulations with a status_filter. "
                             f"Poll this tool again in ~30 seconds for updated totals."
                         )
                 except Exception as e:

@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch, MagicMock
 from safebreach_mcp_data.data_functions import (
     sb_get_tests,
     sb_get_test_details,
-    sb_get_test_simulations,
+    sb_get_simulations,
     sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
@@ -27,8 +27,6 @@ from safebreach_mcp_data.data_functions import (
     _apply_filters,
     _apply_ordering,
     _get_all_simulations_from_cache_or_api,
-    _apply_simulation_filters,
-    _safe_time_compare,
     _get_all_security_control_events_from_cache_or_api,
     _apply_security_control_events_filters,
     _get_all_findings_from_cache_or_api,
@@ -602,135 +600,6 @@ class TestDataFunctions:
 
         # Verify API was called
         mock_post.assert_called_once()
-    
-    def test_apply_simulation_filters_status(self, mock_simulation_data):
-        """Test simulation status filtering."""
-        # Transform to expected format
-        transformed_data = [
-            {"simulation_id": "sim1", "status": "missed"},
-            {"simulation_id": "sim2", "status": "prevented"}
-        ]
-        
-        # Test missed filter
-        missed = _apply_simulation_filters(transformed_data, status_filter="missed")
-        assert len(missed) == 1
-        assert missed[0]["simulation_id"] == "sim1"
-        
-        # Test prevented filter
-        prevented = _apply_simulation_filters(transformed_data, status_filter="prevented")
-        assert len(prevented) == 1
-        assert prevented[0]["simulation_id"] == "sim2"
-    
-    def test_apply_simulation_filters_time(self):
-        """Test simulation time filtering."""
-        sim_data = [
-            {"simulation_id": "sim1", "end_time": 1640995200},
-            {"simulation_id": "sim2", "end_time": "1640995800"},  # Test string conversion
-            {"simulation_id": "sim3", "end_time": 1640996400}
-        ]
-        
-        # Test start_time filter
-        filtered = _apply_simulation_filters(sim_data, start_time=1640995500)
-        assert len(filtered) == 2
-        assert filtered[0]["simulation_id"] == "sim2"
-        assert filtered[1]["simulation_id"] == "sim3"
-        
-        # Test end_time filter
-        filtered = _apply_simulation_filters(sim_data, end_time=1640995500)
-        assert len(filtered) == 1
-        assert filtered[0]["simulation_id"] == "sim1"
-    
-    def test_apply_simulation_filters_playbook(self):
-        """Playbook attack id/name filtering on the REAL reduced entity shape.
-
-        The filter runs on reduced entities (get_reduced_simulation_result_entity), whose keys
-        are snake_case: playbook_attack_id (from moveId, an int) and playbook_attack_name (str).
-        The id filter param is a string, so the id comparison must coerce types.
-        """
-        sim_data = [
-            {"simulation_id": "sim1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan to disk"},
-            {"simulation_id": "sim2", "playbook_attack_id": 456, "playbook_attack_name": "Network Access"},
-        ]
-
-        # id filter: string param vs int field — must still match (type coercion)
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_id_filter="923")
-        assert len(filtered) == 1
-        assert filtered[0]["simulation_id"] == "sim1"
-
-        # name filter: case-insensitive partial match on the snake_case key
-        filtered = _apply_simulation_filters(sim_data, playbook_attack_name_filter="trojan")
-        assert len(filtered) == 1
-        assert filtered[0]["simulation_id"] == "sim1"
-
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    def test_get_test_simulations_id_filter_matches_int_attack(self, mock_get_all):
-        """End-to-end: filtering by a string attack id matches the int playbook_attack_id."""
-        mock_get_all.return_value = [
-            {"simulation_id": "5192190", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
-            {"simulation_id": "5192189", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
-        ]
-        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="923")
-        assert res["total_simulations"] == 1
-        assert res["simulations_in_page"][0]["simulation_id"] == "5192190"
-
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    def test_get_test_simulations_empty_filter_match_warns(self, mock_get_all):
-        """Guard: a filter matching nothing in a NON-empty test must warn, not imply absence."""
-        mock_get_all.return_value = [
-            {"simulation_id": "s1", "playbook_attack_id": 923, "playbook_attack_name": "Write Trojan", "status": "missed"},
-            {"simulation_id": "s2", "playbook_attack_id": 456, "playbook_attack_name": "Other", "status": "missed"},
-        ]
-        res = sb_get_test_simulations("test1", "console", playbook_attack_id_filter="999")
-        assert res["total_simulations"] == 0
-        hint = (res.get("hint_to_agent") or "").lower()
-        assert "0 of 2" in hint
-        assert "verify" in hint
-
-    def test_safe_time_compare(self):
-        """Test safe time comparison with type conversion."""
-        # Test integer end_time
-        sim_int = {"end_time": 1640995200}
-        assert _safe_time_compare(sim_int, 1640995000, lambda x, y: x > y) is True
-        assert _safe_time_compare(sim_int, 1640995500, lambda x, y: x < y) is True
-        
-        # Test string end_time
-        sim_str = {"end_time": "1640995200"}
-        assert _safe_time_compare(sim_str, 1640995000, lambda x, y: x > y) is True
-        assert _safe_time_compare(sim_str, 1640995500, lambda x, y: x < y) is True
-        
-        # Test invalid string end_time
-        sim_invalid = {"end_time": "invalid"}
-        assert _safe_time_compare(sim_invalid, 1640995000, lambda x, y: x > y) is False
-        
-        # Test missing end_time
-        sim_missing = {}
-        assert _safe_time_compare(sim_missing, 1640995000, lambda x, y: x > y) is False
-    
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    def test_sb_get_test_simulations_success(self, mock_get_all, mock_simulation_data):
-        """Test successful test simulations retrieval."""
-        mock_get_all.return_value = mock_simulation_data["simulations"]
-        
-        result = sb_get_test_simulations("test1", console="test-console")
-        
-        assert "simulations_in_page" in result
-        assert "total_simulations" in result
-        assert "total_pages" in result
-        assert "page_number" in result
-        assert "applied_filters" in result
-        assert len(result["simulations_in_page"]) == 2
-        assert result["total_simulations"] == 2
-    
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    def test_sb_get_test_simulations_error(self, mock_get_all):
-        """Test error handling in test simulations retrieval."""
-        mock_get_all.side_effect = Exception("API Error")
-        
-        # Should now raise exception
-        with pytest.raises(Exception) as exc_info:
-            sb_get_test_simulations("test1", console="test-console")
-        
-        assert "API Error" in str(exc_info.value)
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
@@ -1389,40 +1258,6 @@ class TestDataFunctions:
         assert "Invalid date range" in str(exc_info.value)
         assert "start_date (2000) must be before or equal to end_date (1000)" in str(exc_info.value)
     
-    def test_sb_get_test_simulations_time_range_validation(self):
-        """Test time range validation in get_test_simulations (Bug #9)."""
-        
-        # Test valid range (should not raise exception)
-        with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
-            mock_get_sims.return_value = []
-            try:
-                result = sb_get_test_simulations("demo-console", "test123", start_time=1000, end_time=2000)
-                # Should succeed - no exception expected
-            except ValueError:
-                pytest.fail("Valid time range should not raise ValueError")
-        
-        # Test invalid range (start > end)
-        with pytest.raises(ValueError) as exc_info:
-            sb_get_test_simulations("demo-console", "test123", start_time=2000, end_time=1000)
-        assert "Invalid time range" in str(exc_info.value)
-        assert "start_time (2000) must be before or equal to end_time (1000)" in str(exc_info.value)
-    
-    def test_sb_get_test_simulations_boolean_parameter_validation(self):
-        """Test boolean parameter validation in get_test_simulations (Bug #8)."""
-        
-        with patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api') as mock_get_sims:
-            mock_get_sims.return_value = []
-            
-            # Test None (should be handled gracefully by defaulting to False)
-            result = sb_get_test_simulations("demo-console", "test123", drifted_only=None)
-            # Should succeed without error
-            
-            # Test invalid type (should raise error)
-            with pytest.raises(ValueError) as exc_info:
-                sb_get_test_simulations("demo-console", "test123", drifted_only="invalid")
-            assert "Invalid drifted_only parameter" in str(exc_info.value)
-            assert "Must be a boolean value" in str(exc_info.value)
-    
     @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
     def test_sb_get_test_details_boolean_parameter_validation(self, mock_get_all_tests):
         """Test boolean parameter validation in get_test_details (Bug #8)."""
@@ -1864,9 +1699,9 @@ class TestDataFunctions:
             sb_get_test_details(console="unknown_console", test_id="test123")
         assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
 
-        # Test sb_get_test_simulations - should now raise ValueError
+        # Test sb_get_simulations - should now raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_simulations(console="unknown_console", test_id="test123")
+            sb_get_simulations(console="unknown_console", test_id="test123")
         assert "not found" in str(exc_info.value) or "No URL configured" in str(exc_info.value)
 
         # Test sb_get_simulation_details - should now raise ValueError
@@ -1947,10 +1782,10 @@ class TestDataFunctions:
         # Should NOT mention order_by in the error message
         assert "order_by" not in str(exc_info.value)
     
-    def test_sb_get_test_simulations_negative_page_number(self):
+    def test_sb_get_simulations_negative_page_number(self):
         """Test validation for negative page_number parameter."""
         with pytest.raises(ValueError) as exc_info:
-            sb_get_test_simulations("test-console", "test123", page_number=-5)
+            sb_get_simulations("test-console", "test123", page_number=-5)
         assert "Invalid page_number parameter '-5'" in str(exc_info.value)
         assert "Page number must be non-negative" in str(exc_info.value)
     
@@ -2068,88 +1903,6 @@ class TestDataFunctions:
 
     # ===== DRIFT ANALYSIS TESTS =====
     
-    def test_apply_simulation_filters_drifted_only_true(self):
-        """Test drifted_only filter when set to True - should include only drifted simulations."""
-        simulations = [
-            {"id": "sim1", "is_drifted": True, "status": "reported"},
-            {"id": "sim2", "is_drifted": False, "status": "prevented"},
-            {"id": "sim3", "is_drifted": True, "status": "logged"},
-            {"id": "sim4", "status": "missed"},  # No drift info - treated as not drifted
-        ]
-        
-        result = _apply_simulation_filters(simulations, drifted_only=True)
-        
-        assert len(result) == 2
-        assert result[0]["id"] == "sim1"
-        assert result[1]["id"] == "sim3"
-        # Verify all returned simulations are drifted
-        for sim in result:
-            assert sim.get("is_drifted") is True
-
-    def test_apply_simulation_filters_drifted_only_false(self):
-        """Test drifted_only filter when set to False - should include all simulations."""
-        simulations = [
-            {"id": "sim1", "is_drifted": True, "status": "reported"},
-            {"id": "sim2", "is_drifted": False, "status": "prevented"},
-            {"id": "sim3", "status": "missed"},  # No drift info
-        ]
-        
-        result = _apply_simulation_filters(simulations, drifted_only=False)
-        
-        assert len(result) == 3
-        assert [sim["id"] for sim in result] == ["sim1", "sim2", "sim3"]
-
-    def test_apply_simulation_filters_drifted_only_combined_with_other_filters(self):
-        """Test drifted_only filter combined with other filters."""
-        simulations = [
-            {"id": "sim1", "is_drifted": True, "status": "reported", "playbook_attack_name": "File Transfer"},
-            {"id": "sim2", "is_drifted": True, "status": "prevented", "playbook_attack_name": "Network Scan"},
-            {"id": "sim3", "is_drifted": False, "status": "reported", "playbook_attack_name": "File Transfer"},
-            {"id": "sim4", "is_drifted": True, "status": "logged", "playbook_attack_name": "File Transfer"},
-        ]
-        
-        # Test drifted_only + status filter
-        result = _apply_simulation_filters(
-            simulations, 
-            drifted_only=True, 
-            status_filter="reported"
-        )
-        assert len(result) == 1
-        assert result[0]["id"] == "sim1"
-        
-        # Test drifted_only + playbook attack name filter
-        result = _apply_simulation_filters(
-            simulations, 
-            drifted_only=True, 
-            playbook_attack_name_filter="File"
-        )
-        assert len(result) == 2
-        assert result[0]["id"] == "sim1"
-        assert result[1]["id"] == "sim4"
-
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
-    def test_sb_get_test_simulations_with_drifted_only_filter(self, mock_get_all_simulations):
-        """Test get_test_simulations with drifted_only filter."""
-        # _get_all_simulations_from_cache_or_api returns transformed data (via get_reduced_simulation_result_entity)
-        # So we need to mock it with the transformed format
-        mock_simulations = [
-            {"simulation_id": "sim1", "is_drifted": True, "status": "reported", "endTime": 1640995200},
-            {"simulation_id": "sim2", "is_drifted": False, "status": "prevented", "endTime": 1640995300},
-            {"simulation_id": "sim3", "is_drifted": True, "status": "logged", "endTime": 1640995400},
-            {"simulation_id": "sim4", "status": "missed", "endTime": 1640995500},  # No drift info
-        ]
-        mock_get_all_simulations.return_value = mock_simulations
-        
-        # Test with drifted_only=True
-        result = sb_get_test_simulations("test-console", "test1", drifted_only=True)
-        
-        assert "simulations_in_page" in result
-        assert len(result["simulations_in_page"]) == 2
-        assert result["simulations_in_page"][0]["simulation_id"] == "sim1"
-        assert result["simulations_in_page"][1]["simulation_id"] == "sim3"
-        assert result["total_simulations"] == 2
-        assert result["applied_filters"]["drifted_only"] is True
-
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
     @patch('safebreach_mcp_data.data_functions.requests.post')
@@ -4544,7 +4297,7 @@ class TestGetTestDetailsRunningCounts:
         result = sb_get_test_details("run1", "test-console")
         hint = (result.get("hint_to_agent") or "").lower()
         assert "point-in-time" in hint
-        assert "get_test_simulations" in hint
+        assert "get_simulations" in hint
 
     @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
     @patch('safebreach_mcp_data.data_functions._fetch_single_test')
@@ -4675,20 +4428,20 @@ class TestDriftRunningCaveat:
 
 
 class TestGetTestSimulationsRunningHint:
-    """SAF-32018: get_test_simulations flags that results are partial/point-in-time while running."""
+    """SAF-32018: get_simulations flags that results are partial/point-in-time while running."""
 
     @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=True)
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_simulations_page')
     def test_running_adds_partial_hint(self, mock_sims, mock_nonterminal):
-        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
-        result = sb_get_test_simulations("t1", "c", page_number=0)
+        mock_sims.return_value = ([{"status": "missed", "simulation_id": "s1"}], 1)
+        result = sb_get_simulations("t1", "c", page_number=0)
         hint = (result.get("hint_to_agent") or "").lower()
         assert "still running" in hint
         assert "partial" in hint or "point-in-time" in hint
 
     @patch('safebreach_mcp_data.data_functions._is_test_non_terminal', return_value=False)
-    @patch('safebreach_mcp_data.data_functions._get_all_simulations_from_cache_or_api')
+    @patch('safebreach_mcp_data.data_functions._fetch_simulations_page')
     def test_terminal_no_partial_hint(self, mock_sims, mock_nonterminal):
-        mock_sims.return_value = [{"status": "missed", "simulation_id": "s1"}]
-        result = sb_get_test_simulations("t1", "c", page_number=0)
+        mock_sims.return_value = ([{"status": "missed", "simulation_id": "s1"}], 1)
+        result = sb_get_simulations("t1", "c", page_number=0)
         assert "still running" not in (result.get("hint_to_agent") or "").lower()

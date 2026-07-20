@@ -14,12 +14,24 @@ Security: All real environment details must be in private local files only.
 import pytest
 import os
 import time
+import requests
 from safebreach_mcp_playbook.playbook_functions import (
     sb_get_playbook_attacks,
     sb_get_playbook_attack_details,
-    clear_playbook_cache
+    sb_get_playbook_attack_tags,
+    sb_add_playbook_attack_tag,
+    sb_remove_playbook_attack_tag,
+    sb_rename_playbook_attack_tag,
+    sb_bulk_add_playbook_attack_tags,
+    sb_bulk_remove_playbook_attack_tags,
+    sb_bulk_rename_playbook_attack_tag,
+    MAX_BULK_ATTACK_IDS,
+    MAX_BULK_TAG_VALUES,
+    clear_playbook_cache,
 )
 from safebreach_mcp_core.cache_config import is_caching_enabled
+from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
+from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
 
 
 # Skip E2E tests if not in proper environment
@@ -30,6 +42,42 @@ skip_e2e = pytest.mark.skipif(
     SKIP_E2E_TESTS,
     reason="E2E tests skipped (set SKIP_E2E_TESTS=false to enable)"
 )
+
+
+def _move_exists_in_content_store(console, attack_id):
+    """True if the move has a base row in the /content/v3 store (i.e. tag writes will not 404)."""
+    base = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+    headers = get_auth_headers_for_console(console)
+    url = f"{base}/api/content/v3/accounts/{account_id}/moves/{attack_id}/tags"
+    return requests.get(url, headers=headers, timeout=60).status_code == 200
+
+
+@pytest.fixture(scope="class")
+def writable_move_ids():
+    """Discover up to 2 playbook attacks whose moves exist in the /content/v3 write store.
+
+    Self-discovering — no hardcoded IDs. Some consoles (e.g. pentest01) expose the KB moves
+    but have an EMPTY /content/v3 store, so tag writes 404 there; on those, this fixture skips
+    the whole write-suite class cleanly rather than failing.
+    """
+    found = []
+    for page in range(0, 5):
+        response = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=page)
+        for attack in response.get('attacks_in_page', []):
+            aid = attack['id']
+            if _move_exists_in_content_store(E2E_CONSOLE, aid):
+                found.append(aid)
+                if len(found) >= 2:
+                    return found
+        if page + 1 >= response.get('total_pages', 0):
+            break
+    if not found:
+        pytest.skip(
+            f"Console '{E2E_CONSOLE}' has no writable /content/v3 move store "
+            "(empty-store data condition); tag-write E2E cannot run here."
+        )
+    return found
 
 
 @skip_e2e
@@ -667,3 +715,154 @@ class TestPlatformE2E:
             print(f"✅ Attack details verified for {target_id}")
         else:
             print(f"ℹ️ No WINDOWS attacks found in first page")
+
+
+def _unique_tag(suffix=""):
+    """A tag value unlikely to collide with existing data, so tests are self-isolating."""
+    return f"mcp-e2e-{int(time.time() * 1000)}{('-' + suffix) if suffix else ''}"
+
+
+def _current_tags(console, attack_id):
+    """Read-back helper: clear cache then fetch the attack's custom tags fresh."""
+    clear_playbook_cache()
+    return sb_get_playbook_attack_tags(console=console, attack_id=attack_id)['tags']
+
+
+def _cleanup_tags(console, attack_ids, candidate_tags):
+    """Best-effort, residue-free cleanup.
+
+    Removes ONLY the candidate tags actually present on each move — the backend returns HTTP 400
+    when asked to remove a tag that isn't there (so a blind remove-both after a rename would fail
+    and leave residue). Errors are swallowed so cleanup never masks the test's real assertion.
+    """
+    for attack_id in attack_ids:
+        present = set(_current_tags(console, attack_id))
+        for tag in candidate_tags:
+            if tag in present:
+                try:
+                    sb_remove_playbook_attack_tag(console=console, attack_id=attack_id, tag_value=tag)
+                except Exception:  # noqa: BLE001 - cleanup is best-effort
+                    pass
+    clear_playbook_cache()
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestPlaybookTagWriteE2E:
+    """SAF-29870 reqs 1/3/4 — live, self-cleaning tag write + bulk + get-tags E2E.
+
+    Every mutating test restores state in a finally block (add→verify→remove), so the suite is
+    idempotent, order-independent, and leaves no residue on the console. On consoles with an empty
+    /content/v3 store the mutating tests skip via the `writable_move_ids` fixture; the read-only and
+    guard tests below still run everywhere.
+    """
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    # ---- req 3: read tags on an attack (works even on empty-write-store consoles) ---------- #
+
+    def test_get_tags_on_attack_e2e(self):
+        """get_playbook_attack_tags returns a well-formed custom-tag list for a real attack."""
+        attack_id = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)['attacks_in_page'][0]['id']
+        result = sb_get_playbook_attack_tags(console=E2E_CONSOLE, attack_id=attack_id)
+
+        assert result['attack_id'] == attack_id
+        assert isinstance(result['tags'], list)
+        assert 'hint_to_agent' in result
+
+    # ---- req 1: single add / remove / rename round-trips (self-cleaning) ------------------- #
+
+    def test_add_read_remove_tag_roundtrip_e2e(self, writable_move_ids):
+        """Add a tag → verify via get-tags → remove it → verify removal (state restored)."""
+        attack_id = writable_move_ids[0]
+        tag = _unique_tag("single")
+        try:
+            add_result = sb_add_playbook_attack_tag(console=E2E_CONSOLE, attack_id=attack_id, tag_value=tag)
+            assert add_result['success'] is True and add_result['action'] == 'added'
+            assert tag in _current_tags(E2E_CONSOLE, attack_id)
+        finally:
+            sb_remove_playbook_attack_tag(console=E2E_CONSOLE, attack_id=attack_id, tag_value=tag)
+        assert tag not in _current_tags(E2E_CONSOLE, attack_id)
+
+    def test_rename_tag_roundtrip_e2e(self, writable_move_ids):
+        """Add old tag → rename to new → verify swap → remove new (state restored)."""
+        attack_id = writable_move_ids[0]
+        old_tag = _unique_tag("old")
+        new_tag = _unique_tag("new")
+        try:
+            sb_add_playbook_attack_tag(console=E2E_CONSOLE, attack_id=attack_id, tag_value=old_tag)
+            rename_result = sb_rename_playbook_attack_tag(
+                console=E2E_CONSOLE, attack_id=attack_id, old_value=old_tag, new_value=new_tag)
+            assert rename_result['action'] == 'renamed'
+            tags = _current_tags(E2E_CONSOLE, attack_id)
+            assert new_tag in tags and old_tag not in tags
+        finally:
+            _cleanup_tags(E2E_CONSOLE, [attack_id], [old_tag, new_tag])
+        final_tags = _current_tags(E2E_CONSOLE, attack_id)
+        assert old_tag not in final_tags and new_tag not in final_tags
+
+    # ---- req 4: bulk (many tags on many attacks) round-trips (self-cleaning) --------------- #
+
+    def test_bulk_add_remove_roundtrip_e2e(self, writable_move_ids):
+        """Bulk-add N tags on N attacks → verify each → bulk-remove → verify removal."""
+        tag_a = _unique_tag("bulkA")
+        tag_b = _unique_tag("bulkB")
+        tags = [tag_a, tag_b]
+        try:
+            add_result = sb_bulk_add_playbook_attack_tags(
+                console=E2E_CONSOLE, attack_ids=writable_move_ids, tag_values=tags)
+            assert add_result['success'] is True and add_result['action'] == 'bulk_added'
+            for attack_id in writable_move_ids:
+                current = _current_tags(E2E_CONSOLE, attack_id)
+                assert tag_a in current and tag_b in current
+        finally:
+            sb_bulk_remove_playbook_attack_tags(
+                console=E2E_CONSOLE, attack_ids=writable_move_ids, tag_values=tags)
+        for attack_id in writable_move_ids:
+            current = _current_tags(E2E_CONSOLE, attack_id)
+            assert tag_a not in current and tag_b not in current
+
+    def test_bulk_rename_roundtrip_e2e(self, writable_move_ids):
+        """Bulk-add a tag on N attacks → bulk-rename it → verify swap → bulk-remove (restored)."""
+        old_tag = _unique_tag("bulkOld")
+        new_tag = _unique_tag("bulkNew")
+        try:
+            sb_bulk_add_playbook_attack_tags(
+                console=E2E_CONSOLE, attack_ids=writable_move_ids, tag_values=[old_tag])
+            rename_result = sb_bulk_rename_playbook_attack_tag(
+                console=E2E_CONSOLE, attack_ids=writable_move_ids, old_value=old_tag, new_value=new_tag)
+            assert rename_result['action'] == 'bulk_renamed'
+            for attack_id in writable_move_ids:
+                current = _current_tags(E2E_CONSOLE, attack_id)
+                assert new_tag in current and old_tag not in current
+        finally:
+            _cleanup_tags(E2E_CONSOLE, writable_move_ids, [old_tag, new_tag])
+        for attack_id in writable_move_ids:
+            current = _current_tags(E2E_CONSOLE, attack_id)
+            assert old_tag not in current and new_tag not in current
+
+    # ---- req 4 NFR: guardrail caps + input validation (no live writes; always run) --------- #
+
+    def test_bulk_attack_id_cap_enforced_e2e(self):
+        """More than MAX_BULK_ATTACK_IDS attack ids is refused before any API call."""
+        too_many = ",".join(str(i) for i in range(MAX_BULK_ATTACK_IDS + 1))
+        with pytest.raises(ValueError, match="max"):
+            sb_bulk_add_playbook_attack_tags(console=E2E_CONSOLE, attack_ids=too_many, tag_values="x")
+
+    def test_bulk_tag_value_cap_enforced_e2e(self):
+        """More than MAX_BULK_TAG_VALUES tag values is refused before any API call."""
+        too_many = ",".join(f"t{i}" for i in range(MAX_BULK_TAG_VALUES + 1))
+        with pytest.raises(ValueError, match="max"):
+            sb_bulk_add_playbook_attack_tags(console=E2E_CONSOLE, attack_ids="1", tag_values=too_many)
+
+    def test_add_empty_tag_rejected_e2e(self):
+        """An empty tag value is rejected before any API call."""
+        with pytest.raises(ValueError):
+            sb_add_playbook_attack_tag(console=E2E_CONSOLE, attack_id=1, tag_value="  ")
+
+    def test_rename_noop_rejected_e2e(self):
+        """A no-op rename (old == new) is rejected before any API call."""
+        with pytest.raises(ValueError, match="differ"):
+            sb_rename_playbook_attack_tag(
+                console=E2E_CONSOLE, attack_id=1, old_value="same", new_value="same")

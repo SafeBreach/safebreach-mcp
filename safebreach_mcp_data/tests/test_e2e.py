@@ -18,7 +18,7 @@ from typing import Dict, Any
 from safebreach_mcp_data.data_functions import (
     sb_get_tests,
     sb_get_test_details,
-    sb_get_test_simulations,
+    sb_get_simulations,
     sb_get_simulation_details,
     sb_get_security_controls_events,
     sb_get_security_control_event_details,
@@ -70,7 +70,7 @@ def sample_simulation_id(e2e_console, sample_test_id):
     """
     # Try statuses most likely to have execution logs first
     for status in ["stopped", "prevented", "detected", "missed", None]:
-        simulations_response = sb_get_test_simulations(
+        simulations_response = sb_get_simulations(
             sample_test_id, console=e2e_console, page_number=0,
             status_filter=status,
         )
@@ -79,6 +79,27 @@ def sample_simulation_id(e2e_console, sample_test_id):
             return sims[0]['simulation_id']
 
     pytest.skip(f"No simulations found in test {sample_test_id} for E2E testing")
+
+
+@pytest.fixture(scope="class")
+def sample_attack_id(e2e_console, sample_test_id):
+    """Discover a real playbook attack id (moveId) from a simulation in the sample test.
+
+    Self-discovering — no hardcoded IDs against the live env. Used by the account-wide
+    get_simulations tests, which search by this attack id across all tests (not just the
+    sample one).
+    """
+    for status in ["stopped", "prevented", "detected", "missed", None]:
+        response = sb_get_simulations(
+            sample_test_id, console=e2e_console, page_number=0,
+            status_filter=status,
+        )
+        for sim in response.get('simulations_in_page', []):
+            attack_id = sim.get('playbook_attack_id')
+            if attack_id is not None:
+                return str(attack_id)
+
+    pytest.skip(f"No simulation with a playbook_attack_id found in test {sample_test_id}")
 
 
 @pytest.fixture(scope="class")
@@ -233,9 +254,9 @@ class TestDataServerE2E:
         assert len(stats) == 7  # 7 status entries, no drift entry
 
     @pytest.mark.e2e
-    def test_get_test_simulations_e2e(self, e2e_console, sample_test_id):
+    def test_get_simulations_e2e(self, e2e_console, sample_test_id):
         """Test getting real test simulations from SafeBreach console."""
-        result = sb_get_test_simulations(sample_test_id, console=e2e_console, page_number=0)
+        result = sb_get_simulations(sample_test_id, console=e2e_console, page_number=0)
         
         # Verify response structure
         assert isinstance(result, dict)
@@ -249,6 +270,92 @@ class TestDataServerE2E:
             simulation = result['simulations_in_page'][0]
             assert 'simulation_id' in simulation
             assert 'status' in simulation
+
+    @pytest.mark.e2e
+    def test_get_simulations_account_wide_by_attack_id_e2e(self, e2e_console, sample_attack_id):
+        """SAF-29870 Phase J: account-wide search (no test_id) filtered by attack id.
+
+        Exercises the merged get_simulations account-wide path server-side. Verifies each
+        returned record self-identifies its owning test run (test_id/test_name) and that the
+        server-side moveId filter is honored across the whole account.
+        """
+        result = sb_get_simulations(
+            console=e2e_console, page_number=0,
+            playbook_attack_id_filter=sample_attack_id,
+        )
+
+        assert isinstance(result, dict)
+        assert 'simulations_in_page' in result
+        assert 'total_simulations' in result
+        assert result['applied_filters'].get('playbook_attack_id_filter') == sample_attack_id
+        # Confirm test_id was NOT part of the filter set — this is a true account-wide search.
+        assert 'test_id' not in result['applied_filters']
+
+        sims = result['simulations_in_page']
+        assert isinstance(sims, list)
+        # The discovered attack id came from a real simulation, so account-wide must find it.
+        assert result['total_simulations'] >= 1
+        assert sims, "Account-wide search by a discovered attack id returned no simulations"
+
+        for sim in sims:
+            assert 'simulation_id' in sim
+            # Each record must self-identify its owning test run in account-wide mode.
+            assert 'test_id' in sim, f"Account-wide simulation missing test_id: {sim}"
+            assert 'test_name' in sim, f"Account-wide simulation missing test_name: {sim}"
+            # Server-side moveId filter must be exact.
+            assert str(sim.get('playbook_attack_id')) == sample_attack_id
+
+    @pytest.mark.e2e
+    def test_get_simulations_within_test_and_attack_id_e2e(self, e2e_console, sample_test_id, sample_attack_id):
+        """SAF-29870 Phase J: combined within-test + attack-id server-side filter.
+
+        Scoping to a test AND an attack id must return only rows matching BOTH.
+        """
+        result = sb_get_simulations(
+            sample_test_id, console=e2e_console, page_number=0,
+            playbook_attack_id_filter=sample_attack_id,
+        )
+
+        assert isinstance(result, dict)
+        assert result['applied_filters'].get('test_id') == sample_test_id
+        assert result['applied_filters'].get('playbook_attack_id_filter') == sample_attack_id
+
+        for sim in result['simulations_in_page']:
+            assert str(sim.get('test_id')) == str(sample_test_id)
+            assert str(sim.get('playbook_attack_id')) == sample_attack_id
+
+    @pytest.mark.e2e
+    def test_get_simulations_account_wide_by_tag_e2e(self, e2e_console):
+        """SAF-29870 Phase J: account-wide by-tag search executes the labels.keyword clause live.
+
+        Shape/execution validation — proves the server-side `labels.keyword` Lucene clause is
+        accepted by the live endpoint and returns the standard paginated structure account-wide.
+        Does NOT assert non-empty results: the console is not guaranteed to have tag-labeled
+        simulations, and (per SAF-29870) sim-result labels are upper-cased server-side. When
+        results do come back, each must still carry its owning test_id.
+        """
+        result = sb_get_simulations(
+            console=e2e_console, page_number=0,
+            tags="mcp-e2e-nonexistent-tag",
+        )
+
+        assert isinstance(result, dict)
+        assert 'simulations_in_page' in result
+        assert isinstance(result['simulations_in_page'], list)
+        assert isinstance(result['total_simulations'], int)
+        assert result['total_simulations'] >= 0
+        assert result['applied_filters'].get('tags') == "mcp-e2e-nonexistent-tag"
+        assert 'test_id' not in result['applied_filters']
+
+        for sim in result['simulations_in_page']:
+            assert 'test_id' in sim
+            assert 'simulation_id' in sim
+
+    @pytest.mark.e2e
+    def test_get_simulations_requires_filter_account_wide_e2e(self, e2e_console):
+        """SAF-29870 Phase J guard: account-wide with no filter must be refused, not dumped."""
+        with pytest.raises(ValueError, match="at least one filter"):
+            sb_get_simulations(console=e2e_console, page_number=0)
 
     @pytest.mark.e2e
     def test_get_test_simulation_details_basic_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
@@ -392,7 +499,7 @@ class TestDataServerE2E:
     def test_attack_logs_across_multiple_simulations_e2e(self, e2e_console, sample_test_id):
         """Test attack logs functionality across multiple simulations to ensure broad compatibility."""
         # Get simulations from the test
-        simulations_result = sb_get_test_simulations(
+        simulations_result = sb_get_simulations(
             sample_test_id,
             console=e2e_console,
             page_number=0
@@ -900,18 +1007,22 @@ class TestDataServerE2E:
         print(f"==================================\n")
     
     @pytest.mark.e2e
-    def test_get_full_simulation_logs_error_handling_e2e(self):
-        """Test error handling for get_full_simulation_logs with invalid parameters."""
-        console = "pentest01"
-        
-        # Test 1: Invalid simulation ID
+    def test_get_full_simulation_logs_error_handling_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
+        """Test error handling for get_full_simulation_logs with invalid parameters.
+
+        Self-discovering — the valid simulation/test ids come from fixtures so the test does not
+        depend on hardcoded ids that may not exist on the target console.
+        """
+        console = e2e_console
+
+        # Test 1: Invalid simulation ID (real test_id, bogus sim id → not found)
         print(f"\n=== Testing error handling for get_full_simulation_logs ===")
         print(f"Test 1: Invalid simulation ID...")
-        
+
         try:
             result = sb_get_full_simulation_logs(
                 simulation_id="invalid-sim-id",
-                test_id="1771148836322.15",  # Use a reasonable test_id
+                test_id=sample_test_id,
                 console=console
             )
             # If no exception, check if we got an error response structure
@@ -919,31 +1030,31 @@ class TestDataServerE2E:
                 print(f"  ✅ Got expected error response for invalid simulation ID")
             else:
                 pytest.fail("Expected error for invalid simulation ID but got successful response")
-                
+
         except Exception as e:
             print(f"  ✅ Got expected exception for invalid simulation ID: {type(e).__name__}")
             assert len(str(e)) > 0, "Exception should have a meaningful message"
-        
+
         # Test 2: Invalid test ID with valid simulation ID
         # NOTE: The API resolves by simulation_id (path param), not test_id (query param runId).
         # A valid simulation_id with invalid test_id returns data successfully — this is expected.
         print(f"Test 2: Invalid test ID with valid simulation ID (expects success)...")
 
         result = sb_get_full_simulation_logs(
-            simulation_id="3629934",  # Valid simulation ID
+            simulation_id=str(sample_simulation_id),  # Valid, discovered simulation ID
             test_id="invalid-test-id",
             console=console
         )
         assert isinstance(result, dict), "Should return valid response when simulation_id is valid"
         assert 'simulation_id' in result, "Response should contain simulation_id"
         print(f"  ✅ API correctly resolved by simulation_id despite invalid test_id")
-        
+
         # Test 3: Invalid console
         print(f"Test 3: Invalid console...")
-        
+
         try:
             result = sb_get_full_simulation_logs(
-                simulation_id="3629934",
+                simulation_id=str(sample_simulation_id),
                 test_id="some-test-id",
                 console="invalid-console-name"
             )
