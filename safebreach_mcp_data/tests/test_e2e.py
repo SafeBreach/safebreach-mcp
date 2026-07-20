@@ -82,6 +82,27 @@ def sample_simulation_id(e2e_console, sample_test_id):
 
 
 @pytest.fixture(scope="class")
+def sample_attack_id(e2e_console, sample_test_id):
+    """Discover a real playbook attack id (moveId) from a simulation in the sample test.
+
+    Self-discovering — no hardcoded IDs against the live env. Used by the account-wide
+    get_simulations tests, which search by this attack id across all tests (not just the
+    sample one).
+    """
+    for status in ["stopped", "prevented", "detected", "missed", None]:
+        response = sb_get_simulations(
+            sample_test_id, console=e2e_console, page_number=0,
+            status_filter=status,
+        )
+        for sim in response.get('simulations_in_page', []):
+            attack_id = sim.get('playbook_attack_id')
+            if attack_id is not None:
+                return str(attack_id)
+
+    pytest.skip(f"No simulation with a playbook_attack_id found in test {sample_test_id}")
+
+
+@pytest.fixture(scope="class")
 def drift_pair(e2e_console):
     """Discover a real drift-capable pair of test runs on the console (SAF-33124).
 
@@ -249,6 +270,92 @@ class TestDataServerE2E:
             simulation = result['simulations_in_page'][0]
             assert 'simulation_id' in simulation
             assert 'status' in simulation
+
+    @pytest.mark.e2e
+    def test_get_simulations_account_wide_by_attack_id_e2e(self, e2e_console, sample_attack_id):
+        """SAF-29870 Phase J: account-wide search (no test_id) filtered by attack id.
+
+        Exercises the merged get_simulations account-wide path server-side. Verifies each
+        returned record self-identifies its owning test run (test_id/test_name) and that the
+        server-side moveId filter is honored across the whole account.
+        """
+        result = sb_get_simulations(
+            console=e2e_console, page_number=0,
+            playbook_attack_id_filter=sample_attack_id,
+        )
+
+        assert isinstance(result, dict)
+        assert 'simulations_in_page' in result
+        assert 'total_simulations' in result
+        assert result['applied_filters'].get('playbook_attack_id_filter') == sample_attack_id
+        # Confirm test_id was NOT part of the filter set — this is a true account-wide search.
+        assert 'test_id' not in result['applied_filters']
+
+        sims = result['simulations_in_page']
+        assert isinstance(sims, list)
+        # The discovered attack id came from a real simulation, so account-wide must find it.
+        assert result['total_simulations'] >= 1
+        assert sims, "Account-wide search by a discovered attack id returned no simulations"
+
+        for sim in sims:
+            assert 'simulation_id' in sim
+            # Each record must self-identify its owning test run in account-wide mode.
+            assert 'test_id' in sim, f"Account-wide simulation missing test_id: {sim}"
+            assert 'test_name' in sim, f"Account-wide simulation missing test_name: {sim}"
+            # Server-side moveId filter must be exact.
+            assert str(sim.get('playbook_attack_id')) == sample_attack_id
+
+    @pytest.mark.e2e
+    def test_get_simulations_within_test_and_attack_id_e2e(self, e2e_console, sample_test_id, sample_attack_id):
+        """SAF-29870 Phase J: combined within-test + attack-id server-side filter.
+
+        Scoping to a test AND an attack id must return only rows matching BOTH.
+        """
+        result = sb_get_simulations(
+            sample_test_id, console=e2e_console, page_number=0,
+            playbook_attack_id_filter=sample_attack_id,
+        )
+
+        assert isinstance(result, dict)
+        assert result['applied_filters'].get('test_id') == sample_test_id
+        assert result['applied_filters'].get('playbook_attack_id_filter') == sample_attack_id
+
+        for sim in result['simulations_in_page']:
+            assert str(sim.get('test_id')) == str(sample_test_id)
+            assert str(sim.get('playbook_attack_id')) == sample_attack_id
+
+    @pytest.mark.e2e
+    def test_get_simulations_account_wide_by_tag_e2e(self, e2e_console):
+        """SAF-29870 Phase J: account-wide by-tag search executes the labels.keyword clause live.
+
+        Shape/execution validation — proves the server-side `labels.keyword` Lucene clause is
+        accepted by the live endpoint and returns the standard paginated structure account-wide.
+        Does NOT assert non-empty results: the console is not guaranteed to have tag-labeled
+        simulations, and (per SAF-29870) sim-result labels are upper-cased server-side. When
+        results do come back, each must still carry its owning test_id.
+        """
+        result = sb_get_simulations(
+            console=e2e_console, page_number=0,
+            tags="mcp-e2e-nonexistent-tag",
+        )
+
+        assert isinstance(result, dict)
+        assert 'simulations_in_page' in result
+        assert isinstance(result['simulations_in_page'], list)
+        assert isinstance(result['total_simulations'], int)
+        assert result['total_simulations'] >= 0
+        assert result['applied_filters'].get('tags') == "mcp-e2e-nonexistent-tag"
+        assert 'test_id' not in result['applied_filters']
+
+        for sim in result['simulations_in_page']:
+            assert 'test_id' in sim
+            assert 'simulation_id' in sim
+
+    @pytest.mark.e2e
+    def test_get_simulations_requires_filter_account_wide_e2e(self, e2e_console):
+        """SAF-29870 Phase J guard: account-wide with no filter must be refused, not dumped."""
+        with pytest.raises(ValueError, match="at least one filter"):
+            sb_get_simulations(console=e2e_console, page_number=0)
 
     @pytest.mark.e2e
     def test_get_test_simulation_details_basic_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
