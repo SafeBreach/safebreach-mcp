@@ -1007,18 +1007,22 @@ class TestDataServerE2E:
         print(f"==================================\n")
     
     @pytest.mark.e2e
-    def test_get_full_simulation_logs_error_handling_e2e(self):
-        """Test error handling for get_full_simulation_logs with invalid parameters."""
-        console = "pentest01"
-        
-        # Test 1: Invalid simulation ID
+    def test_get_full_simulation_logs_error_handling_e2e(self, e2e_console, sample_test_id, sample_simulation_id):
+        """Test error handling for get_full_simulation_logs with invalid parameters.
+
+        Self-discovering — the valid simulation/test ids come from fixtures so the test does not
+        depend on hardcoded ids that may not exist on the target console.
+        """
+        console = e2e_console
+
+        # Test 1: Invalid simulation ID (real test_id, bogus sim id → not found)
         print(f"\n=== Testing error handling for get_full_simulation_logs ===")
         print(f"Test 1: Invalid simulation ID...")
-        
+
         try:
             result = sb_get_full_simulation_logs(
                 simulation_id="invalid-sim-id",
-                test_id="1771148836322.15",  # Use a reasonable test_id
+                test_id=sample_test_id,
                 console=console
             )
             # If no exception, check if we got an error response structure
@@ -1026,31 +1030,31 @@ class TestDataServerE2E:
                 print(f"  ✅ Got expected error response for invalid simulation ID")
             else:
                 pytest.fail("Expected error for invalid simulation ID but got successful response")
-                
+
         except Exception as e:
             print(f"  ✅ Got expected exception for invalid simulation ID: {type(e).__name__}")
             assert len(str(e)) > 0, "Exception should have a meaningful message"
-        
+
         # Test 2: Invalid test ID with valid simulation ID
         # NOTE: The API resolves by simulation_id (path param), not test_id (query param runId).
         # A valid simulation_id with invalid test_id returns data successfully — this is expected.
         print(f"Test 2: Invalid test ID with valid simulation ID (expects success)...")
 
         result = sb_get_full_simulation_logs(
-            simulation_id="3629934",  # Valid simulation ID
+            simulation_id=str(sample_simulation_id),  # Valid, discovered simulation ID
             test_id="invalid-test-id",
             console=console
         )
         assert isinstance(result, dict), "Should return valid response when simulation_id is valid"
         assert 'simulation_id' in result, "Response should contain simulation_id"
         print(f"  ✅ API correctly resolved by simulation_id despite invalid test_id")
-        
+
         # Test 3: Invalid console
         print(f"Test 3: Invalid console...")
-        
+
         try:
             result = sb_get_full_simulation_logs(
-                simulation_id="3629934",
+                simulation_id=str(sample_simulation_id),
                 test_id="some-test-id",
                 console="invalid-console-name"
             )

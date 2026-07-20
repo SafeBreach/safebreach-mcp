@@ -219,25 +219,25 @@ class TestRateLimitingE2E:
     @patch("safebreach_mcp_core.rate_limiter._identical_action_limit", 5)
     @patch("safebreach_mcp_core.rate_limiter._action_limit", 10)
     @patch("safebreach_mcp_core.rate_limiter._window_seconds", 60)
-    def test_run_scenario_dry_run_bypasses_rate_limit(self):
-        """dry_run=True does not consume rate limit quota."""
+    def test_run_scenario_evaluate_bypasses_rate_limit(self):
+        """evaluate=True does not consume rate limit quota (the gate sits after the evaluate early-return)."""
         scenario = _find_ready_scenario(E2E_CONSOLE)
-        # Multiple dry runs should all succeed — none count toward limit
+        # Multiple evaluate runs should all succeed — none count toward limit
         for i in range(3):
             result = sb_run_scenario(
                 scenario_id=str(scenario["id"]),
                 console=E2E_CONSOLE,
-                dry_run=True,
+                evaluate=True,
             )
-            assert result["status"] == "dry_run", f"dry_run #{i+1} should succeed"
+            assert result["status"] == "evaluating", f"evaluate #{i+1} should succeed"
 
-        # Real run should still work (no quota consumed by dry runs)
+        # Real run should still work (no quota consumed by evaluate runs)
         test_id = None
         try:
             queue_result = sb_run_scenario(
                 scenario_id=str(scenario["id"]),
                 console=E2E_CONSOLE,
-                test_name="E2E: dry_run_bypass_test",
+                test_name="E2E: evaluate_bypass_test",
             )
             test_id = queue_result["test_id"]
             assert queue_result["status"] == "queued"

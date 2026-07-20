@@ -1549,7 +1549,10 @@ def sb_get_studio_attack_latest_result(
                     total_simulations = sum(entry['count'] for entry in simulation_status_counts)
 
                     test_overview = {
-                        'status': summary_data.get('status', ''),
+                        # Normalize casing: the summary API returns an uppercase status
+                        # (e.g. "COMPLETED"), but the documented/unit-tested contract is
+                        # lowercase (running/completed/canceled/failed/queued).
+                        'status': (summary_data.get('status') or '').lower(),
                         'start_time': summary_data.get('startTime'),
                         'end_time': summary_data.get('endTime'),
                         'duration': summary_data.get('duration'),
