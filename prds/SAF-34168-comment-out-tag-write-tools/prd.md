@@ -25,7 +25,7 @@ The two read-only tag tools are unaffected and stay exposed.
 
 | Field | Value |
 |-------|-------|
-| Status | Phases A–C implemented (uncommitted); Phase D (PR) pending |
+| Status | All phases complete — PR #80 open, awaiting review |
 | Last Updated | 2026-07-28 |
 | Prior artifacts | `context.md`, `summary.md` in this folder (from `preparing-ticket`) |
 | Investigation | Complete — reused from `context.md`, not re-run |
@@ -216,8 +216,10 @@ The two **read** tag tools never touch either endpoint, which is why they stay e
       `test_tool_registered_read_only`.
 - [x] Full repo unit suite (`-m "not e2e"` across all modules) passes: **1439 passed, 0 failed**.
 - [x] Work is on `feature/SAF-34168-withdraw-tag-write-tools`, based on `origin/main`.
-- [ ] PR description records: which blocks were commented (not deleted), that imports were commented
-      alongside, and that the 4 mutating E2E tests were skipped. *(Phase D — pending)*
+- [x] PR description records: which blocks were commented (not deleted), that imports were commented
+      alongside, and that the 4 mutating E2E tests were skipped —
+      [PR #80](https://github.com/SafeBreach/safebreach-mcp/pull/80). Also flags the breaking change
+      (10 → 4 advertised tools) and carries the three open questions for the reviewer.
 
 ---
 
@@ -290,10 +292,10 @@ being commented rather than left behind.
 
 | Phase | Name | Status | Completed | Commit | Notes |
 |-------|------|--------|-----------|--------|-------|
-| A | Server registrations + imports | ✅ Complete | 2026-07-28 | uncommitted | Registry verified at exactly 4 tools; import smoke check passes |
-| B | Unit tests (wrapper classes) | ✅ Complete | 2026-07-28 | uncommitted | Both wrapper classes + the unused import in each file commented |
-| C | E2E skip | ✅ Complete | 2026-07-28 | uncommitted | Narrowed during implementation to the 4 **mutating** tests (see 3.4) |
-| D | PR | ⏳ Pending | — | — | Requires explicit approval to commit/push |
+| A | Server registrations + imports | ✅ Complete | 2026-07-28 | `81fc1a3` | Registry verified at exactly 4 tools; import smoke check passes |
+| B | Unit tests (wrapper classes) | ✅ Complete | 2026-07-28 | `81fc1a3` | Both wrapper classes + the unused import in each file commented |
+| C | E2E skip | ✅ Complete | 2026-07-28 | `81fc1a3` | Narrowed during implementation to the 4 **mutating** tests (see 3.4) |
+| D | PR | ✅ Complete | 2026-07-28 | `81fc1a3` | [PR #80](https://github.com/SafeBreach/safebreach-mcp/pull/80) — open against `main` |
 
 Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
 
