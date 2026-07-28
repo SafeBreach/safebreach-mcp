@@ -4445,3 +4445,257 @@ class TestGetTestSimulationsRunningHint:
         mock_sims.return_value = ([{"status": "missed", "simulation_id": "s1"}], 1)
         result = sb_get_simulations("t1", "c", page_number=0)
         assert "still running" not in (result.get("hint_to_agent") or "").lower()
+
+
+class TestQueuedTestsMerge:
+    """SAF-33511: get_tests merges orchestrator-queued tests into its response."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def setup_method(self):
+        tests_cache.clear()
+
+    @staticmethod
+    def _empty_snapshot():
+        return {"pending": [], "busy_plan_run_ids": set(), "is_paused": False}
+
+    @staticmethod
+    def _snapshot(*pending):
+        return {
+            "pending": list(pending),
+            "busy_plan_run_ids": set(),
+            "is_paused": False,
+        }
+
+    @staticmethod
+    def _pending(plan_run_id, name):
+        return {
+            "planRunId": plan_run_id,
+            "name": name,
+            "priority": "low",
+            "ranBy": 12345,
+            "ranFrom": "API",
+            "systemTags": [],
+            "steps_count": 1,
+        }
+
+    @staticmethod
+    def _test_row(test_id, status, end_time, name=None):
+        return {
+            "name": name or f"Plan {test_id}",
+            "test_id": test_id,
+            "start_time": 1000,
+            "end_time": end_time,
+            "duration": 600,
+            "status": status,
+            "test_type": "Breach And Attack Simulation (aka BAS aks Validate)",
+            "simulations_statistics": [],
+        }
+
+    # T-6 — merge produces queued rows + metadata (bug repro at unit level)
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_merge_includes_queued_rows_with_metadata(self, mock_tests, mock_snapshot):
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = self._snapshot(
+            self._pending("1785224437040.28", "Queued A"),
+            self._pending("1785224437041.29", "Queued B"),
+        )
+
+        result = sb_get_tests(console="c")
+
+        page = result["tests_in_page"]
+        queued = [t for t in page if t["status"] == "queued"]
+        assert len(queued) == 2
+        assert {t["test_id"] for t in queued} == {"1785224437040.28", "1785224437041.29"}
+        assert result["queued_tests_count"] == 2
+        assert result["total_tests"] == 3
+        hint = (result.get("hint_to_agent") or "").lower()
+        assert "queue" in hint
+        assert "manage_test" in hint
+
+    # T-7 — planRunId dedupe across sources
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_dedupe_same_plan_run_id(self, mock_tests, mock_snapshot):
+        mock_tests.return_value = [
+            self._test_row("1785224437040.28", "running", 2000),
+            self._test_row("t2", "completed", 1000),
+        ]
+        mock_snapshot.return_value = self._snapshot(
+            self._pending("1785224437040.28", "Transitioning test"),
+        )
+
+        result = sb_get_tests(console="c")
+
+        rows = [t for t in result["tests_in_page"] if t["test_id"] == "1785224437040.28"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "queued"
+        assert result["total_tests"] == 2
+
+    # T-8 — status_filter='queued' selects client-side (no server status param)
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_queued_filter_client_side_no_server_param(
+        self, mock_get, mock_base, mock_acct, mock_snapshot
+    ):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [
+            {"planName": "Preparing", "planRunId": "p1", "status": "PENDING",
+             "systemTags": [], "finalStatus": {}},
+            {"planName": "Running", "planRunId": "r1", "status": "RUNNING",
+             "startTime": 1000, "systemTags": [], "finalStatus": {}},
+        ]
+        mock_get.return_value = mock_response
+        mock_snapshot.return_value = self._snapshot(
+            self._pending("1785224437040.28", "Queued A"),
+        )
+
+        result = sb_get_tests(console="c", status_filter="Queued")
+
+        requested_url = mock_get.call_args[0][0]
+        assert "status=" not in requested_url
+        statuses = {t["status"] for t in result["tests_in_page"]}
+        assert statuses == {"queued"}
+        assert {t["test_id"] for t in result["tests_in_page"]} == {"p1", "1785224437040.28"}
+
+    # T-9 — status_filter validation
+    def test_invalid_status_filter_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            sb_get_tests(console="c", status_filter="bogus")
+        message = str(exc_info.value)
+        for value in ("completed", "canceled", "failed", "running", "queued"):
+            assert value in message
+
+    # T-10 — terminal filters skip the snapshot
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_terminal_filters_skip_snapshot(self, mock_tests, mock_snapshot):
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = self._empty_snapshot()
+
+        for terminal in ("completed", "canceled", "failed"):
+            mock_snapshot.reset_mock()
+            sb_get_tests(console="c", status_filter=terminal)
+            mock_snapshot.assert_not_called()
+
+        for non_terminal in (None, "queued", "running"):
+            mock_snapshot.reset_mock()
+            mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+            sb_get_tests(console="c", status_filter=non_terminal)
+            mock_snapshot.assert_called_once()
+
+    # T-11 — degradation leaves today's response intact
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_snapshot_failure_degrades_to_current_behavior(self, mock_tests, mock_snapshot):
+        rows = [
+            self._test_row("t1", "completed", 2000),
+            self._test_row("t2", "canceled", 1000),
+        ]
+        mock_tests.return_value = rows
+        mock_snapshot.return_value = self._empty_snapshot()
+
+        result = sb_get_tests(console="c")
+
+        assert result["total_tests"] == 2
+        assert [t["test_id"] for t in result["tests_in_page"]] == ["t1", "t2"]
+        assert result["queued_tests_count"] == 0
+        assert all(t["status"] != "queued" for t in result["tests_in_page"])
+
+    # T-12 — queued pinned to top, newest submission first
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_queued_pinned_top_newest_first(self, mock_tests, mock_snapshot):
+        mock_tests.return_value = [
+            self._test_row("t1", "completed", 9999999999999),
+            self._test_row("t2", "completed", 1000, name="AAA first by name"),
+        ]
+        pending = [
+            self._pending("1000000000000.1", "Oldest queued"),
+            self._pending("3000000000000.3", "Newest queued"),
+            self._pending("2000000000000.2", "Middle queued"),
+        ]
+
+        for order_kwargs in ({}, {"order_by": "name", "order_direction": "asc"}):
+            mock_snapshot.return_value = self._snapshot(*pending)
+            result = sb_get_tests(console="c", **order_kwargs)
+            page_ids = [t["test_id"] for t in result["tests_in_page"]]
+            assert page_ids[:3] == [
+                "3000000000000.3",
+                "2000000000000.2",
+                "1000000000000.1",
+            ], f"unexpected head for {order_kwargs}: {page_ids}"
+
+    # T-13 — pagination includes queued entries
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_pagination_includes_queued(self, mock_tests, mock_snapshot):
+        terminal_rows = [
+            self._test_row(f"t{i}", "completed", 1000 + i) for i in range(5)
+        ]
+        pending = [
+            self._pending(f"{2000000000000 + i}.{i}", f"Queued {i}") for i in range(12)
+        ]
+
+        mock_tests.return_value = list(terminal_rows)
+        mock_snapshot.return_value = self._snapshot(*pending)
+        page0 = sb_get_tests(console="c", page_number=0)
+
+        assert page0["total_tests"] == 17
+        assert page0["total_pages"] == 2
+        assert all(t["status"] == "queued" for t in page0["tests_in_page"])
+        assert len(page0["tests_in_page"]) == 10
+
+        mock_tests.return_value = list(terminal_rows)
+        mock_snapshot.return_value = self._snapshot(*pending)
+        page1 = sb_get_tests(console="c", page_number=1)
+
+        page1_statuses = [t["status"] for t in page1["tests_in_page"]]
+        assert page1_statuses[:2] == ["queued", "queued"]
+        assert page1_statuses[2:] == ["completed"] * 5
+
+    # T-14 — snapshot is fresh despite testsummaries cache
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions.is_caching_enabled', return_value=True)
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_snapshot_fresh_despite_tests_cache(
+        self, mock_get, mock_base, mock_acct, mock_caching, mock_snapshot
+    ):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [
+            {"planName": "Done", "planRunId": "t1", "status": "COMPLETED",
+             "startTime": 1000, "endTime": 2000, "systemTags": [], "finalStatus": {}},
+        ]
+        mock_get.return_value = mock_response
+
+        mock_snapshot.return_value = self._snapshot(
+            self._pending("1785224437040.28", "First snapshot"),
+        )
+        first = sb_get_tests(console="c")
+        assert first["queued_tests_count"] == 1
+
+        mock_snapshot.return_value = self._snapshot(
+            self._pending("1785224437041.30", "Second snapshot A"),
+            self._pending("1785224437042.31", "Second snapshot B"),
+        )
+        second = sb_get_tests(console="c")
+
+        assert mock_get.call_count == 1  # testsummaries served from cache
+        assert mock_snapshot.call_count == 2  # snapshot fetched on every call
+        assert second["queued_tests_count"] == 2
+        queued_ids = {t["test_id"] for t in second["tests_in_page"] if t["status"] == "queued"}
+        assert queued_ids == {"1785224437041.30", "1785224437042.31"}
