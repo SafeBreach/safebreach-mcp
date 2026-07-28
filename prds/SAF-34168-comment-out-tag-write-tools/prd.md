@@ -25,7 +25,8 @@ The two read-only tag tools are unaffected and stay exposed.
 
 | Field | Value |
 |-------|-------|
-| Status | Ready for implementation |
+| Status | Phases A–C implemented (uncommitted); Phase D (PR) pending |
+| Last Updated | 2026-07-28 |
 | Prior artifacts | `context.md`, `summary.md` in this folder (from `preparing-ticket`) |
 | Investigation | Complete — reused from `context.md`, not re-run |
 | Approach decision | Confirmed with the reporter: comment out registrations **+** imports **+** the two wrapper test classes |
@@ -125,25 +126,34 @@ has none, so whichever name ends the list must not leave a dangling comma before
 
 ### 3.4 `safebreach_mcp_playbook/tests/test_e2e.py` (867 lines)
 
-`TestPlaybookTagWriteE2E` (class at line **751**) writes real tags to a live console through the two
-endpoints the backend is removing. It must be explicitly skipped.
+`TestPlaybookTagWriteE2E` (class at line **751**) holds **9** live tests. Only some of them touch the
+endpoints the backend is removing, so the skip is applied **per-test, not to the class**:
 
-**Important**: the class already carries `@skip_e2e` (line 749) and `@pytest.mark.e2e` (line 750), but
-`skip_e2e` is **inert by default** — `SKIP_E2E_TESTS` is read at line 39 as
-`os.environ.get('SKIP_E2E_TESTS', 'false')`, so the default is *run*, not skip. (The decorator's own
-reason string, "set SKIP_E2E_TESTS=false to enable", reads backwards relative to that default. Also
-inconsistent with `safebreach_mcp_data/tests/test_drift_tools.py:3300`, which defaults to `"true"`.
-Out of scope here — just don't be misled by it.)
+| Group | Tests | Hits withdrawn endpoints? | Action |
+|-------|-------|---------------------------|--------|
+| Mutating | `test_add_read_remove_tag_roundtrip_e2e`, `test_rename_tag_roundtrip_e2e`, `test_bulk_add_remove_roundtrip_e2e`, `test_bulk_rename_roundtrip_e2e` | **Yes** — write real tags | **Skip these 4** |
+| Read-only | `test_get_tags_on_attack_e2e` | No — reads the cached attacks listing | **Leave** — covers `get_playbook_attack_tags`, a tool this ticket keeps |
+| Validation | `test_bulk_attack_id_cap_enforced_e2e` (847), `test_bulk_tag_value_cap_enforced_e2e` (853), `test_add_empty_tag_rejected_e2e` (859), `test_rename_noop_rejected_e2e` (864) | No — each asserts a `ValueError` raised *before any API call* | **Leave** — still covers the parked `sb_*` input validation, unchanged by this ticket |
 
-Therefore add an **unconditional** class-level skip, e.g.
-`@pytest.mark.skip(reason="playbook tag write tools withdrawn; backend tag mutation removed")`.
-Per house rules the reason string must **not** contain a ticket ID — ticket context belongs in the
-commit/PR, not in code.
+A blanket class-level skip would wrongly disable the read-only test for a tool being kept, plus four
+validation tests whose own banner (line 845) reads "no live writes; always run". Hence per-test.
 
-The 5 affected tests: `test_get_tags_on_attack_e2e`, `test_add_read_remove_tag_roundtrip_e2e`,
-`test_rename_tag_roundtrip_e2e`, `test_bulk_tag_value_cap_enforced_e2e`,
-`test_add_empty_tag_rejected_e2e` (plus `test_bulk_add_remove_roundtrip_e2e`,
-`test_bulk_rename_roundtrip_e2e`).
+**Why the existing decorator is not the lever**: the class already carries `@skip_e2e` (749) and
+`@pytest.mark.e2e` (750), but `skip_e2e` is **inert by default** — `SKIP_E2E_TESTS` is read at line 39
+as `os.environ.get('SKIP_E2E_TESTS', 'false')`, so the default is *run*, not skip. (Its reason string,
+"set SKIP_E2E_TESTS=false to enable", reads backwards relative to that default, and differs from
+`safebreach_mcp_data/tests/test_drift_tools.py:3300`, which defaults to `"true"`. Out of scope — just
+don't be misled.)
+
+Apply `@pytest.mark.skip(reason=...)` to each of the 4 mutating tests. Per house rules the reason
+string must **not** contain a ticket ID — ticket context belongs in the commit/PR, not in code.
+
+**Note on redundancy**: the 4 mutating tests all consume the `writable_move_ids` fixture, which GETs
+the tags endpoint and `pytest.skip()`s when no move has a writable `/content/v3` store. If the backend
+*removes* the endpoints (404), that fixture would skip these 4 on its own and no code change would be
+needed. If the backend *keeps* them and only rejects writes, the fixture still yields IDs and the tests
+would fail. The explicit skip is correct under **either** outcome, which is why it is applied rather
+than relying on the fixture (see Open Question 1).
 
 ### 3.5 Explicitly NOT touched
 
@@ -186,23 +196,28 @@ The two **read** tag tools never touch either endpoint, which is why they stay e
 
 ## Section 6: Definition of Done
 
-- [ ] All six write tool registrations commented out in `playbook_server.py`, across both
-      non-contiguous regions (350-400 and 421-478).
-- [ ] The six write-function imports commented out in the `playbook_server.py:17-28` block, with no
-      dangling comma.
-- [ ] Advertised playbook tool list is exactly four tools: `get_playbook_attacks`,
+- [x] All six write tool registrations commented out in `playbook_server.py`, across both
+      non-contiguous regions.
+- [x] The six write-function imports commented out in the `playbook_server.py` import block, with no
+      dangling comma — verified by `python -c "import safebreach_mcp_playbook.playbook_server"`.
+- [x] Advertised playbook tool list is exactly four tools: `get_playbook_attacks`,
       `get_playbook_attack_details`, `get_playbook_attacks_by_tags`, `get_playbook_attack_tags`.
-- [ ] `TestWriteToolWrappers` and `TestBulkWrappers` commented out, along with the now-unused
-      `SafeBreachPlaybookServer` import at line 22 of each test file.
-- [ ] `TestPlaybookTagWriteE2E` carries an unconditional skip whose reason contains no ticket ID.
-- [ ] `playbook_functions.py` shows **zero** diff.
-- [ ] `pytest safebreach_mcp_playbook/ --ignore=safebreach_mcp_playbook/tests/test_e2e.py` reports
-      **236 passed, 0 failed** (247 baseline − 11 removed cases).
-- [ ] Read-path tag tests in `test_tag_tools.py` still pass, including `test_tool_registered` (220)
-      and `test_tool_registered_read_only` (295).
-- [ ] Work is on `feature/SAF-34168-withdraw-tag-write-tools`, based on `origin/main`.
+      Verified by enumerating the registry — 4 tools, exactly these.
+- [x] `TestWriteToolWrappers` and `TestBulkWrappers` commented out, along with the now-unused
+      `SafeBreachPlaybookServer` import in each test file.
+- [x] The 4 **mutating** tests in `TestPlaybookTagWriteE2E` carry `@pytest.mark.skip`, reason contains
+      no ticket ID. *(Revised from a class-level skip — see 3.4. A blanket skip would have disabled the
+      read-only test for a kept tool plus 4 validation tests that never call the backend.)*
+- [x] `playbook_functions.py` shows **zero** diff — verified with `git diff --quiet`.
+- [x] `pytest safebreach_mcp_playbook/ --ignore=safebreach_mcp_playbook/tests/test_e2e.py` reports
+      **246 passed, 0 failed**. *(Revised from 236: the 247 baseline − 11 removed wrapper cases = 236,
+      plus the 10 new `TestExposedTagTools` cases = 246.)*
+- [x] Read-path tag tests in `test_tag_tools.py` still pass, including `test_tool_registered` and
+      `test_tool_registered_read_only`.
+- [x] Full repo unit suite (`-m "not e2e"` across all modules) passes: **1439 passed, 0 failed**.
+- [x] Work is on `feature/SAF-34168-withdraw-tag-write-tools`, based on `origin/main`.
 - [ ] PR description records: which blocks were commented (not deleted), that imports were commented
-      alongside, and that the E2E class was skipped.
+      alongside, and that the 4 mutating E2E tests were skipped. *(Phase D — pending)*
 
 ---
 
@@ -222,11 +237,27 @@ are pre-existing on `main` and **must not** be treated as regressions.
 
 ### 7.2 Expected after the change
 
-| Invocation | Expected |
-|------------|----------|
-| Unit-only (E2E ignored) | **236 passed, 0 failed** |
-| `test_tag_tools.py` (read paths) | unchanged, all pass |
-| `test_playbook_server.py` | unchanged — it asserts only that the server and `.mcp` exist, never individual tool names |
+| Invocation | Expected | Actual |
+|------------|----------|--------|
+| Unit-only (E2E ignored) | **246 passed, 0 failed** | ✅ 246 passed |
+| Full repo unit suite, `-m "not e2e"` | no failures | ✅ 1439 passed |
+| `test_tag_tools.py` (read paths) | unchanged, all pass | ✅ |
+| `test_playbook_server.py` | **gains** `TestExposedTagTools` (10 cases) — see below | ✅ |
+
+246 = 247 baseline − 11 removed wrapper cases + 10 new `TestExposedTagTools` cases.
+
+`test_playbook_server.py` previously asserted only that the server and `.mcp` exist, with a comment
+claiming tool registration "can't easily be tested" — which the wrapper tests disproved. The new
+`TestExposedTagTools` class replaces that gap with the real invariant, and is what makes this change
+durable rather than a one-off edit:
+
+- `test_tag_write_tool_not_registered` (parametrized ×6) — none of the withdrawn write tools is advertised.
+- `test_expected_tool_registered` (parametrized ×4) — all four surviving tools, including **both** tag
+  read tools, are still advertised. This is the guard against the non-contiguous-region hazard (Risk 1).
+
+Deliberately **not** a strict set-equality assertion: equality would break the moment an unrelated
+playbook tool is added, while presence+absence covers both real risks (over-deletion and partial
+withdrawal) without that brittleness.
 
 ### 7.3 Verification steps
 
@@ -254,6 +285,21 @@ being commented rather than left behind.
 ---
 
 ## Section 8: Implementation Phases
+
+### Phase Status Tracking
+
+| Phase | Name | Status | Completed | Commit | Notes |
+|-------|------|--------|-----------|--------|-------|
+| A | Server registrations + imports | ✅ Complete | 2026-07-28 | uncommitted | Registry verified at exactly 4 tools; import smoke check passes |
+| B | Unit tests (wrapper classes) | ✅ Complete | 2026-07-28 | uncommitted | Both wrapper classes + the unused import in each file commented |
+| C | E2E skip | ✅ Complete | 2026-07-28 | uncommitted | Narrowed during implementation to the 4 **mutating** tests (see 3.4) |
+| D | PR | ⏳ Pending | — | — | Requires explicit approval to commit/push |
+
+Status icons: ✅ Complete · 🔄 In Progress · ⏳ Pending · ❌ Blocked
+
+> **Atomicity constraint**: Phases A and B **must land in the same change**. Phase A alone removes the
+> six registrations while `TestWriteToolWrappers` / `TestBulkWrappers` still resolve those tools from
+> the registry, leaving 11 knowingly-failing tests. Do not commit A without B.
 
 ### Phase A — Server registrations + imports
 1. Comment out the six `@self.mcp.tool` blocks: 350-364, 366-380, 382-400, then 421-437, 439-454,
@@ -331,4 +377,5 @@ from 10 to 4. Unit suite goes 247 → 236 passed.
 
 | Date | Change |
 |------|--------|
-| 2026-07-28 | PRD created. Investigation reused from `context.md` (no re-run). Approach confirmed with reporter: comment out registrations + imports + both wrapper test classes. Discovered during planning that `skip_e2e` is inert by default (`SKIP_E2E_TESTS` defaults to `'false'` at `test_e2e.py:39`), so an unconditional skip is required on `TestPlaybookTagWriteE2E`. |
+| 2026-07-28 | PRD created. Investigation reused from `context.md` (no re-run). Approach confirmed with reporter: comment out registrations + imports + both wrapper test classes. Discovered during planning that `skip_e2e` is inert by default (`SKIP_E2E_TESTS` defaults to `'false'` at `test_e2e.py:39`), so an explicit skip is required. |
+| 2026-07-28 | Phases A–C implemented via TDD. Two revisions found during implementation: **(1)** `TestPlaybookTagWriteE2E` holds **9** tests, not the 5 first recorded, and only **4** of them mutate tags — the skip was narrowed from the class to those 4, since a blanket skip would have disabled the read-only test for `get_playbook_attack_tags` (a tool this ticket keeps) plus 4 validation tests that raise before any API call. **(2)** Expected unit count revised 236 → 246 to account for the 10 new `TestExposedTagTools` cases added as the TDD red step. |

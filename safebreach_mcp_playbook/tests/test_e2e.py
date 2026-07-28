@@ -773,6 +773,9 @@ class TestPlaybookTagWriteE2E:
 
     # ---- req 1: single add / remove / rename round-trips (self-cleaning) ------------------- #
 
+    @pytest.mark.skip(
+        reason="tag mutation unsupported backend-side; write tools withdrawn"
+    )
     def test_add_read_remove_tag_roundtrip_e2e(self, writable_move_ids):
         """Add a tag → verify via get-tags → remove it → verify removal (state restored)."""
         attack_id = writable_move_ids[0]
@@ -785,6 +788,9 @@ class TestPlaybookTagWriteE2E:
             sb_remove_playbook_attack_tag(console=E2E_CONSOLE, attack_id=attack_id, tag_value=tag)
         assert tag not in _current_tags(E2E_CONSOLE, attack_id)
 
+    @pytest.mark.skip(
+        reason="tag mutation unsupported backend-side; write tools withdrawn"
+    )
     def test_rename_tag_roundtrip_e2e(self, writable_move_ids):
         """Add old tag → rename to new → verify swap → remove new (state restored)."""
         attack_id = writable_move_ids[0]
@@ -804,6 +810,9 @@ class TestPlaybookTagWriteE2E:
 
     # ---- req 4: bulk (many tags on many attacks) round-trips (self-cleaning) --------------- #
 
+    @pytest.mark.skip(
+        reason="tag mutation unsupported backend-side; write tools withdrawn"
+    )
     def test_bulk_add_remove_roundtrip_e2e(self, writable_move_ids):
         """Bulk-add N tags on N attacks → verify each → bulk-remove → verify removal."""
         tag_a = _unique_tag("bulkA")
@@ -823,6 +832,9 @@ class TestPlaybookTagWriteE2E:
             current = _current_tags(E2E_CONSOLE, attack_id)
             assert tag_a not in current and tag_b not in current
 
+    @pytest.mark.skip(
+        reason="tag mutation unsupported backend-side; write tools withdrawn"
+    )
     def test_bulk_rename_roundtrip_e2e(self, writable_move_ids):
         """Bulk-add a tag on N attacks → bulk-rename it → verify swap → bulk-remove (restored)."""
         old_tag = _unique_tag("bulkOld")

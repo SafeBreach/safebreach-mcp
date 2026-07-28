@@ -19,7 +19,7 @@ from safebreach_mcp_playbook.playbook_functions import (
     sb_rename_playbook_attack_tag,
     clear_playbook_cache,
 )
-from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
+# from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
 
 MOD = "safebreach_mcp_playbook.playbook_functions"
 BASE_URL = "https://test.safebreach.com"
@@ -263,49 +263,52 @@ class TestRenamePlaybookAttackTag:
         assert result["hint_to_agent"]
 
 
-# =========================================================================== #
-# Server wrappers — annotations + delegation + error path
-# =========================================================================== #
-class TestWriteToolWrappers:
-    def _tool(self, name):
-        server = SafeBreachPlaybookServer()
-        return server, server.mcp._tool_manager._tools[name]
-
-    @pytest.mark.parametrize("name,expected_destructive", [
-        ("add_playbook_attack_tag", False),
-        ("remove_playbook_attack_tag", True),   # remove deletes data → destructive (matches manage_test)
-        ("rename_playbook_attack_tag", False),  # update semantics, like update_studio_attack_draft
-    ])
-    def test_registered_and_write_annotations(self, name, expected_destructive):
-        _, tool = self._tool(name)
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is expected_destructive
-
-    @patch("safebreach_mcp_playbook.playbook_server.sb_add_playbook_attack_tag")
-    def test_add_wrapper_delegates_and_markdown(self, mock_sb):
-        mock_sb.return_value = {"attack_id": 1027, "tag_value": "mytag", "action": "added",
-                                "hint_to_agent": "ok"}
-        _, tool = self._tool("add_playbook_attack_tag")
-        out = tool.fn(console="x", attack_id=1027, tag_value="mytag")
-        assert mock_sb.call_args.kwargs["attack_id"] == 1027
-        assert mock_sb.call_args.kwargs["tag_value"] == "mytag"
-        assert isinstance(out, str)
-        assert "mytag" in out
-
-    @patch("safebreach_mcp_playbook.playbook_server.sb_rename_playbook_attack_tag")
-    def test_rename_wrapper_delegates(self, mock_sb):
-        mock_sb.return_value = {"attack_id": 1027, "old_value": "old", "new_value": "new",
-                                "action": "renamed", "hint_to_agent": "ok"}
-        _, tool = self._tool("rename_playbook_attack_tag")
-        out = tool.fn(console="x", attack_id=1027, old_value="old", new_value="new")
-        assert mock_sb.call_args.kwargs["old_value"] == "old"
-        assert mock_sb.call_args.kwargs["new_value"] == "new"
-        assert isinstance(out, str)
-
-    @patch("safebreach_mcp_playbook.playbook_server.sb_add_playbook_attack_tag")
-    def test_wrapper_error_path(self, mock_sb):
-        mock_sb.side_effect = ValueError("bad")
-        _, tool = self._tool("add_playbook_attack_tag")
-        out = tool.fn(console="x", attack_id=1027, tag_value="mytag")
-        assert isinstance(out, str)
-        assert out.startswith("Error")
+# Wrapper tests are disabled: the tag write tools are no longer registered on the
+# playbook server while tag mutation is unsupported backend-side. Restore together
+# with the tool registrations.
+# # =========================================================================== #
+# # Server wrappers — annotations + delegation + error path
+# # =========================================================================== #
+# class TestWriteToolWrappers:
+#     def _tool(self, name):
+#         server = SafeBreachPlaybookServer()
+#         return server, server.mcp._tool_manager._tools[name]
+#
+#     @pytest.mark.parametrize("name,expected_destructive", [
+#         ("add_playbook_attack_tag", False),
+#         ("remove_playbook_attack_tag", True),   # remove deletes data → destructive (matches manage_test)
+#         ("rename_playbook_attack_tag", False),  # update semantics, like update_studio_attack_draft
+#     ])
+#     def test_registered_and_write_annotations(self, name, expected_destructive):
+#         _, tool = self._tool(name)
+#         assert tool.annotations.readOnlyHint is False
+#         assert tool.annotations.destructiveHint is expected_destructive
+#
+#     @patch("safebreach_mcp_playbook.playbook_server.sb_add_playbook_attack_tag")
+#     def test_add_wrapper_delegates_and_markdown(self, mock_sb):
+#         mock_sb.return_value = {"attack_id": 1027, "tag_value": "mytag", "action": "added",
+#                                 "hint_to_agent": "ok"}
+#         _, tool = self._tool("add_playbook_attack_tag")
+#         out = tool.fn(console="x", attack_id=1027, tag_value="mytag")
+#         assert mock_sb.call_args.kwargs["attack_id"] == 1027
+#         assert mock_sb.call_args.kwargs["tag_value"] == "mytag"
+#         assert isinstance(out, str)
+#         assert "mytag" in out
+#
+#     @patch("safebreach_mcp_playbook.playbook_server.sb_rename_playbook_attack_tag")
+#     def test_rename_wrapper_delegates(self, mock_sb):
+#         mock_sb.return_value = {"attack_id": 1027, "old_value": "old", "new_value": "new",
+#                                 "action": "renamed", "hint_to_agent": "ok"}
+#         _, tool = self._tool("rename_playbook_attack_tag")
+#         out = tool.fn(console="x", attack_id=1027, old_value="old", new_value="new")
+#         assert mock_sb.call_args.kwargs["old_value"] == "old"
+#         assert mock_sb.call_args.kwargs["new_value"] == "new"
+#         assert isinstance(out, str)
+#
+#     @patch("safebreach_mcp_playbook.playbook_server.sb_add_playbook_attack_tag")
+#     def test_wrapper_error_path(self, mock_sb):
+#         mock_sb.side_effect = ValueError("bad")
+#         _, tool = self._tool("add_playbook_attack_tag")
+#         out = tool.fn(console="x", attack_id=1027, tag_value="mytag")
+#         assert isinstance(out, str)
+#         assert out.startswith("Error")

@@ -19,7 +19,7 @@ from safebreach_mcp_playbook.playbook_functions import (
     MAX_BULK_ATTACK_IDS,
     MAX_BULK_TAG_VALUES,
 )
-from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
+# from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
 
 MOD = "safebreach_mcp_playbook.playbook_functions"
 BASE_URL = "https://test.safebreach.com"
@@ -187,37 +187,40 @@ class TestBulkRename:
         infra.rate_limiter.check_limit.assert_called_once_with("test-caller", "bulk_rename_playbook_attack_tag")
 
 
-# =========================================================================== #
-# server wrappers — annotations + delegation
-# =========================================================================== #
-class TestBulkWrappers:
-    def _tool(self, name):
-        server = SafeBreachPlaybookServer()
-        return server.mcp._tool_manager._tools[name]
-
-    @pytest.mark.parametrize("name,destructive", [
-        ("bulk_add_playbook_attack_tags", False),
-        ("bulk_remove_playbook_attack_tags", True),
-        ("bulk_rename_playbook_attack_tag", False),
-    ])
-    def test_registered_write_annotations(self, name, destructive):
-        tool = self._tool(name)
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is destructive
-
-    @patch("safebreach_mcp_playbook.playbook_server.sb_bulk_add_playbook_attack_tags")
-    def test_add_wrapper_delegates(self, mock_sb):
-        mock_sb.return_value = {"attack_ids": [1, 2], "succeeded": 2, "failed_count": 0, "hint_to_agent": "ok"}
-        tool = self._tool("bulk_add_playbook_attack_tags")
-        out = tool.fn(console="c", attack_ids="1,2", tag_values="x")
-        assert mock_sb.call_args.kwargs["attack_ids"] == "1,2"
-        assert mock_sb.call_args.kwargs["tag_values"] == "x"
-        assert isinstance(out, str)
-
-    @patch("safebreach_mcp_playbook.playbook_server.sb_bulk_add_playbook_attack_tags")
-    def test_wrapper_error_path(self, mock_sb):
-        mock_sb.side_effect = ValueError("too many")
-        tool = self._tool("bulk_add_playbook_attack_tags")
-        out = tool.fn(console="c", attack_ids="1", tag_values="x")
-        assert isinstance(out, str)
-        assert out.startswith("Error")
+# Wrapper tests are disabled: the tag write tools are no longer registered on the
+# playbook server while tag mutation is unsupported backend-side. Restore together
+# with the tool registrations.
+# # =========================================================================== #
+# # server wrappers — annotations + delegation
+# # =========================================================================== #
+# class TestBulkWrappers:
+#     def _tool(self, name):
+#         server = SafeBreachPlaybookServer()
+#         return server.mcp._tool_manager._tools[name]
+#
+#     @pytest.mark.parametrize("name,destructive", [
+#         ("bulk_add_playbook_attack_tags", False),
+#         ("bulk_remove_playbook_attack_tags", True),
+#         ("bulk_rename_playbook_attack_tag", False),
+#     ])
+#     def test_registered_write_annotations(self, name, destructive):
+#         tool = self._tool(name)
+#         assert tool.annotations.readOnlyHint is False
+#         assert tool.annotations.destructiveHint is destructive
+#
+#     @patch("safebreach_mcp_playbook.playbook_server.sb_bulk_add_playbook_attack_tags")
+#     def test_add_wrapper_delegates(self, mock_sb):
+#         mock_sb.return_value = {"attack_ids": [1, 2], "succeeded": 2, "failed_count": 0, "hint_to_agent": "ok"}
+#         tool = self._tool("bulk_add_playbook_attack_tags")
+#         out = tool.fn(console="c", attack_ids="1,2", tag_values="x")
+#         assert mock_sb.call_args.kwargs["attack_ids"] == "1,2"
+#         assert mock_sb.call_args.kwargs["tag_values"] == "x"
+#         assert isinstance(out, str)
+#
+#     @patch("safebreach_mcp_playbook.playbook_server.sb_bulk_add_playbook_attack_tags")
+#     def test_wrapper_error_path(self, mock_sb):
+#         mock_sb.side_effect = ValueError("too many")
+#         tool = self._tool("bulk_add_playbook_attack_tags")
+#         out = tool.fn(console="c", attack_ids="1", tag_values="x")
+#         assert isinstance(out, str)
+#         assert out.startswith("Error")
