@@ -1,7 +1,7 @@
 # Ticket Context: SAF-33511
 
 ## Status
-Phase 3: Create Working Branch and PRD Context (planning-dev-task)
+Phase 4: Document Findings (planning-dev-task)
 
 ## Planning Inputs (planning-dev-task)
 
@@ -106,6 +106,59 @@ Consumed by `sb_get_test_details` for non-terminal refresh (`data_functions.py:4
 **Precedent:** SAF-30863 (`prds/SAF-30863-get_tests_history-add-running-filter/summary.md`) added
 `running` as a status_filter — same shape of change, but SAF-33511 additionally needs the
 ordering/visibility fix and possibly an orchestrator-queue data source.
+
+## Live Console Research (pentest01, 2026-07-28)
+
+Method: saturated the validate slots with tiny quick-run tests (attack 11653), captured
+`GET /api/orch/v4/accounts/3471166703/queue` and `GET /api/data/v1/accounts/3471166703/testsummaries`
+while one test was waiting in the queue, then canceled all probe tests. Console restored to prior
+state (only the pre-existing scheduled scenario running).
+
+### Orchestrator /queue response shape (confirmed live)
+`data` top-level keys: `isPause` (bool), `slotState[]`, `queue[]`, `testRunState{}`.
+- **`slotState[]`** — 6 slots on pentest01: `validate-0..4` and `propagate-0` (slots are per
+  test type; "5 slots" refers to validate). Slot entry keys: `id`, `status` (e.g. "Idle",
+  "Waiting for execution", "Generating jobs"), `slotStatus` (e.g. "Idle", "Running Step"),
+  `planRunId` (null when idle), `runId`, `stepRunId`, `name`, `description`, `startTime` (ISO),
+  `isPaused`, `pauseDuration`, `pausedDate`, `jobsLeft`, `jobsDispatched`, `totalJobs`,
+  `maxRemainingSimulations`.
+- **`queue[]`** — pending tests waiting for a slot. Entry top-level keys (confirmed):
+  `planRunId`, `name`, `steps[]`, `actions[]`, `edges[]`, `systemTags[]`, `ranBy` (numeric user id),
+  `ranFrom` ("API"), `retryPolicy`, `retrySimulations`, `priority` ("low"), `flowControl`,
+  `originalPlan` (full plan payload — large). **No queued-at timestamp field**, but the planRunId
+  prefix IS the submission epoch-ms (`"1785224437040.28"` → 1785224437040), usable as a derived
+  submit time.
+- **`testRunState{}`** — dict keyed by planRunId (covers both slot-active and queue-pending tests)
+  with full plan details (id, name, accountId, description, originalScenarioId, actions, ...).
+
+### testsummaries behavior while a test waits in the queue (confirmed live)
+- A test waiting in `data.queue[]` is **completely ABSENT from the testsummaries list** (no row at
+  all) — confirming the RCA. It materializes in testsummaries only after leaving the queue
+  (e.g., as CANCELED after cancellation, or RUNNING once slotted).
+- A test that has taken a slot but is still preparing ("Generating jobs", no startTime yet)
+  appears in testsummaries with **status `PENDING`** (`startTime: null`, `endTime: null`).
+  `PENDING` is a real testsummaries list status that the MCP layer currently neither advertises
+  nor handles specially. Observed status population: CANCELED / COMPLETED / RUNNING / PENDING.
+- `testsummaries?status=QUEUED` returned **0 rows even while a test was queued** — `QUEUED` is not
+  a functioning server-side list filter value; the queue-waiting state simply doesn't exist in the
+  data API.
+- testsummaries rows use `planName` (not `name`); row keys confirmed: planRunId, runId, planName,
+  status, startTime, endTime, duration, pauseDuration, blocked, notBlocked, internalFail,
+  finalStatus, draft, ranBy, tags, systemTags, simulatorCount, simulatorExecutions,
+  totalNumberOfSimulators, plannedSimulationsAmount, constraintsSkipped, securityActionPerControl.
+
+### Design implications
+1. Queue-waiting tests can ONLY come from orchestrator `data.queue[]` — merge is mandatory (RCA
+   confirmed end-to-end).
+2. Dedupe by planRunId across queue[] and testsummaries (a test can transition mid-merge).
+3. `PENDING` (slot taken, generating jobs) should be considered: either surfaced as-is or grouped
+   with queued/running semantics — decision for brainstorming.
+4. Queued entries have no timestamps; derive submit time from the planRunId epoch-ms prefix for
+   ordering/display. Placement decision: top of first page (user-approved).
+5. `slotState[]` also provides progress fields (jobsLeft/totalJobs) — potential enrichment for
+   running tests, out of scope unless cheap.
+6. Probe artifacts left on console: 11 canceled + 1 completed test named `SAF-33511-queue-probe-*`
+   (harmless; can be deleted later).
 
 ## Problem Analysis
 
