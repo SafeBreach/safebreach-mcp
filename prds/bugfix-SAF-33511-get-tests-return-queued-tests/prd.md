@@ -26,10 +26,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | Draft |
-| **Last Updated** | 2026-07-28 10:56 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-07-28 12:10 |
 | **Owner** | Yossi Attas (planning via AI Agent) |
-| **Current Phase** | N/A |
+| **Current Phase** | Phase 2 of 5 |
 
 ## 2. Solution Description
 
@@ -231,11 +231,11 @@ of scope (see Section 11).
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Queue snapshot (core) | ⏳ Pending | - | - | |
-| Phase 2: Queued-test mapping (types) | ⏳ Pending | - | - | |
-| Phase 3: Merge/filter/ordering (data) | ⏳ Pending | - | - | |
-| Phase 4: Tool contract & docs | ⏳ Pending | - | - | |
-| Phase 5: E2E queued-flow test | ⏳ Pending | - | - | |
+| Phase 1: Queue snapshot (core) | ✅ Complete | 2026-07-28 | 955ab96 | 13 tests green; full unit suite 1571 passed |
+| Phase 2: Queued-test mapping (types) | ✅ Complete | 2026-07-28 | 85b5147 | 14 new tests green; suite 1585 passed |
+| Phase 3: Merge/filter/ordering (data) | ✅ Complete | 2026-07-28 | f6b20ee | 9 new tests green; suite 1594 passed |
+| Phase 4: Tool contract & docs | ✅ Complete | 2026-07-28 | a9d091a | 3 contract tests green; suite 1597 passed |
+| Phase 5: E2E queued-flow test | 🔄 In Progress | - | 7225955 | Tests written (T-16/19/20/21); live run BLOCKED — pentest01 in maintenance (HTTP 426); skip-guarded |
 
 ### Phase 1: Queue snapshot (core)
 
@@ -419,3 +419,4 @@ of scope (see Section 11).
 | Date | Change Description |
 |------|-------------------|
 | 2026-07-28 10:56 | PRD created — initial draft |
+| 2026-07-28 11:45 | Phase 1 complete (955ab96): queue snapshot reader + test_queue_state.py (13 tests) |

@@ -18,7 +18,7 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 
 | Req | Requirement (from SAF-33511 ∪ PRD §7) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1 | `get_tests` (no filter) merges queued tests — each with `status='queued'`, `test_id`=planRunId, `queued_time`, `queue_position` | T-6, T-16, T-19, T-18 | Covered |
+| R1 | `get_tests` (no filter) merges queued tests — each with `status='queued'`, `test_id`=planRunId, `queued_time`, `queue_position` | T-6, T-16, T-19, T-18, T-22 | Covered |
 | R2 | `status_filter='queued'` returns only queue-waiting tests + normalized-PENDING rows | T-8, T-16, T-21 | Covered |
 | R3 | A freshly queued test is visible immediately (queue snapshot never cached) | T-14, T-16 | Covered |
 | R4 | A test in both sources during the consistency lag appears exactly once (planRunId dedupe) | T-7, T-20 | Covered |
@@ -41,6 +41,7 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 | safebreach_mcp_data/data_server.py | T-15 | — |
 | safebreach_mcp_data/tests/test_data_server.py | — | test code (hosts T-15) |
 | safebreach_mcp_data/tests/test_e2e.py | — | test code (hosts T-16, T-19, T-20, T-21) |
+| automation helm suite (T-22) | — | test code authored by run-helm-tests (Helm-chat verification) |
 | README.md | — | docs-only, no runtime surface (contract text asserted by T-15 at the tool layer) |
 | CLAUDE.md | — | docs-only, no runtime surface |
 
@@ -73,7 +74,7 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 15 | 0 | 0 | 4 | 19 |
+| Automatic | 15 | 0 | 0 | 5 | 20 |
 | Manual | 0 | 0 | 1 | 1 | 2 |
 
 ## Environment Requirements (aggregated)
@@ -146,6 +147,7 @@ Capability checklist — answered from the plan's system/e2e tests only:
 | T-19 | Multiple queued tests carry ordered queue positions and sane queued_time, newest submission first | Automatic | API-contract | Phase 5 | safebreach_mcp_data | console environment (Validate) |
 | T-20 | A queued test transitioning into a freed slot appears exactly once during the live handover | Automatic | regression | Phase 5 | safebreach_mcp_data | console environment (Validate) |
 | T-21 | Status filters behave correctly on a saturated console (queued excluded from terminal/running views) | Automatic | regression, API-contract | Phase 5 | safebreach_mcp_data | console environment (Validate) |
+| T-22 | Helm AI chat surfaces queued tests via the in-console MCP get_tests (feature verified through the agent) | Automatic | regression, API-contract | Phase 5 | automation | console environment (Validate) |
 | T-18 | The full new queue-then-monitor workflow walked through a real MCP client session | Manual | progression | Final | — | console environment (Validate) |
 
 ### T-1 — Queue snapshot parsing
@@ -538,6 +540,36 @@ Capability checklist — answered from the plan's system/e2e tests only:
 - Automation lives in: planned: safebreach_mcp_data/tests/test_e2e.py
 - Environment needs: console environment (Validate) — existing pentest01; ≥1 connected simulator.
 
+### T-22 — Helm AI-chat surfaces queued tests (feature verified through the agent)
+
+- Description: The primary user-facing proof of SAF-33511 — the console's Helm AI agent, calling the in-console
+  MCP `get_tests` tool (running our feature branch), reports tests waiting in the execution queue when a user asks
+  it to list tests. This is the vehicle the queued-tests feature is verified through end-to-end.
+- Status: Active
+- Passes after: Phase 5
+- Level: e2e
+- Execution: Automatic
+- Aspect: regression, API-contract
+- Risk: Helm is the real consumer of the MCP tool; a units-green feature could still be invisible through the
+  agent if the in-console MCP server, the tool wiring, or the response shape breaks in the served path.
+- Risk source: reviewer input (user directive — verify via Helm chat)
+- Verify: On the dedicated `saf-33511` console (Helm enabled; mcp-proxy running safebreach-mcp @ 7225955): the
+  authored Helm test first **saturates the 5 validate execution slots** by submitting several tiny quick-run tests
+  via the orchestrator client so ≥1 test waits in the queue; then asks the Helm agent to "list all tests including
+  any that are queued/waiting"; extracts the run-ids/statuses from the agent's reply; cross-checks against the
+  backend (the in-console MCP `get_tests` and/or the orchestrator `/queue`) that the queued planRunId is present
+  with status `queued`; scores coherence with the LLM-as-judge; cancels every submitted run in teardown.
+- Expected: The Helm reply enumerates the queued test(s) with a queued/waiting status (and, where surfaced,
+  queue position); the queued planRunId the agent reports matches a real queued entry in the backend; the judge
+  approves the response as accurate (no invented/omitted queued tests); all submitted runs are cancelled and the
+  queue drains.
+- Evidence required: run-helm-tests return — chat transcript + screenshots, the backend cross-check, the judge
+  scorecard, consumed-credit budget, and the cancelled run-ids.
+- Automation lives in: planned: automation/tests/automation_team/pen_test/ui/ai/helm/test_helm_queued_tests.py
+  (authored by run-helm-tests from the helm pattern library)
+- Environment needs: console environment (Validate) — the dedicated saf-33511 env with Helm/Bedrock enabled and
+  the safebreach-mcp feature branch deployed to mcp-proxy; ≥1 connected simulator to saturate execution slots.
+
 ### T-17 — Manual regression: existing get_tests behaviors through a real MCP client
 
 - Description: Proves the change broke nothing for today's users — the existing `get_tests`
@@ -604,7 +636,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 2 | T-3, T-4, T-5 | T-1..T-5 |
 | Phase 3 | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-13, T-14 | T-1..T-14 |
 | Phase 4 | T-15 | T-1..T-15 |
-| Phase 5 | T-16, T-19, T-20, T-21 | T-1..T-16, T-19, T-20, T-21 |
+| Phase 5 | T-16, T-19, T-20, T-21, T-22 | T-1..T-16, T-19, T-20, T-21, T-22 |
 | Final / E2E | T-17, T-18 | all |
 
 ## Sign-off
@@ -628,3 +660,4 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | 2026-07-28 11:15 | Validator run: 1 finding — no hosted CI regression gate; recorded as user-accepted gap |
 | 2026-07-28 11:18 | Dev review recorded (Yossi Attas); Status stays Draft until QA review is recorded |
 | 2026-07-28 11:30 | Densified E2E section per reviewer feedback: added T-19 (multi-queue ordering/positions/queued_time), T-20 (live queue→slot transition dedupe), T-21 (filter matrix on saturated console) |
+| 2026-07-28 12:40 | Added T-22 (Helm AI-chat verification) per user directive to verify the feature through the console's Helm agent; dispatched via run-helm-tests |
