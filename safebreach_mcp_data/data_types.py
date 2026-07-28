@@ -150,12 +150,44 @@ def _percentage_to_test_phase(percentage):
     return "Invalid"
 
 
+def get_reduced_queued_test_mapping(pending_entry, queue_index):
+    """
+    Maps a trimmed orchestrator queue entry (see
+    safebreach_mcp_core.queue_state.get_orchestrator_queue_snapshot) to the
+    reduced test shape returned by get_tests (SAF-33511).
+
+    Queued tests have not started, so there are no start/end timestamps; the
+    submission time is derived from the planRunId epoch-ms prefix when parseable.
+    """
+    queued_test = {
+        'test_id': pending_entry.get('planRunId'),
+        'name': pending_entry.get('name'),
+        'status': 'queued',
+        'queue_position': queue_index + 1,
+        'priority': pending_entry.get('priority'),
+        'ran_from': pending_entry.get('ranFrom'),
+        'ran_by_user_id': pending_entry.get('ranBy'),
+    }
+
+    plan_run_id = str(pending_entry.get('planRunId') or '')
+    prefix = plan_run_id.split('.', 1)[0]
+    if prefix.isdigit():
+        queued_test['queued_time'] = int(prefix) // 1000
+
+    return queued_test
+
+
 def get_reduced_test_summary_mapping(test_summary_entity):
     """
     Returns a reduced test summary entity with only the relevant fields.
     Always includes simulation status counts (free from the API response).
     """
     reduced_test_summary_entity = map_reduced_entity(test_summary_entity, reduced_test_summary_mapping)
+
+    # SAF-33511: a slotted-but-still-preparing test surfaces as PENDING in the
+    # testsummaries list; agents see the two-state model queued -> running.
+    if str(reduced_test_summary_entity.get('status', '')).lower() == 'pending':
+        reduced_test_summary_entity['status'] = 'queued'
     system_tags = test_summary_entity.get('systemTags', [])
     is_propagate = "ALM" in system_tags
     reduced_test_summary_entity['test_type'] = "Automated Lateral Movement (aka ALM aka Propagate)" if is_propagate else "Breach And Attack Simulation (aka BAS aks Validate)"
