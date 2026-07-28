@@ -29,5 +29,7 @@ Bedrock/automation via ambient dev SSO (account 400469752855).
 - Management/UI/orchestrator/data services run stock develop by design (feature is MCP-only).
 
 ## Status
-built — infra up + simulators connected + AI/Helm enabled + safebreach-mcp feature branch live in mcp-proxy.
-Remaining: run the Helm e2e (running-phase-tests → run-helm-tests) to verify queued tests surface via the AI chat.
+**torn-down 2026-07-28T13:36 UTC+3** — Helm E2E completed successfully (queued tests verified via the AI chat,
+see test-results/phase-5.md), then all 3 instances terminated
+(i-07e7dfacbe8dfe318, i-06d4f50da43688318, i-044ed65d2e7211c34). No env-specific security groups or external EDR
+records existed. Re-scan by `sb_ticket=SAF-33511` confirms nothing remains.
