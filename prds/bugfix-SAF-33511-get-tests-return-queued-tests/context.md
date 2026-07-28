@@ -1,7 +1,26 @@
 # Ticket Context: SAF-33511
 
 ## Status
-Phase 6: Summary Created
+Phase 3: Create Working Branch and PRD Context (planning-dev-task)
+
+## Planning Inputs (planning-dev-task)
+
+### Related Tickets (finding-related-tickets verdict: PROCEED)
+No duplicates found. Related-context only:
+- SAF-32366 (Sanity, open) — backend/orchestrator: queued tests slow to appear in testsummaries
+  under queue backlog (server-side ingestion lag). Same theme, different root cause.
+- SAF-29965 (Done) — original ticket adding the running-tests listing to get_tests.
+- SAF-33323 (In Progress) — same get_tests tool, different bug (500 when status_filter=running).
+- SAF-33124 (Done) — same repo area, different tool (get_test_drifts).
+
+### User Decisions
+- Queued tests placement: **top of first page** under default ordering (end_time desc) — queued
+  tests are the newest pending work and must be visible.
+- Backward compatibility of MCP tool responses: explicitly NOT a concern.
+- Live-console research required against **pentest01** (pentest01.safebreach.com, account
+  3471166703; token via `pentest01_apitoken` in ~/Public/safebreach-mcp/.env) to document the
+  orchestrator /queue pending-entry shape and testsummaries behavior for queued tests.
+- No additional data sources beyond ticket + preparing-ticket investigation + live research.
 
 ## Mode
 Improving
