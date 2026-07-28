@@ -1322,32 +1322,56 @@ class TestQueuedTestsInGetTestsE2E:
         self._precheck(console)
         submitted = []
         try:
-            first = _saturate_until_queued(console, submitted, extra=1)
-            if not first:
-                pytest.skip("Could not saturate execution slots within submission budget")
-            # Add a second overflow submission, recording wall-clock.
-            submit_wall = _time.time()
-            extra_id = _submit_queue_probe(console, "second")
-            if extra_id:
-                submitted.append(extra_id)
-            _time.sleep(3)
-
+            # Build a deliberately deep wait-queue (aim for >=4 of ours pending) so that after the
+            # unavoidable drain between saturation and the read, >=2 genuine entries still coexist —
+            # ordering/position is only observable with >=2 concurrent wait-queue entries.
+            pending = _saturate_until_queued(console, submitted, extra=4)
+            if len(pending) < 2:
+                pytest.skip(
+                    f"Shared console did not hold a >=2-deep wait queue "
+                    f"(only {len(pending)} of ours pending) — cannot observe ordering"
+                )
+            # Read immediately — the queue drains a slot at a time, so minimize the gap.
             result = sb_get_tests(console=console)
             page = result["tests_in_page"]
-            ours = [t for t in page if t["test_id"] in submitted and t["status"] == "queued"]
-            assert len(ours) >= 2, f"expected >=2 queued rows, got {[t['test_id'] for t in ours]}"
 
-            positions = [t["queue_position"] for t in ours]
-            assert all(p >= 1 for p in positions)
+            # 'queued' has two lineages: genuine orchestrator-queue entries (waiting for a slot —
+            # these carry a 1-based queue_position + queued_time) and testsummaries PENDING rows
+            # (slotted-but-preparing, normalized to 'queued' — no queue_position). Ordering/positions
+            # are a property of the genuine wait-queue entries only, so scope to them, IN PAGE ORDER.
+            genuine = [
+                t for t in page
+                if t["test_id"] in submitted
+                and t.get("status") == "queued"
+                and isinstance(t.get("queue_position"), int)
+            ]
+            if len(genuine) < 2:
+                pytest.skip(
+                    "Fewer than 2 genuine wait-queue entries survived to the read "
+                    f"(got {[(t['test_id'], t.get('queue_position')) for t in genuine]}) — "
+                    "shared-console timing; ordering not observable"
+                )
+
+            positions = [t["queue_position"] for t in genuine]
+            assert all(p >= 1 for p in positions), f"non-positive queue_position: {positions}"
             assert len(set(positions)) == len(positions), f"positions not distinct: {positions}"
 
-            # Newest-submission-first among the queued head.
-            head_ids = [t["test_id"] for t in page if t["status"] == "queued"]
-            if extra_id in head_ids and first[0] in head_ids:
-                assert head_ids.index(extra_id) < head_ids.index(first[0])
+            # Newest-submission-first pinning: our get_tests orders queued rows by queued_time desc.
+            # Queue positions are FIFO (position 1 = oldest, front of queue), so newest-first on the
+            # page ⇒ our genuine entries' positions are strictly DECREASING down the page (robust to
+            # foreign entries interleaving the absolute position numbers).
+            assert positions == sorted(positions, reverse=True), (
+                f"queued entries not newest-first (positions down the page should decrease): {positions}"
+            )
 
-            newest = next(t for t in ours if t["test_id"] == extra_id)
-            assert abs(newest.get("queued_time", 0) - submit_wall) <= 60
+            # queued_time sanity: every genuine entry has a recent queued_time (derived from the
+            # planRunId epoch prefix), within the last 30 minutes.
+            now = _time.time()
+            for t in genuine:
+                assert "queued_time" in t, f"genuine queued entry missing queued_time: {t['test_id']}"
+                assert 0 <= now - t["queued_time"] <= 1800, (
+                    f"queued_time not recent for {t['test_id']}: {t['queued_time']} (now {now})"
+                )
         finally:
             for tid in submitted:
                 _cancel_probe(tid, console)
