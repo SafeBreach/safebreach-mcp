@@ -1,7 +1,7 @@
 # Ticket Context: SAF-33511
 
 ## Status
-Phase 4: Document Findings (planning-dev-task)
+Phase 5: Brainstorm (planning-dev-task)
 
 ## Planning Inputs (planning-dev-task)
 
@@ -216,5 +216,32 @@ a pure client-side fix (ordering/filter enum) is insufficient.
 - Exact shape of pending (non-slot) entries in the orchestrator `/queue` response — confirm
   against a live console during implementation.
 
+## Brainstorming Results (planning-dev-task Phase 5)
+
+### Chosen Approach: A — Fresh queue merge inside sb_get_tests
+- New core function `get_orchestrator_queue_snapshot(console)` in `safebreach_mcp_core/queue_state.py`
+  returning pending `queue[]` entries + busy `slotState[]`. Fetched FRESH on every relevant
+  `get_tests` call — never cached (single cheap HTTP call). testsummaries 30-min cache untouched.
+- Skip the queue call when `status_filter` is terminal (completed/canceled/failed) — queued tests
+  cannot match.
+- Map `queue[]` entries to the reduced test shape: `test_id`=planRunId, `name`, `status='queued'`,
+  submit time derived from planRunId epoch-ms prefix, `priority`, `ran_from`,
+  `queue_position` (1-based index in queue[] — user-approved enrichment; no slot-progress
+  enrichment).
+- Normalize testsummaries `PENDING` rows → `status='queued'` (user decision: group PENDING under
+  queued).
+- Dedupe merged results by planRunId; fresh queue data wins on status.
+- Placement: queued entries pinned at the TOP of page 1 (sorted among themselves by derived submit
+  time desc); remaining tests follow the requested ordering (user-approved).
+- `status_filter='queued'` returns only queued entries; add missing status_filter validation
+  (valid: completed/canceled/failed/running/queued).
+- Backward compatibility: not a constraint (user directive).
+
+### Rejected Alternatives
+- B — merge inside `_get_all_tests_from_cache_or_api` with short-TTL merged cache: cache-semantics
+  complexity (interplay with existing 'running' bypass), staleness risk.
+- C — separate `get_queued_tests` tool: does not satisfy the ticket (queued tests must appear in
+  the `get_tests` response); requires agents to know a second tool.
+
 ## Proposed Improvements
-(Phase 6)
+(see summary.md — Proposed Ticket Content; posted to JIRA as comment on 2026-07-28)
