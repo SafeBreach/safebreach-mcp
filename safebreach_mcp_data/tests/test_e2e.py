@@ -1176,3 +1176,248 @@ class TestPeerBenchmarkScoreE2E:
             print(f"  all_peers_score.score: {result['all_peers_score'].get('score') if result['all_peers_score'] else None}")
         print(f"  ✅ Peer benchmark E2E shape verified")
         print(f"==========================\n")
+
+
+# ---------------------------------------------------------------------------
+# SAF-33511 — queued-tests-in-get_tests E2E (live queue saturation on pentest01)
+# ---------------------------------------------------------------------------
+
+import time as _time
+import logging as _logging
+
+from safebreach_mcp_core.queue_state import get_orchestrator_queue_snapshot
+
+_saf33511_logger = _logging.getLogger(__name__)
+
+# Verified low-simulation host attack on pentest01 (attacker=target, ~1 sim) —
+# cheap enough to saturate execution slots without heavy load.
+_QUEUE_E2E_ATTACK_ID = "11653"
+_QUEUE_E2E_CONSOLE = os.environ.get('E2E_CONSOLE', 'pentest01')
+_MAX_SATURATION_SUBMITS = 12
+
+
+def _register_leftover(test_id, console):
+    try:
+        from conftest import register_e2e_test
+        register_e2e_test(test_id, console)
+    except Exception:
+        pass
+
+
+def _submit_queue_probe(console, label):
+    """Queue one tiny quick-run test; return its planRunId (or None)."""
+    from safebreach_mcp_studio.studio_functions import sb_quick_run
+    result = sb_quick_run(
+        attack_ids=_QUEUE_E2E_ATTACK_ID,
+        console=console,
+        test_name=f"SAF-33511-e2e-{label}",
+        evaluate=False,
+    )
+    test_id = result.get("test_id")
+    _register_leftover(test_id, console)
+    return test_id
+
+
+def _cancel_probe(test_id, console):
+    from safebreach_mcp_studio.studio_functions import sb_manage_test
+    try:
+        sb_manage_test(console=console, test_id=test_id, action="cancel")
+    except Exception as exc:
+        _saf33511_logger.warning("Cancel %s failed: %s", test_id, exc)
+
+
+def _saturate_until_queued(console, submitted, extra=1):
+    """Submit tests until at least `extra` are waiting in the orchestrator queue.
+
+    Returns the list of pending planRunIds from the live snapshot, or [] if
+    saturation could not be reached within the submission budget.
+    """
+    for i in range(_MAX_SATURATION_SUBMITS):
+        snapshot = get_orchestrator_queue_snapshot(console)
+        pending_ids = [p.get("planRunId") for p in snapshot.get("pending", [])]
+        ours_pending = [pid for pid in pending_ids if pid in submitted]
+        if len(ours_pending) >= extra:
+            return ours_pending
+        tid = _submit_queue_probe(console, f"sat{i}")
+        if tid:
+            submitted.append(tid)
+        _time.sleep(2)
+    snapshot = get_orchestrator_queue_snapshot(console)
+    return [p.get("planRunId") for p in snapshot.get("pending", []) if p.get("planRunId") in submitted]
+
+
+class TestQueuedTestsInGetTestsE2E:
+    """SAF-33511 T-16/T-19/T-20/T-21 — queued tests surface in get_tests on a live console."""
+
+    def setup_method(self):
+        # Never serve queued state (or anything) from a stale cache during e2e.
+        from safebreach_mcp_data.data_functions import tests_cache
+        tests_cache.clear()
+
+    def _precheck(self, console):
+        """Skip when the console is unreachable/in maintenance or the queue is paused."""
+        from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
+        from safebreach_mcp_core.environments_metadata import (
+            get_api_base_url, get_api_account_id,
+        )
+        import requests
+        try:
+            base = get_api_base_url(console, 'orchestrator')
+            account_id = get_api_account_id(console)
+            headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+            resp = requests.get(
+                f"{base}/api/orch/v4/accounts/{account_id}/queue",
+                headers=headers, timeout=30,
+            )
+        except Exception as exc:
+            pytest.skip(f"Console '{console}' unreachable: {exc}")
+        if resp.status_code != 200:
+            pytest.skip(
+                f"Console '{console}' not serving the queue API "
+                f"(HTTP {resp.status_code} — likely maintenance)"
+            )
+        if (resp.json().get("data") or {}).get("isPause"):
+            pytest.skip("Console orchestrator queue is paused — cannot saturate slots")
+
+    # T-16 — a really-queued test appears as 'queued' and disappears after cancel
+    @pytest.mark.e2e
+    def test_queued_test_visible_and_cleared(self):
+        console = _QUEUE_E2E_CONSOLE
+        self._precheck(console)
+        submitted = []
+        try:
+            pending = _saturate_until_queued(console, submitted, extra=1)
+            if not pending:
+                pytest.skip("Could not saturate execution slots within submission budget")
+            queued_id = pending[0]
+
+            result = sb_get_tests(console=console)
+            page = result["tests_in_page"]
+            row = next((t for t in page if t["test_id"] == queued_id), None)
+            assert row is not None, f"{queued_id} not on page 0: {[t['test_id'] for t in page]}"
+            assert row["status"] == "queued"
+            assert row.get("queue_position", 0) >= 1
+            assert result["queued_tests_count"] >= 1
+
+            filtered = sb_get_tests(console=console, status_filter="queued")
+            assert any(t["test_id"] == queued_id for t in filtered["tests_in_page"])
+        finally:
+            for tid in submitted:
+                _cancel_probe(tid, console)
+
+        # After cancellation the queued row must clear.
+        for _ in range(15):
+            self.setup_method()
+            still = sb_get_tests(console=console, status_filter="queued")
+            if not any(t["test_id"] in submitted for t in still["tests_in_page"]):
+                break
+            _time.sleep(2)
+        else:
+            pytest.fail("Queued probe tests still present after cancellation")
+
+    # T-19 — multiple queued tests carry ordered positions and sane queued_time
+    @pytest.mark.e2e
+    def test_multiple_queued_ordering_and_positions(self):
+        console = _QUEUE_E2E_CONSOLE
+        self._precheck(console)
+        submitted = []
+        try:
+            first = _saturate_until_queued(console, submitted, extra=1)
+            if not first:
+                pytest.skip("Could not saturate execution slots within submission budget")
+            # Add a second overflow submission, recording wall-clock.
+            submit_wall = _time.time()
+            extra_id = _submit_queue_probe(console, "second")
+            if extra_id:
+                submitted.append(extra_id)
+            _time.sleep(3)
+
+            result = sb_get_tests(console=console)
+            page = result["tests_in_page"]
+            ours = [t for t in page if t["test_id"] in submitted and t["status"] == "queued"]
+            assert len(ours) >= 2, f"expected >=2 queued rows, got {[t['test_id'] for t in ours]}"
+
+            positions = [t["queue_position"] for t in ours]
+            assert all(p >= 1 for p in positions)
+            assert len(set(positions)) == len(positions), f"positions not distinct: {positions}"
+
+            # Newest-submission-first among the queued head.
+            head_ids = [t["test_id"] for t in page if t["status"] == "queued"]
+            if extra_id in head_ids and first[0] in head_ids:
+                assert head_ids.index(extra_id) < head_ids.index(first[0])
+
+            newest = next(t for t in ours if t["test_id"] == extra_id)
+            assert abs(newest.get("queued_time", 0) - submit_wall) <= 60
+        finally:
+            for tid in submitted:
+                _cancel_probe(tid, console)
+
+    # T-21 — status filters partition correctly on a saturated console
+    @pytest.mark.e2e
+    def test_filter_matrix_on_saturated_console(self):
+        console = _QUEUE_E2E_CONSOLE
+        self._precheck(console)
+        submitted = []
+        try:
+            pending = _saturate_until_queued(console, submitted, extra=1)
+            if not pending:
+                pytest.skip("Could not saturate execution slots within submission budget")
+            queued_id = pending[0]
+
+            self.setup_method()
+            no_filter = sb_get_tests(console=console)
+            self.setup_method()
+            queued_only = sb_get_tests(console=console, status_filter="queued")
+            self.setup_method()
+            completed = sb_get_tests(console=console, status_filter="completed")
+
+            assert any(t["test_id"] == queued_id for t in no_filter["tests_in_page"])
+            assert any(t["test_id"] == queued_id for t in queued_only["tests_in_page"])
+            assert all(t["status"] != "queued" for t in completed["tests_in_page"])
+            assert no_filter["total_tests"] >= completed["total_tests"]
+        finally:
+            for tid in submitted:
+                _cancel_probe(tid, console)
+
+    # T-20 — a queued test transitioning into a freed slot appears exactly once
+    @pytest.mark.e2e
+    def test_queue_to_slot_transition_dedupe(self):
+        console = _QUEUE_E2E_CONSOLE
+        self._precheck(console)
+        submitted = []
+        try:
+            pending = _saturate_until_queued(console, submitted, extra=1)
+            if not pending:
+                pytest.skip("Could not saturate execution slots within submission budget")
+            queued_id = pending[0]
+
+            # Free a slot by cancelling one of our slot-occupying probes so the
+            # queued test is promoted; watch the live handover.
+            snapshot = get_orchestrator_queue_snapshot(console)
+            busy_ours = [pid for pid in snapshot.get("busy_plan_run_ids", set())
+                         if pid in submitted]
+            if not busy_ours:
+                pytest.skip("No slot-occupying probe of ours to free")
+            _cancel_probe(busy_ours[0], console)
+
+            saw_queued = False
+            transitioned = False
+            for _ in range(30):
+                self.setup_method()
+                page = sb_get_tests(console=console)["tests_in_page"]
+                matches = [t for t in page if t["test_id"] == queued_id]
+                assert len(matches) <= 1, f"{queued_id} appears {len(matches)} times"
+                if matches:
+                    status = matches[0]["status"]
+                    if status == "queued":
+                        saw_queued = True
+                    elif saw_queued:
+                        transitioned = True
+                        break
+                _time.sleep(2)
+            assert saw_queued, "Never observed the test in 'queued' state"
+            # transitioned is best-effort (timing-dependent); the invariant proven
+            # every frame is the <=1 dedupe assertion above.
+        finally:
+            for tid in submitted:
+                _cancel_probe(tid, console)
