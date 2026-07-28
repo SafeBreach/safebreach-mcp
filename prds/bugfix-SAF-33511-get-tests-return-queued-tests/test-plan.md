@@ -18,11 +18,11 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 
 | Req | Requirement (from SAF-33511 ∪ PRD §7) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1 | `get_tests` (no filter) merges queued tests — each with `status='queued'`, `test_id`=planRunId, `queued_time`, `queue_position` | T-6, T-16, T-18 | Covered |
-| R2 | `status_filter='queued'` returns only queue-waiting tests + normalized-PENDING rows | T-8, T-16 | Covered |
+| R1 | `get_tests` (no filter) merges queued tests — each with `status='queued'`, `test_id`=planRunId, `queued_time`, `queue_position` | T-6, T-16, T-19, T-18 | Covered |
+| R2 | `status_filter='queued'` returns only queue-waiting tests + normalized-PENDING rows | T-8, T-16, T-21 | Covered |
 | R3 | A freshly queued test is visible immediately (queue snapshot never cached) | T-14, T-16 | Covered |
-| R4 | A test in both sources during the consistency lag appears exactly once (planRunId dedupe) | T-7 | Covered |
-| R5 | Queued tests occupy the top of page 1 under default ordering | T-12, T-16 | Covered |
+| R4 | A test in both sources during the consistency lag appears exactly once (planRunId dedupe) | T-7, T-20 | Covered |
+| R5 | Queued tests occupy the top of page 1 under default ordering | T-12, T-16, T-19 | Covered |
 | R6 | testsummaries `PENDING` rows are presented as `queued` | T-5 | Covered |
 | R7 | Invalid `status_filter` raises a clear validation error listing allowed values | T-9 | Covered |
 | R8 | Queue-API failure degrades gracefully to today's behavior (logged warning) | T-11 | Covered |
@@ -40,7 +40,7 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 | safebreach_mcp_data/tests/test_data_functions.py | — | test code (hosts T-6..T-14) |
 | safebreach_mcp_data/data_server.py | T-15 | — |
 | safebreach_mcp_data/tests/test_data_server.py | — | test code (hosts T-15) |
-| safebreach_mcp_data/tests/test_e2e.py | — | test code (hosts T-16) |
+| safebreach_mcp_data/tests/test_e2e.py | — | test code (hosts T-16, T-19, T-20, T-21) |
 | README.md | — | docs-only, no runtime surface (contract text asserted by T-15 at the tool layer) |
 | CLAUDE.md | — | docs-only, no runtime surface |
 
@@ -73,7 +73,7 @@ Sources: JIRA acceptance criteria (SAF-33511 investigation comment) ∪ PRD §7 
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 15 | 0 | 0 | 1 | 16 |
+| Automatic | 15 | 0 | 0 | 4 | 19 |
 | Manual | 0 | 0 | 1 | 1 | 2 |
 
 ## Environment Requirements (aggregated)
@@ -143,6 +143,9 @@ Capability checklist — answered from the plan's system/e2e tests only:
 | Test | Description | Exec | Aspect | Passes after | Repo | Environment |
 |------|-------------|------|--------|--------------|------|-------------|
 | T-16 | A really-queued test on a saturated console appears in get_tests as 'queued' and disappears after cancel | Automatic | regression, API-contract | Phase 5 | safebreach_mcp_data | console environment (Validate) |
+| T-19 | Multiple queued tests carry ordered queue positions and sane queued_time, newest submission first | Automatic | API-contract | Phase 5 | safebreach_mcp_data | console environment (Validate) |
+| T-20 | A queued test transitioning into a freed slot appears exactly once during the live handover | Automatic | regression | Phase 5 | safebreach_mcp_data | console environment (Validate) |
+| T-21 | Status filters behave correctly on a saturated console (queued excluded from terminal/running views) | Automatic | regression, API-contract | Phase 5 | safebreach_mcp_data | console environment (Validate) |
 | T-18 | The full new queue-then-monitor workflow walked through a real MCP client session | Manual | progression | Final | — | console environment (Validate) |
 
 ### T-1 — Queue snapshot parsing
@@ -458,6 +461,83 @@ Capability checklist — answered from the plan's system/e2e tests only:
 - Environment needs: console environment (Validate) — existing pentest01; `pentest01_apitoken` +
   `E2E_CONSOLE=pentest01` in env; ≥1 connected simulator.
 
+### T-19 — Live multi-queue ordering, positions, and queued_time sanity
+
+- Description: Proves that with several genuinely queued tests, `get_tests` presents them
+  newest-submission-first with consecutive 1-based queue positions and a `queued_time` that
+  matches the real submission wall-clock — the fields agents will use for triage.
+- Status: Active
+- Passes after: Phase 5
+- Level: e2e
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: The `queue[]` array order being the authoritative queue order is a PRD §10 assumption
+  verified only with a single pending entry so far; multi-entry ordering and the planRunId-prefix
+  timestamp derivation are unproven live.
+- Risk source: PRD §10
+- Verify: On pentest01, after saturating validate slots (as T-16), submit TWO additional overflow
+  quick-run tests, recording each submission wall-clock; call `sb_get_tests()` and
+  `sb_get_tests(status_filter='queued')`; cancel everything in a finally block.
+- Expected: Both overflow planRunIds are present with `status='queued'`; their relative order on
+  page 0 is newest-submission-first; their `queue_position` values are distinct, consecutive where
+  no foreign entries interleave, and consistent with the orchestrator `queue[]` order; each
+  `queued_time` is within ±60 s of its recorded submission wall-clock; after cancellation both are
+  gone from the 'queued' view.
+- Evidence required: pytest run output (command log) including asserted planRunIds, positions, and
+  timestamp deltas.
+- Automation lives in: planned: safebreach_mcp_data/tests/test_e2e.py
+- Environment needs: console environment (Validate) — existing pentest01; ≥1 connected simulator.
+
+### T-20 — Live queue→slot transition dedupe
+
+- Description: Proves the consistency-window guarantee (R4) against the real platform: while a
+  queued test is being promoted into a freed slot, `get_tests` never shows it twice and never
+  loses it.
+- Status: Active
+- Passes after: Phase 5
+- Level: e2e
+- Execution: Automatic
+- Aspect: regression
+- Risk: The 10–15 s orchestrator/data-API consistency lag is real (documented in
+  queue_state.py); the unit-level dedupe (T-7) mocks it — only a live transition proves the merge
+  window has no duplicate/absent frames.
+- Risk source: PRD §10
+- Verify: On pentest01 with slots saturated and one overflow test queued (as T-16): cancel ONE
+  slot-occupying probe test to free a slot; poll `sb_get_tests()` every ~2 s for up to 60 s while
+  the queued test is promoted; for every poll frame, count rows whose `test_id` equals the
+  formerly-queued planRunId; stop once its status is no longer 'queued'; cancel everything in a
+  finally block.
+- Expected: In every polled frame the planRunId appears exactly once (never zero while the test is
+  live, never twice); its status transitions monotonically from 'queued' to a
+  running/terminal-family status; no frame shows it with a duplicate row.
+- Evidence required: pytest run output (command log) including the per-frame status sequence.
+- Automation lives in: planned: safebreach_mcp_data/tests/test_e2e.py
+- Environment needs: console environment (Validate) — existing pentest01; ≥1 connected simulator.
+
+### T-21 — Live filter matrix on a saturated console
+
+- Description: Proves the status filters stay mutually consistent when queued tests exist for
+  real: queued rows show up only under the no-filter and 'queued' views, never under terminal or
+  'running' views.
+- Status: Active
+- Passes after: Phase 5
+- Level: e2e
+- Execution: Automatic
+- Aspect: regression, API-contract
+- Risk: Client-side 'queued' filtering + server-side terminal filtering are different code paths;
+  only a live matrix proves they partition the same reality without overlap or loss.
+- Risk source: reviewer input (gate)
+- Verify: On pentest01 with slots saturated and ≥1 overflow test queued (as T-16): call
+  `sb_get_tests` with `status_filter='completed'`, `'running'`, `'queued'`, and no filter; record
+  the queued planRunId's membership in each result; cancel everything in a finally block.
+- Expected: The queued planRunId appears in the no-filter and 'queued' results only; the
+  'completed' result contains no row with `status='queued'` at all; the 'running' result contains
+  the slot-occupying probe planRunIds but not the queued one; totals of the no-filter view ≥
+  totals of each filtered view.
+- Evidence required: pytest run output (command log) including the membership matrix.
+- Automation lives in: planned: safebreach_mcp_data/tests/test_e2e.py
+- Environment needs: console environment (Validate) — existing pentest01; ≥1 connected simulator.
+
 ### T-17 — Manual regression: existing get_tests behaviors through a real MCP client
 
 - Description: Proves the change broke nothing for today's users — the existing `get_tests`
@@ -524,7 +604,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 2 | T-3, T-4, T-5 | T-1..T-5 |
 | Phase 3 | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-13, T-14 | T-1..T-14 |
 | Phase 4 | T-15 | T-1..T-15 |
-| Phase 5 | T-16 | T-1..T-16 |
+| Phase 5 | T-16, T-19, T-20, T-21 | T-1..T-16, T-19, T-20, T-21 |
 | Final / E2E | T-17, T-18 | all |
 
 ## Sign-off
@@ -547,3 +627,4 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | 2026-07-28 11:08 | Test plan created from PRD v1 |
 | 2026-07-28 11:15 | Validator run: 1 finding — no hosted CI regression gate; recorded as user-accepted gap |
 | 2026-07-28 11:18 | Dev review recorded (Yossi Attas); Status stays Draft until QA review is recorded |
+| 2026-07-28 11:30 | Densified E2E section per reviewer feedback: added T-19 (multi-queue ordering/positions/queued_time), T-20 (live queue→slot transition dedupe), T-21 (filter matrix on saturated console) |
