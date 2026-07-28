@@ -8,8 +8,8 @@
 |-------|-------|
 | Status | Draft (In Sync with PRD v1) |
 | Offering / surface | Validate (MCP data server reading console orchestrator + data APIs) |
-| Dev review | — |
-| QA review | — |
+| Dev review | Yossi Attas — 2026-07-28 |
+| QA review | — (pending) |
 
 ## Requirements Traceability
 
@@ -546,3 +546,4 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 |------|--------|
 | 2026-07-28 11:08 | Test plan created from PRD v1 |
 | 2026-07-28 11:15 | Validator run: 1 finding — no hosted CI regression gate; recorded as user-accepted gap |
+| 2026-07-28 11:18 | Dev review recorded (Yossi Attas); Status stays Draft until QA review is recorded |
