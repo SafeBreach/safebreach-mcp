@@ -32,6 +32,43 @@ class TestSafeBreachPlaybookServer:
         assert server.mcp is not None
 
 
+class TestExposedTagTools:
+    """Guard the tag surface the playbook server advertises.
+
+    Tag mutation is unsupported backend-side, so the write tools must not be registered.
+    The read-only tag tools must stay registered.
+    """
+
+    WITHDRAWN_WRITE_TOOLS = [
+        "add_playbook_attack_tag",
+        "remove_playbook_attack_tag",
+        "rename_playbook_attack_tag",
+        "bulk_add_playbook_attack_tags",
+        "bulk_remove_playbook_attack_tags",
+        "bulk_rename_playbook_attack_tag",
+    ]
+
+    EXPECTED_TOOLS = [
+        "get_playbook_attacks",
+        "get_playbook_attack_details",
+        "get_playbook_attacks_by_tags",
+        "get_playbook_attack_tags",
+    ]
+
+    def _registered_tool_names(self):
+        return set(SafeBreachPlaybookServer().mcp._tool_manager._tools.keys())
+
+    @pytest.mark.parametrize("tool_name", WITHDRAWN_WRITE_TOOLS)
+    def test_tag_write_tool_not_registered(self, tool_name):
+        """No tag write tool is advertised to MCP clients."""
+        assert tool_name not in self._registered_tool_names()
+
+    @pytest.mark.parametrize("tool_name", EXPECTED_TOOLS)
+    def test_expected_tool_registered(self, tool_name):
+        """The read-only tools, including both tag read tools, stay advertised."""
+        assert tool_name in self._registered_tool_names()
+
+
 class TestParseExternalConfig:
     """Test the parse_external_config function."""
     
