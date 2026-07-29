@@ -261,6 +261,36 @@ Deliberately **not** a strict set-equality assertion: equality would break the m
 playbook tool is added, while presence+absence covers both real risks (over-deletion and partial
 withdrawal) without that brittleness.
 
+### 7.2b Live E2E verification — DONE (2026-07-28)
+
+Ran `pytest safebreach_mcp_playbook/tests/test_e2e.py -v -rs` against a live internal dev console,
+wired via `SAFEBREACH_ENVS_FILE` + `E2E_CONSOLE`. Console name, URL, account id and instance id are
+deliberately **not** recorded here — this repo is public and `E2E_TESTING.md` requires real
+environment details to stay in private local files. They are in the Jira ticket instead.
+
+**Result: 29 passed, 5 skipped, 0 failed** (309s).
+
+The two outcomes this ticket needed:
+
+| Test | Result | Why it matters |
+|------|--------|----------------|
+| `test_get_tags_on_attack_e2e` | ✅ **PASSED** | The read tool this ticket keeps, exercised against a real console — the one thing unit tests cannot cover |
+| The 4 mutating tag tests | ⏭️ **SKIPPED**, reason `tag mutation unsupported backend-side; write tools withdrawn` | Confirms the per-test skip landed on exactly the intended 4, and did **not** disable the class |
+
+Also passing live: all 4 validation tests (`test_bulk_attack_id_cap_enforced_e2e`,
+`test_bulk_tag_value_cap_enforced_e2e`, `test_add_empty_tag_rejected_e2e`,
+`test_rename_noop_rejected_e2e`) — confirming the Section 3.4 analysis that they raise before any API
+call and therefore did not need skipping.
+
+5th skip is unrelated and pre-existing: `test_cache_behavior_real_api` (`SB_MCP_CACHE_PLAYBOOK` unset).
+
+Console note: the env was stopped and had to be started before the run. Its DNS resolves to the
+instance's **private** address, so it is VPN-reachable only — a bare `curl` from outside the VPN
+returns nothing and can be mistaken for a dead environment.
+
+**Still not covered by this run**: whether a *deployed* build advertises only the 4 tools to clients
+through mcp-proxy. That needs `deploy-mcp-server-under-test`, not a pytest run.
+
 ### 7.3 Verification steps
 
 1. **Tool-list assertion** (the criterion that actually matters). Instantiate the server and confirm
