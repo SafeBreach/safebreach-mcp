@@ -338,6 +338,8 @@ Rate limiting environment variables:
   `queue_position`, and `queued_time` (derived from the planRunId epoch prefix), are pinned to the
   top of page 0 newest-submission-first, and the response includes `queued_tests_count`.
   `status_filter='queued'` filters client-side (the list API has no functional QUEUED status);
+  start_date/end_date filters exclude queued entries (they have no start/end times yet); when the
+  orchestrator queue is paused, a hint warns that queued tests will not start until resumed;
   queue-API failures degrade gracefully to the pre-SAF-33511 response
 4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings.
   **SAF-32018**: for a **non-terminal (running) test**, `simulations_statistics` is refreshed from

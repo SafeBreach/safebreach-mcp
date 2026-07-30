@@ -870,7 +870,7 @@ The MCP server exposes the following tools for SafeBreach operations:
      - `test_type` (string, optional) - Filter by "validate" (BAS), "propagate" (ALM), or None for all
      - `start_date` (int, optional) - Filter tests with end_time >= start_date (Unix timestamp)
      - `end_date` (int, optional) - Filter tests with end_time <= end_date (Unix timestamp)
-     - `status_filter` (string, optional) - Filter by "completed", "canceled", "failed", "running", "queued", or None for all. "queued" returns tests waiting in the orchestrator execution queue (merged live on every call — never cached); queued entries are pinned to the top of the first page and carry `queue_position` and `queued_time` instead of start/end times
+     - `status_filter` (string, optional) - Filter by "completed", "canceled", "failed", "running", "queued", or None for all. "queued" returns tests waiting in the orchestrator execution queue (merged live on every call — never cached); queued entries are pinned to the top of the first page and carry `queue_position` and `queued_time` instead of start/end times (so `start_date`/`end_date` filters exclude them)
      - `name_filter` (string, optional) - Case-insensitive partial match on test name
      - `order_by` (string, default "end_time") - Sort field: "end_time", "start_time", "name", "duration"
      - `order_direction` (string, default "desc") - Sort direction: "desc" or "asc"

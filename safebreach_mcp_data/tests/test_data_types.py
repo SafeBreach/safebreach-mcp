@@ -878,6 +878,23 @@ class TestQueuedTestMapping:
         assert result["queue_position"] == 1
         assert "queued_time" not in result
 
+    def test_test_type_defaults_to_validate(self):
+        """Queued rows must carry test_type so the test_type filter never KeyErrors."""
+        result = get_reduced_queued_test_mapping(self._pending_entry(), 0)
+        assert result["test_type"] == "Breach And Attack Simulation (aka BAS aks Validate)"
+
+    def test_test_type_alm_maps_to_propagate(self):
+        result = get_reduced_queued_test_mapping(
+            self._pending_entry(systemTags=["ALM"]), 0
+        )
+        assert result["test_type"] == "Automated Lateral Movement (aka ALM aka Propagate)"
+
+    def test_test_type_survives_missing_system_tags(self):
+        result = get_reduced_queued_test_mapping(
+            self._pending_entry(systemTags=None), 0
+        )
+        assert result["test_type"] == "Breach And Attack Simulation (aka BAS aks Validate)"
+
 
 class TestPeerBenchmarkTransform:
     """Test suite for the peer benchmark score rename mapping and transform helper (SAF-29415)."""

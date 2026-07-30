@@ -60,8 +60,9 @@ Supports filtering by test type (validate/propagate), time windows, status, name
 Includes tests waiting in the orchestrator execution queue (status 'queued', fetched live on every call, \
 never cached): queued tests are pinned to the top of the first page (newest submission first) and carry \
 queue_position (1-based place in the queue) and queued_time (submission time) instead of start/end times. \
-A test occupying an execution slot but still preparing also reports 'queued'. The response includes \
-queued_tests_count.
+Because queued tests have no start/end times, start_date/end_date filters exclude them — omit date filters \
+to see queued tests. A test occupying an execution slot but still preparing also reports 'queued'. \
+The response includes queued_tests_count.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
 start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
 end_date (epoch ms/seconds or ISO 8601 string),

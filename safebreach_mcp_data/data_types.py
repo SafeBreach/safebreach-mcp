@@ -159,6 +159,8 @@ def get_reduced_queued_test_mapping(pending_entry, queue_index):
     Queued tests have not started, so there are no start/end timestamps; the
     submission time is derived from the planRunId epoch-ms prefix when parseable.
     """
+    system_tags = pending_entry.get('systemTags') or []
+    is_propagate = "ALM" in system_tags
     queued_test = {
         'test_id': pending_entry.get('planRunId'),
         'name': pending_entry.get('name'),
@@ -167,6 +169,7 @@ def get_reduced_queued_test_mapping(pending_entry, queue_index):
         'priority': pending_entry.get('priority'),
         'ran_from': pending_entry.get('ranFrom'),
         'ran_by_user_id': pending_entry.get('ranBy'),
+        'test_type': "Automated Lateral Movement (aka ALM aka Propagate)" if is_propagate else "Breach And Attack Simulation (aka BAS aks Validate)",
     }
 
     plan_run_id = str(pending_entry.get('planRunId') or '')

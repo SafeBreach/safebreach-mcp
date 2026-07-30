@@ -4699,3 +4699,58 @@ class TestQueuedTestsMerge:
         assert second["queued_tests_count"] == 2
         queued_ids = {t["test_id"] for t in second["tests_in_page"] if t["status"] == "queued"}
         assert queued_ids == {"1785224437041.30", "1785224437042.31"}
+
+    # Regression — test_type filter must not crash on queued rows and must
+    # classify them by systemTags (queued rows lacked 'test_type' entirely).
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_test_type_filter_with_queued_rows(self, mock_tests, mock_snapshot):
+        alm_pending = self._pending("2000000000000.2", "Queued propagate")
+        alm_pending["systemTags"] = ["ALM"]
+        pending = [
+            self._pending("1000000000000.1", "Queued validate"),
+            alm_pending,
+        ]
+
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = self._snapshot(*pending)
+        validate = sb_get_tests(console="c", test_type="validate")
+        validate_ids = [t["test_id"] for t in validate["tests_in_page"]]
+        assert validate_ids == ["1000000000000.1", "t1"]
+
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = self._snapshot(*pending)
+        propagate = sb_get_tests(console="c", test_type="propagate")
+        propagate_ids = [t["test_id"] for t in propagate["tests_in_page"]]
+        assert propagate_ids == ["2000000000000.2"]
+
+    # Paused queue — hint must warn that queued tests will not start
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_paused_queue_hint(self, mock_tests, mock_snapshot):
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = {
+            "pending": [self._pending("1785224437040.28", "Queued A")],
+            "busy_plan_run_ids": set(),
+            "is_paused": True,
+        }
+
+        result = sb_get_tests(console="c")
+
+        hint = result.get("hint_to_agent") or ""
+        assert "PAUSED" in hint
+        assert "will not start" in hint
+
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions._get_all_tests_from_cache_or_api')
+    def test_paused_queue_without_queued_rows_has_no_paused_hint(
+        self, mock_tests, mock_snapshot
+    ):
+        mock_tests.return_value = [self._test_row("t1", "completed", 2000)]
+        mock_snapshot.return_value = {
+            "pending": [], "busy_plan_run_ids": set(), "is_paused": True,
+        }
+
+        result = sb_get_tests(console="c")
+
+        assert "PAUSED" not in (result.get("hint_to_agent") or "")

@@ -155,8 +155,10 @@ def sb_get_tests(
         # FRESH queue snapshot whenever the requested status could match a
         # non-terminal test; terminal filters skip the extra call entirely.
         queued_tests: List[Dict[str, Any]] = []
+        queue_is_paused = False
         if normalized_status in (None, 'queued', 'running'):
             snapshot = get_orchestrator_queue_snapshot(console)
+            queue_is_paused = snapshot.get('is_paused', False)
             queued_tests = [
                 get_reduced_queued_test_mapping(entry, index)
                 for index, entry in enumerate(snapshot.get('pending', []))
@@ -255,7 +257,14 @@ def sb_get_tests(
             "simulation statistics yet. Use manage_test to cancel a queued test, or "
             "get_test_details once it starts running."
         ) if queued_tests_count else None
-        combined_hint = " ".join(h for h in (pagination_hint, queued_hint, running_hint) if h) or None
+        # SAF-33511: a paused queue means queued tests will not start until resumed.
+        paused_hint = (
+            "NOTE: the orchestrator queue is currently PAUSED — queued tests will not start "
+            "until the queue is resumed."
+        ) if queue_is_paused and queued_tests_count else None
+        combined_hint = " ".join(
+            h for h in (pagination_hint, queued_hint, paused_hint, running_hint) if h
+        ) or None
 
         return {
             "page_number": page_number,
