@@ -330,7 +330,17 @@ Rate limiting environment variables:
   (empty for custom). Full payload preserved for future queue API integration.
 
 **Data Server (Port 8001):**
-3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
+3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering.
+  **SAF-33511**: also returns tests waiting in the orchestrator execution queue — the testsummaries
+  API only covers slot-active and terminal tests, so a fresh (never-cached) orchestrator queue
+  snapshot is merged on every non-terminal-filter call, deduplicated by planRunId. Queued entries
+  have `status='queued'` (slotted-but-preparing PENDING rows are normalized to 'queued' too),
+  `queue_position`, and `queued_time` (derived from the planRunId epoch prefix), are pinned to the
+  top of page 0 newest-submission-first, and the response includes `queued_tests_count`.
+  `status_filter='queued'` filters client-side (the list API has no functional QUEUED status);
+  start_date/end_date filters exclude queued entries (they have no start/end times yet); when the
+  orchestrator queue is paused, a hint warns that queued tests will not start until resumed;
+  queue-API failures degrade gracefully to the pre-SAF-33511 response
 4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings.
   **SAF-32018**: for a **non-terminal (running) test**, `simulations_statistics` is refreshed from
   a **fresh single-test `testsummaries/{id}` call** instead of the (up-to-30-min) cached test-list
@@ -483,7 +493,11 @@ The `get_console_simulators`, `get_tests`, and `get_test_simulations` functions 
 **Enhanced Test History Filtering (`get_tests`):**
 - **Test Type**: Filter by "validate" (BAS tests) or "propagate" (ALM tests)
 - **Time Windows**: Filter by start/end dates (epoch timestamps or ISO 8601 strings, e.g., '2026-03-01T00:00:00Z')
-- **Status**: Filter by "completed", "canceled", "failed", "running"
+- **Status**: Filter by "completed", "canceled", "failed", "running", "queued" (SAF-33511: "queued"
+  covers tests waiting in the orchestrator execution queue — merged live from the orchestrator
+  queue API on every call, never cached — plus slotted-but-preparing tests; queued entries are
+  pinned to the top of the first page with `queue_position` and `queued_time` fields, and the
+  response carries `queued_tests_count`)
 - **Name Patterns**: Case-insensitive partial matching on test names
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 

@@ -18,8 +18,10 @@ from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.suggestions import get_suggestions_for_collection
 from safebreach_mcp_core.datetime_utils import convert_epoch_to_datetime
+from safebreach_mcp_core.queue_state import get_orchestrator_queue_snapshot
 from .data_types import (
     get_reduced_test_summary_mapping,
+    get_reduced_queued_test_mapping,
     get_reduced_simulation_result_entity,
     get_full_simulation_result_entity,
     build_simulation_steps_by_node,
@@ -127,7 +129,14 @@ def sb_get_tests(
     valid_order_direction = ['asc', 'desc']
     if order_direction not in valid_order_direction:
         raise ValueError(f"Invalid order_direction parameter '{order_direction}'. Valid values are: {', '.join(valid_order_direction)}")
-    
+
+    # Validate status_filter parameter (SAF-33511)
+    valid_status_filters = ['completed', 'canceled', 'failed', 'running', 'queued']
+    if status_filter is not None and (
+        not isinstance(status_filter, str) or status_filter.lower() not in valid_status_filters
+    ):
+        raise ValueError(f"Invalid status_filter parameter '{status_filter}'. Valid values are: {', '.join(valid_status_filters)}")
+
     # Validate date range - start_date should be before end_date
     if start_date is not None and end_date is not None and start_date > end_date:
         raise ValueError(f"Invalid date range: start_date ({start_date}) must be before or equal to end_date ({end_date})")
@@ -136,8 +145,30 @@ def sb_get_tests(
         # Get all tests from cache or API
         normalized_status = status_filter.lower() if isinstance(status_filter, str) else None
         use_cache = normalized_status != 'running'  # Don't use cache when running tests are requested
-        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache, status_filter=normalized_status)
-        
+        # SAF-33511: the testsummaries list API has no functional QUEUED status —
+        # queued tests are filtered client-side from the merged result instead.
+        server_status = None if normalized_status == 'queued' else normalized_status
+        all_tests = _get_all_tests_from_cache_or_api(console, use_cache=use_cache, status_filter=server_status)
+
+        # SAF-33511: tests waiting in the orchestrator queue never appear in
+        # testsummaries (it only covers slot-active and terminal tests). Merge a
+        # FRESH queue snapshot whenever the requested status could match a
+        # non-terminal test; terminal filters skip the extra call entirely.
+        queued_tests: List[Dict[str, Any]] = []
+        queue_is_paused = False
+        if normalized_status in (None, 'queued', 'running'):
+            snapshot = get_orchestrator_queue_snapshot(console)
+            queue_is_paused = snapshot.get('is_paused', False)
+            queued_tests = [
+                get_reduced_queued_test_mapping(entry, index)
+                for index, entry in enumerate(snapshot.get('pending', []))
+            ]
+            if queued_tests:
+                pending_ids = {t['test_id'] for t in queued_tests}
+                # Dedupe on the queue->slot transition window: fresh queue data wins.
+                all_tests = [t for t in all_tests if t.get('test_id') not in pending_ids]
+            all_tests = queued_tests + all_tests
+
         # Enrich with launched_by before filtering (best-effort — SAF-29972)
         from safebreach_mcp_core.user_lookup import get_user_name
         for test in all_tests:
@@ -154,14 +185,20 @@ def sb_get_tests(
             name_filter=name_filter,
             launched_by_filter=launched_by_filter,
         )
-        
-        # Apply ordering
-        ordered_tests = _apply_ordering(
-            filtered_tests,
+
+        # Apply ordering. SAF-33511: queued tests have no timestamps and would sink
+        # to the bottom of any time ordering — pin them above everything else,
+        # newest submission first, and order the rest as requested.
+        queued_rows = [t for t in filtered_tests if t.get('status') == 'queued']
+        other_rows = [t for t in filtered_tests if t.get('status') != 'queued']
+        queued_rows.sort(key=lambda t: t.get('queued_time', float('-inf')), reverse=True)
+        ordered_tests = queued_rows + _apply_ordering(
+            other_rows,
             order_by=order_by,
             order_direction=order_direction
         )
-        
+        queued_tests_count = len(queued_rows)
+
         # Calculate pagination info
         total_tests = len(ordered_tests)
         total_pages = (total_tests + PAGE_SIZE - 1) // PAGE_SIZE
@@ -201,7 +238,8 @@ def sb_get_tests(
         # is intentionally NOT done here (would require paging every running test).
         terminal_statuses = {'completed', 'canceled', 'failed'}
         running_in_page = any(
-            (t.get('status', '') or '').lower() not in terminal_statuses for t in page_tests
+            (t.get('status', '') or '').lower() not in terminal_statuses | {'queued'}
+            for t in page_tests
         )
         pagination_hint = (
             f"You can scan next page by specifying page_number={page_number + 1}"
@@ -212,12 +250,27 @@ def sb_get_tests(
             "periodically-updated summary and may lag the live results. For live counts call "
             "get_test_details (live for running tests) or get_simulations with a status_filter."
         ) if running_in_page else None
-        combined_hint = " ".join(h for h in (pagination_hint, running_hint) if h) or None
+        # SAF-33511: queued rows come live from the orchestrator queue.
+        queued_hint = (
+            f"{queued_tests_count} test(s) are waiting in the orchestrator execution queue "
+            "(status 'queued'); this is point-in-time state fetched live and has no timestamps or "
+            "simulation statistics yet. Use manage_test to cancel a queued test, or "
+            "get_test_details once it starts running."
+        ) if queued_tests_count else None
+        # SAF-33511: a paused queue means queued tests will not start until resumed.
+        paused_hint = (
+            "NOTE: the orchestrator queue is currently PAUSED — queued tests will not start "
+            "until the queue is resumed."
+        ) if queue_is_paused and queued_tests_count else None
+        combined_hint = " ".join(
+            h for h in (pagination_hint, queued_hint, paused_hint, running_hint) if h
+        ) or None
 
         return {
             "page_number": page_number,
             "total_pages": total_pages,
             "total_tests": total_tests,
+            "queued_tests_count": queued_tests_count,
             "tests_in_page": page_tests,
             "applied_filters": applied_filters,
             "hint_to_agent": combined_hint

@@ -228,3 +228,27 @@ class TestSimulationLogsToolWrappers:
         fn = _get_tool_fn("get_paginated_simulation_logs")
         asyncio.run(fn(simulation_id="555"))
         assert mock_fn.call_args.kwargs["console"] == "default"
+
+
+class TestGetTestsToolContract:
+    """SAF-33511: the get_tests tool advertises 'queued' and delegates the filter."""
+
+    def test_tool_registered_and_read_only(self):
+        from safebreach_mcp_data.data_server import data_server
+        tools = asyncio.run(data_server.mcp.list_tools())
+        tool = next(t for t in tools if t.name == "get_tests")
+        assert tool.annotations.readOnlyHint is True
+
+    def test_description_advertises_queued_filter(self):
+        from safebreach_mcp_data.data_server import data_server
+        tools = asyncio.run(data_server.mcp.list_tools())
+        tool = next(t for t in tools if t.name == "get_tests")
+        assert "'queued'" in tool.description
+        assert "queue_position" in tool.description
+
+    @patch('safebreach_mcp_data.data_server.sb_get_tests')
+    def test_delegates_queued_status_filter(self, mock_fn):
+        mock_fn.return_value = {"tests_in_page": []}
+        fn = _get_tool_fn("get_tests")
+        asyncio.run(fn(console="c", status_filter="queued"))
+        assert mock_fn.call_args.kwargs["status_filter"] == "queued"

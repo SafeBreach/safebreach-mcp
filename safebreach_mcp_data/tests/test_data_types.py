@@ -18,6 +18,7 @@ from safebreach_mcp_data.data_types import (
     get_full_simulation_logs_mapping,
     get_simulation_logs_mapping,
     get_reduced_test_summary_mapping,
+    get_reduced_queued_test_mapping,
     _build_node_data,
     build_simulation_steps_by_node,
     get_reduced_peer_benchmark_response,
@@ -811,6 +812,88 @@ class TestTestSummaryMapping:
             self._base_entity(status="RUNNING", logProcessingCompletionPercentage=0)
         )
         assert "test_phase" not in result
+
+    @pytest.mark.parametrize("raw_status", ["PENDING", "pending", "Pending"])
+    def test_pending_status_normalizes_to_queued(self, raw_status):
+        """SAF-33511: a slotted-but-preparing test (PENDING) presents as 'queued'."""
+        result = get_reduced_test_summary_mapping(self._base_entity(status=raw_status))
+        assert result["status"] == "queued"
+        assert "test_phase" not in result
+
+    @pytest.mark.parametrize(
+        "raw_status", ["RUNNING", "COMPLETED", "CANCELED", "FAILED"]
+    )
+    def test_non_pending_statuses_stay_verbatim(self, raw_status):
+        """SAF-33511: normalization touches only PENDING — everything else verbatim."""
+        result = get_reduced_test_summary_mapping(self._base_entity(status=raw_status))
+        assert result["status"] == raw_status
+
+
+class TestQueuedTestMapping:
+    """SAF-33511 — mapping of a trimmed orchestrator queue entry to the reduced test shape."""
+
+    def _pending_entry(self, **overrides):
+        entry = {
+            "planRunId": "1785224437040.28",
+            "name": "Queued Plan A",
+            "priority": "low",
+            "ranBy": 347116670300007,
+            "ranFrom": "API",
+            "systemTags": [],
+            "steps_count": 1,
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_maps_all_queued_fields(self):
+        result = get_reduced_queued_test_mapping(self._pending_entry(), 1)
+
+        assert result["test_id"] == "1785224437040.28"
+        assert result["name"] == "Queued Plan A"
+        assert result["status"] == "queued"
+        assert result["queued_time"] == 1785224437
+        assert result["queue_position"] == 2
+        assert result["priority"] == "low"
+        assert result["ran_from"] == "API"
+
+    def test_no_execution_timestamps_present(self):
+        result = get_reduced_queued_test_mapping(self._pending_entry(), 0)
+
+        assert "start_time" not in result
+        assert "end_time" not in result
+        assert "duration" not in result
+
+    def test_first_position_is_one_based(self):
+        result = get_reduced_queued_test_mapping(self._pending_entry(), 0)
+        assert result["queue_position"] == 1
+
+    @pytest.mark.parametrize("bad_plan_run_id", ["abc.5", "", "nodot", ".28"])
+    def test_malformed_plan_run_id_omits_queued_time(self, bad_plan_run_id):
+        """SAF-33511: defensive prefix parse — mapping survives, queued_time dropped."""
+        result = get_reduced_queued_test_mapping(
+            self._pending_entry(planRunId=bad_plan_run_id), 0
+        )
+
+        assert result["status"] == "queued"
+        assert result["queue_position"] == 1
+        assert "queued_time" not in result
+
+    def test_test_type_defaults_to_validate(self):
+        """Queued rows must carry test_type so the test_type filter never KeyErrors."""
+        result = get_reduced_queued_test_mapping(self._pending_entry(), 0)
+        assert result["test_type"] == "Breach And Attack Simulation (aka BAS aks Validate)"
+
+    def test_test_type_alm_maps_to_propagate(self):
+        result = get_reduced_queued_test_mapping(
+            self._pending_entry(systemTags=["ALM"]), 0
+        )
+        assert result["test_type"] == "Automated Lateral Movement (aka ALM aka Propagate)"
+
+    def test_test_type_survives_missing_system_tags(self):
+        result = get_reduced_queued_test_mapping(
+            self._pending_entry(systemTags=None), 0
+        )
+        assert result["test_type"] == "Breach And Attack Simulation (aka BAS aks Validate)"
 
 
 class TestPeerBenchmarkTransform:

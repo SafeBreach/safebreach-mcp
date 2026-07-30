@@ -61,3 +61,60 @@ def get_orchestrator_test_state(test_id: str, console: str) -> str | None:
             "Orchestrator queue check failed for '%s': %s", test_id, e
         )
         return None
+
+
+_PENDING_ENTRY_FIELDS = ("planRunId", "name", "priority", "ranBy", "ranFrom", "systemTags")
+
+
+def _empty_snapshot() -> dict:
+    return {"pending": [], "busy_plan_run_ids": set(), "is_paused": False}
+
+
+def get_orchestrator_queue_snapshot(console: str) -> dict:
+    """
+    Fetch a fresh snapshot of the orchestrator queue.
+
+    Calls ``GET /api/orch/v4/accounts/{account_id}/queue`` and returns:
+
+    - ``pending``: the ``queue`` entries (tests waiting for an execution slot) in
+      queue order, each trimmed to planRunId, name, priority, ranBy, ranFrom,
+      systemTags plus ``steps_count`` — the heavy ``originalPlan``/``steps``/
+      ``actions``/``edges``/``flowControl`` payloads are dropped.
+    - ``busy_plan_run_ids``: planRunIds occupying active execution slots.
+    - ``is_paused``: the account-level queue pause flag.
+
+    Never cached and never raises: on any error (HTTP, RBAC, malformed body) an
+    empty snapshot is returned and a warning is logged, so callers can merge the
+    result without their own error handling.
+    """
+    try:
+        orch_base = get_api_base_url(console, 'orchestrator')
+        account_id = get_api_account_id(console)
+        queue_url = f"{orch_base}/api/orch/v4/accounts/{account_id}/queue"
+        headers = {"accept": "application/json", **get_auth_headers_for_console(console)}
+
+        response = requests.get(queue_url, headers=headers, timeout=30)
+        check_rbac_response(response)
+        queue_data = response.json().get('data', {})
+
+        pending = []
+        for entry in queue_data.get('queue', []) or []:
+            trimmed = {field: entry.get(field) for field in _PENDING_ENTRY_FIELDS}
+            trimmed['steps_count'] = len(entry.get('steps') or [])
+            pending.append(trimmed)
+
+        busy_plan_run_ids = {
+            slot.get('planRunId')
+            for slot in queue_data.get('slotState', []) or []
+            if slot.get('planRunId')
+        }
+
+        return {
+            "pending": pending,
+            "busy_plan_run_ids": busy_plan_run_ids,
+            "is_paused": bool(queue_data.get('isPause', False)),
+        }
+
+    except Exception as e:
+        logger.warning("Orchestrator queue snapshot failed for '%s': %s", console, e)
+        return _empty_snapshot()
