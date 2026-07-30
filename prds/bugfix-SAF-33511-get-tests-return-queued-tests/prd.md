@@ -27,9 +27,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | Complete |
-| **Last Updated** | 2026-07-28 13:15 |
+| **Last Updated** | 2026-07-30 |
 | **Owner** | Yossi Attas (planning via AI Agent) |
-| **Current Phase** | Complete (5 of 5) |
+| **Current Phase** | Complete (6 of 6 — Phase 6 added post-review) |
 
 ## 2. Solution Description
 
@@ -236,6 +236,7 @@ of scope (see Section 11).
 | Phase 3: Merge/filter/ordering (data) | ✅ Complete | 2026-07-28 | f6b20ee | 9 new tests green; suite 1594 passed |
 | Phase 4: Tool contract & docs | ✅ Complete | 2026-07-28 | a9d091a | 3 contract tests green; suite 1597 passed |
 | Phase 5: E2E queued-flow test | ✅ Complete | 2026-07-28 | 7225955 | Verified live via Helm AI chat on dedicated console saf-33511 (T-22): Helm's get_tests returned 5 queued tests w/ status+position, matching backend exactly. See test-results/phase-5.md |
+| Phase 6: Post-review fixes | ✅ Complete | 2026-07-30 | 9dd2f62 | Review blocker + 2 minors fixed; 6 new regression tests; suite 1603 passed |
 
 ### Phase 1: Queue snapshot (core)
 
@@ -367,6 +368,39 @@ of scope (see Section 11).
 
 - **Git Commit**: `test(data): e2e coverage for queued tests in get_tests (SAF-33511)`
 
+### Phase 6: Post-review fixes
+
+- **Semantic Change**: Address code-review findings on the queued-tests merge (review performed
+  2026-07-29 on the completed branch).
+- **Findings addressed**:
+  1. **BLOCKER — `test_type` filter crash**: queued rows carried no `test_type` key while
+     `_apply_filters` uses direct `t['test_type']` access, so `get_tests(test_type=...)` raised
+     `KeyError` whenever the orchestrator queue was non-empty. The snapshot already preserved
+     `systemTags` for this purpose but the mapping never consumed it. Fixed by deriving
+     `test_type` in `get_reduced_queued_test_mapping` with the same ALM detection used for test
+     summaries. Escaped TDD because no unit test combined queued rows with `test_type`, and the
+     only e2e using `test_type` paired it with a terminal `status_filter` (which skips the merge).
+  2. **Minor — paused queue invisible**: the snapshot's `is_paused` flag was captured but never
+     surfaced. Now, when the queue is paused and queued rows are returned, `hint_to_agent` warns
+     that queued tests will not start until the queue is resumed.
+  3. **Minor — undocumented date-filter interaction**: `start_date`/`end_date` exclude queued
+     tests (no timestamps yet) by design, but the tool description didn't say so. Documented in
+     the tool description, CLAUDE.md, and README.
+- **Tests**: 6 new regression tests (3 mapping-level in `test_data_types.py`, 3 merge-level in
+  `test_data_functions.py`); full non-e2e suite 1603 passed.
+- **Changes**:
+
+  | File | Change |
+  |------|--------|
+  | `safebreach_mcp_data/data_types.py` | `test_type` derived from `systemTags` in queued mapping |
+  | `safebreach_mcp_data/data_functions.py` | `is_paused` captured; paused-queue hint |
+  | `safebreach_mcp_data/data_server.py` | Date-filter exclusion documented in tool description |
+  | `safebreach_mcp_data/tests/test_data_types.py` | 3 regression tests for queued `test_type` |
+  | `safebreach_mcp_data/tests/test_data_functions.py` | `test_type`-filter crash repro + paused-hint tests |
+  | `CLAUDE.md`, `README.md` | Date-filter + paused-queue notes |
+
+- **Git Commit**: `fix(data): address review findings on queued-tests merge (SAF-33511)` (9dd2f62)
+
 ## 10. Risks and Assumptions
 
 **Technical Risks**:
@@ -421,3 +455,5 @@ of scope (see Section 11).
 | 2026-07-28 10:56 | PRD created — initial draft |
 | 2026-07-28 11:45 | Phase 1 complete (955ab96): queue snapshot reader + test_queue_state.py (13 tests) |
 | 2026-07-28 13:15 | Phases 2–4 complete (85b5147/f6b20ee/a9d091a); Phase 5 verified live via Helm on dedicated env saf-33511 (T-22, two-legged). PRD Complete. |
+| 2026-07-30 | Phase 6 added post-review (9dd2f62): test_type blocker fix (queued rows crashed `get_tests(test_type=...)`), paused-queue hint, date-filter docs; 6 regression tests, suite 1603 green. |
+| 2026-07-30 | Branch rider (unrelated to SAF-33511): capped `mcp>=1.10.0,<2.0.0` in pyproject/uv.lock (7a16efa) — mcp SDK 2.x removed `mcp.server.fastmcp`, crashing standalone installs of any release with unbounded metadata. |
