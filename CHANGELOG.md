@@ -5,6 +5,26 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.10.0 — 2026-07-30
+
+### Added
+
+- `get_tests` now includes tests waiting in the orchestrator execution queue: a fresh
+  (never-cached) queue snapshot is merged on every call that could match non-terminal tests.
+  Queued entries carry `status='queued'`, `queue_position` (1-based), and `queued_time`
+  (submission time), are pinned to the top of the first page (newest submission first), and
+  the response includes `queued_tests_count`
+- New `'queued'` value for the `get_tests` `status_filter` — slotted-but-still-preparing
+  (PENDING) tests are normalized to `'queued'` as well; `status_filter` values are now
+  explicitly validated with a clear error listing allowed options
+- `get_tests` warns via `hint_to_agent` when the orchestrator queue is paused (queued tests
+  will not start until the queue is resumed)
+
+### Fixed
+
+- Capped the `mcp` SDK dependency below 2.0 (`mcp>=1.10.0,<2.0.0`) — mcp 2.x removed
+  `mcp.server.fastmcp`, which crashed all servers on first import for fresh standalone installs
+
 ## 1.9.0 — 2026-07-29
 
 ### Changed
