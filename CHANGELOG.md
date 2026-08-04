@@ -5,6 +5,20 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.10.1 — 2026-08-04
+
+### Fixed
+
+- `get_tests` accepts `status_filter='paused'` again. The status allowlist added in 1.10.0 was
+  built from the documented values and omitted `paused`, which had worked by pass-through before —
+  the call then failed immediately with a validation error, regardless of whether a paused test
+  existed. Note that pause state is authoritative in the orchestrator, so if a console's test-list
+  API does not report `paused`, the filter may return no rows rather than an error; that case needs
+  a separate orchestrator-backed fix
+- `get_scenarios` no longer fails outright when a scenario or custom plan has a null `steps` field.
+  Such a record is now listed as a scenario with zero steps (`step_count: 0`) instead of raising a
+  `TypeError` that discarded the entire scenario catalog for the console
+
 ## 1.10.0 — 2026-07-30
 
 ### Added
