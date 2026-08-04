@@ -77,19 +77,21 @@ every call against the console, and the 473 healthy scenarios plus all custom pl
   begin with scenario discovery (notably `run_scenario`) are blocked.
 - **CI**: the scheduled `Automation-staging-sanity` pipeline fails deterministically
   (builds #1862, #1863+) on a response-shape assertion.
-- **Recurrence**: the failure mode is generic. Any future unanticipated upstream shape in any mapped
-  field reproduces the same total outage, so fixing only `steps` leaves the blast radius intact.
+- **Noted, not addressed here**: the same all-or-nothing structure means any *other* unanticipated
+  upstream shape would reproduce a total outage. Deliberately left alone — see the decision log in
+  `prd.md`. Changing that generic path carries its own regression risk and needs its own ticket.
 
 ### Risks & Edge Cases
 
-- **All records malformed** — must not report success with an empty list; needs an explicit signal.
-- **Log noise** — a per-record `except` could emit hundreds of warnings; log per record at `warning`
-  once and keep the aggregate in the response.
-- **Unbounded skip list** — must not dump hundreds of IDs into the response; cap the sample.
+- **Semantics of a stepless scenario** — the fix must not assert that `steps: null` is invalid. It
+  projects the record as a scenario with zero steps and lists it normally, which is correct under
+  either answer to the open data question.
+- **Missing-key path** — the pre-existing `steps`-absent behavior must not regress; covered by test.
 - **Cache interaction** — the scenario/plan caches hold *raw* API payloads, so a malformed record
-  persists for the cache TTL. Behavior must be stable across cached and uncached reads.
-- **Contract stability** — new fields must be additive; the two tests asserting `"error" in result`
-  for genuine API failures must keep passing.
+  persists for the cache TTL. The fix is in the mapper, which runs on every read, so cached and
+  uncached reads behave identically.
+- **Contract stability** — no response-shape or error-handling change; the two tests asserting
+  `"error" in result` for genuine API failures are untouched.
 
 ---
 
@@ -97,7 +99,7 @@ every call against the console, and the 473 healthy scenarios plus all custom pl
 
 ### Summary (Title)
 
-`get_scenarios: null steps crashes the whole listing — make step_count null-safe and isolate per-record mapping failures`
+`get_scenarios: scenario with steps: null crashes the listing — make step_count null-safe`
 
 ### Description
 
@@ -130,16 +132,24 @@ description and comment: 2 of 475 scenarios were created with `steps: null` on 2
 * The agent receives an error string rather than a degraded result, so it cannot route around the
   problem or report partial availability — the tool appears down. Scenario-discovery-dependent flows
   such as `run_scenario` are blocked.
-* The failure mode is generic: fixing only `steps` leaves the same total-outage blast radius for the
-  next unanticipated upstream shape.
 * Whether `steps: null` is a legal scenario shape is a separate data question (assigned to Noam
-  Sagiv). The MCP must not fail this way under either answer, and this fix does not depend on it.
+  Sagiv). The fix does not take a position on it: a stepless record is projected as a scenario with
+  zero steps and listed normally, which is correct under either answer.
+
+### Fix
+
+* Null-safe extraction in both mappers: `scenario.get("steps") or []` instead of
+  `scenario.get("steps", [])`. The record then maps cleanly and appears in the listing with
+  `step_count: 0` — not skipped, not flagged, not an error.
+* No change to `sb_get_scenarios`, its error handling, or the response shape. The broader
+  all-or-nothing structure of that function is noted but deliberately left alone: changing a generic
+  path that serves every scenario and plan listing carries its own regression risk and warrants its
+  own ticket rather than riding along on a two-line bugfix.
 
 ### Affected Areas
 
 * safebreach-mcp: `safebreach_mcp_config/config_types.py` (`get_reduced_scenario_mapping`,
-  `get_reduced_plan_mapping`)
-* safebreach-mcp: `safebreach_mcp_config/config_functions.py` (`sb_get_scenarios`)
+  `get_reduced_plan_mapping`) — the only file changed
 ```
 
 ### Acceptance Criteria
@@ -147,14 +157,10 @@ description and comment: 2 of 475 scenarios were created with `steps: null` on 2
 ```markdown
 * `get_reduced_scenario_mapping` and `get_reduced_plan_mapping` return `step_count: 0` for a record
   whose `steps` key is present with value `null`, and do not raise.
-* `get_scenarios` returns the healthy records when one or more records cannot be mapped, instead of
-  failing the whole call.
-* The response reports how many records were skipped, and `hint_to_agent` states the count so the
-  agent can disclose partial results to the user.
-* When every record fails to map, the response makes that explicit rather than reporting an empty
-  but successful listing.
-* Genuine global failures (auth, network, RBAC) still surface as they do today — the existing
-  `{"error": ...}` contract and the tests asserting it are unchanged.
+* A scenario with `steps: null` is RETURNED in the get_scenarios listing (step_count 0), not skipped,
+  flagged, or treated as an error — a stepless scenario is projected as a scenario with zero steps.
+* The pre-existing missing-`steps`-key path is unchanged.
+* No change to the get_scenarios response shape, its error handling, or its tool description.
 * Regression test reproducing the exact reported payload (`"steps": null`) fails before the fix and
   passes after.
 * The full existing suite passes.
