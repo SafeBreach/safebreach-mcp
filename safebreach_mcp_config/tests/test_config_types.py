@@ -344,6 +344,43 @@ class TestGetReducedScenarioMapping:
         result = get_reduced_scenario_mapping(scenario, sample_categories_map)
         assert result["category_names"] == ["Known Threats Series"]
 
+    # T-1 (SAF-34228) — `steps` present with value null. `.get("steps", [])` returns None
+    # (the default applies only to a MISSING key), so len() raised TypeError and took down
+    # the whole get_scenarios listing.
+    def test_null_steps_yields_zero_step_count(self, sample_categories_map):
+        scenario = {
+            "id": "278b6968-676e-4940-bbd2-59c933437238",
+            "name": "Adversary Reconnaissance",
+            "description": None,
+            "createdBy": "SafeBreach",
+            "recommended": False,
+            "categories": [2],
+            "tags": None,
+            "createdAt": "2026-07-29T06:45:57.000Z",
+            "updatedAt": "2026-07-29T07:19:06.000Z",
+            "steps": None,
+        }
+        result = get_reduced_scenario_mapping(scenario, sample_categories_map)
+        assert result["step_count"] == 0
+        assert result["total_attack_count"] == 0
+        assert result["is_ready_to_run"] is False
+
+    # T-3 (SAF-34228) — the pre-existing missing-key path must keep working.
+    def test_absent_steps_key_yields_zero_step_count(self, sample_categories_map):
+        scenario = {
+            "id": "no-steps-key",
+            "name": "No Steps Key",
+            "description": None,
+            "createdBy": "SafeBreach",
+            "recommended": False,
+            "categories": [2],
+            "tags": None,
+            "createdAt": "2025-01-01T00:00:00.000Z",
+            "updatedAt": "2025-01-01T00:00:00.000Z",
+        }
+        result = get_reduced_scenario_mapping(scenario, sample_categories_map)
+        assert result["step_count"] == 0
+
 
 class TestGetReducedPlanMapping:
     """Test the get_reduced_plan_mapping function for custom plans."""
@@ -418,6 +455,21 @@ class TestGetReducedPlanMapping:
     def test_is_ready_to_run_for_plans(self, sample_plan):
         result = get_reduced_plan_mapping(sample_plan)
         assert result["is_ready_to_run"] is True
+
+    # T-2 (SAF-34228) — same null-vs-missing defect on the custom-plan mapper. Plans are
+    # user-editable, so a null steps field is at least as reachable here as on OOB scenarios.
+    def test_null_steps_yields_zero_step_count(self, sample_plan):
+        sample_plan["steps"] = None
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["step_count"] == 0
+        assert result["total_attack_count"] == 0
+        assert result["is_ready_to_run"] is False
+
+    # T-3 (SAF-34228) — missing-key path unchanged.
+    def test_absent_steps_key_yields_zero_step_count(self, sample_plan):
+        del sample_plan["steps"]
+        result = get_reduced_plan_mapping(sample_plan)
+        assert result["step_count"] == 0
 
 
 class TestFilterScenariosByCriteria:

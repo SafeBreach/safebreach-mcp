@@ -194,8 +194,10 @@ def get_reduced_scenario_mapping(
         "recommended": scenario.get("recommended", False),
         "category_names": category_names,
         "tags": scenario.get("tags") or [],
-        "step_count": len(scenario.get("steps", [])),
-        "total_attack_count": _compute_total_attack_count(scenario.get("steps", [])),
+        # SAF-34228: `or []` not `.get(k, [])` — the default applies only to a MISSING key, so a
+        # record with "steps": null yields None and len() raises, failing the whole listing.
+        "step_count": len(scenario.get("steps") or []),
+        "total_attack_count": _compute_total_attack_count(scenario.get("steps") or []),
         "is_ready_to_run": compute_is_ready_to_run(scenario),
         "createdAt": scenario.get("createdAt"),
         "updatedAt": scenario.get("updatedAt"),
@@ -227,8 +229,9 @@ def get_reduced_plan_mapping(
         "recommended": False,  # Custom plans don't have the recommended concept
         "category_names": [],  # Custom plans don't have categories
         "tags": plan.get("tags") or [],
-        "step_count": len(plan.get("steps", [])),
-        "total_attack_count": _compute_total_attack_count(plan.get("steps", [])),
+        # SAF-34228: see get_reduced_scenario_mapping — null-safe, not just missing-safe.
+        "step_count": len(plan.get("steps") or []),
+        "total_attack_count": _compute_total_attack_count(plan.get("steps") or []),
         "is_ready_to_run": compute_is_ready_to_run(plan),
         "createdAt": plan.get("createdAt"),
         "updatedAt": plan.get("updatedAt"),
