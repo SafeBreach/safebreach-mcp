@@ -66,7 +66,7 @@ The response includes queued_tests_count.
 Parameters: console (required), page_number (default 0), test_type ('validate'/'propagate'/None), \
 start_date (epoch ms/seconds or ISO 8601 string, e.g. '2026-03-01T00:00:00Z'), \
 end_date (epoch ms/seconds or ISO 8601 string),
-status_filter ('completed'/'canceled'/'failed'/'running'/'queued'/None), name_filter (partial name match), \
+status_filter ('completed'/'canceled'/'failed'/'running'/'paused'/'queued'/None), name_filter (partial name match), \
 launched_by_filter (partial username match, case-insensitive — e.g. 'sbadmin'), \
 order_by ('end_time'/'start_time'/'name'/'duration'), order_direction ('desc'/'asc').
 Accepts both epoch timestamps and ISO 8601 strings for date parameters.

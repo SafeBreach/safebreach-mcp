@@ -493,7 +493,7 @@ The `get_console_simulators`, `get_tests`, and `get_test_simulations` functions 
 **Enhanced Test History Filtering (`get_tests`):**
 - **Test Type**: Filter by "validate" (BAS tests) or "propagate" (ALM tests)
 - **Time Windows**: Filter by start/end dates (epoch timestamps or ISO 8601 strings, e.g., '2026-03-01T00:00:00Z')
-- **Status**: Filter by "completed", "canceled", "failed", "running", "queued" (SAF-33511: "queued"
+- **Status**: Filter by "completed", "canceled", "failed", "running", "paused", "queued" (SAF-33511: "queued"
   covers tests waiting in the orchestrator execution queue — merged live from the orchestrator
   queue API on every call, never cached — plus slotted-but-preparing tests; queued entries are
   pinned to the top of the first page with `queue_position` and `queued_time` fields, and the

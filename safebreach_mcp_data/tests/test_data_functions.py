@@ -4573,8 +4573,35 @@ class TestQueuedTestsMerge:
         with pytest.raises(ValueError) as exc_info:
             sb_get_tests(console="c", status_filter="bogus")
         message = str(exc_info.value)
-        for value in ("completed", "canceled", "failed", "running", "queued"):
+        for value in ("completed", "canceled", "failed", "running", "paused", "queued"):
             assert value in message
+
+    # Regression: the SAF-33511 allowlist dropped 'paused', which the pre-allowlist
+    # pass-through accepted. Customers pause tests outside business hours and filter
+    # for them; rejecting the value made those tests undetectable.
+    @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')
+    @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
+    @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
+    @patch('safebreach_mcp_data.data_functions.requests.get')
+    def test_paused_status_filter_is_accepted(
+        self, mock_get, mock_base, mock_acct, mock_snapshot
+    ):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [
+            {"planName": "Paused overnight", "planRunId": "p1", "status": "paused",
+             "startTime": 1000, "systemTags": [], "finalStatus": {}},
+            {"planName": "Running", "planRunId": "r1", "status": "running",
+             "startTime": 1000, "systemTags": [], "finalStatus": {}},
+        ]
+        mock_get.return_value = mock_response
+        mock_snapshot.return_value = self._empty_snapshot()
+
+        result = sb_get_tests(console="c", status_filter="paused")
+
+        assert [t["test_id"] for t in result["tests_in_page"]] == ["p1"]
+        assert result["applied_filters"]["status_filter"] == "paused"
 
     # T-10 — terminal filters skip the snapshot
     @patch('safebreach_mcp_data.data_functions.get_orchestrator_queue_snapshot')

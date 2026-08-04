@@ -101,7 +101,7 @@ def sb_get_tests(
         test_type: Filter by test type ('validate', 'propagate')
         start_date: Start date filter (Unix timestamp)
         end_date: End date filter (Unix timestamp)
-        status_filter: Filter by status ('completed', 'canceled', 'failed', 'running')
+        status_filter: Filter by status ('completed', 'canceled', 'failed', 'running', 'paused', 'queued')
         name_filter: Filter by test name (partial match)
         launched_by_filter: Filter by launcher username (partial match, case-insensitive)
         order_by: Field to order by ('end_time', 'start_time', 'name', 'duration')
@@ -131,7 +131,7 @@ def sb_get_tests(
         raise ValueError(f"Invalid order_direction parameter '{order_direction}'. Valid values are: {', '.join(valid_order_direction)}")
 
     # Validate status_filter parameter (SAF-33511)
-    valid_status_filters = ['completed', 'canceled', 'failed', 'running', 'queued']
+    valid_status_filters = ['completed', 'canceled', 'failed', 'running', 'paused', 'queued']
     if status_filter is not None and (
         not isinstance(status_filter, str) or status_filter.lower() not in valid_status_filters
     ):
