@@ -188,6 +188,9 @@ class TestQuickRunE2E:
             assert result["status"] == "queued"
             assert result["test_id"]
             assert len(result["step_run_ids"]) > 0
+            assert result["test_name"].startswith("Quick Run - "), (
+                f"SAF-33575: default name must name the attack, got {result['test_name']!r}"
+            )
             test_id = result["test_id"]
             passed = True
             logger.info(

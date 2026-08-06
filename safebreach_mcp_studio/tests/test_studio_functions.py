@@ -10045,14 +10045,39 @@ class TestQuickRunTestName:
     def test_default_test_name_auto_generated(
         self, mock_playbook, mock_stats, mock_queue, mock_limiter
     ):
-        """No test_name → auto-generated default containing 'Quick Run'."""
+        """No test_name → default names the attack (SAF-33575)."""
         mock_stats.return_value = [{"simulationCount": 10}]
         mock_queue.return_value = MOCK_QUEUE_RESPONSE_QUICK_RUN
         sb_quick_run(
             attack_ids="8849", console="test", evaluate=False,
         )
         payload = mock_queue.call_args[0][0]
-        assert "Quick Run" in payload["plan"]["name"]
+        assert payload["plan"]["name"] == (
+            "Quick Run - Transfer of LAPSUS infostealer over HTTP/S"
+        )
+
+
+class TestDefaultQuickRunName:
+    """SAF-33575: default Quick Run name reflects the queued attacks."""
+
+    def test_single_attack_names_it(self):
+        from safebreach_mcp_studio.studio_functions import _default_quick_run_name
+        steps = [{"name": "Lazarus Fake TLS"}]
+        assert _default_quick_run_name(steps) == "Quick Run - Lazarus Fake TLS"
+
+    def test_multiple_attacks_summarise(self):
+        from safebreach_mcp_studio.studio_functions import _default_quick_run_name
+        steps = [{"name": "Lazarus Fake TLS"}, {"name": "RIG kit"}, {"name": "GAMARUE C&C"}]
+        assert _default_quick_run_name(steps) == "Quick Run - Lazarus Fake TLS +2 more"
+
+    def test_unnamed_steps_fall_back_to_count(self):
+        from safebreach_mcp_studio.studio_functions import _default_quick_run_name
+        steps = [{}, {"name": ""}]
+        assert _default_quick_run_name(steps) == "Quick Run (2 attacks)"
+
+    def test_no_steps_falls_back_to_count(self):
+        from safebreach_mcp_studio.studio_functions import _default_quick_run_name
+        assert _default_quick_run_name([]) == "Quick Run (0 attacks)"
 
 
 # ---------------------------------------------------------------------------
