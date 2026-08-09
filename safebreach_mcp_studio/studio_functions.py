@@ -2609,6 +2609,24 @@ def _build_quick_run_steps(parsed_ids, name_map):
     return steps
 
 
+def _default_quick_run_name(steps):
+    """
+    Build the default Quick Run test name from the attacks being queued.
+
+    Args:
+        steps: Step dicts that will actually be queued
+
+    Returns:
+        Name following the Playbook UI convention ("Quick Run - <attack>")
+    """
+    names = [step.get("name") for step in steps if step.get("name")]
+    if not names:
+        return f"Quick Run ({len(steps)} attacks)"
+    if len(names) == 1:
+        return f"Quick Run - {names[0]}"
+    return f"Quick Run - {names[0]} +{len(names) - 1} more"
+
+
 def _apply_quick_run_overrides(steps, overrides, parsed_ids):
     """
     Apply per-attack simulator overrides to constructed steps.
@@ -2783,7 +2801,7 @@ def sb_quick_run(
     actions, edges = _build_linear_dag(steps)
 
     # Build queue payload
-    effective_test_name = test_name or f"Quick Run ({len(steps)} attacks)"
+    effective_test_name = test_name or _default_quick_run_name(steps)
     payload = {
         "plan": {
             "name": effective_test_name,
