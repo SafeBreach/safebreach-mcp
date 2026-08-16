@@ -60,7 +60,7 @@ async def _received_request(
         case _:
             if self._initialization_state != InitializationState.Initialized:
                 # Log the issue but allow the request to proceed
-                logging.warning(f"Received request before initialization was complete: {type(responder.request.root).__name__}")
+                logging.debug(f"Received request before initialization was complete: {type(responder.request.root).__name__}")
                 # Set to initialized state to prevent further warnings
                 self._initialization_state = InitializationState.Initialized
             
