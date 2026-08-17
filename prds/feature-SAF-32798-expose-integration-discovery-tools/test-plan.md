@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft |
+| Status | Signed off (all 39 T-items green; see test-results/manual-e2e.md) |
 | Offering / surface | console (MCP tools over a live SafeBreach console's SIEM API) + repo-harness (unit) |
 
 ## Requirements Traceability
@@ -783,13 +783,13 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 ## Sign-off
 
-- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope
-- [ ] Change Coverage complete — every changed file tested or justified
-- [ ] Regression complete — ≥1 Manual regression test (T-18) + post-ship CI named
-- [ ] Progression evidence — ≥1 Manual progression test (T-19, T-35) walking the new feature
-- [ ] validating-test-plan: RESULT: clean
-- [ ] All tests green (cumulative through Phase 4) — evidence: test-results/<phase-or-date>.md
-- [ ] Accepted gaps listed and approved: none
+- [x] Requirements traceability complete — every R# covered or explicitly out-of-scope
+- [x] Change Coverage complete — every changed file tested or justified
+- [x] Regression complete — Manual regression T-18 PASS + post-ship CI named (safebreach-mcp repo suite)
+- [x] Progression evidence — Manual progression T-19 + T-35 PASS (feature walked through the live product)
+- [x] validating-test-plan: RESULT: clean
+- [x] All tests green (cumulative through Phase 4) — 132 unit + 4 automatic e2e + 7 manual e2e (test-results/manual-e2e.md); cross-server unit 1584 green
+- [x] Accepted gaps listed and approved: none
 
 ## Change Log
 
