@@ -104,10 +104,10 @@ Capability checklist (answered from the plan's system/e2e tests only):
 | T-4  | Redaction force-masks `headers` and `proxyPass` even when not schema-sensitive | security | Phase A | safebreach_mcp_config |
 | T-5  | Redaction fail-safe: unknown connector type never returns unredacted | security | Phase A | safebreach_mcp_config |
 | T-6  | TI transform produces slim id/type/name/enabled | API-contract | Phase A | safebreach_mcp_config |
-| T-7  | `sb_get_integrations` hits catalog endpoint, unwraps result, filters by category, paginates | API-contract | Phase B | safebreach_mcp_config |
-| T-8  | `sb_get_installed_integrations` hits installed endpoint, returns slim, paginates | API-contract | Phase B | safebreach_mcp_config |
+| T-7  | `sb_get_integrations` hits catalog endpoint, unwraps result, applies name/category/vendor/ti_only/vm_only filters + order_by/order_direction, paginates | API-contract | Phase B | safebreach_mcp_config |
+| T-8  | `sb_get_installed_integrations` hits installed endpoint, returns slim, applies name/type/enabled filters + ordering, paginates | API-contract | Phase B | safebreach_mcp_config |
 | T-9  | `sb_get_installed_integration` fetches /config, filters by id, returns redacted; not-found handled | API-contract | Phase B | safebreach_mcp_config |
-| T-10 | `sb_get_ti_integrations` keeps only installed connectors whose catalog `isTiV2` is true | API-contract | Phase B | safebreach_mcp_config |
+| T-10 | `sb_get_ti_integrations` keeps only installed connectors whose catalog `isTiV2` is true, applies name/type/enabled filters + ordering | API-contract | Phase B | safebreach_mcp_config |
 | T-11 | Backend 403 is surfaced as `PermissionError` + `RBAC_DENIED_HINT` | security | Phase B | safebreach_mcp_config |
 | T-12 | Out-of-range `page_number` handled per repo pagination convention | regression | Phase B | safebreach_mcp_config |
 | T-13 | All four tools registered with `readOnlyHint=True`, public names/descriptions/schemas | API-contract | Phase C | safebreach_mcp_config |
@@ -221,32 +221,32 @@ Capability checklist (answered from the plan's system/e2e tests only):
 
 ### T-7 — sb_get_integrations function
 
-- Description: Proves the catalog function calls the right endpoint, unwraps the `{error,result}` envelope, filters by category, and paginates per repo convention.
+- Description: Proves the catalog function calls the right endpoint, unwraps the `{error,result}` envelope, applies the full sibling-consistent filter/order surface, and paginates per repo convention.
 - Status: Active
 - Passes after: Phase B
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: Wrong endpoint/envelope handling returns nothing; broken pagination breaks the contract with sibling tools.
-- Risk source: PRD §9
-- Verify: Mock `get_api_base_url`/`get_api_account_id`/`requests.get` (by import path) returning `{"error":0,"result":<catalog map>}`; call with and without `category_filter` and across pages.
-- Expected: Calls `GET .../config/integrations`; returns paginated catalog entries with `total_pages`/`applied_filters`/`hint_to_agent`; `category` filter narrows results.
+- Risk: Wrong endpoint/envelope handling returns nothing; a filter/order surface thinner than sibling tools breaks consistency; broken pagination breaks the contract.
+- Risk source: PRD §9, §2.0 (filter consistency)
+- Verify: Mock `get_api_base_url`/`get_api_account_id`/`requests.get` (by import path) returning `{"error":0,"result":<catalog map>}`; call with each filter (`name_filter`, `category_filter`, `vendor_filter`, `ti_only`, `vm_only`), with `order_by`/`order_direction`, and across pages.
+- Expected: Calls `GET .../config/integrations`; each `*_filter` narrows results (partial, case-insensitive); `ti_only`/`vm_only` keep only matching entries; `order_by`/`order_direction` reorder deterministically; returns `total_pages`/`applied_filters`/`hint_to_agent`.
 - Evidence required: CI run — green.
 - Automation lives in: planned: `safebreach_mcp_config/tests/test_config_functions.py`
 - Environment needs: none
 
 ### T-8 — sb_get_installed_integrations function
 
-- Description: Proves the installed-list function hits the installed endpoint and returns the slim, paginated list.
+- Description: Proves the installed-list function hits the installed endpoint, returns the slim list, and applies the sibling-consistent filter/order surface.
 - Status: Active
 - Passes after: Phase B
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: Returning raw connectors would leak config; wrong endpoint returns nothing.
-- Risk source: PRD §9
-- Verify: Mock the backend seams returning `{"error":0,"result":[{id,type,name,enabled},...]}`; call across pages.
-- Expected: Calls `GET .../config/integrations/installed`; returns slim entries, paginated, with metadata fields.
+- Risk: Returning raw connectors would leak config; wrong endpoint returns nothing; a thinner filter surface than siblings breaks consistency.
+- Risk source: PRD §9, §2.0
+- Verify: Mock the backend seams returning `{"error":0,"result":[{id,type,name,enabled},...]}`; call with `name_filter`, `type_filter`, `enabled_filter`, `order_by`/`order_direction`, and across pages.
+- Expected: Calls `GET .../config/integrations/installed`; each filter narrows correctly (`enabled_filter` is a bool match); ordering is deterministic; returns slim entries, paginated, with `total_pages`/`applied_filters`/`hint_to_agent`.
 - Evidence required: CI run — green.
 - Automation lives in: planned: `safebreach_mcp_config/tests/test_config_functions.py`
 - Environment needs: none
@@ -261,24 +261,24 @@ Capability checklist (answered from the plan's system/e2e tests only):
 - Aspect: API-contract
 - Risk: Wrong source/filter returns the wrong connector or unredacted data; missing-id must not 500.
 - Risk source: PRD §9
-- Verify: Mock `/config` (`{"error":0,"result":{"connectors":[...]}}`) and the catalog fetch; call with a present id and an absent id.
-- Expected: Present id → the matching connector, redacted (delegates to the T-3/T-4 redaction); absent id → a clear not-found result/`hint_to_agent`, no exception.
+- Verify: Mock `/config` (`{"error":0,"result":{"connectors":[...]}}`) and the catalog fetch; call with a present `integration_id` and an absent one.
+- Expected: Present `integration_id` → the matching connector, redacted (delegates to the T-3/T-4 redaction); absent → a clear not-found result/`hint_to_agent`, no exception. (Param is `integration_id`, not bare `id`, per repo detail-tool convention.)
 - Evidence required: CI run — green.
 - Automation lives in: planned: `safebreach_mcp_config/tests/test_config_functions.py`
 - Environment needs: none
 
 ### T-10 — sb_get_ti_integrations function
 
-- Description: Proves TI derivation keeps only installed connectors whose catalog type has `isTiV2 == true`.
+- Description: Proves TI derivation keeps only installed connectors whose catalog type has `isTiV2 == true`, and applies the sibling-consistent filter/order surface.
 - Status: Active
 - Passes after: Phase B
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: Wrong join could include non-TI connectors or drop real TI feeds.
-- Risk source: PRD §9 (TI misclassification)
-- Verify: Mock installed list (mix of TI and non-TI types) + catalog with `isTiV2` flags; call the function.
-- Expected: Returns only the `isTiV2==true` connectors, slim-shaped, paginated.
+- Risk: Wrong join could include non-TI connectors or drop real TI feeds; a thinner filter surface than siblings breaks consistency.
+- Risk source: PRD §9 (TI misclassification), §2.0
+- Verify: Mock installed list (mix of TI and non-TI types) + catalog with `isTiV2` flags; call with `name_filter`, `type_filter`, `enabled_filter`, `order_by`/`order_direction`, across pages.
+- Expected: Returns only the `isTiV2==true` connectors, slim-shaped; each filter narrows correctly; ordering deterministic; paginated with metadata fields.
 - Evidence required: CI run — green.
 - Automation lives in: planned: `safebreach_mcp_config/tests/test_config_functions.py`
 - Environment needs: none

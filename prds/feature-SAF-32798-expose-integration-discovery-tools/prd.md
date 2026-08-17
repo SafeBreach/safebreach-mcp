@@ -49,6 +49,35 @@ Config-server tool contracts.
 Note: `/config/integrations/installed/{id}` returns **404** (no single-connector GET) — confirmed
 live and by the reporter; the single-connector read is synthesized from `/config`.
 
+### Section 2.0: Tool signatures (consistent with existing Config list/detail tools)
+Filter surface mirrors `get_console_simulators` / `get_scenarios` / `get_playbook_attacks`: `<field>_filter`
+partial/case-insensitive string matches, `<field>_filter` booleans, and `order_by`/`order_direction` on
+every list tool; detail tool takes `<entity>_id` (never bare `id`); `console` first, `page_number` for
+paginated tools. Client-side filtering in `config_types.py` (same as siblings — the SIEM API has no
+query params for these).
+
+```
+get_integrations(console="default", page_number=0,
+    name_filter=None, category_filter=None, vendor_filter=None,
+    ti_only=None, vm_only=None,
+    order_by="name", order_direction="asc")            # order_by: name|type|category|vendor
+
+get_installed_integrations(console="default", page_number=0,
+    name_filter=None, type_filter=None, enabled_filter=None,
+    order_by="name", order_direction="asc")            # order_by: name|type|id|enabled
+
+get_installed_integration(console="default", integration_id=<required>)   # detail tool, no filters
+
+get_ti_integrations(console="default", page_number=0,
+    name_filter=None, type_filter=None, enabled_filter=None,
+    order_by="name", order_direction="asc")            # order_by: name|type|id|enabled
+```
+
+- `name_filter`/`category_filter`/`vendor_filter`/`type_filter`: partial, case-insensitive (repo convention).
+- `ti_only`/`vm_only` (catalog) and `enabled_filter` (installed/TI): `Optional[bool]`, mirroring
+  `critical_only`/`recommended_filter`.
+- Each tool's docstring carries the standard `Parameters:` enumeration line.
+
 ### Section 2.1: Redaction (`get_installed_integration`) — highest-severity requirement
 The SIEM REST endpoints do **not** apply the MCP tools' redaction. Live on pentest01, `/config`
 returns sensitive values as `$PAM:INTERNAL_VAULT:...` vault references, non-sensitive fields as
@@ -150,6 +179,9 @@ through the gateway (canonical pattern) and relay the 403; no backend/gateway ch
 - [ ] Names + conventions consistent with the repo: `get_integrations`, `get_installed_integrations`,
       `get_installed_integration`, `get_ti_integrations`; `page_number`/`PAGE_SIZE=10` pagination with
       `total_pages`/`applied_filters`/`hint_to_agent`; repo-style validation.
+- [ ] Filter surface matches sibling list tools (§2.0): `<field>_filter` partial/case-insensitive
+      string filters, `Optional[bool]` flag filters, and `order_by`/`order_direction` on every list
+      tool; detail tool uses `integration_id` (not bare `id`); each docstring has a `Parameters:` line.
 - [ ] Data fetched via `get_api_base_url(console,'siem')` + `get_api_account_id` +
       `get_auth_headers_for_console` + `check_rbac_response`; envelope `result` unwrapped; legacy
       `SafeBreachAuth` not used.
@@ -246,3 +278,4 @@ conventions exactly.
 | Date | Change |
 |------|--------|
 | 2026-08-17 | Initial PRD from investigation + live pentest01 API research; host=Config, pagination=repo convention, redaction re-implemented in Python. |
+| 2026-08-17 | Added §2.0 explicit tool signatures — full filter/order surface consistent with `get_console_simulators`/`get_scenarios`/`get_playbook_attacks` (`<field>_filter`, bool flags, `order_by`/`order_direction`, `integration_id`). RBAC reframed as ui-server-enforced. |
