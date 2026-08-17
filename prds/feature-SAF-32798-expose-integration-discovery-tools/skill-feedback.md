@@ -76,6 +76,16 @@ mission. Grouped by skill/KB. Severity: 🔴 blocked work · 🟠 cost time · �
   should explicitly require the authored test to capture per-answer screenshots even in `ai/` (or lift a
   screenshot helper to the parent `ai/conftest.py`), so evidence is complete regardless of dir.
 
+## run-helm-tests — provenance assertion for MIGRATION tests (important)
+- 🟠 **A Helm test for a *migrated* tool must assert tool PROVENANCE, not just a correct answer.** Here
+  the SIEM MCP still exposes the same four tools, so "Helm answered correctly" does NOT prove the NEW
+  safebreach-mcp tool ran — the legacy SIEM-MCP copy could have served it (false positive). I only
+  checked this after the user asked. **Fix:** for a migration/dedup case, run-helm-tests should (a) grep
+  the `mcp-proxy` log for the `[<server>]` that handled the `CallToolRequest`, and/or (b) assert a
+  discriminating field in the tool output (here: snake_case `*_in_page`/`applied_filters` vs the TS
+  `installedIntegrations`/`totalCount`). Add "verify which MCP served the call" to Step 5 evidence when
+  the case is a migration. (Verified here: `[configuration]` server + snake_case envelope = ours.)
+
 ## SUCCESS — what worked well (keep)
 - The pattern-library template `test_helm_simulation_search.py` (parent `ai/` dir, data-query) was an
   excellent, copyable model — `AiChatPage` + `claude_judge` + backend cross-check via `Config.data`.

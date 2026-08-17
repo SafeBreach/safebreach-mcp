@@ -24,6 +24,19 @@ safebreach-mcp tools are auto-exposed to Helm; no allowlist change was needed.**
 
 Backend ground truth logged per test (installed list, isTiV2 set, redaction target, 83-type catalog).
 
+## Provenance — the calls hit OUR MCP, not the SIEM MCP (critical for a migration test)
+Because the SIEM MCP (`/api/siem/mcp`) still exposes the same four tools (SAF-32798 migrates away from
+it; SAF-35067 withdraws them), a passing Helm test is only meaningful if the calls hit the NEW
+safebreach-mcp Config server. Verified two ways:
+1. **mcp-proxy log** (`/datadb/logs/sbmcp-proxy.log`): the `[configuration]` server (= `safebreach_mcp_config`,
+   host of the 4 tools) logged `ListToolsRequest` + `CallToolRequest` for each test in BOTH run windows
+   (17:51–17:53 and 17:57–17:58 UTC). The SIEM MCP is a separate service; its calls do not appear here.
+2. **Output envelope**: the tool outputs in the transcript use the NEW repo snake_case pagination shape
+   (`installed_integrations_in_page`, `total_installed_integrations`, `ti_integrations_in_page`,
+   `total_integrations`, `applied_filters`) with ZERO occurrences of the SIEM-MCP shape
+   (`installedIntegrations`/`totalCount`). Only the new tools emit those keys.
+Conclusion: Helm invoked the migrated safebreach-mcp Config-server tools, not the legacy SIEM-MCP copies.
+
 ## Coverage of the 7 Manual e2e T-items
 - **Fully executed via Helm (protocol-level, judged):** T-35, T-36, T-37, T-38.
 - **T-19 (progression / discovery flow):** covered — the four tools were exercised in sequence
