@@ -225,17 +225,20 @@ discovering (pick an id from the installed list at runtime — never hardcode a 
 ## Section 8: Implementation Phases
 
 ### Phase Status Tracking
-Bottom-up TDD order (types → functions → server), tests written **within** each layer per repo
-convention (red → green per phase).
+**Vertical per-tool slices** (Elephant-Carpaccio): each phase delivers ONE tool end-to-end —
+transform → `sb_*` function → registration → its unit tests → its e2e test — so every test gates the
+soonest phase at which it can be green. Within a slice the repo's bottom-up order (types → functions →
+server → tests) still holds. Ordering is dependency-driven: Phase 1 builds the shared
+`_get_catalog_from_cache_or_api` helper (reused by Phases 3 & 4); Phase 3 builds `redact_sensitive_fields`.
 
-| Phase | Description | Changes | Status |
-|-------|-------------|---------|--------|
-| A | `config_types.py`: 4 transforms + `redact_sensitive_fields`, with their unit tests | `config_types.py`, `tests/test_config_types.py` | Not started |
-| B | `config_functions.py`: 4 `sb_*` + `_get_catalog_from_cache_or_api`, with their unit tests | `config_functions.py`, `tests/test_config_functions.py` | Not started |
-| C | `config_server.py`: 4 tool registrations, with registration unit tests | `config_server.py`, `tests/test_config_server.py` | Not started |
-| D | E2E tests against live console (pentest01) | `tests/test_e2e_integrations.py` | Not started |
-| E | Docs | `CLAUDE.md`, `README.md` | Not started |
-| F | PR | — | Not started |
+| Phase | Deliverable (end-to-end) | Changes | Status |
+|-------|--------------------------|---------|--------|
+| Phase 1 | `get_integrations` — catalog fetch helper + `get_integration_catalog_entry` + `sb_get_integrations` (name/category/vendor/ti_only/vm_only filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
+| Phase 2 | `get_installed_integrations` — `get_minimal_installed_integration` + `sb_get_installed_integrations` (name/type/enabled filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
+| Phase 3 | `get_installed_integration` — `redact_sensitive_fields` + `get_installed_integration_detail_view` + `sb_get_installed_integration` (fetch `/config`, filter by `integration_id`, redact) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
+| Phase 4 | `get_ti_integrations` — `get_minimal_ti_integration` + `sb_get_ti_integrations` (isTiV2 derivation, name/type/enabled filters, ordering, pagination) + registration; + cross-tool hardening (403 relay across all four, pagination out-of-range, all-four registration, compose, whole-server regression, full-flow progression) | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
+| Phase 5 | Docs | `CLAUDE.md`, `README.md` | Not started |
+| Phase 6 | PR | — | Not started |
 
 ## Section 9: Risks and Assumptions
 
