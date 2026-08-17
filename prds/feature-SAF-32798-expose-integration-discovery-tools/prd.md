@@ -284,3 +284,4 @@ conventions exactly.
 |------|--------|
 | 2026-08-17 | Initial PRD from investigation + live pentest01 API research; host=Config, pagination=repo convention, redaction re-implemented in Python. |
 | 2026-08-17 | Added §2.0 explicit tool signatures — full filter/order surface consistent with `get_console_simulators`/`get_scenarios`/`get_playbook_attacks` (`<field>_filter`, bool flags, `order_by`/`order_direction`, `integration_id`). RBAC reframed as ui-server-enforced. |
+| 2026-08-17 | Implemented all 4 phases via TDD (132 config unit tests + 4 live e2e on pentest01; 1584 cross-server unit green). Strict review fixes: `_resolve_console` dedupe + recursive nested vault-ref redaction. RBAC contract corrected to sibling catch-and-return-with-hint. All DoD checked; phases 1-5 ✅. |

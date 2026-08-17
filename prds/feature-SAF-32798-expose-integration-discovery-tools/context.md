@@ -1,9 +1,11 @@
 # Ticket Context: SAF-32798
 
 ## Status
-Planning COMPLETE — prd.md + test-plan.md (19 tests, validator clean) authored; ticket In Progress;
-draft PR https://github.com/SafeBreach/safebreach-mcp/pull/88. Test plan Status=Draft (→Reviewed on
-review). Next: implement per prd.md §8 phases A–F (tdd-implementing-prd).
+IMPLEMENTATION COMPLETE — all 4 tools built via TDD across 4 vertical-slice phases. 132 config unit
+tests + 4 live e2e (pentest01) green; full cross-server suite 1584 passing. Strict review addressed
+(_resolve_console dedupe + recursive nested vault-ref redaction). Docs updated; DoD fully checked.
+PR https://github.com/SafeBreach/safebreach-mcp/pull/88 (draft — awaiting user review to mark ready).
+Known out-of-scope pre-existing bug flagged: apply_scenario_ordering null-date crash (get_scenarios).
 Preparing-ticket phase 9 done: refinement posted to SAF-32798 as comment 203713 (2026-08-17).
 
 ## Live API Research (pentest01, 2026-08-17) — see api-research.md
