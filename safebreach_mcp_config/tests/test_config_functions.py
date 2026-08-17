@@ -880,3 +880,156 @@ class TestSbGetScenarioDetails:
             assert "attack_selection" in step
             assert "target_criteria" in step
             assert "attacker_criteria" in step
+
+
+# --- Integration-discovery: get_integrations (SAF-32798, Phase 1) ---
+
+from safebreach_mcp_config.config_functions import sb_get_integrations
+
+
+def _catalog_fixture():
+    """A catalog dict keyed by type, modeled on pentest01 /config/integrations."""
+    catalog = {
+        "custom_splunkrest": {"displayName": "Splunk REST", "description": "d", "category": "siem",
+                              "vendor": "Splunk Inc.", "product": "Splunk", "isTiV2": False, "isVm": False},
+        "crowdstrike": {"displayName": "CrowdStrike Falcon", "description": "d", "category": "security_control",
+                        "vendor": "CrowdStrike", "product": "Falcon", "isTiV2": False, "isVm": False},
+        "alienvault": {"displayName": "AlienVault OTX", "description": "d", "category": "ti",
+                       "vendor": "AT&T", "product": "OTX", "isTiV2": True, "isVm": False},
+        "threatconnect": {"displayName": "ThreatConnect", "description": "d", "category": "ti",
+                          "vendor": "ThreatConnect", "product": "TC", "isTiV2": True, "isVm": False},
+        "wiz": {"displayName": "Wiz CSPM", "description": "d", "category": "vm",
+                "vendor": "Wiz", "product": "Wiz", "isTiV2": False, "isVm": True},
+    }
+    # filler to exceed PAGE_SIZE (10) → 12 total
+    for i in range(7):
+        catalog[f"filler{i}"] = {"displayName": f"Filler {i}", "description": "d", "category": "misc",
+                                 "vendor": f"Vendor{i}", "product": "P", "isTiV2": False, "isVm": False}
+    return catalog
+
+
+class TestGetIntegrations:
+    """Phase 1 — get_integrations catalog tool."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # T-7 — core: endpoint, envelope unwrap, pagination, metadata
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_core_endpoint_envelope_pagination(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"error": 0, "result": _catalog_fixture()}
+        mock_get.return_value = resp
+
+        result = sb_get_integrations(console="c", page_number=0)
+
+        called_url = mock_get.call_args[0][0]
+        assert "/api/siem/v1/accounts/999/config/integrations" in called_url
+        assert result["total_integrations"] == 12
+        assert result["total_pages"] == 2
+        assert len(result["integrations_in_page"]) == 10
+        assert result["page_number"] == 0
+        assert "hint_to_agent" in result  # more pages exist
+        assert "applied_filters" in result
+
+        page2 = sb_get_integrations(console="c", page_number=1)
+        assert len(page2["integrations_in_page"]) == 2
+
+    # T-11 — 403 surfaced with RBAC hint via catch-and-return
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_403_returns_error_dict_with_rbac_hint(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.url = "https://console.example/api/siem/v1/accounts/999/config/integrations"
+        mock_get.return_value = resp
+
+        result = sb_get_integrations(console="c")
+        assert "integrations_in_page" not in result
+        assert "error" in result
+        assert "Access denied" in result["error"]
+
+    # T-12 — out-of-range page_number
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_out_of_range_page(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        result = sb_get_integrations(console="c", page_number=5)
+        assert result["integrations_in_page"] == []
+        assert "error" in result and "page_number" in result["error"]
+
+    # T-20 — name_filter partial, case-insensitive
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_name_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", name_filter="splunk")
+        names = [e["name"] for e in r["integrations_in_page"]]
+        assert names == ["Splunk REST"]
+        assert r["applied_filters"]["name_filter"] == "splunk"
+        r2 = sb_get_integrations(console="c", name_filter="CONNECT")
+        assert [e["type"] for e in r2["integrations_in_page"]] == ["threatconnect"]
+
+    # T-21 — category_filter
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_category_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", category_filter="TI")
+        assert sorted(e["type"] for e in r["integrations_in_page"]) == ["alienvault", "threatconnect"]
+
+    # T-22 — vendor_filter
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_vendor_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", vendor_filter="splunk")
+        assert [e["type"] for e in r["integrations_in_page"]] == ["custom_splunkrest"]
+
+    # T-23 — ti_only / vm_only
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_ti_and_vm_flags(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        ti = sb_get_integrations(console="c", ti_only=True)
+        assert sorted(e["type"] for e in ti["integrations_in_page"]) == ["alienvault", "threatconnect"]
+        vm = sb_get_integrations(console="c", vm_only=True)
+        assert [e["type"] for e in vm["integrations_in_page"]] == ["wiz"]
+        all_ = sb_get_integrations(console="c")
+        assert all_["total_integrations"] == 12
+
+    # T-24 — ordering
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_ordering(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+
+        def all_names(order_direction):
+            p0 = sb_get_integrations(console="c", order_by="name", order_direction=order_direction, page_number=0)
+            p1 = sb_get_integrations(console="c", order_by="name", order_direction=order_direction, page_number=1)
+            return [e["name"] for e in p0["integrations_in_page"]] + [e["name"] for e in p1["integrations_in_page"]]
+
+        asc_names = all_names("asc")
+        desc_names = all_names("desc")
+        assert asc_names == sorted(asc_names, key=str.lower)
+        assert desc_names == sorted(asc_names, key=str.lower, reverse=True)
+
+        by_type = sb_get_integrations(console="c", order_by="type")
+        assert by_type["applied_filters"]["order_by"] == "type"
+
+    def test_invalid_order_by_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_integrations(console="c", order_by="bogus")
+
+    # T-34 — zero-match filter → empty page + hint
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_zero_match_filter_hint(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", name_filter="zzzz-no-such")
+        assert r["integrations_in_page"] == []
+        assert r["total_integrations"] == 0
+        assert "hint_to_agent" in r

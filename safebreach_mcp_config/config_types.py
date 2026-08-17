@@ -550,3 +550,121 @@ def get_scenario_detail_view(
         "steps": simplified_steps,
         "has_wait_steps": has_wait_steps,
     }
+
+
+# =============================================================================
+# Integration-discovery transforms & helpers (SAF-32798)
+# =============================================================================
+
+def get_integration_catalog_entry(type_key: str, raw_def: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a raw catalog type-def (from /config/integrations, keyed by type) to the
+    public catalog entry. Allow-list only — internal fields (fields[], featureFlag,
+    guideLink, raw isTi/isTiV2) are never exposed.
+
+    `is_ti` derives from `isTiV2` (the current TI capability, matching get_ti_integrations).
+    """
+    return {
+        "type": type_key,
+        "name": raw_def.get("displayName") or type_key,
+        "description": raw_def.get("description"),
+        "category": raw_def.get("category"),
+        "vendor": raw_def.get("vendor"),
+        "product": raw_def.get("product"),
+        "is_ti": bool(raw_def.get("isTiV2")),
+        "is_vm": bool(raw_def.get("isVm")),
+    }
+
+
+def _partial_ci_match(value: Optional[str], term: Optional[str]) -> bool:
+    """True when `term` is a case-insensitive substring of `value` (or term is falsy)."""
+    if not term:
+        return True
+    return term.lower() in (value or "").lower()
+
+
+def filter_integration_catalog(
+    entries: List[Dict[str, Any]],
+    name_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
+    vendor_filter: Optional[str] = None,
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """Filter catalog entries by partial/case-insensitive string filters and boolean flags."""
+    def keep(e: Dict[str, Any]) -> bool:
+        if not _partial_ci_match(e.get("name"), name_filter):
+            return False
+        if not _partial_ci_match(e.get("category"), category_filter):
+            return False
+        if not _partial_ci_match(e.get("vendor"), vendor_filter):
+            return False
+        if ti_only is not None and bool(e.get("is_ti")) != ti_only:
+            return False
+        if vm_only is not None and bool(e.get("is_vm")) != vm_only:
+            return False
+        return True
+
+    return [e for e in entries if keep(e)]
+
+
+def apply_integration_ordering(
+    entries: List[Dict[str, Any]],
+    order_by: str = "name",
+    order_direction: str = "asc",
+) -> List[Dict[str, Any]]:
+    """Order integration entries by a field, case-insensitively for strings.
+
+    Works for catalog (name/type/category/vendor) and installed/TI (name/type/id/enabled)."""
+    reverse = order_direction == "desc"
+
+    def key(e: Dict[str, Any]):
+        v = e.get(order_by)
+        # (is-missing, normalized-value) keeps None values grouped and types homogeneous per field
+        if v is None:
+            return (1, "")
+        if isinstance(v, str):
+            return (0, v.lower())
+        return (0, v)
+
+    return sorted(entries, key=key, reverse=reverse)
+
+
+def paginate_integration_list(
+    items: List[Dict[str, Any]],
+    page_number: int,
+    page_size: int,
+    noun: str,
+) -> Dict[str, Any]:
+    """Generic pagination for the integration tools. `noun` sets the response keys:
+    `total_<noun>` and `<noun>_in_page` (e.g. noun='integrations')."""
+    total = len(items)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    result: Dict[str, Any] = {
+        "page_number": page_number,
+        "total_pages": total_pages,
+        f"total_{noun}": total,
+    }
+
+    if page_number < 0 or (total_pages > 0 and page_number >= total_pages):
+        result[f"{noun}_in_page"] = []
+        result["error"] = (
+            f"Invalid page_number {page_number}. "
+            f"Available pages range from 0 to {max(total_pages - 1, 0)} (total {total_pages} pages)"
+        )
+        return result
+
+    start = page_number * page_size
+    end = min(start + page_size, total)
+    result[f"{noun}_in_page"] = items[start:end]
+
+    if total == 0:
+        result["hint_to_agent"] = (
+            f"No {noun} matched. Try removing or broadening the filters."
+        )
+    elif page_number + 1 < total_pages:
+        result["hint_to_agent"] = (
+            f"You can scan the next page by calling with page_number={page_number + 1}"
+        )
+
+    return result

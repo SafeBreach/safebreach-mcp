@@ -709,3 +709,63 @@ class TestMalformedScenarioSteps:
         result = get_reduced_scenario_mapping(scenario, {})
         assert result["is_ready_to_run"] is False
         assert result["step_count"] == 1
+
+
+# --- Integration-discovery transforms (SAF-32798) ---
+
+from safebreach_mcp_config.config_types import get_integration_catalog_entry
+
+
+class TestIntegrationCatalogEntry:
+    """T-1 — catalog entry transform exposes the public allow-list only."""
+
+    def _raw(self):
+        # Modeled on the pentest01 /config/integrations type-def shape.
+        return {
+            "displayName": "Splunk (REST)",
+            "description": "Splunk SIEM over REST",
+            "category": "siem",
+            "vendor": "Splunk Inc.",
+            "product": "Splunk",
+            "isTi": False,
+            "isTiV2": False,
+            "isVm": False,
+            # internal fields that must NOT leak through:
+            "fields": [{"key": "token", "sensitive": True}],
+            "featureFlag": "feature.mcpToolsConfig",
+            "guideLink": "https://internal/guide",
+        }
+
+    def test_maps_public_fields_only(self):
+        entry = get_integration_catalog_entry("custom_splunkrest", self._raw())
+        assert entry == {
+            "type": "custom_splunkrest",
+            "name": "Splunk (REST)",
+            "description": "Splunk SIEM over REST",
+            "category": "siem",
+            "vendor": "Splunk Inc.",
+            "product": "Splunk",
+            "is_ti": False,
+            "is_vm": False,
+        }
+        # no internal keys leaked
+        for leaked in ("fields", "featureFlag", "guideLink", "isTiV2"):
+            assert leaked not in entry
+
+    def test_name_falls_back_to_type_when_no_display_name(self):
+        raw = self._raw()
+        del raw["displayName"]
+        entry = get_integration_catalog_entry("custom_splunkrest", raw)
+        assert entry["name"] == "custom_splunkrest"
+
+    def test_is_ti_derives_from_isTiV2(self):
+        raw = self._raw()
+        raw["isTiV2"] = True
+        entry = get_integration_catalog_entry("alienvault", raw)
+        assert entry["is_ti"] is True
+
+    def test_is_vm_flag(self):
+        raw = self._raw()
+        raw["isVm"] = True
+        entry = get_integration_catalog_entry("wiz", raw)
+        assert entry["is_vm"] is True

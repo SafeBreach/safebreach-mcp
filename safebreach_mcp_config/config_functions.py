@@ -22,6 +22,10 @@ from .config_types import (
     filter_scenarios_by_criteria,
     apply_scenario_ordering,
     paginate_scenarios,
+    get_integration_catalog_entry,
+    filter_integration_catalog,
+    apply_integration_ordering,
+    paginate_integration_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,9 @@ categories_cache = SafeBreachCache(name="scenario_categories", maxsize=5, ttl=36
 plans_cache = SafeBreachCache(name="plans", maxsize=5, ttl=1800)
 users_cache = SafeBreachCache(name="users", maxsize=5, ttl=3600)
 assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
+
+# Integration-discovery cache (SAF-32798): the connector-type catalog per console
+integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=1800)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -709,3 +716,120 @@ def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[
                                             users_map=users_map)
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")
+
+
+# =============================================================================
+# Integration-discovery tools (SAF-32798)
+# =============================================================================
+
+def clear_integrations_catalog_cache():
+    """Clear the integrations catalog cache (for testing)."""
+    integrations_catalog_cache.clear()
+
+
+def _get_integrations_catalog_from_cache_or_api(console: str) -> Dict[str, Any]:
+    """Fetch the SIEM connector-type catalog (keyed by type) from cache or the SIEM API.
+
+    Source: GET /api/siem/v1/accounts/{account}/config/integrations, whose response is
+    wrapped in the SIEM envelope {"error": 0, "result": {<type>: <def>, ...}}.
+    Reused by get_integrations, get_installed_integration (redaction schema) and
+    get_ti_integrations (isTiV2 derivation).
+    """
+    cache_key = f"integrations_catalog_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = integrations_catalog_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved integrations catalog from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config/integrations"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching integrations catalog from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    catalog = payload.get("result", payload) if isinstance(payload, dict) else payload
+    if not isinstance(catalog, dict):
+        catalog = {}
+
+    if is_caching_enabled("config"):
+        integrations_catalog_cache.set(cache_key, catalog)
+
+    logger.info(f"Retrieved {len(catalog)} connector types from API for console '{console}'")
+    return catalog
+
+
+def sb_get_integrations(
+    console: str = "default",
+    page_number: int = 0,
+    name_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
+    vendor_filter: Optional[str] = None,
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
+    order_by: str = "name",
+    order_direction: str = "asc",
+) -> Dict[str, Any]:
+    """Get the filtered, paginated catalog of available SIEM/TI connector *types*.
+
+    Returns the menu of connector types that could be installed (no account data, no secrets).
+    """
+    valid_order_by = ['name', 'type', 'category', 'vendor']
+    if order_by not in valid_order_by:
+        raise ValueError(
+            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
+        )
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(
+            f"Invalid order_direction parameter '{order_direction}'. "
+            f"Valid values are: {', '.join(valid_order_direction)}"
+        )
+    if page_number < 0:
+        raise ValueError(f"page_number must be >= 0, got {page_number}")
+
+    try:
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+        entries = [get_integration_catalog_entry(type_key, raw) for type_key, raw in catalog.items()]
+
+        filtered = filter_integration_catalog(
+            entries,
+            name_filter=name_filter,
+            category_filter=category_filter,
+            vendor_filter=vendor_filter,
+            ti_only=ti_only,
+            vm_only=vm_only,
+        )
+        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
+        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'integrations')
+
+        applied_filters: Dict[str, Any] = {}
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if category_filter:
+            applied_filters['category_filter'] = category_filter
+        if vendor_filter:
+            applied_filters['vendor_filter'] = vendor_filter
+        if ti_only is not None:
+            applied_filters['ti_only'] = ti_only
+        if vm_only is not None:
+            applied_filters['vm_only'] = vm_only
+        if order_by != "name":
+            applied_filters['order_by'] = order_by
+        if order_direction != "asc":
+            applied_filters['order_direction'] = order_direction
+
+        paginated['applied_filters'] = applied_filters
+        return paginated
+
+    except Exception as e:
+        logger.error(f"Error getting integrations for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get integrations: {str(e)}",
+            "console": console,
+        }

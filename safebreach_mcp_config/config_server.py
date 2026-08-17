@@ -20,6 +20,7 @@ from .config_functions import (
     sb_get_simulator_details,
     sb_get_scenarios,
     sb_get_scenario_details,
+    sb_get_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,47 @@ Parameters: scenario_id (required, UUID string), console (required)"""
                 if console_name != 'default' and console not in safebreach_envs:
                     console = console_name
             return sb_get_scenario_details(scenario_id, console)
+
+        @self.mcp.tool(
+            name="get_integrations",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered, paginated catalog of AVAILABLE SIEM/TI integration connector TYPES
+for a given console — the menu of what COULD be installed (e.g. Splunk, QRadar, CrowdStrike, AlienVault),
+NOT what is currently configured. Contains no account data and no secrets. To see installed connectors use
+get_installed_integrations; for a single installed connector's config use get_installed_integration.
+Results are paginated (10 per page) and ordered by name ascending by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+category_filter (partial category match, e.g. 'siem'/'ti'/'security_control'), vendor_filter (partial vendor match),
+ti_only (True/False - only Threat-Intelligence-capable types), vm_only (True/False - only vulnerability-management types),
+order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
+        )
+        async def get_integrations_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            category_filter: Optional[str] = None,
+            vendor_filter: Optional[str] = None,
+            ti_only: Optional[bool] = None,
+            vm_only: Optional[bool] = None,
+            order_by: str = "name",
+            order_direction: str = "asc",
+        ) -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_integrations(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                category_filter=category_filter,
+                vendor_filter=vendor_filter,
+                ti_only=ti_only,
+                vm_only=vm_only,
+                order_by=order_by,
+                order_direction=order_direction,
+            )
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""
