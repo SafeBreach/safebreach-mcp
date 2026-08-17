@@ -21,6 +21,7 @@ from .config_functions import (
     sb_get_scenarios,
     sb_get_scenario_details,
     sb_get_integrations,
+    sb_get_installed_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,42 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
                 vendor_filter=vendor_filter,
                 ti_only=ti_only,
                 vm_only=vm_only,
+                order_by=order_by,
+                order_direction=order_direction,
+            )
+
+        @self.mcp.tool(
+            name="get_installed_integrations",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered, paginated list of SIEM integration connectors currently INSTALLED and
+configured for a given console. Returns a slim id/type/name/enabled per connector (no secrets). To browse the
+catalog of connector TYPES that could be installed use get_integrations; for one connector's full (redacted)
+config use get_installed_integration with its id. Results are paginated (10 per page), ordered by name ascending
+by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+type_filter (partial connector-type match, e.g. 'splunk'), enabled_filter (True/False - only enabled/disabled),
+order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
+        )
+        async def get_installed_integrations_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            type_filter: Optional[str] = None,
+            enabled_filter: Optional[bool] = None,
+            order_by: str = "name",
+            order_direction: str = "asc",
+        ) -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_installed_integrations(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                type_filter=type_filter,
+                enabled_filter=enabled_filter,
                 order_by=order_by,
                 order_direction=order_direction,
             )

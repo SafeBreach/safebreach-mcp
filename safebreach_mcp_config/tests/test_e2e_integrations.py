@@ -17,6 +17,7 @@ import pytest
 import os
 from safebreach_mcp_config.config_functions import (
     sb_get_integrations,
+    sb_get_installed_integrations,
     clear_integrations_catalog_cache,
 )
 
@@ -56,3 +57,11 @@ class TestIntegrationsE2E:
         assert filtered['total_integrations'] >= 1
         assert all(category.lower() in (e.get('category') or '').lower()
                    for e in filtered['integrations_in_page'])
+
+    # T-15 — live installed-integrations slim list
+    def test_get_installed_integrations_slim(self):
+        result = sb_get_installed_integrations(console=E2E_CONSOLE, page_number=0)
+        assert 'error' not in result, result.get('error')
+        assert result['total_installed_integrations'] > 0
+        for item in result['installed_integrations_in_page']:
+            assert set(item.keys()) == {"id", "type", "name", "enabled"}

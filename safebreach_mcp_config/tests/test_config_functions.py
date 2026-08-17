@@ -1033,3 +1033,112 @@ class TestGetIntegrations:
         assert r["integrations_in_page"] == []
         assert r["total_integrations"] == 0
         assert "hint_to_agent" in r
+
+
+# --- Integration-discovery: get_installed_integrations (SAF-32798, Phase 2) ---
+
+from safebreach_mcp_config.config_functions import sb_get_installed_integrations
+
+
+def _installed_fixture():
+    """Installed connector list, modeled on pentest01 /config/integrations/installed
+    (already slim), with a couple of extra fields to prove slimming."""
+    items = [
+        {"id": "a1", "type": "custom_splunkrest", "name": "Splunk Prod", "enabled": True,
+         "token": "$PAM:INTERNAL_VAULT:x/token"},
+        {"id": "b2", "type": "cortexxdr", "name": "Cortex XDR", "enabled": True},
+        {"id": "c3", "type": "alienvault", "name": "AlienVault Feed", "enabled": False},
+        {"id": "d4", "type": "splunkrest", "name": "Splunk Notable", "enabled": True},
+        {"id": "e5", "type": "threatconnect", "name": "ThreatConnect", "enabled": False},
+    ]
+    for i in range(7):
+        items.append({"id": f"f{i}", "type": f"filler{i}", "name": f"Filler {i}", "enabled": True})
+    return items
+
+
+class TestGetInstalledIntegrations:
+    """Phase 2 — get_installed_integrations."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # T-8 — core: endpoint, slim passthrough, pagination
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_core_endpoint_slim_pagination(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"error": 0, "result": _installed_fixture()}
+        mock_get.return_value = resp
+
+        result = sb_get_installed_integrations(console="c", page_number=0)
+        called_url = mock_get.call_args[0][0]
+        assert "/api/siem/v1/accounts/999/config/integrations/installed" in called_url
+        assert result["total_installed_integrations"] == 12
+        assert result["total_pages"] == 2
+        assert len(result["installed_integrations_in_page"]) == 10
+        # slim shape — no secrets leaked
+        for item in result["installed_integrations_in_page"]:
+            assert set(item.keys()) == {"id", "type", "name", "enabled"}
+
+    # T-25 — name_filter
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_name_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        r = sb_get_installed_integrations(console="c", name_filter="notable")
+        assert [i["id"] for i in r["installed_integrations_in_page"]] == ["d4"]
+
+    # T-26 — type_filter
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_type_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        r = sb_get_installed_integrations(console="c", type_filter="splunk")
+        assert sorted(i["id"] for i in r["installed_integrations_in_page"]) == ["a1", "d4"]
+
+    # T-27 — enabled_filter boolean
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_enabled_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        only_disabled = sb_get_installed_integrations(console="c", enabled_filter=False)
+        assert sorted(i["id"] for i in only_disabled["installed_integrations_in_page"]) == ["c3", "e5"]
+        only_enabled = sb_get_installed_integrations(console="c", enabled_filter=True)
+        assert all(i["enabled"] for i in only_enabled["installed_integrations_in_page"])
+        assert only_enabled["total_installed_integrations"] == 10
+        all_ = sb_get_installed_integrations(console="c")
+        assert all_["total_installed_integrations"] == 12
+
+    # T-28 — ordering
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_ordering(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        by_type = sb_get_installed_integrations(console="c", order_by="type", order_direction="asc", page_number=0)
+        types_p0 = [i["type"] for i in by_type["installed_integrations_in_page"]]
+        assert types_p0 == sorted(types_p0)
+        assert by_type["applied_filters"]["order_by"] == "type"
+
+    def test_invalid_order_by_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", order_by="bogus")
+
+    # T-33 — filters compose (AND semantics) + applied_filters echoes all
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_filters_compose_and(self, mock_list):
+        # g1 matches name+type but is DISABLED — must be excluded by the AND with enabled_filter=True.
+        data = _installed_fixture() + [
+            {"id": "g1", "type": "splunkrest", "name": "Splunk Dev", "enabled": False},
+        ]
+        mock_list.return_value = data
+        r = sb_get_installed_integrations(console="c", name_filter="splunk",
+                                          type_filter="splunkrest", enabled_filter=True)
+        # a1 (custom_splunkrest, enabled) + d4 (splunkrest, enabled) satisfy all three; g1 fails enabled.
+        assert sorted(i["id"] for i in r["installed_integrations_in_page"]) == ["a1", "d4"]
+        af = r["applied_filters"]
+        assert af["name_filter"] == "splunk"
+        assert af["type_filter"] == "splunkrest"
+        assert af["enabled_filter"] is True

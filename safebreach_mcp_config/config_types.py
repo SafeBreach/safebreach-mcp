@@ -668,3 +668,34 @@ def paginate_integration_list(
         )
 
     return result
+
+
+def get_minimal_installed_integration(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a raw installed connector to the slim public shape — never secrets.
+
+    Allow-list `id/type/name/enabled` only; `enabled` defaults to False when absent."""
+    return {
+        "id": raw.get("id"),
+        "type": raw.get("type"),
+        "name": raw.get("name"),
+        "enabled": bool(raw.get("enabled", False)),
+    }
+
+
+def filter_installed_integrations(
+    entries: List[Dict[str, Any]],
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    enabled_filter: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """Filter installed connectors by partial/case-insensitive name/type and boolean enabled."""
+    def keep(e: Dict[str, Any]) -> bool:
+        if not _partial_ci_match(e.get("name"), name_filter):
+            return False
+        if not _partial_ci_match(e.get("type"), type_filter):
+            return False
+        if enabled_filter is not None and bool(e.get("enabled")) != enabled_filter:
+            return False
+        return True
+
+    return [e for e in entries if keep(e)]

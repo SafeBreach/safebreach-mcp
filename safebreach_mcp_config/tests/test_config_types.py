@@ -769,3 +769,32 @@ class TestIntegrationCatalogEntry:
         raw["isVm"] = True
         entry = get_integration_catalog_entry("wiz", raw)
         assert entry["is_vm"] is True
+
+
+from safebreach_mcp_config.config_types import get_minimal_installed_integration
+
+
+class TestMinimalInstalledIntegration:
+    """T-2 — installed transform returns the slim shape, no secrets."""
+
+    def test_slim_shape_only(self):
+        raw = {
+            "id": "AQKPdodinKdfTCJT8kp8Y",
+            "type": "custom_splunkrest",
+            "name": "Splunk Prod",
+            "enabled": True,
+            # sensitive / config fields that must NOT survive:
+            "token": "$PAM:INTERNAL_VAULT:abc/token",
+            "password": "$PAM:INTERNAL_VAULT:abc/password",
+            "host": "splunk.internal",
+            "headers": {"Authorization": "Bearer x"},
+        }
+        result = get_minimal_installed_integration(raw)
+        assert result == {"id": "AQKPdodinKdfTCJT8kp8Y", "type": "custom_splunkrest",
+                          "name": "Splunk Prod", "enabled": True}
+        for leaked in ("token", "password", "host", "headers"):
+            assert leaked not in result
+
+    def test_missing_enabled_defaults_false(self):
+        result = get_minimal_installed_integration({"id": "x", "type": "t", "name": "n"})
+        assert result["enabled"] is False

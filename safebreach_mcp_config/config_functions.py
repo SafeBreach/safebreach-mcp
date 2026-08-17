@@ -26,6 +26,8 @@ from .config_types import (
     filter_integration_catalog,
     apply_integration_ordering,
     paginate_integration_list,
+    get_minimal_installed_integration,
+    filter_installed_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,9 @@ plans_cache = SafeBreachCache(name="plans", maxsize=5, ttl=1800)
 users_cache = SafeBreachCache(name="users", maxsize=5, ttl=3600)
 assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
 
-# Integration-discovery cache (SAF-32798): the connector-type catalog per console
+# Integration-discovery caches (SAF-32798)
 integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=1800)
+installed_integrations_cache = SafeBreachCache(name="installed_integrations", maxsize=5, ttl=600)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -831,5 +834,106 @@ def sb_get_integrations(
         logger.error(f"Error getting integrations for console '{console}': {str(e)}")
         return {
             "error": f"Failed to get integrations: {str(e)}",
+            "console": console,
+        }
+
+
+def clear_installed_integrations_cache():
+    """Clear the installed-integrations cache (for testing)."""
+    installed_integrations_cache.clear()
+
+
+def _get_installed_integrations_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """Fetch the installed SIEM connectors from cache or the SIEM API.
+
+    Source: GET /api/siem/v1/accounts/{account}/config/integrations/installed, whose
+    response is wrapped in the SIEM envelope {"error": 0, "result": [<connector>, ...]}.
+    The live API already returns a slim id/type/name/enabled per connector.
+    """
+    cache_key = f"installed_integrations_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = installed_integrations_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved installed integrations from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config/integrations/installed"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching installed integrations from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    installed = payload.get("result", payload) if isinstance(payload, dict) else payload
+    if not isinstance(installed, list):
+        installed = []
+
+    if is_caching_enabled("config"):
+        installed_integrations_cache.set(cache_key, installed)
+
+    logger.info(f"Retrieved {len(installed)} installed integrations from API for console '{console}'")
+    return installed
+
+
+def sb_get_installed_integrations(
+    console: str = "default",
+    page_number: int = 0,
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    enabled_filter: Optional[bool] = None,
+    order_by: str = "name",
+    order_direction: str = "asc",
+) -> Dict[str, Any]:
+    """Get the filtered, paginated list of INSTALLED SIEM connectors (slim, no secrets)."""
+    valid_order_by = ['name', 'type', 'id', 'enabled']
+    if order_by not in valid_order_by:
+        raise ValueError(
+            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
+        )
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(
+            f"Invalid order_direction parameter '{order_direction}'. "
+            f"Valid values are: {', '.join(valid_order_direction)}"
+        )
+    if page_number < 0:
+        raise ValueError(f"page_number must be >= 0, got {page_number}")
+
+    try:
+        raw_installed = _get_installed_integrations_from_cache_or_api(console)
+        entries = [get_minimal_installed_integration(c) for c in raw_installed]
+
+        filtered = filter_installed_integrations(
+            entries,
+            name_filter=name_filter,
+            type_filter=type_filter,
+            enabled_filter=enabled_filter,
+        )
+        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
+        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'installed_integrations')
+
+        applied_filters: Dict[str, Any] = {}
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if type_filter:
+            applied_filters['type_filter'] = type_filter
+        if enabled_filter is not None:
+            applied_filters['enabled_filter'] = enabled_filter
+        if order_by != "name":
+            applied_filters['order_by'] = order_by
+        if order_direction != "asc":
+            applied_filters['order_direction'] = order_direction
+
+        paginated['applied_filters'] = applied_filters
+        return paginated
+
+    except Exception as e:
+        logger.error(f"Error getting installed integrations for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get installed integrations: {str(e)}",
             "console": console,
         }
