@@ -1142,3 +1142,61 @@ class TestGetInstalledIntegrations:
         assert af["name_filter"] == "splunk"
         assert af["type_filter"] == "splunkrest"
         assert af["enabled_filter"] is True
+
+
+# --- Integration-discovery: get_installed_integration (SAF-32798, Phase 3) ---
+
+from safebreach_mcp_config.config_functions import sb_get_installed_integration
+
+
+class TestGetInstalledIntegration:
+    """Phase 3 — single connector, redacted."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _connectors(self):
+        return [
+            {"id": "a1", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+             "host": "splunk.internal", "token": "$PAM:INTERNAL_VAULT:abc/token"},
+            {"id": "b2", "type": "cortexxdr", "name": "Cortex", "enabled": True,
+             "apiToken": "$PAM:INTERNAL_VAULT:b/apiToken"},
+        ]
+
+    def _catalog(self):
+        return {
+            "custom_splunkrest": {"fields": [{"key": "token", "sensitive": True},
+                                             {"key": "host", "sensitive": False}]},
+            "cortexxdr": {"fields": [{"key": "apiToken", "sensitive": True}]},
+        }
+
+    # T-9 — fetch /config, filter by integration_id, redact
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_siem_config_connectors_from_cache_or_api')
+    def test_found_returns_redacted(self, mock_conn, mock_cat):
+        mock_conn.return_value = self._connectors()
+        mock_cat.return_value = self._catalog()
+        result = sb_get_installed_integration(console="c", integration_id="a1")
+        assert result["id"] == "a1"
+        assert result["type"] == "custom_splunkrest"
+        assert result["host"] == "splunk.internal"
+        assert result["token"] == "@enc:SENSITIVE_FIELD"
+        assert "$PAM:" not in json.dumps(result)
+
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_siem_config_connectors_from_cache_or_api')
+    def test_not_found_returns_hint(self, mock_conn, mock_cat):
+        mock_conn.return_value = self._connectors()
+        mock_cat.return_value = self._catalog()
+        result = sb_get_installed_integration(console="c", integration_id="does-not-exist")
+        assert "error" in result
+        assert "hint_to_agent" in result
+        assert "token" not in result  # no connector data
+
+    def test_missing_id_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integration(console="c", integration_id="")

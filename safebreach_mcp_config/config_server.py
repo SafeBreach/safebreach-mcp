@@ -22,6 +22,7 @@ from .config_functions import (
     sb_get_scenario_details,
     sb_get_integrations,
     sb_get_installed_integrations,
+    sb_get_installed_integration,
 )
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,23 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
                 order_by=order_by,
                 order_direction=order_direction,
             )
+
+        @self.mcp.tool(
+            name="get_installed_integration",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns the full configuration and status of a single INSTALLED SIEM integration connector,
+by its id, with credentials and other sensitive fields REDACTED. Any field whose value is '@enc:SENSITIVE_FIELD'
+is a redacted secret (credentials, tokens, proxy passwords, and request headers are always redacted). Obtain a
+valid id from get_installed_integrations first.
+Parameters: console (required), integration_id (required - the connector id from get_installed_integrations)"""
+        )
+        async def get_installed_integration_tool(integration_id: str, console: str = "default") -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_installed_integration(console=console, integration_id=integration_id)
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""

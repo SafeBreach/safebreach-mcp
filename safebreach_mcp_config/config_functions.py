@@ -28,6 +28,7 @@ from .config_types import (
     paginate_integration_list,
     get_minimal_installed_integration,
     filter_installed_integrations,
+    get_installed_integration_detail_view,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
 # Integration-discovery caches (SAF-32798)
 integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=1800)
 installed_integrations_cache = SafeBreachCache(name="installed_integrations", maxsize=5, ttl=600)
+siem_config_cache = SafeBreachCache(name="siem_config", maxsize=5, ttl=600)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -935,5 +937,80 @@ def sb_get_installed_integrations(
         logger.error(f"Error getting installed integrations for console '{console}': {str(e)}")
         return {
             "error": f"Failed to get installed integrations: {str(e)}",
+            "console": console,
+        }
+
+
+def clear_siem_config_cache():
+    """Clear the SIEM full-config cache (for testing)."""
+    siem_config_cache.clear()
+
+
+def _get_siem_config_connectors_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """Fetch the FULL connector configs from the SIEM config blob (cache or API).
+
+    Source: GET /api/siem/v1/accounts/{account}/config → envelope {"error":0,"result":{...}}
+    whose `result.connectors[]` holds the full per-connector config (with secrets as
+    vault refs). Used by get_installed_integration since there is no single-connector GET.
+    """
+    cache_key = f"siem_config_connectors_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = siem_config_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved SIEM config connectors from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching SIEM config from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    config = payload.get("result", payload) if isinstance(payload, dict) else payload
+    connectors = config.get("connectors", []) if isinstance(config, dict) else []
+    if not isinstance(connectors, list):
+        connectors = []
+
+    if is_caching_enabled("config"):
+        siem_config_cache.set(cache_key, connectors)
+
+    logger.info(f"Retrieved {len(connectors)} full connector configs from API for console '{console}'")
+    return connectors
+
+
+def sb_get_installed_integration(console: str = "default", integration_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get the full config of a single INSTALLED connector by id, with secrets redacted.
+
+    There is no dedicated single-connector API, so the connector is located in the SIEM
+    config blob (`/config`) and redacted in Python against the catalog's sensitive-field schema.
+    """
+    if integration_id is None or (isinstance(integration_id, str) and not integration_id.strip()):
+        raise ValueError("integration_id parameter is required and cannot be empty")
+
+    integration_id = str(integration_id).strip()
+
+    try:
+        connectors = _get_siem_config_connectors_from_cache_or_api(console)
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+
+        for connector in connectors:
+            if str(connector.get("id")) == integration_id:
+                return get_installed_integration_detail_view(connector, catalog)
+
+        return {
+            "error": f"Installed integration with id '{integration_id}' not found",
+            "console": console,
+            "hint_to_agent": "Call get_installed_integrations to list valid connector ids.",
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting installed integration '{integration_id}' for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get installed integration: {str(e)}",
             "console": console,
         }

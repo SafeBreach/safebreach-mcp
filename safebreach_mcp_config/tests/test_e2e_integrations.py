@@ -15,9 +15,11 @@ never hardcoded against the environment.
 
 import pytest
 import os
+import json
 from safebreach_mcp_config.config_functions import (
     sb_get_integrations,
     sb_get_installed_integrations,
+    sb_get_installed_integration,
     clear_integrations_catalog_cache,
 )
 
@@ -65,3 +67,23 @@ class TestIntegrationsE2E:
         assert result['total_installed_integrations'] > 0
         for item in result['installed_integrations_in_page']:
             assert set(item.keys()) == {"id", "type", "name", "enabled"}
+
+    # T-16 — live redaction + cross-layer identity consistency (self-discovered id)
+    def test_get_installed_integration_redaction(self):
+        listing = sb_get_installed_integrations(console=E2E_CONSOLE, page_number=0)
+        assert listing['installed_integrations_in_page'], "need at least one installed connector"
+        target = listing['installed_integrations_in_page'][0]
+        detail = sb_get_installed_integration(console=E2E_CONSOLE, integration_id=target['id'])
+        assert 'error' not in detail, detail.get('error')
+        # cross-layer identity consistency
+        assert detail['id'] == target['id']
+        assert detail['type'] == target['type']
+        assert detail['name'] == target['name']
+        # no secret material leaks: no vault refs anywhere in the payload
+        dumped = json.dumps(detail)
+        assert "$PAM:" not in dumped
+        # headers, when present, must be redacted (never a raw object)
+        if "headers" in detail:
+            assert detail["headers"] == "@enc:SENSITIVE_FIELD"
+        if "proxyPass" in detail:
+            assert detail["proxyPass"] == "@enc:SENSITIVE_FIELD"

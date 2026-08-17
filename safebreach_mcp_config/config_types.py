@@ -699,3 +699,64 @@ def filter_installed_integrations(
         return True
 
     return [e for e in entries if keep(e)]
+
+
+# Redaction constants (mirror the SIEM MCP's sanitizeSensetiveFields + ALWAYS_REDACTED_FIELDS)
+REDACTED_PLACEHOLDER = "@enc:SENSITIVE_FIELD"
+ALWAYS_REDACTED_FIELDS = ["proxyPass", "headers"]
+
+# Conservative fail-safe set for connector types absent from the catalog, so an unknown
+# type can never bypass schema-driven masking. Field names drawn from the live pentest01
+# connector schemas (SAF-32798 research).
+_DEFAULT_SENSITIVE_FIELDS = {
+    "password", "token", "secret", "apiToken", "apiSecret", "apiKey", "clientSecret",
+    "secretId", "privateKey", "keyPassword", "pfxPassword", "clientKeyPassword",
+    "uidTokenCurrent", "uidTokenNext", "proxyPass",
+}
+
+
+def _schema_sensitive_fields(catalog: Dict[str, Any], connector_type: Optional[str]):
+    """Return the set of schema-`sensitive` field keys for a type, or None when the type
+    is absent from the catalog (signals the caller to use the fail-safe default set)."""
+    type_def = catalog.get(connector_type) if isinstance(catalog, dict) else None
+    if not isinstance(type_def, dict):
+        return None
+    fields = type_def.get("fields") or []
+    return {f.get("key") for f in fields if isinstance(f, dict) and f.get("sensitive") and f.get("key")}
+
+
+def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a redacted copy of a connector config.
+
+    1. Mask every schema-`sensitive` field (from catalog[type].fields) to the placeholder.
+    2. Fail-safe: if the type is absent from the catalog, mask a conservative default set.
+    3. Always force-mask `headers` and `proxyPass` (headers is often not schema-sensitive
+       yet can carry auth tokens).
+    4. Defense-in-depth: mask ANY field whose value is a `$PAM:`/`@enc:` vault reference,
+       so a secret can never leak even if the schema misses it.
+    The input is not mutated.
+    """
+    redacted = dict(connector)
+
+    sensitive = _schema_sensitive_fields(catalog, connector.get("type"))
+    if sensitive is None:
+        sensitive = set(_DEFAULT_SENSITIVE_FIELDS)
+
+    for key in list(redacted.keys()):
+        if key in sensitive:
+            redacted[key] = REDACTED_PLACEHOLDER
+
+    for key in ALWAYS_REDACTED_FIELDS:
+        if key in redacted:
+            redacted[key] = REDACTED_PLACEHOLDER
+
+    for key, value in list(redacted.items()):
+        if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
+            redacted[key] = REDACTED_PLACEHOLDER
+
+    return redacted
+
+
+def get_installed_integration_detail_view(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
+    """Full config of a single installed connector, with sensitive fields redacted."""
+    return redact_sensitive_fields(connector, catalog)

@@ -798,3 +798,90 @@ class TestMinimalInstalledIntegration:
     def test_missing_enabled_defaults_false(self):
         result = get_minimal_installed_integration({"id": "x", "type": "t", "name": "n"})
         assert result["enabled"] is False
+
+
+from safebreach_mcp_config.config_types import (
+    redact_sensitive_fields,
+    get_installed_integration_detail_view,
+    REDACTED_PLACEHOLDER,
+)
+
+
+def _catalog_with_sensitive():
+    """Catalog keyed by type; fields[].sensitive marks the secret fields per type."""
+    return {
+        "custom_splunkrest": {
+            "displayName": "Splunk REST",
+            "fields": [
+                {"key": "host", "sensitive": False},
+                {"key": "token", "sensitive": True},
+                {"key": "password", "sensitive": True},
+            ],
+        },
+        "custom_wiz": {
+            "displayName": "Wiz",
+            # headers deliberately NOT flagged sensitive — must be force-masked anyway
+            "fields": [{"key": "clientId", "sensitive": False}],
+        },
+    }
+
+
+class TestRedaction:
+    """T-3/T-4/T-5 — sensitive-field redaction for get_installed_integration."""
+
+    def test_masks_schema_sensitive_fields(self):
+        connector = {
+            "id": "a1", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+            "host": "splunk.internal",
+            "token": "$PAM:INTERNAL_VAULT:abc/token",
+            "password": "$PAM:INTERNAL_VAULT:abc/password",
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["token"] == REDACTED_PLACEHOLDER
+        assert result["password"] == REDACTED_PLACEHOLDER
+        assert result["host"] == "splunk.internal"  # non-sensitive untouched
+        # no vault ref survives anywhere
+        assert not any(isinstance(v, str) and v.startswith("$PAM:") for v in result.values())
+        # original not mutated
+        assert connector["token"].startswith("$PAM:")
+
+    def test_force_masks_headers_and_proxypass(self):
+        connector = {
+            "id": "w1", "type": "custom_wiz", "name": "Wiz", "enabled": True,
+            "clientId": "public-client-id",
+            "headers": {"Authorization": "Bearer super-secret"},
+            "proxyPass": "$PAM:INTERNAL_VAULT:xyz/proxyPass",
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["headers"] == REDACTED_PLACEHOLDER
+        assert result["proxyPass"] == REDACTED_PLACEHOLDER
+        assert result["clientId"] == "public-client-id"
+        # the bearer token must not appear anywhere in the serialized result
+        import json as _json
+        assert "super-secret" not in _json.dumps(result)
+
+    def test_fail_safe_unknown_type(self):
+        connector = {
+            "id": "u1", "type": "totally_unknown_type", "name": "Mystery", "enabled": True,
+            "token": "$PAM:INTERNAL_VAULT:q/token",
+            "apiSecret": "$PAM:INTERNAL_VAULT:q/apiSecret",
+            "headers": {"X-Auth": "leak-me"},
+            "proxyPass": "$PAM:INTERNAL_VAULT:q/proxyPass",
+            "host": "mystery.internal",
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["token"] == REDACTED_PLACEHOLDER
+        assert result["apiSecret"] == REDACTED_PLACEHOLDER
+        assert result["headers"] == REDACTED_PLACEHOLDER
+        assert result["proxyPass"] == REDACTED_PLACEHOLDER
+        import json as _json
+        dumped = _json.dumps(result)
+        assert "$PAM:" not in dumped
+        assert "leak-me" not in dumped
+
+    def test_detail_view_delegates_to_redaction(self):
+        connector = {"id": "a1", "type": "custom_splunkrest", "name": "S", "enabled": True,
+                     "token": "$PAM:INTERNAL_VAULT:abc/token"}
+        view = get_installed_integration_detail_view(connector, _catalog_with_sensitive())
+        assert view["token"] == REDACTED_PLACEHOLDER
+        assert view["id"] == "a1"
