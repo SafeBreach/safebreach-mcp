@@ -1,8 +1,12 @@
-# Manual E2E Results — SAF-32798 (AI-executed against pentest01, 2026-08-17)
+# Manual E2E — SAF-32798 — ⚠️ MANUAL-SUBSTITUTION PROBE (not the planned tests)
 
-Executed by driving the four tools like a user against `E2E_CONSOLE=pentest01` and judging outputs.
-Late execution — see the retrospective note at the bottom (these were missed during the TDD phases
-and run after the fact).
+> **This is NOT a green run of the planned Manual e2e.** These probes called the `sb_*` functions
+> DIRECTLY against `E2E_CONSOLE=pentest01` — the same seam as the Automatic e2e — and therefore do
+> NOT exercise the MCP registration/protocol layer or a real MCP client. The planned Manual e2e
+> (T-18, T-19, T-35–T-39) must run via **`run-helm-tests`** (AI-agent chat invoking the tools on a
+> deployed pentest console). Per running-phase-tests guardrails these are `manual-substitution`, do
+> NOT count toward a PASS, and still owe a real protocol-level run. See `phase-4.md` for the audited
+> accounting. The results below are useful business-logic evidence, not sign-off.
 
 | Test | Aspect | Verdict | Evidence |
 |------|--------|---------|----------|
@@ -14,8 +18,9 @@ and run after the fact).
 | T-18 | regression | ✅ PASS | Existing tools unaffected: `get_console_simulators`→27 (no error), `get_scenarios`→58 pages (no error). |
 | T-19 | progression | ✅ PASS | Full discovery flow catalog(93)→installed(25)→detail(redacted, secret-free)→ti(6) coherent; each step feeds the next. |
 
-**Sign-off: 7/7 manual E2E PASS.** Combined with 132 config unit + 4 automatic e2e + 1584 cross-server
-unit, the feature's full cumulative test set (all 39 T-items) is green.
+**NOT sign-off.** The 7 rows above are manual-substitution probes (business-logic signal only), not the
+planned protocol-level tests. Executed-green for the feature = 32/39 (unit + automatic e2e); the 7 Manual
+e2e remain open until run via `run-helm-tests` on a deployed console. See `phase-4.md`.
 
 ## Retrospective — why these ran late
 During `tdd-implementing-prd` I substituted ad-hoc `pytest -m "not e2e"` / `pytest -m e2e` runs for the

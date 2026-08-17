@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Signed off (all 39 T-items green; see test-results/manual-e2e.md) |
+| Status | Reviewed — 32/39 executed green (unit + automatic e2e). 7 Manual e2e are open manual-substitutions owing a real run via `run-helm-tests` on a deployed console (see test-results/phase-4.md). NOT signed off. |
 | Offering / surface | console (MCP tools over a live SafeBreach console's SIEM API) + repo-harness (unit) |
 
 ## Requirements Traceability
@@ -785,11 +785,11 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 - [x] Requirements traceability complete — every R# covered or explicitly out-of-scope
 - [x] Change Coverage complete — every changed file tested or justified
-- [x] Regression complete — Manual regression T-18 PASS + post-ship CI named (safebreach-mcp repo suite)
-- [x] Progression evidence — Manual progression T-19 + T-35 PASS (feature walked through the live product)
+- [ ] Regression complete — Manual regression T-18 is a manual-substitution (direct `sb_*` probe), NOT the planned `run-helm-tests` run; owes a real run
+- [ ] Progression evidence — Manual progression T-19/T-35 are manual-substitutions, not the planned protocol-level runs; owe a real run
 - [x] validating-test-plan: RESULT: clean
-- [x] All tests green (cumulative through Phase 4) — 132 unit + 4 automatic e2e + 7 manual e2e (test-results/manual-e2e.md); cross-server unit 1584 green
-- [x] Accepted gaps listed and approved: none
+- [ ] All tests green (cumulative through Phase 4) — 32/39 executed green (132 unit + 4 automatic e2e); 7 Manual e2e are open manual-substitutions (test-results/phase-4.md)
+- [ ] Accepted gaps listed and approved: pending — Manual e2e lane owes a `run-helm-tests` run on a deployed console
 
 ## Change Log
 
