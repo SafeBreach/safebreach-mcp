@@ -20,7 +20,7 @@ Sources: JIRA acceptance criteria ∪ PRD §6 Definition of Done (user-confirmed
 | R3  | Expose `get_installed_integration` (one connector, secrets redacted) | T-9, T-13, T-16, T-37 | Covered |
 | R4  | Expose `get_ti_integrations` (installed TI feeds, slim) | T-6, T-10, T-13, T-17, T-29, T-30, T-31, T-32, T-38 | Covered |
 | R5  | All four have clear public-facing names, descriptions, input/output schemas | T-13 | Covered |
-| R6  | RBAC remains enforced (esp. `get_installed_integration`) | T-11 | Covered (unit 403→PermissionError on the shared path; live enforcement is ui-server's standard mechanism — see Out of scope) |
+| R6  | RBAC remains enforced (esp. `get_installed_integration`) | T-11 | Covered (unit: 403 surfaced with RBAC hint via sibling catch-and-return; live enforcement is ui-server's standard mechanism — see Out of scope) |
 | R7  | Redaction of sensitive fields (`@enc:SENSITIVE_FIELD`, `proxyPass`, `headers`) verified | T-3, T-4, T-5, T-16, T-37 | Covered |
 | R8  | Tests cover public registration of the four tools | T-13 | Covered |
 
@@ -111,7 +111,7 @@ Capability checklist (answered from the plan's system/e2e tests only):
 | T-8  | `sb_get_installed_integrations` core: endpoint, slim passthrough, pagination | API-contract | Phase 2 | safebreach_mcp_config |
 | T-9  | `sb_get_installed_integration`: fetch /config, filter by `integration_id`, redact, not-found handled | API-contract | Phase 3 | safebreach_mcp_config |
 | T-10 | `sb_get_ti_integrations` core: `isTiV2` derivation + pagination | API-contract | Phase 4 | safebreach_mcp_config |
-| T-11 | Backend 403 on the shared `check_rbac_response` path → `PermissionError` + `RBAC_DENIED_HINT` | security | Phase 1 | safebreach_mcp_config |
+| T-11 | Backend 403 on the shared `check_rbac_response` path → error dict carrying the RBAC denial hint (sibling catch-and-return convention) | security | Phase 1 | safebreach_mcp_config |
 | T-12 | Out-of-range `page_number` handled per repo pagination convention | regression | Phase 1 | safebreach_mcp_config |
 | T-13 | All four tools registered with `readOnlyHint=True`, public names/descriptions/schemas (incl. filter params) | API-contract | Phase 4 | safebreach_mcp_config |
 | T-20 | `get_integrations` `name_filter` — partial, case-insensitive | API-contract | Phase 1 | safebreach_mcp_config |
@@ -180,16 +180,16 @@ Capability checklist (answered from the plan's system/e2e tests only):
 
 ### T-11 — Backend 403 → PermissionError/RBAC_DENIED_HINT (shared path)
 
-- Description: Proves an unauthorized backend response is relayed as the standard RBAC error via the shared `check_rbac_response` path all four functions use — gated at Phase 1 so any RBAC-relay regression is caught immediately.
+- Description: Proves an unauthorized backend response is surfaced with the RBAC denial hint via the shared `check_rbac_response` path all four functions use — gated at Phase 1 so any RBAC-relay regression is caught immediately.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
 - Aspect: security
-- Risk: Swallowing or mis-handling a 403 would hide an authorization failure or crash the tool; the path is shared, so a break affects all four tools.
+- Risk: Swallowing or mis-handling a 403 would hide an authorization failure; the path is shared, so a break affects all four tools.
 - Risk source: PRD §6 (R6), §4
 - Verify: Mock `requests.get` to return `status_code=403`; call `sb_get_integrations` (representative of the shared `check_rbac_response` path; later tools reuse it — confirmed by their core tests T-8/T-9/T-10).
-- Expected: `check_rbac_response` raises `PermissionError` carrying `RBAC_DENIED_HINT`; no data returned.
+- Expected: `check_rbac_response` raises `PermissionError` internally; the function catches it (sibling `sb_get_console_simulators`/`sb_get_scenarios` convention) and returns an `{"error": ...}` dict whose message contains the RBAC denial hint (`Access denied (403 Forbidden)` / `RBAC_DENIED_HINT` text); no connector data is returned.
 - Evidence required: CI run — green.
 - Automation lives in: planned: `safebreach_mcp_config/tests/test_config_functions.py`
 - Environment needs: none

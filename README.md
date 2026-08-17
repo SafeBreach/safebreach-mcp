@@ -812,6 +812,10 @@ The MCP server exposes the following tools for SafeBreach operations:
 **Config Server (Port 8000):**
 1. **`get_console_simulators`** ✨ **Enhanced with Filtering**
 2. **`get_simulator_details`**
+3. **`get_integrations`** ✨ **NEW** - Catalog of available SIEM/TI connector TYPES (no secrets), with name/category/vendor/ti_only/vm_only filters
+4. **`get_installed_integrations`** ✨ **NEW** - Installed SIEM connectors, slim id/type/name/enabled (no secrets), with name/type/enabled filters
+5. **`get_installed_integration`** ✨ **NEW** - One installed connector's full config by `integration_id`, secrets redacted to `@enc:SENSITIVE_FIELD`
+6. **`get_ti_integrations`** ✨ **NEW** - Installed Threat-Intelligence feeds (isTiV2-capable), slim id/type/name/enabled, with filters
 
 **Data Server (Port 8001):**
 3. **`get_tests`** ✨ **Enhanced with Filtering**

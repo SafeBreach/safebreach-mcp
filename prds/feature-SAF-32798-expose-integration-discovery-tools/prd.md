@@ -174,30 +174,32 @@ through the gateway (canonical pattern) and relay the 403; no backend/gateway ch
 - Any **write** operation on integrations (create/update/delete) — these tools are read-only.
 
 ## Section 6: Definition of Done
-- [ ] Four read-only tools registered in `safebreach_mcp_config` with `readOnlyHint=True`, a `console`
+- [x] Four read-only tools registered in `safebreach_mcp_config` with `readOnlyHint=True`, a `console`
       param, and clear public-facing descriptions/schemas.
-- [ ] Names + conventions consistent with the repo: `get_integrations`, `get_installed_integrations`,
+- [x] Names + conventions consistent with the repo: `get_integrations`, `get_installed_integrations`,
       `get_installed_integration`, `get_ti_integrations`; `page_number`/`PAGE_SIZE=10` pagination with
       `total_pages`/`applied_filters`/`hint_to_agent`; repo-style validation.
-- [ ] Filter surface matches sibling list tools (§2.0): `<field>_filter` partial/case-insensitive
+- [x] Filter surface matches sibling list tools (§2.0): `<field>_filter` partial/case-insensitive
       string filters, `Optional[bool]` flag filters, and `order_by`/`order_direction` on every list
       tool; detail tool uses `integration_id` (not bare `id`); each docstring has a `Parameters:` line.
-- [ ] Data fetched via `get_api_base_url(console,'siem')` + `get_api_account_id` +
+- [x] Data fetched via `get_api_base_url(console,'siem')` + `get_api_account_id` +
       `get_auth_headers_for_console` + `check_rbac_response`; envelope `result` unwrapped; legacy
       `SafeBreachAuth` not used.
-- [ ] `get_installed_integrations` returns slim `id/type/name/enabled` (no secrets).
-- [ ] `get_installed_integration` returns one connector by `id` (from `/config`) with secrets redacted
+- [x] `get_installed_integrations` returns slim `id/type/name/enabled` (no secrets).
+- [x] `get_installed_integration` returns one connector by `id` (from `/config`) with secrets redacted
       in Python (schema-`sensitive` → `@enc:SENSITIVE_FIELD`; `headers`+`proxyPass` force-masked);
       explicit test asserts no secret material (incl. vault paths and header values) leaks;
       unknown-type fail-safe covered.
-- [ ] `get_integrations` returns the connector-type catalog with `category` filtering.
-- [ ] `get_ti_integrations` returns installed TI connectors via `isTiV2`; derivation documented + tested.
-- [ ] RBAC: tools route through the ui-server gateway (canonical `get_api_base_url` pattern) and
-      surface backend 403 as `PermissionError`/`RBAC_DENIED_HINT` — verified by a unit test mocking a
-      403 response (real enforcement is ui-server's standard mechanism, same as all backend APIs).
-- [ ] Unit tests (functions/types/server) + e2e (`@pytest.mark.e2e`) pass; full cross-server unit
+- [x] `get_integrations` returns the connector-type catalog with `category` filtering.
+- [x] `get_ti_integrations` returns installed TI connectors via `isTiV2`; derivation documented + tested.
+- [x] RBAC: tools route through the ui-server gateway (canonical `get_api_base_url` pattern) and
+      surface a backend 403 with the RBAC denial hint — `check_rbac_response` raises `PermissionError`,
+      which the function catches and returns as an `{"error": ...}` dict carrying `RBAC_DENIED_HINT`
+      (sibling `sb_get_console_simulators`/`sb_get_scenarios` convention); verified by a unit test
+      mocking a 403 (real enforcement is ui-server's standard mechanism, same as all backend APIs).
+- [x] Unit tests (functions/types/server) + e2e (`@pytest.mark.e2e`) pass; full cross-server unit
       suite green.
-- [ ] `CLAUDE.md` + `README.md` updated.
+- [x] `CLAUDE.md` + `README.md` updated.
 
 ## Section 7: Testing Strategy
 
@@ -233,12 +235,12 @@ server → tests) still holds. Ordering is dependency-driven: Phase 1 builds the
 
 | Phase | Deliverable (end-to-end) | Changes | Status |
 |-------|--------------------------|---------|--------|
-| Phase 1 | `get_integrations` — catalog fetch helper + `get_integration_catalog_entry` + `sb_get_integrations` (name/category/vendor/ti_only/vm_only filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
-| Phase 2 | `get_installed_integrations` — `get_minimal_installed_integration` + `sb_get_installed_integrations` (name/type/enabled filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
-| Phase 3 | `get_installed_integration` — `redact_sensitive_fields` + `get_installed_integration_detail_view` + `sb_get_installed_integration` (fetch `/config`, filter by `integration_id`, redact) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
-| Phase 4 | `get_ti_integrations` — `get_minimal_ti_integration` + `sb_get_ti_integrations` (isTiV2 derivation, name/type/enabled filters, ordering, pagination) + registration; + cross-tool hardening (403 relay across all four, pagination out-of-range, all-four registration, compose, whole-server regression, full-flow progression) | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | Not started |
-| Phase 5 | Docs | `CLAUDE.md`, `README.md` | Not started |
-| Phase 6 | PR | — | Not started |
+| Phase 1 | `get_integrations` — catalog fetch helper + `get_integration_catalog_entry` + `sb_get_integrations` (name/category/vendor/ti_only/vm_only filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (453903d, 2026-08-17) |
+| Phase 2 | `get_installed_integrations` — `get_minimal_installed_integration` + `sb_get_installed_integrations` (name/type/enabled filters, ordering, pagination) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (212059b, 2026-08-17) |
+| Phase 3 | `get_installed_integration` — `redact_sensitive_fields` + `get_installed_integration_detail_view` + `sb_get_installed_integration` (fetch `/config`, filter by `integration_id`, redact) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (8f58c52, 2026-08-17) |
+| Phase 4 | `get_ti_integrations` — `get_minimal_ti_integration` + `sb_get_ti_integrations` (isTiV2 derivation, name/type/enabled filters, ordering, pagination) + registration; + cross-tool hardening (403 relay across all four, pagination out-of-range, all-four registration, compose, whole-server regression, full-flow progression) | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (00c0f5a, 2026-08-17) |
+| Phase 5 | Docs | `CLAUDE.md`, `README.md` | ✅ Complete (2026-08-17) |
+| Phase 6 | PR | — | 🔄 In Progress (PR #88) |
 
 ## Section 9: Risks and Assumptions
 
