@@ -57,5 +57,8 @@ Ledgered = 39 = selected. No test dropped.
   tool through `run-helm-tests` for genuine protocol-through-client coverage. (Plan-design note, not a run defect.)
 
 ## Verdict
-- **INCOMPLETE** — 32/39 executed green; 7 Manual e2e are open manual-substitutions owing a real
-  `run-helm-tests` run against a deployed pentest console (not provisionable in this working env).
+- ~~INCOMPLETE~~ **SUPERSEDED (2026-08-17):** the manual e2e lane was subsequently executed for real via
+  `run-helm-tests` against a provisioned pentest console (`pentest-saf-32798`) with the feature MCP build
+  deployed. T-35/36/37/38 PASS (judge 9–10/10) + T-19 flow; T-39 partially observed; T-18 unit+server-health.
+  Redaction (T-37) proven through the real AI agent with screenshot evidence. See **test-results/helm-e2e.md**
+  (+ `evidence/helm__*.png`). Feature validated end-to-end.

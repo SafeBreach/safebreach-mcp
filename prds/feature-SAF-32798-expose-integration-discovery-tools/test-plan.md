@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Reviewed — 32/39 executed green (unit + automatic e2e). 7 Manual e2e are open manual-substitutions owing a real run via `run-helm-tests` on a deployed console (see test-results/phase-4.md). NOT signed off. |
+| Status | Signed off — 32/39 automatic green + Manual lane executed via `run-helm-tests` (protocol-level, judged): T-35/36/37/38 PASS (9–10/10) + T-19 flow; T-39 partially observed; T-18 unit+server-health covered. Redaction (T-37) proven through the real AI agent. See test-results/helm-e2e.md. |
 | Offering / surface | console (MCP tools over a live SafeBreach console's SIEM API) + repo-harness (unit) |
 
 ## Requirements Traceability
