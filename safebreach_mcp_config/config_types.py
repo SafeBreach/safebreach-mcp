@@ -725,6 +725,18 @@ def _schema_sensitive_fields(catalog: Dict[str, Any], connector_type: Optional[s
     return {f.get("key") for f in fields if isinstance(f, dict) and f.get("sensitive") and f.get("key")}
 
 
+def _mask_vault_refs(value: Any) -> Any:
+    """Recursively replace any `$PAM:`/`@enc:` vault-reference string with the placeholder,
+    descending into nested dicts and lists. Returns a redacted copy."""
+    if isinstance(value, dict):
+        return {k: _mask_vault_refs(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_vault_refs(v) for v in value]
+    if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
+        return REDACTED_PLACEHOLDER
+    return value
+
+
 def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
     """Return a redacted copy of a connector config.
 
@@ -732,8 +744,8 @@ def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) 
     2. Fail-safe: if the type is absent from the catalog, mask a conservative default set.
     3. Always force-mask `headers` and `proxyPass` (headers is often not schema-sensitive
        yet can carry auth tokens).
-    4. Defense-in-depth: mask ANY field whose value is a `$PAM:`/`@enc:` vault reference,
-       so a secret can never leak even if the schema misses it.
+    4. Defense-in-depth: recursively mask ANY value that is a `$PAM:`/`@enc:` vault reference
+       — top-level OR nested — so a secret can never leak even if the schema misses it.
     The input is not mutated.
     """
     redacted = dict(connector)
@@ -750,9 +762,8 @@ def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) 
         if key in redacted:
             redacted[key] = REDACTED_PLACEHOLDER
 
-    for key, value in list(redacted.items()):
-        if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
-            redacted[key] = REDACTED_PLACEHOLDER
+    # Recursive vault-ref sweep (covers top-level AND nested dict/list values).
+    redacted = _mask_vault_refs(redacted)
 
     return redacted
 

@@ -28,6 +28,18 @@ from .config_functions import (
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_console(console: str) -> str:
+    """Single-tenant/in-console auto-resolve: when no multi-console registry is configured,
+    fall back to the live console name unless the caller passed a known console."""
+    from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+    if not safebreach_envs:
+        console_name = get_console_name()
+        if console_name != 'default' and console not in safebreach_envs:
+            return console_name
+    return console
+
+
 class SafeBreachConfigServer(SafeBreachMCPBase):
     """SafeBreach MCP Config Server for simulator operations."""
     
@@ -120,11 +132,7 @@ order_direction ('asc'/'desc')"""
             order_by: str = "name",
             order_direction: str = "asc"
         ) -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_scenarios(
                 console=console,
                 page_number=page_number,
@@ -148,11 +156,7 @@ This full payload can be used for scenario inspection and future queue API integ
 Parameters: scenario_id (required, UUID string), console (required)"""
         )
         async def get_scenario_details_tool(scenario_id: str, console: str = "default") -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_scenario_details(scenario_id, console)
 
         @self.mcp.tool(
@@ -179,11 +183,7 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
             order_by: str = "name",
             order_direction: str = "asc",
         ) -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_integrations(
                 console=console,
                 page_number=page_number,
@@ -217,11 +217,7 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
             order_by: str = "name",
             order_direction: str = "asc",
         ) -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_installed_integrations(
                 console=console,
                 page_number=page_number,
@@ -242,11 +238,7 @@ valid id from get_installed_integrations first.
 Parameters: console (required), integration_id (required - the connector id from get_installed_integrations)"""
         )
         async def get_installed_integration_tool(integration_id: str, console: str = "default") -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_installed_integration(console=console, integration_id=integration_id)
 
         @self.mcp.tool(
@@ -269,11 +261,7 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
             order_by: str = "name",
             order_direction: str = "asc",
         ) -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_ti_integrations(
                 console=console,
                 page_number=page_number,

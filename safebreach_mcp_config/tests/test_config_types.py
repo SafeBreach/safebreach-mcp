@@ -879,6 +879,20 @@ class TestRedaction:
         assert "$PAM:" not in dumped
         assert "leak-me" not in dumped
 
+    def test_masks_nested_vault_refs(self):
+        # a secret hidden in a nested dict/list must not leak (defense-in-depth)
+        connector = {
+            "id": "n1", "type": "custom_splunkrest", "name": "Nested", "enabled": True,
+            "deployments": [{"name": "prod", "apiKey": "$PAM:INTERNAL_VAULT:n/apiKey"}],
+            "nested": {"inner": {"secretRef": "$PAM:INTERNAL_VAULT:n/inner"}},
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        import json as _json
+        assert "$PAM:" not in _json.dumps(result)
+        assert result["deployments"][0]["apiKey"] == REDACTED_PLACEHOLDER
+        assert result["nested"]["inner"]["secretRef"] == REDACTED_PLACEHOLDER
+        assert result["deployments"][0]["name"] == "prod"  # non-secret preserved
+
     def test_detail_view_delegates_to_redaction(self):
         connector = {"id": "a1", "type": "custom_splunkrest", "name": "S", "enabled": True,
                      "token": "$PAM:INTERNAL_VAULT:abc/token"}
