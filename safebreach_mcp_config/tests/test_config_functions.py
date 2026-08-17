@@ -1200,3 +1200,99 @@ class TestGetInstalledIntegration:
     def test_missing_id_raises(self):
         with pytest.raises(ValueError):
             sb_get_installed_integration(console="c", integration_id="")
+
+
+# --- Integration-discovery: get_ti_integrations (SAF-32798, Phase 4) ---
+
+from safebreach_mcp_config.config_functions import sb_get_ti_integrations
+
+
+def _ti_installed_fixture():
+    return [
+        {"id": "1", "type": "alienvault", "name": "AlienVault OTX", "enabled": True},
+        {"id": "2", "type": "alienvault", "name": "AlienVault Akeyless", "enabled": False},
+        {"id": "3", "type": "threatconnect", "name": "ThreatConnect", "enabled": True},
+        {"id": "4", "type": "custom_mitreattack", "name": "MITRE", "enabled": True},
+        {"id": "5", "type": "splunkrest", "name": "Splunk (not TI)", "enabled": True},
+        {"id": "6", "type": "cortexxdr", "name": "Cortex (not TI)", "enabled": True},
+    ]
+
+
+def _ti_catalog_fixture():
+    return {
+        "alienvault": {"isTiV2": True},
+        "threatconnect": {"isTiV2": True},
+        "custom_mitreattack": {"isTiV2": True},
+        "splunkrest": {"isTiV2": False},
+        "cortexxdr": {"isTiV2": False},
+    }
+
+
+class TestGetTiIntegrations:
+    """Phase 4 — get_ti_integrations."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # T-10 — core: isTiV2 derivation + pagination
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_core_derivation(self, mock_installed, mock_catalog):
+        mock_installed.return_value = _ti_installed_fixture()
+        mock_catalog.return_value = _ti_catalog_fixture()
+        r = sb_get_ti_integrations(console="c")
+        ids = sorted(i["id"] for i in r["ti_integrations_in_page"])
+        assert ids == ["1", "2", "3", "4"]  # only isTiV2 types
+        assert r["total_ti_integrations"] == 4
+        for item in r["ti_integrations_in_page"]:
+            assert set(item.keys()) == {"id", "type", "name", "enabled"}
+
+    # T-29 — name_filter over the derived TI set
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_name_filter(self, mock_installed, mock_catalog):
+        mock_installed.return_value = _ti_installed_fixture()
+        mock_catalog.return_value = _ti_catalog_fixture()
+        r = sb_get_ti_integrations(console="c", name_filter="akeyless")
+        assert [i["id"] for i in r["ti_integrations_in_page"]] == ["2"]
+        # a non-TI connector never appears even if its name would match
+        r2 = sb_get_ti_integrations(console="c", name_filter="splunk")
+        assert r2["ti_integrations_in_page"] == []
+
+    # T-30 — type_filter over the derived TI set
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_type_filter(self, mock_installed, mock_catalog):
+        mock_installed.return_value = _ti_installed_fixture()
+        mock_catalog.return_value = _ti_catalog_fixture()
+        r = sb_get_ti_integrations(console="c", type_filter="alienvault")
+        assert sorted(i["id"] for i in r["ti_integrations_in_page"]) == ["1", "2"]
+
+    # T-31 — enabled_filter over the derived TI set
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_enabled_filter(self, mock_installed, mock_catalog):
+        mock_installed.return_value = _ti_installed_fixture()
+        mock_catalog.return_value = _ti_catalog_fixture()
+        disabled = sb_get_ti_integrations(console="c", enabled_filter=False)
+        assert [i["id"] for i in disabled["ti_integrations_in_page"]] == ["2"]
+        enabled = sb_get_ti_integrations(console="c", enabled_filter=True)
+        assert sorted(i["id"] for i in enabled["ti_integrations_in_page"]) == ["1", "3", "4"]
+
+    # T-32 — ordering
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_ordering(self, mock_installed, mock_catalog):
+        mock_installed.return_value = _ti_installed_fixture()
+        mock_catalog.return_value = _ti_catalog_fixture()
+        r = sb_get_ti_integrations(console="c", order_by="name", order_direction="desc")
+        names = [i["name"] for i in r["ti_integrations_in_page"]]
+        assert names == sorted(names, key=str.lower, reverse=True)
+
+    def test_invalid_order_by_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_ti_integrations(console="c", order_by="bogus")

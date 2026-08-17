@@ -885,3 +885,30 @@ class TestRedaction:
         view = get_installed_integration_detail_view(connector, _catalog_with_sensitive())
         assert view["token"] == REDACTED_PLACEHOLDER
         assert view["id"] == "a1"
+
+
+from safebreach_mcp_config.config_types import get_minimal_ti_integration, select_ti_connectors
+
+
+class TestTiTransforms:
+    """T-6 — slim TI transform; TI derivation via catalog isTiV2."""
+
+    def test_minimal_ti_slim_shape(self):
+        raw = {"id": "c3", "type": "alienvault", "name": "AlienVault", "enabled": True,
+               "apiToken": "$PAM:INTERNAL_VAULT:x/apiToken"}
+        result = get_minimal_ti_integration(raw)
+        assert result == {"id": "c3", "type": "alienvault", "name": "AlienVault", "enabled": True}
+
+    def test_select_ti_connectors_by_isTiV2(self):
+        installed = [
+            {"id": "1", "type": "alienvault", "name": "AV", "enabled": True},
+            {"id": "2", "type": "splunkrest", "name": "Splunk", "enabled": True},
+            {"id": "3", "type": "threatconnect", "name": "TC", "enabled": False},
+        ]
+        catalog = {
+            "alienvault": {"isTiV2": True},
+            "splunkrest": {"isTiV2": False},
+            "threatconnect": {"isTiV2": True},
+        }
+        ti = select_ti_connectors(installed, catalog)
+        assert sorted(c["id"] for c in ti) == ["1", "3"]

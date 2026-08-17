@@ -23,6 +23,7 @@ from .config_functions import (
     sb_get_integrations,
     sb_get_installed_integrations,
     sb_get_installed_integration,
+    sb_get_ti_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -247,6 +248,41 @@ Parameters: console (required), integration_id (required - the connector id from
                 if console_name != 'default' and console not in safebreach_envs:
                     console = console_name
             return sb_get_installed_integration(console=console, integration_id=integration_id)
+
+        @self.mcp.tool(
+            name="get_ti_integrations",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered, paginated list of installed Threat Intelligence (TI) feeds/connectors
+for a given console — the subset of installed integrations that are TI-capable (e.g. AlienVault, ThreatConnect,
+recorded-future-style feeds). Returns a slim id/type/name/enabled per connector (no secrets). Results are
+paginated (10 per page), ordered by name ascending by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+type_filter (partial connector-type match), enabled_filter (True/False - only enabled/disabled),
+order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
+        )
+        async def get_ti_integrations_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            type_filter: Optional[str] = None,
+            enabled_filter: Optional[bool] = None,
+            order_by: str = "name",
+            order_direction: str = "asc",
+        ) -> dict:
+            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+            if not safebreach_envs:
+                console_name = get_console_name()
+                if console_name != 'default' and console not in safebreach_envs:
+                    console = console_name
+            return sb_get_ti_integrations(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                type_filter=type_filter,
+                enabled_filter=enabled_filter,
+                order_by=order_by,
+                order_direction=order_direction,
+            )
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""

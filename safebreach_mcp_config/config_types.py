@@ -760,3 +760,21 @@ def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) 
 def get_installed_integration_detail_view(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
     """Full config of a single installed connector, with sensitive fields redacted."""
     return redact_sensitive_fields(connector, catalog)
+
+
+def get_minimal_ti_integration(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a raw TI connector to the slim public shape (id/type/name/enabled)."""
+    return get_minimal_installed_integration(raw)
+
+
+def select_ti_connectors(
+    installed: List[Dict[str, Any]],
+    catalog: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Keep only installed connectors whose catalog type is Threat-Intelligence-capable
+    (`isTiV2` — the same capability the SIEM MCP's getTiV2Connectors uses)."""
+    def is_ti(connector: Dict[str, Any]) -> bool:
+        type_def = catalog.get(connector.get("type")) if isinstance(catalog, dict) else None
+        return bool(isinstance(type_def, dict) and type_def.get("isTiV2"))
+
+    return [c for c in installed if is_ti(c)]

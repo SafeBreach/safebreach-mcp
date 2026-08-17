@@ -29,6 +29,8 @@ from .config_types import (
     get_minimal_installed_integration,
     filter_installed_integrations,
     get_installed_integration_detail_view,
+    get_minimal_ti_integration,
+    select_ti_connectors,
 )
 
 logger = logging.getLogger(__name__)
@@ -1012,5 +1014,72 @@ def sb_get_installed_integration(console: str = "default", integration_id: Optio
         logger.error(f"Error getting installed integration '{integration_id}' for console '{console}': {str(e)}")
         return {
             "error": f"Failed to get installed integration: {str(e)}",
+            "console": console,
+        }
+
+
+def sb_get_ti_integrations(
+    console: str = "default",
+    page_number: int = 0,
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    enabled_filter: Optional[bool] = None,
+    order_by: str = "name",
+    order_direction: str = "asc",
+) -> Dict[str, Any]:
+    """Get the filtered, paginated list of installed Threat-Intelligence (TI) connectors (slim).
+
+    Derived from the installed connectors whose catalog type is `isTiV2`-capable, since there
+    is no dedicated TI-list endpoint.
+    """
+    valid_order_by = ['name', 'type', 'id', 'enabled']
+    if order_by not in valid_order_by:
+        raise ValueError(
+            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
+        )
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(
+            f"Invalid order_direction parameter '{order_direction}'. "
+            f"Valid values are: {', '.join(valid_order_direction)}"
+        )
+    if page_number < 0:
+        raise ValueError(f"page_number must be >= 0, got {page_number}")
+
+    try:
+        raw_installed = _get_installed_integrations_from_cache_or_api(console)
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+
+        ti_raw = select_ti_connectors(raw_installed, catalog)
+        entries = [get_minimal_ti_integration(c) for c in ti_raw]
+
+        filtered = filter_installed_integrations(
+            entries,
+            name_filter=name_filter,
+            type_filter=type_filter,
+            enabled_filter=enabled_filter,
+        )
+        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
+        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'ti_integrations')
+
+        applied_filters: Dict[str, Any] = {}
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if type_filter:
+            applied_filters['type_filter'] = type_filter
+        if enabled_filter is not None:
+            applied_filters['enabled_filter'] = enabled_filter
+        if order_by != "name":
+            applied_filters['order_by'] = order_by
+        if order_direction != "asc":
+            applied_filters['order_direction'] = order_direction
+
+        paginated['applied_filters'] = applied_filters
+        return paginated
+
+    except Exception as e:
+        logger.error(f"Error getting TI integrations for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get TI integrations: {str(e)}",
             "console": console,
         }
