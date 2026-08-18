@@ -6,20 +6,20 @@
 **Reporter**: Gal Turgeman · **Assignee**: Yossi Attas
 **Repositories**:
 - `/Users/yossiattas/Public/safebreach-mcp` (Python — migration target)
-- `/Users/yossiattas/projects/integrations/siem` (TypeScript — source of the tools)
+- An internal TypeScript MCP service — source of the tools
 
 ---
 
 ## Current State
-**Original summary**: Expose integration-discovery tools (getIntegrations, getInstalledIntegrations,
-getInstalledIntegration, getTiIntegrations) as public tools in the SafeBreach MCP.
+**Original summary**: Expose integration-discovery tools (get_integrations, get_installed_integrations,
+get_installed_integration, get_ti_integrations) as public tools in the SafeBreach MCP.
 
 **Gaps in the original ticket**:
 - Assumed a simple "make public" / re-registration. Investigation shows the TS tools read the SIEM
   service's **in-process** connector registry (no API call), so they cannot be lifted as-is into the
   Python repo — they must be **re-implemented over HTTP**.
-- File paths in the ticket (`integrationsTools.ts`, `tiTools.ts`) are wrong — tools live in
-  per-tool directories under `src/mcp/tools/<tool>/`.
+- File paths named in the ticket are wrong — the tools live in the internal service under per-tool
+  directories.
 - Did not identify that **two of the four tools have no matching REST endpoint** and that the SIEM
   REST endpoints **do not apply the tools' secret redaction**.
 - Did not state the host package (now decided: `safebreach_mcp_config`).
@@ -28,20 +28,18 @@ getInstalledIntegration, getTiIntegrations) as public tools in the SafeBreach MC
 
 ## Investigation Summary
 
-### siem (TypeScript — source)
-- Four tools defined per-directory under `src/mcp/tools/<tool>/{index.ts,handler.ts}`, aggregated in
-  `src/mcp/tools/index.ts`, mounted Streamable HTTP at `/api/siem/mcp` (`McpService.ts:8,34`).
+### Internal MCP service (TypeScript — source)
+- Four tools defined per-directory in the internal service, aggregated and mounted over Streamable HTTP.
 - Data source is **in-process** (`config.value.connectors`) — no request-time HTTP call.
-- `getInstalledIntegration` redaction: masks schema-`sensitive` fields to `@enc:SENSITIVE_FIELD` and
-  force-masks `proxyPass`+`headers` (`getInstalledIntegration/handler.ts:16-23`,
-  `ConnectorManager.ts:485-492`).
-- RBAC/consent enforced only in the MCP lib layer (`ToolAuthorizer.ts:63-97`); for these read-only
+- `get_installed_integration` redaction: masks schema-`sensitive` fields to `@enc:SENSITIVE_FIELD` and
+  force-masks `proxyPass`+`headers`.
+- RBAC/consent enforced only in the internal MCP service's authorization layer; for these read-only
   tools only the RBAC leg is active. No "public/internal" tool flag exists.
 - **REST surface** (`swagger.yaml`, base `/api/siem`):
   - catalog → `GET /v1/accounts/{accountId}/config/integrations` (`getProvidersDefaults`) ✅
   - installed → `GET /v1/accounts/{accountId}/config/integrations/installed` (`getProvidersConfig`) ✅ (raw/full)
   - single connector → **no GET** (only PUT/DELETE) ✗
-  - TI connectors → **no list endpoint** (`getTiV2Connectors()` is MCP-only) ✗
+  - TI connectors → **no list endpoint** (an MCP-only TI listing, no REST list endpoint) ✗
   - REST returns connectors **unredacted** vs the MCP tools (`$PAM:INTERNAL_VAULT:...` vault refs;
     `headers`/`proxyPass` not masked). SIEM REST routes have **no in-app RBAC**.
 
@@ -65,7 +63,7 @@ getInstalledIntegration, getTiIntegrations) as public tools in the SafeBreach MC
 ## Problem Analysis
 
 ### Problem Description
-Migrate the four read-only SIEM/TI integration-discovery tools from the TypeScript siem repo into
+Migrate the four read-only integration-discovery tools from the internal TypeScript MCP service into
 `safebreach_mcp_config` as native Python tools, re-implemented to fetch their data over HTTP from the
 SIEM backend API (through the RBAC gateway), matching the existing safebreach-mcp tool conventions
 for naming, parameters, filters, validation, pagination, annotations, and tests. Because the source
@@ -77,7 +75,7 @@ must reconstruct: (1) HTTP data access, (2) slim/redacted output shaping, and (3
   `get_installed_integration`, `get_ti_integrations`.
 - **New redaction pattern** in `config_types.py` (first field-level secret masking in the repo).
 - **Docs**: `CLAUDE.md` Config Server tool list + README.
-- **Cross-ticket**: step 1 of 2 with SAF-35067 (later withdraws the SIEM-MCP copies).
+- **Cross-ticket**: step 1 of 2 with SAF-35067 (later withdraws the duplicate copies from the internal MCP service).
 
 ### Risks & Edge Cases
 - **Secret leakage (highest severity)**: REST does not redact; `headers`/`proxyPass` and vault paths
@@ -103,10 +101,10 @@ get_installed_integration, get_ti_integrations) into the SafeBreach MCP Config S
 ### Description
 
 **Background**
-Expose the four read-only SIEM/TI integration-discovery tools — currently in the `integrations/siem`
-repo's MCP (`/api/siem/mcp`) — as public tools in the public SafeBreach MCP, so external/customer
-consumers can discover and inspect SIEM and TI integrations. Step 1 of 2 (SAF-35067 later withdraws
-the SIEM-MCP copies).
+Expose the four read-only integration-discovery tools — currently in
+an internal TypeScript MCP service — as public tools in the public SafeBreach MCP, so external/customer
+consumers can discover and inspect integrations. Step 1 of 2 (SAF-35067 later withdraws
+the duplicate copies from the internal MCP service).
 
 **Decision**
 Host the four tools in `safebreach_mcp_config` (Config Server, port 8000). Migrate TS → Python with
@@ -177,7 +175,7 @@ validations, pagination, annotations, tests).
 **Description (Markdown for JIRA):**
 ```markdown
 ### Background
-Expose the four read-only SIEM/TI integration-discovery tools — currently in the integrations/siem repo's MCP (`/api/siem/mcp`) — as public tools in the public SafeBreach MCP, so external/customer consumers can discover and inspect SIEM and TI integrations. Step 1 of 2 (SAF-35067 later withdraws the SIEM-MCP copies).
+Expose the four read-only integration-discovery tools — currently in an internal TypeScript MCP service — as public tools in the public SafeBreach MCP, so external/customer consumers can discover and inspect integrations. Step 1 of 2 (SAF-35067 later withdraws the duplicate copies from the internal MCP service).
 
 ### Decision
 Host the four tools in `safebreach_mcp_config` (Config Server, port 8000). Migrate TypeScript → Python with consistency to the existing safebreach-mcp tool conventions (naming, parameters, filters, validations, pagination, annotations, tests).
@@ -197,7 +195,7 @@ Host the four tools in `safebreach_mcp_config` (Config Server, port 8000). Migra
 * `CLAUDE.md` + `README.md`: Config Server tool documentation
 
 ### Out of Scope
-* Removing the four tools from the integrations/siem MCP once public — SAF-35067.
+* Removing the four tools from the internal MCP service once public — SAF-35067.
 * TI data-plane tools (`getThreats`, `getThreatInfo`, `getThreatsFilters`) — separate ticket.
 ```
 

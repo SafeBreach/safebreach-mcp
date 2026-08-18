@@ -735,7 +735,7 @@ def clear_integrations_catalog_cache():
 
 
 def _get_integrations_catalog_from_cache_or_api(console: str) -> Dict[str, Any]:
-    """Fetch the SIEM connector-type catalog (keyed by type) from cache or the SIEM API.
+    """Fetch the connector-type catalog (keyed by type) from cache or the SIEM API.
 
     Source: GET /api/siem/v1/accounts/{account}/config/integrations, whose response is
     wrapped in the SIEM envelope {"error": 0, "result": {<type>: <def>, ...}}.
@@ -782,7 +782,7 @@ def sb_get_integrations(
     order_by: str = "name",
     order_direction: str = "asc",
 ) -> Dict[str, Any]:
-    """Get the filtered, paginated catalog of available SIEM/TI connector *types*.
+    """Get the filtered, paginated catalog of available connector *types*.
 
     Returns the menu of connector types that could be installed (no account data, no secrets).
     """
@@ -848,7 +848,7 @@ def clear_installed_integrations_cache():
 
 
 def _get_installed_integrations_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
-    """Fetch the installed SIEM connectors from cache or the SIEM API.
+    """Fetch the installed connectors from cache or the SIEM API.
 
     Source: GET /api/siem/v1/accounts/{account}/config/integrations/installed, whose
     response is wrapped in the SIEM envelope {"error": 0, "result": [<connector>, ...]}.
@@ -892,7 +892,7 @@ def sb_get_installed_integrations(
     order_by: str = "name",
     order_direction: str = "asc",
 ) -> Dict[str, Any]:
-    """Get the filtered, paginated list of INSTALLED SIEM connectors (slim, no secrets)."""
+    """Get the filtered, paginated list of INSTALLED integration connectors (slim, no secrets)."""
     valid_order_by = ['name', 'type', 'id', 'enabled']
     if order_by not in valid_order_by:
         raise ValueError(

@@ -3,10 +3,10 @@
 ## Section 1: Overview
 
 ### Driver
-Expose the four read-only SIEM/TI integration-discovery tools — currently only in the
-`integrations/siem` repo's MCP (`/api/siem/mcp`) — as public tools in the public SafeBreach MCP, so
-external/customer consumers can discover and inspect SIEM and TI integrations. This is **step 1 of 2**:
-expose publicly here; SAF-35067 later withdraws the SIEM-MCP copies.
+Expose the four read-only integration-discovery tools — currently only in
+an internal TypeScript MCP service — as public tools in the public SafeBreach MCP, so
+external/customer consumers can discover and inspect integrations. This is **step 1 of 2**:
+expose publicly here; SAF-35067 later withdraws the duplicate copies from the internal MCP service.
 
 The four tools:
 - `get_integrations` — catalog of available connector *types* (no account data, no secrets).
@@ -88,7 +88,7 @@ The redaction schema is the catalog: `catalog[type].fields[]` entries with `sens
 the fields to mask per connector type (live-verified: e.g. `custom_splunkrest` → `token, password,
 proxyPass`; `threatconnect` → `apiSecret, apiToken, proxyPass`).
 
-**Algorithm (mirrors TS `sanitizeSensetiveFields` + `ALWAYS_REDACTED_FIELDS`):**
+**Algorithm (mirrors the platform's existing sensitive-field sanitization):**
 1. Fetch the catalog; for the connector's `type`, mask every field with `sensitive == true` →
    set value to the literal `@enc:SENSITIVE_FIELD` (regardless of current value / vault-ref).
 2. Force-mask `headers` and `proxyPass` → `@enc:SENSITIVE_FIELD` if present (backstop; `headers` is
@@ -153,7 +153,7 @@ description=...)` async wrappers in `_register_tools()`, mirroring `get_console_
 `CLAUDE.md` (Config Server tool list + filtering section) and `README.md`: add the four tools.
 
 ### 3.6 Explicitly NOT touched
-`integrations/siem` (SAF-35067 handles withdrawal); other servers; auth/core modules (reused as-is).
+The internal MCP service (SAF-35067 handles withdrawal); other servers; auth/core modules (reused as-is).
 
 ## Section 4: Backend Dependency
 
@@ -169,7 +169,7 @@ place enforcement path — **not** a new dependency or a gap. The Python-side ob
 through the gateway (canonical pattern) and relay the 403; no backend/gateway change is required.
 
 ## Section 5: Out of Scope
-- Removing the four tools from the `integrations/siem` MCP once public — **SAF-35067**.
+- Removing the four tools from the internal MCP service once public — **SAF-35067**.
 - TI data-plane tools (`getThreats`, `getThreatInfo`, `getThreatsFilters`) — separate ticket.
 - Any **write** operation on integrations (create/update/delete) — these tools are read-only.
 

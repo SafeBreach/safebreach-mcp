@@ -25,68 +25,64 @@ vault refs + raw `headers` object → Python redaction confirmed required. Envel
 Improving
 
 ## Original Ticket
-- **Summary**: Expose integration-discovery tools (getIntegrations, getInstalledIntegrations, getInstalledIntegration, getTiIntegrations) as public tools in the SafeBreach MCP
+- **Summary**: Expose integration-discovery tools (get_integrations, get_installed_integrations, get_installed_integration, get_ti_integrations) as public tools in the SafeBreach MCP
 - **Type**: Task | **Status**: To Do | **Priority**: Medium | **Labels**: CTEM-dev
 - **Reporter**: Gal Turgeman | **Assignee**: Yossi Attas
-- **Description**: Make the SIEM MCP integration-discovery tools available as public tools in the
-  SafeBreach MCP, so external/customer consumers can discover and inspect SIEM and TI integrations.
-  These tools live in `siem/src/mcp/tools/integrationsTools.ts` and `tiTools.ts`, registered via
-  `siem/src/mcp/tools/index.ts` (`McpService`, Streamable HTTP at `/api/siem/mcp`). All are
+- **Description**: Make the internal MCP service's integration-discovery tools available as public tools in the
+  SafeBreach MCP, so external/customer consumers can discover and inspect integrations.
+  These tools live in an internal TypeScript MCP service. All are
   read-only and gated per-request by RBAC + write-consent.
 - **Scope — tools to make public**:
-  - `getIntegrations` — catalog of available connector *types* (no account data, no secrets)
-  - `getInstalledIntegrations` — installed connectors, slim `id/type/name/enabled` (no secrets)
-  - `getInstalledIntegration` — full config of one connector, secrets redacted as `@enc:SENSITIVE_FIELD`
-  - `getTiIntegrations` — installed Threat Intelligence feeds, slim `id/type/name/enabled`
-- **Out of scope**: removing the four tools from the SIEM MCP once public (SAF-35067); TI data-plane
+  - `get_integrations` — catalog of available connector *types* (no account data, no secrets)
+  - `get_installed_integrations` — installed connectors, slim `id/type/name/enabled` (no secrets)
+  - `get_installed_integration` — full config of one connector, secrets redacted as `@enc:SENSITIVE_FIELD`
+  - `get_ti_integrations` — installed Threat Intelligence feeds, slim `id/type/name/enabled`
+- **Out of scope**: removing the four tools from the internal MCP service once public (SAF-35067); TI data-plane
   tools (`getThreats`, `getThreatInfo`, `getThreatsFilters`) — separate decision/ticket.
 - **Acceptance Criteria (original)**:
   - Four tools exposed as public SafeBreach MCP tools with clear names/descriptions/schemas
-  - RBAC remains enforced for all four (esp. `getInstalledIntegration`)
-  - Redaction of sensitive fields (`@enc:SENSITIVE_FIELD`, `proxyPass`, `headers`) verified for `getInstalledIntegration`
+  - RBAC remains enforced for all four (esp. `get_installed_integration`)
+  - Redaction of sensitive fields (`@enc:SENSITIVE_FIELD`, `proxyPass`, `headers`) verified for `get_installed_integration`
   - Tests cover public registration of the four tools
 
 ## Task Scope
-Refine SAF-32798 into an implementation-ready ticket: understand how the four SIEM-MCP
-integration-discovery tools work today (siem repo), how the SafeBreach MCP exposes public tools
+Refine SAF-32798 into an implementation-ready ticket: understand how the four internal MCP service
+integration-discovery tools work today (in the internal source service), how the SafeBreach MCP exposes public tools
 (safebreach-mcp repo), and describe precisely what "expose as public tools in the SafeBreach MCP"
 requires — data source, RBAC/redaction preservation, naming, schemas, tests. No solution design
 (that is planning-dev-task's job).
 
 ## Repositories Under Investigation
 - /Users/yossiattas/Public/safebreach-mcp (Python, public SafeBreach MCP — implementation target)
-- /Users/yossiattas/projects/integrations/siem (TypeScript, SIEM MCP — current home of the tools)
+- An internal TypeScript MCP service — current home of the tools
 
 ## Investigation Findings
 
-### Source repo — `integrations/siem` (TypeScript, current home of the tools)
+### Source service — an internal TypeScript MCP service (current home of the tools)
 
-**Actual file layout** (ticket's `integrationsTools.ts`/`tiTools.ts` paths are wrong): each tool is a
-directory `src/mcp/tools/<toolName>/` with `index.ts` (definition + JSON schemas) and `handler.ts`
-(logic). All four aggregated in `src/mcp/tools/index.ts` (`toolDefinitions`/`toolHandlers` maps),
-registered via `McpService.ts:33` `registerTools(...)`, mounted Streamable HTTP at `/api/siem/mcp`
-(`McpService.ts:8,34`). Built through `defineTool` (`src/mcp/lib/defineTool.ts:39-58`) which stamps
-read/write MCP annotations.
+**Structure**: the four tools live in an internal TypeScript MCP service; each is defined with its
+JSON schemas and handler logic, aggregated and registered with read/write MCP annotations, and
+exposed over Streamable HTTP.
 
 **Per-tool contract (name / title / input / output):**
-- `getIntegrations` — "List Available Integration Types". Input: `category?` (enum-ish string:
+- `get_integrations` — "List Available Integration Types". Input: `category?` (enum-ish string:
   siem/security_control/ti/workflow/file_provider/secret_provider/custom), `limit?` (int 1..200,
-  default 50). Output `{ integrations: [{type,name,description,category,vendor,product,isTi,isVm,
-  supportsCollectorNode}], totalCount }`. `read:'local'`, `category:'config'`.
-- `getInstalledIntegrations` — "List Installed Integrations". Input: `limit?` (int 1..200, default
-  50). Output `{ installedIntegrations: [{id,type,name,enabled,categories}], totalCount }`. No
+  default 50). Output: a list of catalog entries
+  `{type,name,description,category,vendor,product,isTi,isVm,supportsCollectorNode}` plus a total
+  count. `read:'local'`, `category:'config'`.
+- `get_installed_integrations` — "List Installed Integrations". Input: `limit?` (int 1..200, default
+  50). Output: a list of connectors `{id,type,name,enabled,categories}` plus a total count. No
   secrets. `read:'local'`, `category:'config'`.
-- `getInstalledIntegration` — "Get Installed Integration Config". Input: `id` (string, **required**).
+- `get_installed_integration` — "Get Installed Integration Config". Input: `id` (string, **required**).
   Output: open object (id/type/name/enabled + connector-specific config), **secrets redacted**.
   `read:'local'`, `category:'config'`.
-- `getTiIntegrations` — "List Threat Intelligence Connectors". Input: **none**. Output
-  `{ tiIntegrations: [{id,type,name,enabled}], totalCount }`. `read:'local'`, `category:'ti'`.
+- `get_ti_integrations` — "List Threat Intelligence Connectors". Input: **none**. Output:
+  a list of connectors `{id,type,name,enabled}` plus a total count. `read:'local'`, `category:'ti'`.
 
-**Redaction (`getInstalledIntegration`)**: `REDACTED='@enc:SENSITIVE_FIELD'`;
-`ALWAYS_REDACTED_FIELDS=['proxyPass','headers']`. Handler fetches the connector's `configSchema`
-and calls `connectorManager.sanitizeSensetiveFields(schema, connector)` (`ConnectorManager.ts:485-492`)
-which masks every schema field flagged `sensitive`, then force-masks `proxyPass`/`headers` as a
-backstop. Stored secrets are already vault paths, not plaintext; sanitizer masks them entirely.
+**Redaction (`get_installed_integration`)**: masks to the literal `@enc:SENSITIVE_FIELD`; always-redacted
+fields `['proxyPass','headers']`. The platform's connector-schema sanitization masks every schema
+field flagged `sensitive`, then force-masks `proxyPass`/`headers` as a
+backstop. Stored secrets are already vault paths, not plaintext; the sanitization masks them entirely.
 
 **Data source**: NONE of the four make an outbound HTTP call at request time. They read the SIEM
 service's in-process config/connector registry (`config.value.connectors`, backing key
@@ -94,8 +90,8 @@ service's in-process config/connector registry (`config.value.connectors`, backi
 `openWorldHint:false`. *(Implication for Python: the equivalent data must be fetched over HTTP from a
 SafeBreach backend API — this is the biggest open question; see Problem Analysis.)*
 
-**RBAC / consent gating**: Enforced per-request in the MCP lib layer (`ToolAuthorizer.decideAccess`,
-`ToolAuthorizer.ts:63-97`), not in handlers. Chain: RBAC (`POST /api/rbac/mcp-check` to ui-server,
+**RBAC / consent gating**: Enforced per-request in the internal MCP service's authorization layer,
+not in handlers. Chain: RBAC (`POST /api/rbac/mcp-check` to ui-server,
 fail-closed) → connector-enabled policy → write-consent (only if `write===true`) → per-connector
 deny dial. For these four read-only, non-resourceRef tools **only the RBAC leg is active**;
 write-consent structurally does not apply. Identity from `originaldata` header / token resolution.
@@ -158,7 +154,7 @@ pattern** — the redaction must be verified server-side, not assumed from the b
 ## Problem Analysis
 
 ### Problem statement
-Re-implement four read-only SIEM/TI integration-discovery tools as native Python tools in
+Re-implement four read-only integration-discovery tools as native Python tools in
 `safebreach_mcp_config`, fetching their data over HTTP from the SafeBreach SIEM backend API, with
 behaviour (names, params, filters, validation, pagination, redaction, RBAC relay) consistent with
 both the source TS tools' intent and the existing safebreach-mcp Python conventions.
@@ -176,8 +172,8 @@ endpoints. The REST surface only partially matches the four tools:
 - **`get_installed_integration`** (single, redacted) → **no dedicated REST GET** (only PUT/DELETE on
   `/installed/{id}`). **[Confirmed by Gal Turgeman, reporter]** No dedicated endpoint exists; fetch
   the installed list and **filter by `id`**, then redact.
-- **`get_ti_integrations`** → **no REST list endpoint**; `getTiV2Connectors()` (a `tiV2`-capability
-  filter) is in-process TS only. **[Confirmed by Gal Turgeman, reporter]** No dedicated endpoint;
+- **`get_ti_integrations`** → **no REST list endpoint**; the TI listing is MCP-only (no REST list
+  endpoint) in the internal service. **[Confirmed by Gal Turgeman, reporter]** No dedicated endpoint;
   derive TI connectors from the installed list by **filtering on type / `isTi`**.
 
 > **Reporter confirmation (Gal Turgeman, 2026-08-16 Slack)**: points 1 & 2 above are correct — there
@@ -238,7 +234,7 @@ not gate these paths, RBAC enforcement is an open dependency (possibly a backend
 ### Dependencies
 - Live SIEM backend endpoints (`/config/integrations`, `/config/integrations/installed`) reachable
   through the RBAC gateway for the target console.
-- Coordination with SAF-35067 (withdraw the SIEM-MCP copies) — this ticket is step 1 of 2.
+- Coordination with SAF-35067 (withdraw the duplicate copies from the internal MCP service) — this ticket is step 1 of 2.
 - Possible backend/gateway dependency if RBAC is not enforced on these REST paths.
 
 ## Proposed Improvements

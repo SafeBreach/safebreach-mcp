@@ -44,7 +44,7 @@ the exact set of fields to mask per connector type. Live sample (installed types
 - `custom_hashicorpvault`: `clientKeyPassword, token, secretId, proxyPass` · `idira`: `keyPassword, pfxPassword, proxyPass`
 - `msatpgraph`/`office365graph`/`custom_wiz`: `clientSecret, proxyPass` · `sentinelonesdl`/`cortexxdr`: `apiToken, proxyPass`
 
-**Python redaction algorithm (mirrors TS `sanitizeSensetiveFields` + `ALWAYS_REDACTED_FIELDS`):**
+**Python redaction algorithm (mirrors the platform's existing sensitive-field sanitization):**
 1. Look up `catalog[connector.type].fields[]`; for every field with `sensitive==true`, set
    `connector[field.key] = "@enc:SENSITIVE_FIELD"` (mask regardless of current value/vault-ref).
 2. Force-mask `headers` and `proxyPass` to `@enc:SENSITIVE_FIELD` if present (backstop — `headers`
@@ -53,11 +53,11 @@ the exact set of fields to mask per connector type. Live sample (installed types
 
 ## TI derivation — CONFIRMED
 
-`catalog[type].isTiV2 == true` identifies TI connectors (the TS `getTiV2Connectors` uses the
-`tiV2` capability, which the catalog surfaces as `isTiV2`). Live: 6 installed TI connectors
+`catalog[type].isTiV2 == true` identifies TI connectors (the platform's TI capability, which the
+catalog surfaces as `isTiV2`). Live: 6 installed TI connectors
 (`alienvault` ×2, `custom_tiv2mockconnector`, `threatconnect`, `custom_mitreattack` ×2). `isTi` and
-`isTiV2` agreed for every installed TI connector here; use **`isTiV2`** as primary (matches TS
-`supportsTiV2()`), optionally union with `isTi`.
+`isTiV2` agreed for every installed TI connector here; use **`isTiV2`** as primary,
+optionally union with `isTi`.
 
 ## RBAC — still an implementation/verify item
 

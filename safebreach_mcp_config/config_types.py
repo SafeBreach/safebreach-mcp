@@ -701,7 +701,7 @@ def filter_installed_integrations(
     return [e for e in entries if keep(e)]
 
 
-# Redaction constants (mirror the SIEM MCP's sanitizeSensetiveFields + ALWAYS_REDACTED_FIELDS)
+# Redaction constants 
 REDACTED_PLACEHOLDER = "@enc:SENSITIVE_FIELD"
 ALWAYS_REDACTED_FIELDS = ["proxyPass", "headers"]
 
@@ -783,7 +783,8 @@ def select_ti_connectors(
     catalog: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """Keep only installed connectors whose catalog type is Threat-Intelligence-capable
-    (`isTiV2` — the same capability the SIEM MCP's getTiV2Connectors uses)."""
+    (catalog[type].isTiV2 == True). Returns a new list; input is not mutated.
+    """
     def is_ti(connector: Dict[str, Any]) -> bool:
         type_def = catalog.get(connector.get("type")) if isinstance(catalog, dict) else None
         return bool(isinstance(type_def, dict) and type_def.get("isTiV2"))

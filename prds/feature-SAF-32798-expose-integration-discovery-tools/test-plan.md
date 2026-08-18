@@ -59,7 +59,7 @@ Sources: JIRA acceptance criteria ∪ PRD §6 Definition of Done (user-confirmed
     this ticket's surface. The Python obligation (route through the gateway, relay 403) is unit-covered by
     T-11; re-verifying ui-server's own RBAC is out of scope.
   - **Write operations** on integrations (create/update/delete) — this ticket is read-only.
-  - **Withdrawing the siem-MCP copies** — SAF-35067.
+  - **Withdrawing the duplicate copies from the internal MCP service** — SAF-35067.
 
 ## Coverage Summary (generated)
 
@@ -71,7 +71,7 @@ Sources: JIRA acceptance criteria ∪ PRD §6 Definition of Done (user-confirmed
 ## Environment Requirements (aggregated)
 
 - Environment classes: repo-harness / none (unit — mocked HTTP); console environment (E2E — a live
-  SafeBreach console with SIEM/TI connectors installed; `E2E_CONSOLE`, default `pentest01`).
+  SafeBreach console with integration connectors installed; `E2E_CONSOLE`, default `pentest01`).
 
 Capability checklist (answered from the plan's system/e2e tests only):
 
@@ -80,7 +80,7 @@ Capability checklist (answered from the plan's system/e2e tests only):
   connectors is sufficient; no execution needed.
 - [x] Mockulators sufficient? — **N/A** (no simulators involved). E2E needs a real console whose SIEM
   connectors are already configured; unit tests mock the HTTP layer entirely.
-- [x] Console-specific configuration required? — **Yes.** A console with SIEM integrations installed —
+- [x] Console-specific configuration required? — **Yes.** A console with integrations installed —
   including several connectors with sensitive fields (diverse types: splunk/crowdstrike/threatconnect/wiz)
   and ≥1 TI (`isTiV2`) feed. `pentest01` already satisfies this (25 connectors incl. those types + TI
   feeds; verified live 2026-08-17). No special RBAC role needed for the happy-path tests.

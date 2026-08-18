@@ -162,7 +162,7 @@ Parameters: scenario_id (required, UUID string), console (required)"""
         @self.mcp.tool(
             name="get_integrations",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns a filtered, paginated catalog of AVAILABLE SIEM/TI integration connector TYPES
+            description="""Returns a filtered, paginated catalog of AVAILABLE integration connector TYPES
 for a given console — the menu of what COULD be installed (e.g. Splunk, QRadar, CrowdStrike, AlienVault),
 NOT what is currently configured. Contains no account data and no secrets. To see installed connectors use
 get_installed_integrations; for a single installed connector's config use get_installed_integration.
@@ -199,7 +199,7 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
         @self.mcp.tool(
             name="get_installed_integrations",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns a filtered, paginated list of SIEM integration connectors currently INSTALLED and
+            description="""Returns a filtered, paginated list of integration connectors currently INSTALLED and
 configured for a given console. Returns a slim id/type/name/enabled per connector (no secrets). To browse the
 catalog of connector TYPES that could be installed use get_integrations; for one connector's full (redacted)
 config use get_installed_integration with its id. Results are paginated (10 per page), ordered by name ascending
@@ -231,7 +231,7 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
         @self.mcp.tool(
             name="get_installed_integration",
             annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns the full configuration and status of a single INSTALLED SIEM integration connector,
+            description="""Returns the full configuration and status of a single INSTALLED integration connector,
 by its id, with credentials and other sensitive fields REDACTED. Any field whose value is '@enc:SENSITIVE_FIELD'
 is a redacted secret (credentials, tokens, proxy passwords, and request headers are always redacted). Obtain a
 valid id from get_installed_integrations first.

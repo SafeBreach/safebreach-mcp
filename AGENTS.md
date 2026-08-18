@@ -1,17 +1,17 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-## 🚨 SECURITY FIRST - CRITICAL FOR CLAUDE
+## 🚨 SECURITY FIRST - CRITICAL FOR Codex
 
-**IMPORTANT**: Claude should always be launched using the secure launcher to ensure full project context and security awareness:
+**IMPORTANT**: Codex should always be launched using the secure launcher to ensure full project context and security awareness:
 
 ```bash
-# ALWAYS use this command to launch Claude:
-./claude-launcher.sh
+# ALWAYS use this command to launch Codex:
+./Codex-launcher.sh
 ```
 
-**This ensures Claude has:**
+**This ensures Codex has:**
 - ✅ Complete project architecture and best practices knowledge
 - ✅ Security context and awareness of token handling rules
 - ✅ Current git status and environment configuration
@@ -153,7 +153,7 @@ The project includes comprehensive test coverage for external connection authent
 **Test Coverage:**
 - ✅ **Authentication token generation and management** - Secure token creation and preservation
 - ✅ **Re-entrant deployment token preservation** - Existing tokens maintained across deployments  
-- ✅ **Claude Desktop configuration generation** - Correct Bearer token integration
+- ✅ **Codex Desktop configuration generation** - Correct Bearer token integration
 - ✅ **Multi-server launcher authentication** - Consistent auth across all servers
 - ✅ **Environment variable configuration** - Proper auth token handling
 - ✅ **systemd service authentication setup** - Deployment script integration
@@ -205,8 +205,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
   - `config_server.py`: FastMCP server for simulator operations
   - `config_functions.py`: Business logic for simulator management
   - `config_types.py`: Data transformations for simulator data
-  - **Tools**: `get_console_simulators`, `get_simulator_details`, `get_scenarios`, `get_scenario_details`,
-    `get_integrations`, `get_installed_integrations`, `get_installed_integration`, `get_ti_integrations`
+  - **Tools**: `get_console_simulators`, `get_simulator_details`
 
 - **`safebreach_mcp_data/`**: Data Server (Port 8001)
   - `data_server.py`: FastMCP server for test and simulation data
@@ -329,33 +328,9 @@ Rate limiting environment variables:
   integer-as-string (custom plan). Returns complete payload including all steps with attack filters,
   system/target/attacker filters, phases, actions, edges, plus `source_type` and resolved category names
   (empty for custom). Full payload preserved for future queue API integration.
-5. `get_integrations` ✨ **NEW** - Filtered, paginated catalog of AVAILABLE integration connector TYPES
-  (the menu of what could be installed; no account data, no secrets). Filters: name, category, vendor,
-  `ti_only`, `vm_only`; ordering by name/type/category/vendor. Sourced from the SIEM
-  `/config/integrations` API. PAGE_SIZE=10 with hint_to_agent.
-6. `get_installed_integrations` ✨ **NEW** - Filtered, paginated list of INSTALLED integration connectors,
-  slim `id/type/name/enabled` (no secrets). Filters: name, type, `enabled_filter`; ordering by
-  name/type/id/enabled. Sourced from `/config/integrations/installed`.
-7. `get_installed_integration` ✨ **NEW** - Full config of ONE installed connector by `integration_id`,
-  with secrets REDACTED to `@enc:SENSITIVE_FIELD` (schema-`sensitive` fields + `headers`/`proxyPass` +
-  any `$PAM:` vault-ref value; fail-safe default set for unknown types). Located in the SIEM `/config`
-  blob (no dedicated single-connector API). RBAC enforced via the ui-server gateway.
-8. `get_ti_integrations` ✨ **NEW** - Filtered, paginated list of installed Threat-Intelligence feeds
-  (installed connectors whose catalog type is `isTiV2`-capable), slim `id/type/name/enabled`. Filters:
-  name, type, `enabled_filter`; ordering by name/type/id/enabled.
 
 **Data Server (Port 8001):**
-3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering.
-  **SAF-33511**: also returns tests waiting in the orchestrator execution queue — the testsummaries
-  API only covers slot-active and terminal tests, so a fresh (never-cached) orchestrator queue
-  snapshot is merged on every non-terminal-filter call, deduplicated by planRunId. Queued entries
-  have `status='queued'` (slotted-but-preparing PENDING rows are normalized to 'queued' too),
-  `queue_position`, and `queued_time` (derived from the planRunId epoch prefix), are pinned to the
-  top of page 0 newest-submission-first, and the response includes `queued_tests_count`.
-  `status_filter='queued'` filters client-side (the list API has no functional QUEUED status);
-  start_date/end_date filters exclude queued entries (they have no start/end times yet); when the
-  orchestrator queue is paused, a hint warns that queued tests will not start until resumed;
-  queue-API failures degrade gracefully to the pre-SAF-33511 response
+3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering
 4. `get_test_details` ✨ **Enhanced** - Full details with always-inline status counts, optional streaming drift count, and Propagate findings.
   **SAF-32018**: for a **non-terminal (running) test**, `simulations_statistics` is refreshed from
   a **fresh single-test `testsummaries/{id}` call** instead of the (up-to-30-min) cached test-list
@@ -508,11 +483,7 @@ The `get_console_simulators`, `get_tests`, and `get_test_simulations` functions 
 **Enhanced Test History Filtering (`get_tests`):**
 - **Test Type**: Filter by "validate" (BAS tests) or "propagate" (ALM tests)
 - **Time Windows**: Filter by start/end dates (epoch timestamps or ISO 8601 strings, e.g., '2026-03-01T00:00:00Z')
-- **Status**: Filter by "completed", "canceled", "failed", "running", "paused", "queued" (SAF-33511: "queued"
-  covers tests waiting in the orchestrator execution queue — merged live from the orchestrator
-  queue API on every call, never cached — plus slotted-but-preparing tests; queued entries are
-  pinned to the top of the first page with `queue_position` and `queued_time` fields, and the
-  response carries `queued_tests_count`)
+- **Status**: Filter by "completed", "canceled", "failed", "running"
 - **Name Patterns**: Case-insensitive partial matching on test names
 - **Custom Ordering**: Sort by end_time, start_time, name, or duration (ascending/descending)
 
@@ -728,9 +699,9 @@ uv tool install git+ssh://git@github.com:SafeBreach/safebreach-mcp.git/@1.1.0
 
 
 
-## Claude Desktop Integration
+## Codex Desktop Integration
 
-Register the servers in Claude Desktop config at `/Library/Application Support/Claude/claude_desktop_config.json`:
+Register the servers in Codex Desktop config at `/Library/Application Support/Codex/claude_desktop_config.json`:
 
 **Multi-Server Configuration (Localhost - Recommended):**
 ```json
@@ -830,7 +801,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
 - Data Server: 60+ tests available from SafeBreach environments
 - Utilities Server: Datetime conversion functions operational
 - API Integration: All SafeBreach console APIs working correctly
-- Claude Desktop: Remote MCP integration confirmed working
+- Codex Desktop: Remote MCP integration confirmed working
 
 **Deployment Tips**:
 ```bash
