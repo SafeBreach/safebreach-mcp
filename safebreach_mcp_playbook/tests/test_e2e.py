@@ -316,8 +316,13 @@ class TestPlaybookE2E:
             err = str(exc_info.value).lower()
             assert "not found" in err or "no url configured" in err
             
-            # Test invalid page number
-            invalid_page_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=999)
+            # Test invalid page number — self-discover total_pages so the assertion is robust
+            # regardless of how many attacks the live console holds (a hardcoded page like 999
+            # becomes VALID once the console exceeds ~9,990 attacks; SAF-32798 stale-test fix).
+            first_page = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=0)
+            total_pages = first_page.get('total_pages', 1)
+            out_of_range_page = total_pages + 5  # genuinely past the last valid page
+            invalid_page_result = sb_get_playbook_attacks(console=E2E_CONSOLE, page_number=out_of_range_page)
             assert 'error' in invalid_page_result
             assert 'Invalid page_number' in invalid_page_result['error']
             
