@@ -1,6 +1,6 @@
 # Test Plan — Migrate Integration-Discovery Tools into the Config Server (SAF-32798)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-32798-expose-integration-discovery-tools  |  Status: Draft  |  Updated: 2026-08-17 11:45
+> PRD: ./prd.md  |  Branch: feature/SAF-32798-expose-integration-discovery-tools  |  Status: Signed off  |  Updated: 2026-08-18
 
 ## Status & Review
 
@@ -15,10 +15,10 @@ Sources: JIRA acceptance criteria ∪ PRD §6 Definition of Done (user-confirmed
 
 | Req | Requirement (from SAF-32798 ∪ PRD §6) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1  | Expose `get_integrations` (connector-type catalog, no secrets) | T-1, T-7, T-13, T-14, T-20, T-21, T-22, T-23, T-24, T-34, T-35, T-39 | Covered |
-| R2  | Expose `get_installed_integrations` (slim id/type/name/enabled, no secrets) | T-2, T-8, T-13, T-15, T-25, T-26, T-27, T-28, T-33, T-36 | Covered |
+| R1  | Expose `get_integrations` (connector-type catalog, no secrets) | T-1, T-7, T-13, T-14, T-20, T-21, T-22, T-23, T-24, T-34, T-35, T-39, T-40, T-41 | Covered |
+| R2  | Expose `get_installed_integrations` (slim id/type/name/enabled, no secrets) | T-2, T-8, T-13, T-15, T-25, T-26, T-27, T-28, T-33, T-36, T-42, T-43 | Covered |
 | R3  | Expose `get_installed_integration` (one connector, secrets redacted) | T-9, T-13, T-16, T-37 | Covered |
-| R4  | Expose `get_ti_integrations` (installed TI feeds, slim) | T-6, T-10, T-13, T-17, T-29, T-30, T-31, T-32, T-38 | Covered |
+| R4  | Expose `get_ti_integrations` (installed TI feeds, slim) | T-6, T-10, T-13, T-17, T-29, T-30, T-31, T-32, T-38, T-44 | Covered |
 | R5  | All four have clear public-facing names, descriptions, input/output schemas | T-13 | Covered |
 | R6  | RBAC remains enforced (esp. `get_installed_integration`) | T-11 | Covered (unit: 403 surfaced with RBAC hint via sibling catch-and-return; live enforcement is ui-server's standard mechanism — see Out of scope) |
 | R7  | Redaction of sensitive fields (`@enc:SENSITIVE_FIELD`, `proxyPass`, `headers`) verified | T-3, T-4, T-5, T-16, T-37 | Covered |
@@ -66,7 +66,7 @@ Sources: JIRA acceptance criteria ∪ PRD §6 Definition of Done (user-confirmed
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
 | Automatic | 28   | 0           | 0      | 4   | 32    |
-| Manual    | 0    | 0           | 0      | 7   | 7     |
+| Manual    | 0    | 0           | 0      | 12  | 12    |
 
 ## Environment Requirements (aggregated)
 
@@ -145,6 +145,11 @@ Capability checklist (answered from the plan's system/e2e tests only):
 | T-37 | Explore `get_installed_integration` redaction across MULTIPLE diverse connector types | Manual | security, exploratory | Phase 3 | — | console environment |
 | T-38 | Explore `get_ti_integrations`: correctness vs catalog `isTiV2` + filters | Manual | exploratory | Phase 4 | — | console environment |
 | T-39 | Pagination + `hint_to_agent` guidance across the large live catalog | Manual | UX, exploratory | Phase 1 | — | console environment |
+| T-40 | Helm `get_integrations` **ti_only** filter — only TI-capable catalog types | Manual | exploratory | Phase 4 | — | console environment |
+| T-41 | Helm `get_integrations` **name/vendor** filter ('splunk') | Manual | exploratory | Phase 4 | — | console environment |
+| T-42 | Helm `get_installed_integrations` **enabled_filter** (disabled only) | Manual | exploratory | Phase 4 | — | console environment |
+| T-43 | Helm `get_installed_integrations` **type_filter** (alienvault) | Manual | exploratory | Phase 4 | — | console environment |
+| T-44 | Helm `get_ti_integrations` **enabled_filter** (enabled only) | Manual | exploratory | Phase 4 | — | console environment |
 
 ### T-1 — Catalog entry transform
 
@@ -353,6 +358,7 @@ Capability checklist (answered from the plan's system/e2e tests only):
 - Evidence required: transcript + captured page outputs + observed-vs-expected narrative; BLOCKED if unreachable.
 - Manual because: exploratory UX judgment over paging ergonomics at real scale.
 - Environment needs: console environment
+- Result (2026-08-18): **ACCEPTED GAP — agent-side, not a feature defect.** On the automated Helm run the judge rejected this because Helm's prose claimed "page 2" but re-listed page 1's 10 connectors. The judge itself confirmed the TOOL output was correct (`page 1 of 9, total 83, proper hint_to_agent`). Tool pagination independently verified: page 2 (`page_number=1`) = Cortex XDR, Cortex XSOAR, CrowdStrike Falcon, Cybereason, Cylance, Cyware, Darktrace, Deploy Mockion, Devo, ElasticSearch (distinct from page 1; `total_pages=9`). User decision: keep as a Helm-agent UX check and accept the original miss as a non-reproducing agent limitation. See test-results/helm-e2e.md.
 
 ### T-2 — Slim installed-integration transform
 
@@ -770,6 +776,86 @@ Capability checklist (answered from the plan's system/e2e tests only):
 - Manual because: exploratory end-to-end judgment for sign-off confidence, beyond the deterministic e2e assertions.
 - Environment needs: console environment
 
+### T-40 — Helm get_integrations ti_only filter
+
+- Description: Demonstrate the catalog tool's `ti_only` option via Helm — only TI-capable connector types are returned.
+- Status: Active
+- Passes after: Phase 4
+- Level: e2e
+- Execution: Manual
+- Aspect: exploratory
+- Risk: A filter that returns unfiltered/mismatched results diverges from the tool contract; visible only against real data.
+- Risk source: PRD §2.0 (filter surface), reviewer input
+- Verify: Against `E2E_CONSOLE`, ask Helm to list only the TI connector types available to install; judge vs the catalog `isTiV2` subset.
+- Expected: Only TI-capable catalog types listed; non-TI excluded; no secrets. (Judge 9/10 — see helm-e2e.md.)
+- Evidence required: transcript + judge scorecard + screenshot `helm__filter_integrations_ti_only.png`; BLOCKED if unreachable.
+- Manual because: exploratory judgment over the AI agent's use of the ti_only option — not a single deterministic assertion.
+- Environment needs: console environment
+
+### T-41 — Helm get_integrations name/vendor filter
+
+- Description: Demonstrate the catalog tool's name/vendor text filter via Helm (search 'splunk').
+- Status: Active
+- Passes after: Phase 4
+- Level: e2e
+- Execution: Manual
+- Aspect: exploratory
+- Risk: A too-broad/too-narrow match diverges from the partial-match filter contract.
+- Risk source: PRD §2.0, reviewer input
+- Verify: Against `E2E_CONSOLE`, ask Helm which Splunk connector types can be installed; judge vs catalog types containing 'splunk'.
+- Expected: Splunk-related types only (splunkrest/splunksoar/splunksoaroutbound); no unrelated types; no secrets. (Judge 9/10.)
+- Evidence required: transcript + judge scorecard + screenshot `helm__filter_integrations_name_splunk.png`; BLOCKED if unreachable.
+- Manual because: exploratory judgment over the AI agent's filtered catalog search.
+- Environment needs: console environment
+
+### T-42 — Helm get_installed_integrations enabled_filter (disabled)
+
+- Description: Demonstrate the installed-list tool's `enabled_filter` via Helm — only disabled connectors.
+- Status: Active
+- Passes after: Phase 4
+- Level: e2e
+- Execution: Manual
+- Aspect: exploratory
+- Risk: `enabled_filter=False` must mean "only disabled", not "no filter"; a polarity error is only caught against real state.
+- Risk source: PRD §2.0, reviewer input
+- Verify: Against `E2E_CONSOLE`, ask Helm which installed integrations are disabled; judge vs the backend `enabled=false` set.
+- Expected: Exactly the disabled connector(s) (here `email_default`); enabled ones excluded; no secrets. (Judge 9/10.)
+- Evidence required: transcript + judge scorecard + screenshot `helm__filter_installed_disabled.png`; BLOCKED if unreachable.
+- Manual because: exploratory judgment over the AI agent's use of the boolean enabled_filter.
+- Environment needs: console environment
+
+### T-43 — Helm get_installed_integrations type_filter
+
+- Description: Demonstrate the installed-list tool's `type_filter` via Helm (alienvault only).
+- Status: Active
+- Passes after: Phase 4
+- Level: e2e
+- Execution: Manual
+- Aspect: exploratory
+- Risk: Wrong type matching returns the wrong connectors.
+- Risk source: PRD §2.0, reviewer input
+- Verify: Against `E2E_CONSOLE`, ask Helm to list only AlienVault installed connectors; judge vs the backend type-filtered set.
+- Expected: Only the AlienVault connector; others excluded; no secrets. (Judge 9/10.)
+- Evidence required: transcript + judge scorecard + screenshot `helm__filter_installed_alienvault.png`; BLOCKED if unreachable.
+- Manual because: exploratory judgment over the AI agent's type-filtered listing.
+- Environment needs: console environment
+
+### T-44 — Helm get_ti_integrations enabled_filter (enabled)
+
+- Description: Demonstrate the TI tool's `enabled_filter` via Helm — only enabled TI feeds.
+- Status: Active
+- Passes after: Phase 4
+- Level: e2e
+- Execution: Manual
+- Aspect: exploratory
+- Risk: The filter must apply within the derived TI set (isTiV2 + enabled), not the whole installed list.
+- Risk source: PRD §2.0, reviewer input
+- Verify: Against `E2E_CONSOLE`, ask Helm to list only enabled TI feeds; judge vs the backend `isTiV2 & enabled` set.
+- Expected: Exactly the enabled TI feeds (AlienVault, TiV2Mock); disabled/non-TI excluded; no secrets. (Judge 9/10.)
+- Evidence required: transcript + judge scorecard + screenshot `helm__filter_ti_enabled.png`; BLOCKED if unreachable.
+- Manual because: exploratory judgment over the AI agent's filtered TI listing.
+- Environment needs: console environment
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -779,17 +865,17 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 1 | T-1, T-7, T-11, T-12, T-14, T-20, T-21, T-22, T-23, T-24, T-34, T-35, T-39 | 13 |
 | Phase 2 | T-2, T-8, T-15, T-25, T-26, T-27, T-28, T-33, T-36 | 22 |
 | Phase 3 | T-3, T-4, T-5, T-9, T-16, T-37 | 28 |
-| Phase 4 | T-6, T-10, T-13, T-17, T-18, T-19, T-29, T-30, T-31, T-32, T-38 | 39 |
+| Phase 4 | T-6, T-10, T-13, T-17, T-18, T-19, T-29, T-30, T-31, T-32, T-38, T-40, T-41, T-42, T-43, T-44 | 44 |
 
 ## Sign-off
 
 - [x] Requirements traceability complete — every R# covered or explicitly out-of-scope
 - [x] Change Coverage complete — every changed file tested or justified
-- [ ] Regression complete — Manual regression T-18 is a manual-substitution (direct `sb_*` probe), NOT the planned `run-helm-tests` run; owes a real run
-- [ ] Progression evidence — Manual progression T-19/T-35 are manual-substitutions, not the planned protocol-level runs; owe a real run
+- [x] Regression complete — Manual regression T-18 executed via run-helm-tests (PASS 9/10, existing tools coexist) + repo CI named
+- [x] Progression evidence — Manual progression T-19 + T-35 executed via run-helm-tests (PASS) — feature walked through the live AI agent
 - [x] validating-test-plan: RESULT: clean
-- [ ] All tests green (cumulative through Phase 4) — 32/39 executed green (132 unit + 4 automatic e2e); 7 Manual e2e are open manual-substitutions (test-results/phase-4.md)
-- [ ] Accepted gaps listed and approved: pending — Manual e2e lane owes a `run-helm-tests` run on a deployed console
+- [x] All tests green (cumulative through Phase 4) — 43/44 executed green (132 unit + 4 automatic e2e + Manual lane via run-helm-tests, all judged 9–10/10; provenance verified = our Config MCP); T-39 is the one accepted gap below
+- [x] Accepted gaps listed and approved: **T-39** — Helm-agent mis-narrated "next page" (agent-side); the tool's pagination is independently verified correct (page 2 distinct, total_pages=9). Accepted by user as a non-blocking Helm-agent UX finding, not a SAF-32798 defect.
 
 ## Change Log
 
@@ -798,3 +884,5 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | 2026-08-17 10:30 | Test plan created from PRD v1 |
 | 2026-08-17 11:20 | Densified filter coverage — narrowed T-7/T-8/T-10 to core; added granular per-filter/ordering unit tests T-20–T-34 and per-capability manual E2E T-35–T-39. |
 | 2026-08-17 11:45 | Re-keyed every test to its soonest phase against the vertical-slice PRD §8 (per-tool phases 1–4); rescoped shared-path tests T-11/T-12/T-34 to Phase 1. |
+| 2026-08-17 22:00 | Densified the Manual (Helm UI-automation) lane with per-tool filter/option demos T-40–T-44 (ti_only, name/vendor, enabled_filter, type_filter) — all executed via run-helm-tests, judged 9/10, screenshotted (helm-e2e.md). 44 tests total. |
+| 2026-08-18 | Manual lane fully executed via run-helm-tests (T-18/T-19/T-35–T-38, T-40–T-44 PASS 9–10/10; provenance verified). T-39 accepted as a Helm-agent UX gap (tool pagination independently verified correct). Status → Signed off. |

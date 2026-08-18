@@ -54,6 +54,30 @@ Conclusion: Helm invoked the migrated safebreach-mcp Config-server tools, not th
   single most important validation for this feature.
 - Guardrails: read-only run (no Helm-queued runs to cancel); throwaway env (AI flags left enabled by design).
 
+## Filter / option demonstrations (T-40–T-44) — added 2026-08-17, all PASS via Helm
+Densified per request to demonstrate each tool's filters/options through the AI agent, judged vs a
+FILTERED backend query. Full 9-case run: **9 passed in 213s.**
+| T-<n> | Tool + filter | Judge | Result |
+|-------|---------------|-------|--------|
+| T-40 | `get_integrations` **ti_only** | 9/10 | 8 TI-capable catalog types listed (ti_only applied); non-TI excluded |
+| T-41 | `get_integrations` **name/vendor='splunk'** | 9/10 | exactly `splunkrest`/`splunksoar`/`splunksoaroutbound`; no unrelated types |
+| T-42 | `get_installed_integrations` **enabled_filter=disabled** | 9/10 | exactly 1 disabled (`email_default`); enabled ones excluded |
+| T-43 | `get_installed_integrations` **type=alienvault** | 9/10 | only the AlienVault connector |
+| T-44 | `get_ti_integrations` **enabled_filter=enabled** | 9/10 | exactly the 2 enabled TI feeds (AlienVault, TiV2Mock) |
+Each judged against a filtered backend query + screenshotted. Env was resumed (eod-off auto-stop) before
+this run; `mcp-proxy` feature build persisted (`@8906def`).
+
+### T-39 (pagination) — ACCEPTED as a non-blocking Helm-agent UX finding
+On the automated run, the judge rejected T-39 because Helm's prose claimed "page 2" but re-listed page 1's
+10 connectors. Root cause = **the AI agent**, not the tool: the judge itself confirmed the tool output was
+correct (`page 1 of 9, total 83, proper hint_to_agent`). Verified deterministically — `get_integrations`
+page 2 (`page_number=1`, name-ordered) MUST be: Cortex XDR, Cortex XSOAR, CrowdStrike Falcon, Cybereason,
+CylancePROTECT & OPTICS, Cyware, Darktrace, Deploy Mockion, Devo, ElasticSearch (distinct from page 1;
+total_pages=9). In a follow-up interactive session Helm clarified it had fetched `page_number: 1` and that
+"page 2" was 1-indexed English over the 0-based param. **Decision (user): keep T-39 as an agent-UX check;
+accept the original miss as a non-reproducing Helm-agent limitation. The tool's pagination is correct and
+independently verified — not a SAF-32798 defect.** Evidence: `helm__pagination_catalog.png`.
+
 ## Screenshot evidence (test-results/evidence/)
 Full-page captures of the real console Helm chat, one per tool (re-run with `page.screenshot()` added):
 - `helm__installed_integrations.png` — Helm lists the 3 installed connectors.
@@ -62,6 +86,9 @@ Full-page captures of the real console Helm chat, one per tool (re-run with `pag
   field)`**, `Connector Type: alienvault`, `Enabled: ✅`, `Reject Unauthorized (SSL): ✅` — visual proof
   the secret is redacted end-to-end, no `$PAM:`/token value shown.
 - `helm__catalog.png` — Helm describes the available connector-type catalog.
+- Filter demos: `helm__filter_integrations_ti_only.png`, `helm__filter_integrations_name_splunk.png`,
+  `helm__filter_installed_disabled.png`, `helm__filter_installed_alienvault.png`,
+  `helm__filter_ti_enabled.png` — each showing the correctly-filtered AI-agent answer.
 
 ## Feature verdict
 SAF-32798 is validated end-to-end: 4 tools implemented (132 unit + 4 automatic e2e) → deployed & verified
