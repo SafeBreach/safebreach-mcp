@@ -97,6 +97,40 @@ mission. Grouped by skill/KB. Severity: 🔴 blocked work · 🟠 cost time · �
   the SSH `dpull` fallback + pip-ref verify were exactly right for the SSM-only pentest console.
 
 ## design-test-environment / provision-feature-environment
+- 🔴 **Provisioning mis-tags the lifecycle scheduler → the env auto-stops every ~90 min and no manual
+  start survives** (cost hours across days; confirmed via live AWS tags + CloudTrail). The
+  `create-custom-environment-pentest` Jenkins job (`...-10039`) stamped **three mutually
+  contradictory** lifecycle tags on all 3 instances:
+  - `TF=24/7` (means "never auto-stop"), yet also
+  - `stop_at=2026-08-18 02:05:21` — an **absolute timestamp already in the past**, and
+  - **no `start_at`** — so nothing ever brings them back up.
+
+  **Mechanism (why it re-stops, not stops once):** the DevOps scheduler is stateless/idempotent and
+  runs on a ~90-min cron (proven: stop sweeps at 05:31 → 07:01 → 08:31 local, exactly 90 min apart).
+  Every sweep re-evaluates `now ≥ stop_at`, which is *permanently true* for a past timestamp, so it
+  stops the instances again forever; `TF=24/7` is ignored in favor of the explicit `stop_at`. A manual
+  `start-instances` therefore survives **at most ~90 min**. CloudTrail shows **12 StopInstances events
+  (4 rounds × 3 instances), all by DevOps automation** (EC2 scheduler principals from IP
+  `54.158.35.29`), **none by a human**; EC2 labels them "User initiated" because the scheduler stops
+  via the API.
+
+  **Doc drift compounder:** the offering was documented as `TF=eod-off` but the applied tag is
+  `TF=24/7` — requested intent, applied label, and operative `stop_at` behavior were all inconsistent.
+
+  **Fixes for the skill/DevOps:**
+  1. A `TF=24/7` request must NOT also receive an EOD `stop_at`; for 24/7, `stop_at` should be absent
+     or ≥ `terminate_at`. For a real daily off-hours cycle, use a recurring **time-of-day**
+     `start_at`/`stop_at` pair, never a single past absolute datetime with no `start_at`. File a DevOps
+     ticket against the `create-custom-environment-pentest` job.
+  2. `provision-feature-environment` should **record the actually-applied** `TF`/`start_at`/`stop_at`/
+     `terminate_at` tags in `environment.md` at build time (not just the requested offering), so this
+     mismatch is visible on day 1.
+  3. Add a preflight/health check: a `TF=24/7` env whose instances are `stopped`, or that has a
+     past-dated `stop_at` with no `start_at`, should raise a loud warning instead of leaving the
+     operator to hand-start on a 90-min loop.
+
+  **Operator remedy (until re-provisioned):** set `stop_at = terminate_at` (or delete the `stop_at`
+  tag) on all 3 instances so `now < stop_at`, then `start-instances`; the next sweep leaves them up.
 - 🟡 A pure **data-query Helm case** is forced onto a full **pentest** topology (DC + patient-zero)
   solely because `run-helm-tests` requires a pentest console — heavier/costlier than the feature needs.
   Worth a note in offerings.md, or letting run-helm-tests accept a Validate console for data-query cases.
