@@ -23,6 +23,7 @@ from .playbook_types import (
     _extract_custom_tag_values,
     VALID_TEST_TYPES,
     TEST_TYPE_VALIDATE,
+    TEST_TYPE_PROPAGATE,
     TEST_TYPE_ALL
 )
 
@@ -144,6 +145,49 @@ def _compose_scope_hint(existing_hint: Optional[str], propagate_count: int) -> s
     return disclosure
 
 
+def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
+                 page_number: int, page_size: int) -> Dict[str, Any]:
+    """
+    Scope a criteria-filtered attack list, paginate it, and disclose what the scope hid.
+
+    Counts are taken from the incoming list — after the other criteria filters, before the scope
+    filter — so the disclosed count describes what this query dropped rather than what the whole
+    catalog holds.
+
+    Args:
+        filtered_attacks: Attacks already narrowed by every non-scope criterion.
+        test_type: A validated, lowercased scope value.
+        page_number: Zero-based page to return.
+        page_size: Attacks per page.
+
+    Returns:
+        The paginated result, carrying validate_count / propagate_count when the scope is 'all'
+        and a composed disclosure hint when a Validate scope excluded anything.
+    """
+    propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
+    validate_count = len(filtered_attacks) - propagate_count
+
+    if test_type == TEST_TYPE_VALIDATE:
+        scoped = [attack for attack in filtered_attacks if not attack.get('is_propagate')]
+    elif test_type == TEST_TYPE_PROPAGATE:
+        scoped = [attack for attack in filtered_attacks if attack.get('is_propagate')]
+    else:
+        scoped = filtered_attacks
+
+    paginated_result = paginate_attacks(scoped, page_number, page_size)
+
+    if test_type == TEST_TYPE_ALL:
+        paginated_result['validate_count'] = validate_count
+        paginated_result['propagate_count'] = propagate_count
+
+    if test_type == TEST_TYPE_VALIDATE and propagate_count:
+        paginated_result['hint_to_agent'] = _compose_scope_hint(
+            paginated_result.get('hint_to_agent'), propagate_count
+        )
+
+    return paginated_result
+
+
 def sb_get_playbook_attacks(
     console: str = "default",
     page_number: int = 0,
@@ -238,22 +282,8 @@ def sb_get_playbook_attacks(
             target_platform_filter=target_platform_filter
         )
 
-        propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
-        validate_count = len(filtered_attacks) - propagate_count
-
-        filtered_attacks = filter_attacks_by_criteria(filtered_attacks, test_type=test_type_normalized)
-
         # Paginate results
-        paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
-
-        if test_type_normalized == TEST_TYPE_ALL:
-            paginated_result['validate_count'] = validate_count
-            paginated_result['propagate_count'] = propagate_count
-
-        if test_type_normalized == TEST_TYPE_VALIDATE and propagate_count:
-            paginated_result['hint_to_agent'] = _compose_scope_hint(
-                paginated_result.get('hint_to_agent'), propagate_count
-            )
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number, PAGE_SIZE)
 
         # Add applied filters info
         applied_filters = {}
@@ -404,23 +434,9 @@ def sb_get_playbook_attacks_by_tags(
         # Apply the tag filter
         filtered_attacks = filter_attacks_by_criteria(reduced_attacks, tag_filter=tags)
 
-        propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
-        validate_count = len(filtered_attacks) - propagate_count
-
-        filtered_attacks = filter_attacks_by_criteria(filtered_attacks, test_type=test_type_normalized)
-
         # Paginate results
-        paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number, PAGE_SIZE)
         paginated_result['applied_filters'] = {'tags': tags, 'test_type': test_type_normalized}
-
-        if test_type_normalized == TEST_TYPE_ALL:
-            paginated_result['validate_count'] = validate_count
-            paginated_result['propagate_count'] = propagate_count
-
-        if test_type_normalized == TEST_TYPE_VALIDATE and propagate_count:
-            paginated_result['hint_to_agent'] = _compose_scope_hint(
-                paginated_result.get('hint_to_agent'), propagate_count
-            )
 
         return paginated_result
 

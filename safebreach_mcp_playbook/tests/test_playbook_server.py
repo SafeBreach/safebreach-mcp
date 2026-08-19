@@ -269,3 +269,64 @@ class TestAttackDetailsPropagateMarker:
         import inspect
         params = inspect.signature(_tool_fn('get_playbook_attack_details')).parameters
         assert 'test_type' not in params
+
+
+class TestNullDescriptionRendering:
+    """Regression guard for the two TypeError crashes the strict review confirmed.
+
+    Pre-existing on main, but in the exact render blocks SAF-34553 edits, so fixed here.
+    transform_reduced_playbook_attack always SETS the description key, so a missing API
+    description arrives as None rather than triggering dict.get's default.
+    """
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_listing_survives_null_description(self, mock_sb):
+        """A null description must not crash the listing render."""
+        attack = _attack(1027, 'no description attack')
+        attack['description'] = None
+        mock_sb.return_value = _fake_result([attack], total=1)
+
+        output = _tool_fn('get_playbook_attacks')(console='c')
+
+        assert 'No description available' in output
+        assert 'Error getting playbook attacks' not in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_listing_truncates_long_description(self, mock_sb):
+        """Truncation behaviour is preserved for an over-long description."""
+        attack = _attack(1027, 'long description attack')
+        attack['description'] = 'x' * 250
+        mock_sb.return_value = _fake_result([attack], total=1)
+
+        output = _tool_fn('get_playbook_attacks')(console='c')
+
+        assert 'x' * 200 + '...' in output
+        assert 'x' * 201 not in output.replace('x' * 200 + '...', '')
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_listing_keeps_short_description_verbatim(self, mock_sb):
+        """A short description is rendered without an ellipsis."""
+        attack = _attack(1027, 'short description attack')
+        attack['description'] = 'brief'
+        mock_sb.return_value = _fake_result([attack], total=1)
+
+        output = _tool_fn('get_playbook_attacks')(console='c')
+
+        assert '**Description:** brief' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_details')
+    def test_details_survives_null_description(self, mock_sb):
+        """A null description must not crash the details render via "\n".join."""
+        mock_sb.return_value = {
+            'id': 9001,
+            'name': 'no description attack',
+            'description': None,
+            'modifiedDate': '2024-10-07',
+            'publishedDate': '2019-05-29',
+            'is_propagate': False,
+        }
+
+        output = _tool_fn('get_playbook_attack_details')(attack_id=9001, console='c')
+
+        assert 'No description available' in output
+        assert 'Error getting playbook attack details' not in output

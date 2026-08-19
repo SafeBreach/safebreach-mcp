@@ -31,6 +31,23 @@ from .playbook_functions import (
 
 logger = logging.getLogger(__name__)
 
+def _truncate_description(description: object, limit: int = 200) -> str:
+    """
+    Render an attack description safely, tolerating a null value.
+
+    Args:
+        description: The description as the API supplied it, which may be None.
+        limit: Characters to keep before eliding.
+
+    Returns:
+        The truncated description, with an ellipsis when it was cut, or a placeholder when absent.
+    """
+    text = str(description or '')
+    if not text:
+        return 'No description available'
+    return f"{text[:limit]}..." if len(text) > limit else text
+
+
 PROPAGATE_ROW_MARKER = (
     "**Test Type:** Propagate (ALM) - not reachable from the Playbook UI; "
     "the customer cannot find, open or run this attack there"
@@ -122,7 +139,7 @@ test_type (catalog scope, default 'validate'):
             mitre_tactic_filter: Optional[str] = None,
             attacker_platform_filter: Optional[str] = None,
             target_platform_filter: Optional[str] = None,
-            test_type: str = "validate"
+            test_type: Optional[str] = "validate"
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -171,7 +188,7 @@ test_type (catalog scope, default 'validate'):
                 for attack in attacks:
                     response_parts.extend([
                         f"### {attack.get('name', 'Unknown')} (ID: {attack.get('id', 'Unknown')})",
-                        f"**Description:** {attack.get('description', 'No description available')[:200]}{'...' if len(str(attack.get('description', ''))) > 200 else ''}",
+                        f"**Description:** {_truncate_description(attack.get('description'))}",
                         f"**Modified:** {attack.get('modifiedDate', 'Unknown')}",
                         f"**Published:** {attack.get('publishedDate', 'Unknown')}"
                     ])
@@ -246,7 +263,7 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
                     f"## {result.get('name', 'Unknown Attack')} (ID: {result.get('id', 'Unknown')})",
                     "",
                     f"**Description:**",
-                    result.get('description', 'No description available'),
+                    result.get('description') or 'No description available',
                     "",
                     f"**Modified Date:** {result.get('modifiedDate', 'Unknown')}",
                     f"**Published Date:** {result.get('publishedDate', 'Unknown')}"
@@ -350,7 +367,7 @@ Results are paginated with 10 items per page; each attack includes its normalize
             console: str = "default",
             tags: Optional[str] = None,
             page_number: int = 0,
-            test_type: str = "validate"
+            test_type: Optional[str] = "validate"
         ) -> str:
             """Get playbook attacks filtered by one or more custom tags."""
             try:
