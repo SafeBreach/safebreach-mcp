@@ -151,11 +151,11 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | T-24 | Real console: default scope excludes ALM moves and scopes are coherent | Automatic | regression | Phase 5 | safebreach_mcp_playbook | console environment |
 | T-31 | Real console: details on a real ALM attack states it is unreachable | Automatic | — | Phase 7 | safebreach_mcp_playbook | console environment |
 | T-32 | Real console: rendered subtotals agree with the function-layer counts | Automatic | API-contract | Final | safebreach_mcp_playbook | console environment |
-| T-33 | An agent reading the tool output does not present Propagate as Playbook content | Manual | progression | Final | — | console environment |
 | T-44 | Real console: drafts hidden by default and the hidden count disclosed | Automatic | regression | Phase 8 | safebreach_mcp_playbook | console environment |
 | T-45 | Real console: the draft and catalog gates stay independent | Automatic | — | Phase 8 | safebreach_mcp_playbook | console environment |
 | T-46 | Real console: the reporter's query equals the Playbook UI count | Automatic | regression | Phase 8 | safebreach_mcp_playbook | console environment |
 | T-47 | Real console: draft rows are marked when included | Automatic | — | Phase 8 | safebreach_mcp_playbook | console environment |
+| T-33 | An agent reading the tool output does not present Propagate as Playbook content | Manual | progression | Final | — | console environment |
 
 ### T-1 — Group 44 named ALM with value 1 is Propagate
 
