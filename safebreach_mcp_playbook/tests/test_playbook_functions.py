@@ -829,3 +829,188 @@ class TestPlatformGetPlaybookAttacks:
         result = sb_get_playbook_attacks('test-console', target_platform_filter="NONEXISTENT")
 
         assert result['total_attacks'] == 0
+
+def _raw_attack(attack_id, name, is_alm, tactic=None):
+    """Build a raw API-shaped move, optionally ALM-tagged and/or tactic-tagged."""
+    tags = []
+    if is_alm:
+        tags.append({"id": 44, "name": "ALM",
+                     "values": [{"id": 1, "value": "1", "displayName": "1"}]})
+    if tactic:
+        tags.append({"id": 3, "name": "MITRE_Tactic",
+                     "values": [{"id": 9, "value": tactic, "displayName": tactic}]})
+    return {
+        "id": attack_id,
+        "name": name,
+        "description": f"description of {name}",
+        "modifiedDate": "2024-10-07T07:28:05.000Z",
+        "publishedDate": "2019-05-29T15:18:44.000Z",
+        "tags": tags,
+        "content": {},
+    }
+
+
+@pytest.fixture
+def mixed_scope_raw_attacks():
+    """3 Validate + 2 Propagate — asymmetric so a collapsed count cannot coincidentally match."""
+    return [
+        _raw_attack(101, 'validate one', False),
+        _raw_attack(102, 'validate two', False),
+        _raw_attack(201, 'propagate one', True),
+        _raw_attack(103, 'validate three', False),
+        _raw_attack(202, 'propagate two', True),
+    ]
+
+
+@pytest.fixture
+def credential_access_raw_attacks():
+    """The reporter's shape: both catalogs carry the requested tactic."""
+    return [
+        _raw_attack(301, 'validate cred one', False, tactic='Credential Access'),
+        _raw_attack(302, 'validate cred two', False, tactic='Credential Access'),
+        _raw_attack(401, 'propagate cred one', True, tactic='Credential Access'),
+        _raw_attack(303, 'validate other', False, tactic='Discovery'),
+        _raw_attack(402, 'propagate other', True, tactic='Discovery'),
+    ]
+
+
+class TestTestTypeGetPlaybookAttacks:
+    """T-11 through T-19 — scope default, validation, ordering, disclosure."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_default_scope_is_validate(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-11: omitting test_type excludes Propagate without the caller doing anything."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        returned_ids = [a['id'] for a in result['attacks_in_page']]
+        assert returned_ids == [101, 102, 103]
+        assert result['total_attacks'] == 3
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_total_reflects_scope_not_catalog(self, mock_get_all):
+        """T-12: scope is applied BEFORE pagination, so the total and page count follow the scope."""
+        attacks = [_raw_attack(i, f'validate {i}', False) for i in range(12)]
+        attacks += [_raw_attack(900 + i, f'propagate {i}', True) for i in range(9)]
+        mock_get_all.return_value = attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert result['total_attacks'] == 12
+        assert result['total_pages'] == 2
+        assert all(not a['is_propagate'] for a in result['attacks_in_page'])
+
+        all_scope = sb_get_playbook_attacks('test-console', test_type='all')
+        assert all_scope['total_attacks'] == 21
+        assert all_scope['total_pages'] == 3
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_invalid_test_type_raises_naming_valid_values(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-13: an unusable value fails loudly with a message an agent can recover from."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        with pytest.raises(ValueError) as exc:
+            sb_get_playbook_attacks('test-console', test_type='bogus')
+
+        message = str(exc.value)
+        assert 'bogus' in message
+        for valid in ('validate', 'propagate', 'all'):
+            assert valid in message
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_applied_filters_echoes_scope(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-14: the scope in force is disclosed, including on a defaulted call."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        defaulted = sb_get_playbook_attacks('test-console')
+        assert defaulted['applied_filters']['test_type'] == 'validate'
+
+        for scope in ('validate', 'propagate', 'all'):
+            result = sb_get_playbook_attacks('test-console', test_type=scope)
+            assert result['applied_filters']['test_type'] == scope
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_default_call_discloses_excluded_count(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-15: the default is safe AND honest — the inversion of the reported complaint."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        hint = result['hint_to_agent']
+        assert hint
+        assert '2' in hint
+        assert 'Propagate' in hint
+        assert "test_type='all'" in hint
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_no_hint_when_nothing_excluded(self, mock_get_all):
+        """T-16: a Validate-only console gets no confusing '0 excluded' line."""
+        mock_get_all.return_value = [_raw_attack(1, 'validate only', False)]
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert not result['hint_to_agent'] or 'Propagate' not in result['hint_to_agent']
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_next_page_hint_is_preserved(self, mock_get_all):
+        """T-17: the new disclosure composes with the paginator's hint instead of replacing it."""
+        attacks = [_raw_attack(i, f'validate {i}', False) for i in range(25)]
+        attacks += [_raw_attack(900 + i, f'propagate {i}', True) for i in range(3)]
+        mock_get_all.return_value = attacks
+
+        result = sb_get_playbook_attacks('test-console', page_number=0)
+
+        hint = result['hint_to_agent']
+        assert 'page_number' in hint
+        assert 'Propagate' in hint
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_excluded_count_is_after_other_criteria(self, mock_get_all, credential_access_raw_attacks):
+        """T-18: the excluded count describes what THIS query dropped, not the whole catalog."""
+        mock_get_all.return_value = credential_access_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', mitre_tactic_filter='Credential Access')
+
+        assert '1' in result['hint_to_agent']
+        assert '2 Propagate' not in result['hint_to_agent']
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_reported_defect_repro(self, mock_get_all, credential_access_raw_attacks):
+        """T-19: repro-regression for the reported defect — red before the fix, green after."""
+        mock_get_all.return_value = credential_access_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', mitre_tactic_filter='Credential Access')
+
+        returned_ids = sorted(a['id'] for a in result['attacks_in_page'])
+        assert returned_ids == [301, 302]
+        assert result['total_attacks'] == 2
+        assert 401 not in returned_ids
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_propagate_scope_returns_only_propagate(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-11 (cont.): an explicit Propagate request is never mixed."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', test_type='propagate')
+
+        assert sorted(a['id'] for a in result['attacks_in_page']) == [201, 202]
+        assert result['total_attacks'] == 2
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_all_scope_returns_per_catalog_counts(self, mock_get_all, mixed_scope_raw_attacks):
+        """T-19 (cont.): 'all' returns the split the renderer needs, without recounting."""
+        mock_get_all.return_value = mixed_scope_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', test_type='all')
+
+        assert result['total_attacks'] == 5
+        assert result['validate_count'] == 3
+        assert result['propagate_count'] == 2
+        assert result['validate_count'] + result['propagate_count'] == result['total_attacks']
