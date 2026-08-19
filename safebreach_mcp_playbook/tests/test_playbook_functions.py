@@ -1126,3 +1126,91 @@ class TestDraftExclusion:
         assert sb_get_playbook_attacks('test-console')['applied_filters']['include_drafts'] is False
         assert sb_get_playbook_attacks(
             'test-console', include_drafts=True)['applied_filters']['include_drafts'] is True
+
+
+class TestDraftCountIsScopeAware:
+    """The hidden-draft count must describe the REQUESTED scope, not the whole filtered set.
+
+    Found by a live sanity run: with test_type='propagate' the tool claimed 15 drafts were hidden
+    when all 15 were Validate and none were in scope. Same ordering trap T-18 guards for the
+    Propagate count, made in the mirror direction.
+    """
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    def _dataset(self):
+        """3 published validate, 2 published propagate, 2 validate drafts, 0 propagate drafts."""
+        return [
+            _draft_raw_attack(101, 'validate a', status='published'),
+            _draft_raw_attack(102, 'validate b', status='published'),
+            _draft_raw_attack(103, 'validate c', status='published'),
+            _draft_raw_attack(201, 'propagate a', status='published', is_alm=True),
+            _draft_raw_attack(202, 'propagate b', status='published', is_alm=True),
+            _draft_raw_attack(901, 'validate draft a', status='draft'),
+            _draft_raw_attack(902, 'validate draft b', status='draft'),
+        ]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_propagate_scope_reports_no_hidden_drafts(self, mock_get_all):
+        """No Propagate draft exists, so a Propagate-scoped answer must not claim drafts were hidden."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks('test-console', test_type='propagate')
+
+        assert result['total_attacks'] == 2
+        hint = result['hint_to_agent'] or ''
+        assert 'draft' not in hint.lower(), (
+            f"claimed drafts were hidden from the propagate scope, but none were: {hint}"
+        )
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_validate_scope_reports_its_own_drafts(self, mock_get_all):
+        """The Validate scope holds both drafts, so it must report exactly 2."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert result['total_attacks'] == 3
+        hint = result['hint_to_agent']
+        assert '2 unpublished draft' in hint
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_all_scope_reports_every_hidden_draft(self, mock_get_all):
+        """Scope 'all' spans both catalogs, so it reports every draft it hid."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks('test-console', test_type='all')
+
+        assert result['total_attacks'] == 5
+        assert '2 unpublished draft' in result['hint_to_agent']
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_propagate_drafts_are_counted_under_propagate_scope(self, mock_get_all):
+        """Mirror case: a Propagate draft must be reported under the Propagate scope only."""
+        data = self._dataset()
+        data.append(_draft_raw_attack(903, 'propagate draft', status='draft', is_alm=True))
+        mock_get_all.return_value = data
+
+        propagate = sb_get_playbook_attacks('test-console', test_type='propagate')
+        assert '1 unpublished draft' in propagate['hint_to_agent']
+
+        validate = sb_get_playbook_attacks('test-console')
+        assert '2 unpublished draft' in validate['hint_to_agent']
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_split_counts_stay_consistent_with_the_total(self, mock_get_all):
+        """validate_count + propagate_count must always equal total_attacks, drafts or not."""
+        data = self._dataset()
+        data.append(_draft_raw_attack(903, 'propagate draft', status='draft', is_alm=True))
+        mock_get_all.return_value = data
+
+        without = sb_get_playbook_attacks('test-console', test_type='all')
+        assert without['validate_count'] + without['propagate_count'] == without['total_attacks'] == 5
+
+        with_drafts = sb_get_playbook_attacks('test-console', test_type='all', include_drafts=True)
+        assert (with_drafts['validate_count'] + with_drafts['propagate_count']
+                == with_drafts['total_attacks'] == 8)

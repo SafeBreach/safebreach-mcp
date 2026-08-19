@@ -174,9 +174,10 @@ def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
     """
     Scope a criteria-filtered attack list, paginate it, and disclose what the scope hid.
 
-    Counts are taken from the incoming list — after the other criteria filters, before the scope
-    filter — so the disclosed count describes what this query dropped rather than what the whole
-    catalog holds.
+    Counting order matters twice over. The Propagate count is taken across both catalogs — after
+    the other criteria filters, before the scope filter — because it answers "what else matched that
+    this scope hid". The draft count is taken AFTER the scope filter, because it answers "what did
+    this scope itself hide", and a Validate draft is not hidden from a Propagate answer.
 
     Args:
         filtered_attacks: Attacks already narrowed by every non-scope criterion.
@@ -188,19 +189,23 @@ def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
         The paginated result, carrying validate_count / propagate_count when the scope is 'all'
         and a composed disclosure hint when a Validate scope excluded anything.
     """
-    draft_count = sum(1 for attack in filtered_attacks if attack.get('is_draft'))
-    if not include_drafts:
-        filtered_attacks = [attack for attack in filtered_attacks if not attack.get('is_draft')]
-
-    propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
-    validate_count = len(filtered_attacks) - propagate_count
-
     if test_type == TEST_TYPE_VALIDATE:
-        scoped = [attack for attack in filtered_attacks if not attack.get('is_propagate')]
+        in_scope = [attack for attack in filtered_attacks if not attack.get('is_propagate')]
     elif test_type == TEST_TYPE_PROPAGATE:
-        scoped = [attack for attack in filtered_attacks if attack.get('is_propagate')]
+        in_scope = [attack for attack in filtered_attacks if attack.get('is_propagate')]
     else:
-        scoped = filtered_attacks
+        in_scope = filtered_attacks
+
+    draft_count = sum(1 for attack in in_scope if attack.get('is_draft'))
+    scoped = in_scope if include_drafts else [
+        attack for attack in in_scope if not attack.get('is_draft')
+    ]
+
+    countable = filtered_attacks if include_drafts else [
+        attack for attack in filtered_attacks if not attack.get('is_draft')
+    ]
+    propagate_count = sum(1 for attack in countable if attack.get('is_propagate'))
+    validate_count = len(countable) - propagate_count
 
     paginated_result = paginate_attacks(scoped, page_number, page_size)
 
