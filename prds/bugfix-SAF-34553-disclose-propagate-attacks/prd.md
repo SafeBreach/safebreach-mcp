@@ -27,9 +27,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-08-19 14:05 |
+| **Last Updated** | 2026-08-19 14:30 |
 | **Owner** | Itamar Bar Hod |
-| **Current Phase** | Phase 2 of 7 |
+| **Current Phase** | Phase 5 of 7 |
 
 ## 2. Solution Description
 
@@ -273,20 +273,20 @@ and rendering, not operational behavior.
 ## 7. Definition of Done
 
 **Core Functionality**
-- [ ] A call with no `test_type` returns Validate attacks only, and the reported total excludes every
+- [x] A call with no `test_type` returns Validate attacks only, and the reported total excludes every
       Propagate attack (expected result 1).
-- [ ] `test_type='propagate'` returns only Propagate attacks, never mixed with Validate
+- [x] `test_type='propagate'` returns only Propagate attacks, never mixed with Validate
       (expected result 2).
 - [ ] `test_type='all'` reports a split total (overall plus per-catalog) and marks every Propagate row
       as not reachable from the Playbook (expected result 3).
-- [ ] A default-scoped call that excluded attacks discloses the excluded count and how to include them.
+- [x] A default-scoped call that excluded attacks discloses the excluded count and how to include them.
 - [x] The discriminator matches tag group id 44, name `ALM`, value `1`; a value of `0` is treated as
       Validate.
-- [ ] Scope is applied before pagination — the total reflects the scope, not the unfiltered catalog.
-- [ ] Applied scope appears in the applied-filters output.
+- [x] Scope is applied before pagination — the total reflects the scope, not the unfiltered catalog.
+- [x] Applied scope appears in the applied-filters output.
 - [ ] `get_playbook_attacks_by_tags` honors `test_type` with the same default.
 - [ ] `get_playbook_attack_details` marks a Propagate attack as not reachable from the Playbook.
-- [ ] An invalid `test_type` raises an error naming the valid values.
+- [x] An invalid `test_type` raises an error naming the valid values.
 
 **Quality Gates**
 - [ ] Every test in `test-plan.md` for this fix is green, with evidence in `test-results/`.
@@ -309,9 +309,9 @@ and rendering, not operational behavior.
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
 | Phase 1: Propagate discriminator | ✅ Complete | 2026-08-19 | 760cf81 | T-1..T-4 green; 262 playbook tests pass |
-| Phase 2: Emit `is_propagate` in reduced payload | ⏳ Pending | - | - | |
-| Phase 3: Scope filter in criteria filter | ⏳ Pending | - | - | |
-| Phase 4: Thread scope + disclosure through listing function | ⏳ Pending | - | - | |
+| Phase 2: Emit `is_propagate` in reduced payload | ✅ Complete | 2026-08-19 | cc27616 | T-5, T-6 green |
+| Phase 3: Scope filter in criteria filter | ✅ Complete | 2026-08-19 | cc27616 | T-7..T-10 green |
+| Phase 4: Thread scope + disclosure through listing function | ✅ Complete | 2026-08-19 | 5ef1339 | T-11..T-19 green; repro-regression red before fix |
 | Phase 5: Tool surface + presentation for `get_playbook_attacks` | ⏳ Pending | - | - | |
 | Phase 6: `get_playbook_attacks_by_tags` parity | ⏳ Pending | - | - | |
 | Phase 7: Propagate marker on `get_playbook_attack_details` | ⏳ Pending | - | - | |
@@ -554,13 +554,14 @@ Verification happens on a Propagate-capable console before the change is handed 
 |------|-------------------|
 | 2026-08-19 13:26 | PRD created — initial draft |
 | 2026-08-19 14:05 | Phase 1 complete (760cf81) — discriminator + T-1..T-4 |
+| 2026-08-19 14:30 | Phases 2-4 complete (cc27616, 5ef1339) — payload field, scope filter, validate default + disclosure |
 
 ## 12. Current Implementation State
 
 **Progress Summary**
-- Last completed phase: Phase 1 — Propagate discriminator
-- Next phase to implement: Phase 2 — Emit `is_propagate` in reduced payload
-- Overall progress: 1 of 7 phases complete
+- Last completed phase: Phase 4 — scope default, validation, ordered counting, disclosure
+- Next phase to implement: Phase 5 — Tool surface + presentation for `get_playbook_attacks`
+- Overall progress: 4 of 7 phases complete
 
 **Blockers**: None
 
