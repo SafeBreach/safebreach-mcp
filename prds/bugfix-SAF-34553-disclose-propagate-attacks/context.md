@@ -146,4 +146,32 @@ Divergences this forces (see Design Decisions):
 - Not touching `safebreach_mcp_studio` (prose references only).
 - Release / mcp-proxy pin bump — separate ticket per Phase 2 decision.
 
-**Status**: Phase 6: PRD Created
+**Status**: Phase 8: Test Plan Authored
+
+## Accepted DoD Gaps
+
+### regression-section — no repo CI job to name (accepted 2026-08-19)
+
+**Item**: `validating-test-plan` check `regression-section` requires the test plan's Regression
+section to name a repo CI job and/or the `Automation-Pen-Testing-*` suite that must pass post-ship.
+
+**Checkable statement**: "The Regression section names the CI suite(s) that must be green after the
+change ships."
+
+**Why it cannot be satisfied**: `safebreach-mcp` has no CI that runs its unit suites. Verified:
+`.github/workflows/` contains only `release.yml` and `security-scan.yml`, neither of which invokes
+pytest; there is no Makefile, Jenkinsfile, or butler config in the repo. Naming `security-scan.yml`
+would be misleading — it does not run tests. The automation-repo Helm suite
+(`Jenkins-jobs/pen-testing/helm/Jenkinsfile.HelmTests.groovy`) was scoped OUT of this ticket at the
+Phase 2 gate to avoid the mcp-proxy build chain, so it cannot be named either.
+
+**User justification (Phase 2 gate)**: confirmed pre-commit is the only automated gate; record the
+absent CI as a known gap rather than inventing a suite name or expanding scope.
+
+**Consequence, stated plainly**: for this repo, "the relevant CI is green" is currently unenforceable.
+The plan's regression protection rests on the pre-commit hooks plus a developer running
+`uv run pytest safebreach_mcp_playbook/tests/ -m "not e2e"`. Nothing prevents a future change from
+merging with these 34 tests red.
+
+**Follow-up**: worth its own ticket — add a CI job running the per-package pytest suites. Not filed
+as part of SAF-34553.
