@@ -104,3 +104,113 @@ class TestParseExternalConfig:
         """Test parsing external config with explicit false."""
         result = parse_external_config('playbook')
         assert result is False
+
+def _tool_fn(name):
+    """Reach the registered tool's underlying callable — the only way to test its formatting."""
+    return SafeBreachPlaybookServer().mcp._tool_manager._tools[name].fn
+
+
+def _fake_result(attacks, total, page=0, pages=1, applied=None, **extra):
+    result = {
+        'attacks_in_page': attacks,
+        'total_attacks': total,
+        'page_number': page,
+        'total_pages': pages,
+        'applied_filters': applied if applied is not None else {'test_type': 'validate'},
+    }
+    result.update(extra)
+    return result
+
+
+def _attack(attack_id, name, is_propagate=False):
+    return {
+        'id': attack_id,
+        'name': name,
+        'description': f'description of {name}',
+        'modifiedDate': '2024-10-07T07:28:05.000Z',
+        'publishedDate': '2019-05-29T15:18:44.000Z',
+        'is_propagate': is_propagate,
+    }
+
+
+class TestPlaybookAttacksPresentation:
+    """T-20 through T-23 — the first tests of this layer's rendered output."""
+
+    MIXED = [_attack(101, 'validate one'), _attack(201, 'propagate one', True)]
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_all_scope_renders_split_header(self, mock_sb):
+        """T-20: the customer sees which catalogs the total spans."""
+        mock_sb.return_value = _fake_result(
+            self.MIXED, total=153, applied={'test_type': 'all'},
+            validate_count=108, propagate_count=45
+        )
+
+        output = _tool_fn('get_playbook_attacks')(console='c', test_type='all')
+
+        assert '153' in output
+        assert '108' in output
+        assert '45' in output
+        assert 'Validate' in output
+        assert 'Propagate' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_propagate_rows_are_marked(self, mock_sb):
+        """T-21: the customer can tell which listed attacks they cannot open in the Playbook."""
+        mock_sb.return_value = _fake_result(
+            self.MIXED, total=2, applied={'test_type': 'all'},
+            validate_count=1, propagate_count=1
+        )
+
+        output = _tool_fn('get_playbook_attacks')(console='c', test_type='all')
+
+        validate_block, propagate_block = output.split('### propagate one')[0], output.split('### propagate one')[1]
+        assert 'not reachable from the Playbook' in propagate_block
+        assert 'not reachable from the Playbook' not in validate_block
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    @pytest.mark.parametrize('scope', ['validate', 'propagate'])
+    def test_non_all_scope_keeps_single_total_header(self, mock_sb, scope):
+        """T-22: the header change is confined to 'all' — the majority path is untouched."""
+        mock_sb.return_value = _fake_result(
+            [_attack(101, 'only one')], total=1, applied={'test_type': scope}
+        )
+
+        output = _tool_fn('get_playbook_attacks')(console='c', test_type=scope)
+
+        assert '**Total attacks matching filters: 1**' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    @pytest.mark.parametrize('counts', [
+        {},
+        {'validate_count': None, 'propagate_count': None},
+        {'validate_count': 'x', 'propagate_count': 'y'},
+    ])
+    def test_missing_counts_fall_back_to_single_total(self, mock_sb, counts):
+        """T-23: a cosmetic gap must not become a total tool failure."""
+        mock_sb.return_value = _fake_result(
+            self.MIXED, total=2, applied={'test_type': 'all'}, **counts
+        )
+
+        output = _tool_fn('get_playbook_attacks')(console='c', test_type='all')
+
+        assert '**Total attacks matching filters: 2**' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attacks')
+    def test_test_type_is_forwarded(self, mock_sb):
+        """T-14 (server side): the tool passes the scope through rather than dropping it."""
+        mock_sb.return_value = _fake_result([], total=0)
+
+        _tool_fn('get_playbook_attacks')(console='c', test_type='propagate')
+
+        assert mock_sb.call_args.kwargs['test_type'] == 'propagate'
+
+    def test_tool_description_documents_scope(self):
+        """T-34 (partial): the agent learns the vocabulary and the default from the description."""
+        description = SafeBreachPlaybookServer().mcp._tool_manager._tools['get_playbook_attacks'].description
+
+        assert 'test_type' in description
+        for value in ('validate', 'propagate', 'all'):
+            assert value in description
+        assert 'ALM' in description
+        assert 'Playbook' in description

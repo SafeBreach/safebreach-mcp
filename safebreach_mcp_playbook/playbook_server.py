@@ -31,6 +31,36 @@ from .playbook_functions import (
 
 logger = logging.getLogger(__name__)
 
+PROPAGATE_ROW_MARKER = (
+    "**Test Type:** Propagate (ALM) - not reachable from the Playbook UI; "
+    "the customer cannot find, open or run this attack there"
+)
+
+
+def _render_total_line(total_attacks: int, result: dict) -> str:
+    """
+    Render the total line, splitting it per catalog when both catalogs are in scope.
+
+    Args:
+        total_attacks: The scoped total reported by the function layer.
+        result: The function-layer result, which carries validate_count / propagate_count
+            only when the scope was 'all'.
+
+    Returns:
+        The single-total line, or the split line when both per-catalog counts are usable.
+    """
+    validate_count = result.get('validate_count')
+    propagate_count = result.get('propagate_count')
+
+    if isinstance(validate_count, int) and isinstance(propagate_count, int):
+        return (
+            f"**Total attacks matching filters: {total_attacks}** "
+            f"- {validate_count} in the Playbook (Validate), {propagate_count} Propagate (ALM)"
+        )
+
+    return f"**Total attacks matching filters: {total_attacks}**"
+
+
 class SafeBreachPlaybookServer(SafeBreachMCPBase):
     """SafeBreach MCP Playbook Server for playbook attack operations."""
     
@@ -64,7 +94,16 @@ attacker_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - O
 target_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
   Strict: only attacks matching the specified platform(s) are returned.
   Add ANY to also include platform-agnostic attacks, e.g. WINDOWS,ANY).
-Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS"""
+Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
+test_type (catalog scope, default 'validate'):
+  'validate' - Playbook (Validate/BAS) attacks only. THIS IS THE DEFAULT, and it is what the customer
+    sees in the Playbook UI. Use it for every general question about attacks, including totals.
+  'propagate' - only Propagate (aka ALM, Automated Lateral Movement) attacks. Use when the user asks
+    specifically about Propagate.
+  'all' - both catalogs. The response then reports a per-catalog split of the total.
+  Propagate attacks are NOT reachable from the Playbook UI - the customer cannot find, open or run
+  them there - so never present them as Playbook content. When a default-scoped answer excluded
+  Propagate attacks, the response says so; relay that rather than implying the total is everything."""
         )
         def get_playbook_attacks(
             console: str = "default",
@@ -81,7 +120,8 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
             mitre_technique_filter: Optional[str] = None,
             mitre_tactic_filter: Optional[str] = None,
             attacker_platform_filter: Optional[str] = None,
-            target_platform_filter: Optional[str] = None
+            target_platform_filter: Optional[str] = None,
+            test_type: str = "validate"
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -100,7 +140,8 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                     mitre_technique_filter=mitre_technique_filter,
                     mitre_tactic_filter=mitre_tactic_filter,
                     attacker_platform_filter=attacker_platform_filter,
-                    target_platform_filter=target_platform_filter
+                    target_platform_filter=target_platform_filter,
+                    test_type=test_type
                 )
                 
                 if 'error' in result:
@@ -115,7 +156,7 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                 # Format response
                 response_parts = [
                     f"## Playbook Attacks - Page {page_number + 1} of {total_pages}",
-                    f"**Total attacks matching filters: {total_attacks}**"
+                    _render_total_line(total_attacks, result)
                 ]
                 
                 if applied_filters:
@@ -156,6 +197,9 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                         response_parts.append(f"**Attacker Platform:** {attacker_platform}")
                     if target_platform:
                         response_parts.append(f"**Target Platform:** {target_platform}")
+
+                    if attack.get('is_propagate'):
+                        response_parts.append(PROPAGATE_ROW_MARKER)
 
                     response_parts.append("")
                 
