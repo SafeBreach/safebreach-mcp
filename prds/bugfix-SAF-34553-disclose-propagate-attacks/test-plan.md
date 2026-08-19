@@ -27,14 +27,17 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 | R10 | Invalid `test_type` raises an error naming the valid values | T-13, T-34 | Covered |
 | R11 | No regression of SAF-33946 (Propagate-disabled metadata behaviour) | — | **Out of scope — justified.** T-30 tombstoned: the guarded behaviour is absent from this repo (no SAF-33946 commit, no entitlement branch in the details path). Phase 7 adds a line and modifies no existing branch, so there is no code path here to regress. Entitlement lives upstream in content-manager. |
 | R12 | Verified on a Propagate-capable console; staging cannot exercise this path | T-24, T-31, T-33 | Covered |
+| R13 | Unpublished drafts are hidden by default, so a reported total equals what the Playbook UI displays | T-35, T-36, T-40, T-43, T-44, T-46 | Covered |
+| R14 | Drafts remain reachable on request, and their exclusion is disclosed | T-37, T-38, T-39, T-41, T-42, T-47 | Covered |
+| R15 | The render paths tolerate a null description (strict-review crashes in touched lines) | T-48, T-49, T-50, T-51 | Covered |
 
 ## Change Coverage
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_playbook/playbook_types.py` | T-1, T-2, T-3, T-4, T-5, T-6, T-7, T-8, T-9, T-10 | — |
-| `safebreach_mcp_playbook/playbook_functions.py` | T-11, T-12, T-13, T-14, T-15, T-16, T-17, T-18, T-19, T-25, T-26, T-27, T-28 | — |
-| `safebreach_mcp_playbook/playbook_server.py` | T-20, T-21, T-22, T-23, T-28, T-29, T-34 | — |
+| `safebreach_mcp_playbook/playbook_types.py` | T-1..T-10, T-36 | — |
+| `safebreach_mcp_playbook/playbook_functions.py` | T-11..T-19, T-25..T-28, T-35, T-37..T-43 | — |
+| `safebreach_mcp_playbook/playbook_server.py` | T-20..T-23, T-29, T-34, T-47, T-48..T-51 | — |
 
 ## Risk Landscape
 
@@ -51,6 +54,8 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
   - The MCP server layer's Markdown formatting has **no tests at all** today (`tests/test_playbook_server.py` asserts only tool registration and config parsing). Header subtotals and row markers land on untested surface — T-20..T-23 are the first tests of their kind for that layer.
   - No fixture in the repo carries a tag group with id 44 / name `ALM`. One is introduced, captured verbatim from pentest01's real moves payload rather than hand-shaped.
   - `paginate_attacks` has no test covering a caller-supplied `hint_to_agent` — only the next-page one (T-17).
+- **A second cause was missed by the original ticket.** Excluding Propagate alone took the reporter's query from 181 to 136 while the Playbook UI showed 121. The residual 15 were unpublished BREACH_STUDIO drafts — the same defect class (undisclosed scope), different cause. The plan's reconciliation test is now T-46, and the ticket's premise ("Helm's number should agree with the UI") was only satisfied after Phase 8.
+- **The `move` table is not the population the API serves.** The KB API returns 10,056 moves against 9,605 rows in `move`; the difference is custom/Studio content. Any DB-based cross-check in this plan is against a subset — the ALM count (111) matched exactly only because custom moves are not ALM-tagged.
 - **Anti-test — staging-management produces a FALSE PASS**: staging-management has 9,497 moves and **zero** ALM tags. Every scope assertion trivially passes there while proving nothing. Any real-API test must assert a non-zero ALM count as a precondition, or skip loudly. Recorded here because it is the single most likely way a future executor reports a green run that means nothing.
 - **Intentionally out of scope**:
   - **The Helm-facing UI/LLM route** (automation repo `tests/automation_team/pen_test/ui/ai/helm/`, driven by `Jenkinsfile.HelmTests.groovy` with its `swap_images` artifact injection). Scoped out at the gate to avoid the two-repo build chain (repin `requirements.txt` → build `mcp-proxy` → `dpull` → verify `pip freeze`). **Consequence, stated plainly**: nothing in this plan proves Helm's *phrasing* to the customer actually improved — only that the data and the disclosure hint reaching Helm are correct. T-33 partially mitigates by judging an agent's comprehension of the tool output directly.
@@ -61,7 +66,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 29   | 0           | 0      | 3   | 32    |
+| Automatic | 42   | 0           | 0      | 7   | 49    |
 | Manual    | 0    | 0           | 0      | 1   | 1     |
 
 ## Environment Requirements (aggregated)
@@ -118,6 +123,19 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | T-28 | Details marks a Propagate attack as unreachable | — | Phase 7 | safebreach_mcp_playbook |
 | T-29 | Details output is unchanged for a Validate attack | regression | Phase 7 | safebreach_mcp_playbook |
 | T-34 | Valid-value enum and user-facing copy are exact | API-contract | Final | safebreach_mcp_playbook |
+| T-35 | Unpublished drafts are excluded by default | — | Phase 8 | safebreach_mcp_playbook |
+| T-36 | A move with no status field is not a draft | — | Phase 8 | safebreach_mcp_playbook |
+| T-37 | `include_drafts=True` brings drafts back | — | Phase 8 | safebreach_mcp_playbook |
+| T-38 | Draft exclusion is disclosed with its count | — | Phase 8 | safebreach_mcp_playbook |
+| T-39 | No draft hint when nothing was hidden | — | Phase 8 | safebreach_mcp_playbook |
+| T-40 | Per-catalog counts describe visible, non-draft attacks | — | Phase 8 | safebreach_mcp_playbook |
+| T-41 | The draft and catalog gates are independent | — | Phase 8 | safebreach_mcp_playbook |
+| T-42 | Applied filters record the draft gate | API-contract | Phase 8 | safebreach_mcp_playbook |
+| T-43 | Tag search excludes drafts by default | regression | Phase 8 | safebreach_mcp_playbook |
+| T-48 | Listing render survives a null description | regression | Phase 8 | safebreach_mcp_playbook |
+| T-49 | Listing render truncates a long description | regression | Phase 8 | safebreach_mcp_playbook |
+| T-50 | Listing render keeps a short description verbatim | regression | Phase 8 | safebreach_mcp_playbook |
+| T-51 | Details render survives a null description | regression | Phase 8 | safebreach_mcp_playbook |
 
 **E2E**
 
@@ -127,6 +145,10 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | T-31 | Real console: details on a real ALM attack states it is unreachable | Automatic | — | Phase 7 | safebreach_mcp_playbook | console environment |
 | T-32 | Real console: rendered subtotals agree with the function-layer counts | Automatic | API-contract | Final | safebreach_mcp_playbook | console environment |
 | T-33 | An agent reading the tool output does not present Propagate as Playbook content | Manual | progression | Final | — | console environment |
+| T-44 | Real console: drafts hidden by default and the hidden count disclosed | Automatic | regression | Phase 8 | safebreach_mcp_playbook | console environment |
+| T-45 | Real console: the draft and catalog gates stay independent | Automatic | — | Phase 8 | safebreach_mcp_playbook | console environment |
+| T-46 | Real console: the reporter's query equals the Playbook UI count | Automatic | regression | Phase 8 | safebreach_mcp_playbook | console environment |
+| T-47 | Real console: draft rows are marked when included | Automatic | — | Phase 8 | safebreach_mcp_playbook | console environment |
 
 ### T-1 — Group 44 named ALM with value 1 is Propagate
 
@@ -656,6 +678,56 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 - Automation lives in: `planned: safebreach_mcp_playbook/tests/test_playbook_server.py`
 - Environment needs: none
 
+
+### T-35 to T-43 — draft exclusion (unit)
+
+- Description: prove unpublished drafts are hidden by default, reachable on request, disclosed when hidden, and that the draft gate is independent of the catalog scope.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: regression (T-43)
+- Risk: Hiding drafts silently would repeat the very defect this ticket fixes; treating a statusless move as a draft would hide almost the entire catalog (most OOB moves carry no status at all).
+- Risk source: reviewer input — discovered by cross-checking the fix against a live console
+- Verify: over a fixture of published, statusless, and draft moves (one draft also Propagate-tagged): default excludes drafts (T-35); the statusless move stays visible (T-36); `include_drafts=True` restores them (T-37); the hint names the hidden count and how to include them (T-38); no hint when nothing was hidden (T-39); per-catalog counts describe the non-draft population (T-40); opening one gate does not open the other (T-41); the gate appears in applied filters (T-42); tag search behaves identically (T-43).
+- Expected: as stated per test; ids asserted explicitly, never just counts.
+- Evidence required: CI run — local `uv run pytest safebreach_mcp_playbook/tests/ -m "not e2e"` output.
+- Automation lives in: `safebreach_mcp_playbook/tests/test_playbook_functions.py` (`TestDraftExclusion`) and `tests/test_tag_tools.py` (`TestDraftExclusionByTags`)
+- Environment needs: none
+
+### T-44 to T-47 — draft exclusion (real console)
+
+- Description: prove against live content that the draft gate behaves as designed and that the reported total reconciles with the Playbook UI — the ticket's actual acceptance test.
+- Status: Active
+- Passes after: Phase 8
+- Level: e2e
+- Execution: Automatic
+- Aspect: regression (T-44, T-46)
+- Risk: The whole ticket exists because Helm's number contradicted the UI. Only a live comparison can prove they now agree; fixtures cannot.
+- Risk source: reviewer input
+- Verify: default vs `include_drafts=True` totals differ and the delta is disclosed, failing loudly if the console has no drafts (T-44); the draft and catalog gates compose without leaking into each other (T-45); the Credential Access default total equals `PLAYBOOK_UI_CREDENTIAL_ACCESS_COUNT`, skipping when unset rather than asserting an unverified number (T-46); a rendered draft row carries its marker (T-47).
+- Expected: T-46 is the reconciliation assertion — observed 121 == 121 on pentest01.
+- Evidence required: e2e pytest output with the observed totals; for T-46, the human-observed UI count recorded alongside.
+- Automation lives in: `safebreach_mcp_playbook/tests/test_e2e.py` (`TestDraftExclusionE2E`)
+- Environment needs: console environment
+  - Non-default addition: the console must carry unpublished Breach Studio drafts, and for T-46 the operator must supply the UI's observed count via `PLAYBOOK_UI_CREDENTIAL_ACCESS_COUNT`.
+
+### T-48 to T-51 — null-description render guards (unit)
+
+- Description: regression guards for two `TypeError` crashes the strict review confirmed in the render blocks this ticket edits.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: `transform_reduced_playbook_attack` always SETS the description key, so a missing API description arrives as `None` and `dict.get`'s default never fires — slicing it raises, and the outer handler swallows the crash into a generic error message. Pre-existing on main, but in lines this ticket touches, and the render layer had zero tests before this ticket.
+- Risk source: PRD §9 + strict review
+- Verify: render a listing with a null description (T-48), an over-long one (T-49), a short one (T-50), and render attack details with a null description (T-51).
+- Expected: the placeholder appears, truncation is applied only past the limit, and no generic error surfaces.
+- Evidence required: CI run — local pytest output.
+- Automation lives in: `safebreach_mcp_playbook/tests/test_playbook_server.py` (`TestNullDescriptionRendering`)
+- Environment needs: none
+
 ## Tests by Phase (readiness view — generated)
 
 | After phase | Newly green | Cumulative green |
@@ -667,6 +739,7 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | Phase 5 | T-20, T-21, T-22, T-23, T-24 | T-1..T-24 |
 | Phase 6 | T-25, T-26, T-27 | T-1..T-27 |
 | Phase 7 | T-28, T-29, T-31 | T-1..T-31 (T-30 removed) |
+| Phase 8 | T-35..T-51 | T-1..T-51 (T-30 removed) |
 | Final | T-32, T-33, T-34 | all |
 
 ## Sign-off
@@ -685,3 +758,4 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 |------|--------|
 | 2026-08-19 13:26 | Test plan created from PRD v1 |
 | 2026-08-19 14:55 | T-30 tombstoned — SAF-33946's guarded behaviour is absent from this repo; R11 moved to justified out-of-scope. Status stays Draft (material change). |
+| 2026-08-19 16:10 | Added T-35..T-51 for Phase 8 (draft exclusion) and the strict-review null-description guards. R13-R15 added. Status stays Draft (material change). |

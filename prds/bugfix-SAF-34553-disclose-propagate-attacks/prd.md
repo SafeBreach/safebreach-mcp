@@ -27,9 +27,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress (awaiting e2e + review) |
-| **Last Updated** | 2026-08-19 14:55 |
+| **Last Updated** | 2026-08-19 16:10 |
 | **Owner** | Itamar Bar Hod |
-| **Current Phase** | All 7 phases complete |
+| **Current Phase** | All 8 phases complete |
 
 ## 2. Solution Description
 
@@ -299,8 +299,9 @@ and rendering, not operational behavior.
 **Deployment Readiness**
 - [ ] Verified on a Propagate-capable console (pentest01 has 111 Propagate attacks). Staging cannot
       exercise this path — it has zero Propagate content.
-- [ ] Reporter's exact reproduction re-run: Helm's total matches the Playbook UI's Credential Access
-      count.
+- [x] Reporter's exact reproduction re-run: Helm's total matches the Playbook UI's Credential Access
+      count. **Verified on pentest01: Helm 121 == UI 121.** Required Phase 8 — the Propagate fix alone
+      reached only 136.
 - [ ] Release and `mcp-proxy` pin bump handed to a follow-up ticket, and SAF-34097 notified that its
       blocker has shipped.
 
@@ -315,6 +316,7 @@ and rendering, not operational behavior.
 | Phase 5: Tool surface + presentation for `get_playbook_attacks` | ✅ Complete | 2026-08-19 | ca791e8 | T-20..T-23 green; first tests of this layer |
 | Phase 6: `get_playbook_attacks_by_tags` parity | ✅ Complete | 2026-08-19 | 2d025c2 | T-25..T-27 green |
 | Phase 7: Propagate marker on `get_playbook_attack_details` | ✅ Complete | 2026-08-19 | f661e46 | T-28, T-29 green; T-30 tombstoned |
+| Phase 8: Hide unpublished drafts by default | ✅ Complete | 2026-08-19 | 92218d7 | T-35..T-43 green; found by live UI cross-check, NOT in the original ticket |
 
 ### Phase 1: Propagate discriminator
 
@@ -488,6 +490,42 @@ and rendering, not operational behavior.
 
 - **Git Commit**: `fix(playbook): mark propagate attacks as unreachable in attack details`
 
+
+### Phase 8: Hide unpublished drafts by default
+
+- **Semantic Change**: unpublished Breach Studio drafts are hidden by default, so a reported total
+  equals what the Playbook UI displays.
+- **Origin — this phase was NOT in the original plan.** It was found by cross-checking the fix against
+  a real console. The Propagate fix took the reporter's query from 181 to 136, but the Playbook UI
+  showed 121. The residual 15 were all `origin: BREACH_STUDIO`, `status: draft`. The UI lists
+  published content only, so the knowledge-base API returns content the customer cannot find there —
+  the same defect class as Propagate (undisclosed scope), from a different cause.
+- **Deliverables**: a draft discriminator; an `is_draft` field on the reduced payload; an
+  `include_drafts` gate defaulting to False on both listing functions and their tools; disclosure of
+  the hidden count; a draft marker on rendered rows and on attack details.
+- **Implementation Details**: A predicate returns true only when a move explicitly carries the draft
+  status — a move with **no** status field is out-of-the-box content and must never be treated as a
+  draft, which is the trap here since most OOB moves have no status at all. The reduced transform
+  emits the boolean unconditionally, as it does for the Propagate flag. The scope helper takes an
+  `include_drafts` argument, counts drafts from the incoming criteria-filtered list, then removes them
+  unless included — **before** the per-catalog counting, so the Validate/Propagate split describes
+  visible attacks and therefore matches the UI. Disclosure composes onto any existing hint using the
+  same punctuation-aware separator as the scope hint, so a response can carry the next-page
+  instruction plus both exclusions. The two gates are independent: opening the catalog scope must not
+  unhide drafts, and vice versa.
+- **What can go wrong**: treating a statusless move as a draft would hide almost the entire catalog;
+  counting drafts after removing them always reports zero; excluding drafts after the per-catalog
+  counting would leave the split disagreeing with the total.
+- **Changes**:
+
+| File | Description |
+|------|-------------|
+| `safebreach_mcp_playbook/playbook_types.py` | Draft status constant, discriminator, `is_draft` on the reduced payload |
+| `safebreach_mcp_playbook/playbook_functions.py` | `include_drafts` on both listing functions; draft counting and removal in the scope helper; draft disclosure |
+| `safebreach_mcp_playbook/playbook_server.py` | `include_drafts` on both tools, descriptions, draft row marker, marker on details |
+
+- **Git Commit**: `fix(playbook): hide unpublished drafts by default so totals match the Playbook UI`
+
 ## 9. Risks and Assumptions
 
 ### Technical Risks
@@ -507,6 +545,9 @@ and rendering, not operational behavior.
 | Tag id 44 named `ALM` identifies Propagate on every console | **Validated** — `tag` table has no account column (definitions are global); id 44 resolves to `ALM` on both staging-management and pentest01 |
 | Only value `1` is ever set on the ALM group | **Validated on inspected consoles** — pentest01: 111 attacks at value 1, zero at value 0. The predicate is value-aware regardless, so a future value 0 is defined rather than accidental |
 | The KB moves API exposes the ALM tag group to this repo | **Validated** — the discriminator's data lives in content-manager's `move.tags`, which is exactly what this endpoint serves |
+| Excluding Propagate is sufficient to reconcile Helm with the Playbook UI | **FALSIFIED on 2026-08-19.** The Propagate fix alone reached 136 against a UI showing 121. Unpublished drafts were a second, independent cause, addressed in Phase 8. The original ticket did not identify it |
+| The `move` table is the population the KB API serves | **FALSIFIED.** The API returns 10,056 moves; the `move` table holds 9,605. The difference is custom/Studio-authored content with ids outside the OOB range. Early DB cross-checks in this PRD were therefore against a subset — the ALM count (111) still matched exactly because custom moves are not ALM-tagged |
+| The Playbook UI hides drafts | **Strongly evidenced, not code-verified.** 136 − 15 drafts = 121 matches the observed UI count exactly, and `status: "draft" \| "published"` is a documented configuration-API enum. The specific UI/endpoint code performing the exclusion was not located |
 | Propagate is a small fraction of the catalog, so per-row markers do not bloat responses | **Validated** — 111 of 9,605 on pentest01, about 1.2% |
 
 ### Risk Mitigation Strategies
@@ -556,13 +597,15 @@ Verification happens on a Propagate-capable console before the change is handed 
 | 2026-08-19 14:05 | Phase 1 complete (760cf81) — discriminator + T-1..T-4 |
 | 2026-08-19 14:30 | Phases 2-4 complete (cc27616, 5ef1339) — payload field, scope filter, validate default + disclosure |
 | 2026-08-19 14:55 | Phases 5-7 complete (ca791e8, 2d025c2, f661e46) — presentation, by_tags parity, details marker. SAF-33946 DoD item re-scoped; T-30 tombstoned. |
+| 2026-08-19 15:40 | Strict review: 9 findings, all pre-existing. Fixed the 2 crashes in touched lines + own duplication; rest filed as SAF-35355. |
+| 2026-08-19 16:10 | Phase 8 added (92218d7) — draft exclusion, found by live UI cross-check. Reconciliation DoD now met: 121 == 121. Two PRD assumptions falsified and recorded. |
 
 ## 12. Current Implementation State
 
 **Progress Summary**
-- Last completed phase: Phase 7 — details reachability marker (all 7 phases complete)
-- Next phase to implement: none — remaining work is the e2e tests (T-24, T-31, T-32, T-33) against a Propagate-capable console, plus the strict review
-- Overall progress: 7 of 7 phases complete
+- Last completed phase: Phase 8 — draft exclusion (all 8 phases complete)
+- Next phase to implement: none. Remaining: T-33 (AI-executed progression) not run; the Helm-deployed surface remains out of scope
+- Overall progress: 8 of 8 phases complete
 
 **Blockers**: None
 
