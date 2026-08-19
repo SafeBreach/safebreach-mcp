@@ -149,6 +149,43 @@ def _extract_custom_tag_values(tags_data: Any) -> List[str]:
     return values
 
 
+PROPAGATE_TAG_ID = 44
+PROPAGATE_TAG_NAME = 'ALM'
+PROPAGATE_TAG_VALUE = '1'
+
+
+def _is_propagate_attack(tags_data: Any) -> bool:
+    """
+    Decide whether a move's tags mark it as a Propagate (ALM) attack.
+
+    Args:
+        tags_data: Raw tags list from the SafeBreach API — tag groups shaped
+            {id, name, values: [{value, displayName}]}.
+
+    Returns:
+        True only when a group matches the Propagate tag id AND name AND carries the truthy
+        value. False for every other input, including malformed or absent tag data. The value
+        check is deliberate: the ALM group is boolean-valued, so presence alone does not mean
+        an attack is Propagate.
+    """
+    if not isinstance(tags_data, list):
+        return False
+
+    for tag_item in tags_data:
+        if not isinstance(tag_item, dict):
+            continue
+        if tag_item.get('id') != PROPAGATE_TAG_ID or tag_item.get('name') != PROPAGATE_TAG_NAME:
+            continue
+        values = tag_item.get('values')
+        if not isinstance(values, list):
+            continue
+        for value_obj in values:
+            if isinstance(value_obj, dict) and str(value_obj.get('value')) == PROPAGATE_TAG_VALUE:
+                return True
+
+    return False
+
+
 def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
     """
     Extract MITRE ATT&CK data from the tags array.

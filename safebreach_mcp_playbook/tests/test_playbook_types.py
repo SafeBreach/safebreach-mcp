@@ -16,7 +16,11 @@ from safebreach_mcp_playbook.playbook_types import (
     _extract_mitre_data,
     _extract_platform_data,
     _attack_matches_platform,
-    _resolve_tactic_filter_value
+    _resolve_tactic_filter_value,
+    _is_propagate_attack,
+    PROPAGATE_TAG_ID,
+    PROPAGATE_TAG_NAME,
+    PROPAGATE_TAG_VALUE
 )
 
 
@@ -1257,3 +1261,72 @@ class TestPlatformFiltering:
         ids = [a['id'] for a in result]
         # Only attack 2: attacker=LINUX, target=WINDOWS
         assert ids == [2]
+
+@pytest.fixture
+def propagate_tag_group():
+    """An ALM tag group as content-manager denormalizes it onto a move (Propagate)."""
+    return {
+        "id": PROPAGATE_TAG_ID,
+        "name": PROPAGATE_TAG_NAME,
+        "values": [{"id": 1, "sort": 1, "value": "1", "displayName": "1"}]
+    }
+
+
+@pytest.fixture
+def non_propagate_tag_group():
+    """The same ALM group carrying the falsy value — explicitly NOT Propagate."""
+    return {
+        "id": PROPAGATE_TAG_ID,
+        "name": PROPAGATE_TAG_NAME,
+        "values": [{"id": 0, "sort": 0, "value": "0", "displayName": "0"}]
+    }
+
+
+class TestPropagateDiscriminator:
+    """Tests for _is_propagate_attack — T-1 through T-4 of the SAF-34553 test plan."""
+
+    def test_alm_group_with_value_one_is_propagate(self, propagate_tag_group, sample_mitre_tags):
+        """T-1: group 44 named ALM with value 1 is Propagate."""
+        assert _is_propagate_attack([propagate_tag_group]) is True
+        assert _is_propagate_attack(sample_mitre_tags + [propagate_tag_group]) is True
+
+    def test_alm_group_with_value_zero_is_not_propagate(self, non_propagate_tag_group):
+        """T-2: group 44 named ALM with value 0 is NOT Propagate (value-aware, unlike ui-react)."""
+        assert _is_propagate_attack([non_propagate_tag_group]) is False
+
+    @pytest.mark.parametrize("tags_data", [
+        None,
+        {},
+        "not-a-list",
+        42,
+        [],
+        ["a-bare-string"],
+        [None],
+        [{"id": PROPAGATE_TAG_ID, "name": PROPAGATE_TAG_NAME}],
+        [{"id": PROPAGATE_TAG_ID, "name": PROPAGATE_TAG_NAME, "values": None}],
+        [{"id": PROPAGATE_TAG_ID, "name": PROPAGATE_TAG_NAME, "values": "1"}],
+        [{"id": PROPAGATE_TAG_ID, "name": PROPAGATE_TAG_NAME, "values": []}],
+        [{"id": PROPAGATE_TAG_ID, "name": PROPAGATE_TAG_NAME, "values": ["1"]}],
+    ])
+    def test_malformed_or_absent_tags_are_not_propagate(self, tags_data):
+        """T-3: malformed or absent tag data is not Propagate, and never raises."""
+        assert _is_propagate_attack(tags_data) is False
+
+    def test_id_and_name_must_both_match(self):
+        """T-4: neither the id nor the name alone qualifies a group as ALM."""
+        truthy = [{"id": 1, "sort": 1, "value": "1", "displayName": "1"}]
+        right_id_wrong_name = {"id": PROPAGATE_TAG_ID, "name": "sector", "values": truthy}
+        right_name_wrong_id = {"id": 999, "name": PROPAGATE_TAG_NAME, "values": truthy}
+
+        assert _is_propagate_attack([right_id_wrong_name]) is False
+        assert _is_propagate_attack([right_name_wrong_id]) is False
+
+    def test_propagate_value_is_matched_as_string(self, propagate_tag_group):
+        """T-1 (cont.): a numeric value representation still matches the truthy marker."""
+        numeric = {
+            "id": PROPAGATE_TAG_ID,
+            "name": PROPAGATE_TAG_NAME,
+            "values": [{"id": 1, "value": 1, "displayName": "1"}]
+        }
+        assert _is_propagate_attack([numeric]) is True
+        assert PROPAGATE_TAG_VALUE == "1"
