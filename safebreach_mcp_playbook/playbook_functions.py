@@ -360,7 +360,8 @@ def sb_get_playbook_attack_details(
 def sb_get_playbook_attacks_by_tags(
     console: str = "default",
     tags: Optional[str] = None,
-    page_number: int = 0
+    page_number: int = 0,
+    test_type: Optional[str] = TEST_TYPE_VALIDATE
 ) -> Dict[str, Any]:
     """
     Get playbook attacks filtered by one or more custom tags.
@@ -369,9 +370,12 @@ def sb_get_playbook_attacks_by_tags(
         console: SafeBreach console name
         tags: Comma-separated tag values (OR logic, case-insensitive exact match per tag token)
         page_number: Page number (0-based)
+        test_type: Catalog scope — 'validate' (default), 'propagate', or 'all'. Same semantics as
+            sb_get_playbook_attacks.
 
     Returns:
-        Dict containing paginated attacks (each carrying its `tags` list) and metadata
+        Dict containing paginated attacks (each carrying its `tags` list) and metadata. When
+        test_type is 'all', also carries validate_count and propagate_count.
 
     Raises:
         ValueError: If no tags are provided, page_number is negative, or the API call fails
@@ -383,6 +387,8 @@ def sb_get_playbook_attacks_by_tags(
     # Validate page_number parameter
     if page_number < 0:
         raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+
+    test_type_normalized = _normalize_test_type(test_type)
 
     try:
         # Get all attacks from cache or API
@@ -397,9 +403,23 @@ def sb_get_playbook_attacks_by_tags(
         # Apply the tag filter
         filtered_attacks = filter_attacks_by_criteria(reduced_attacks, tag_filter=tags)
 
+        propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
+        validate_count = len(filtered_attacks) - propagate_count
+
+        filtered_attacks = filter_attacks_by_criteria(filtered_attacks, test_type=test_type_normalized)
+
         # Paginate results
         paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
-        paginated_result['applied_filters'] = {'tags': tags}
+        paginated_result['applied_filters'] = {'tags': tags, 'test_type': test_type_normalized}
+
+        if test_type_normalized == TEST_TYPE_ALL:
+            paginated_result['validate_count'] = validate_count
+            paginated_result['propagate_count'] = propagate_count
+
+        if test_type_normalized == TEST_TYPE_VALIDATE and propagate_count:
+            paginated_result['hint_to_agent'] = _compose_scope_hint(
+                paginated_result.get('hint_to_agent'), propagate_count
+            )
 
         return paginated_result
 

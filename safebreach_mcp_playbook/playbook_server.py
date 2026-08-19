@@ -37,7 +37,7 @@ PROPAGATE_ROW_MARKER = (
 )
 
 
-def _render_total_line(total_attacks: int, result: dict) -> str:
+def _render_total_line(total_attacks: int, result: dict, label: str = "matching filters") -> str:
     """
     Render the total line, splitting it per catalog when both catalogs are in scope.
 
@@ -45,6 +45,7 @@ def _render_total_line(total_attacks: int, result: dict) -> str:
         total_attacks: The scoped total reported by the function layer.
         result: The function-layer result, which carries validate_count / propagate_count
             only when the scope was 'all'.
+        label: The qualifier describing what the total counts.
 
     Returns:
         The single-total line, or the split line when both per-catalog counts are usable.
@@ -54,11 +55,11 @@ def _render_total_line(total_attacks: int, result: dict) -> str:
 
     if isinstance(validate_count, int) and isinstance(propagate_count, int):
         return (
-            f"**Total attacks matching filters: {total_attacks}** "
+            f"**Total attacks {label}: {total_attacks}** "
             f"- {validate_count} in the Playbook (Validate), {propagate_count} Propagate (ALM)"
         )
 
-    return f"**Total attacks matching filters: {total_attacks}**"
+    return f"**Total attacks {label}: {total_attacks}**"
 
 
 class SafeBreachPlaybookServer(SafeBreachMCPBase):
@@ -336,20 +337,25 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paginated list of SafeBreach playbook attacks that carry any of the given custom tags.
 Tag matching is case-insensitive and exact per tag token (a filter of "net" does NOT match a tag "network").
-Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0).
+Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0),
+test_type ('validate' | 'propagate' | 'all', default 'validate' - same catalog scope as get_playbook_attacks:
+  the default returns Playbook (Validate) attacks only; Propagate (ALM) attacks are NOT reachable from the
+  Playbook UI, so never present them as Playbook content).
 Results are paginated with 10 items per page; each attack includes its normalized tags list."""
         )
         def get_playbook_attacks_by_tags(
             console: str = "default",
             tags: Optional[str] = None,
-            page_number: int = 0
+            page_number: int = 0,
+            test_type: str = "validate"
         ) -> str:
             """Get playbook attacks filtered by one or more custom tags."""
             try:
                 result = sb_get_playbook_attacks_by_tags(
                     console=console,
                     tags=tags,
-                    page_number=page_number
+                    page_number=page_number,
+                    test_type=test_type
                 )
 
                 if 'error' in result:
@@ -363,7 +369,7 @@ Results are paginated with 10 items per page; each attack includes its normalize
 
                 response_parts = [
                     f"## Playbook Attacks by Tags - Page {page_number + 1} of {total_pages}",
-                    f"**Total attacks matching tags: {total_attacks}**"
+                    _render_total_line(total_attacks, result, label="matching tags")
                 ]
 
                 if applied_filters:
@@ -382,6 +388,8 @@ Results are paginated with 10 items per page; each attack includes its normalize
                         response_parts.append(
                             f"**Description:** {description[:200]}{'...' if len(description) > 200 else ''}"
                         )
+                    if attack.get('is_propagate'):
+                        response_parts.append(PROPAGATE_ROW_MARKER)
                     response_parts.append("")
 
                 if result.get('hint_to_agent'):
