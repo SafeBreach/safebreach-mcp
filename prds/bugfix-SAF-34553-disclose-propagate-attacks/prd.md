@@ -26,10 +26,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Progress |
-| **Last Updated** | 2026-08-19 14:30 |
+| **PRD Status** | In Progress (awaiting e2e + review) |
+| **Last Updated** | 2026-08-19 14:55 |
 | **Owner** | Itamar Bar Hod |
-| **Current Phase** | Phase 5 of 7 |
+| **Current Phase** | All 7 phases complete |
 
 ## 2. Solution Description
 
@@ -277,15 +277,15 @@ and rendering, not operational behavior.
       Propagate attack (expected result 1).
 - [x] `test_type='propagate'` returns only Propagate attacks, never mixed with Validate
       (expected result 2).
-- [ ] `test_type='all'` reports a split total (overall plus per-catalog) and marks every Propagate row
+- [x] `test_type='all'` reports a split total (overall plus per-catalog) and marks every Propagate row
       as not reachable from the Playbook (expected result 3).
 - [x] A default-scoped call that excluded attacks discloses the excluded count and how to include them.
 - [x] The discriminator matches tag group id 44, name `ALM`, value `1`; a value of `0` is treated as
       Validate.
 - [x] Scope is applied before pagination — the total reflects the scope, not the unfiltered catalog.
 - [x] Applied scope appears in the applied-filters output.
-- [ ] `get_playbook_attacks_by_tags` honors `test_type` with the same default.
-- [ ] `get_playbook_attack_details` marks a Propagate attack as not reachable from the Playbook.
+- [x] `get_playbook_attacks_by_tags` honors `test_type` with the same default.
+- [x] `get_playbook_attack_details` marks a Propagate attack as not reachable from the Playbook.
 - [x] An invalid `test_type` raises an error naming the valid values.
 
 **Quality Gates**
@@ -294,7 +294,7 @@ and rendering, not operational behavior.
       intended change.
 - [ ] No regression of SAF-33946: the Propagate-disabled metadata behavior of the details tool is
       unchanged.
-- [ ] Tool descriptions state the default scope and how to request Propagate or both.
+- [x] Tool descriptions state the default scope and how to request Propagate or both.
 
 **Deployment Readiness**
 - [ ] Verified on a Propagate-capable console (pentest01 has 111 Propagate attacks). Staging cannot
@@ -312,9 +312,9 @@ and rendering, not operational behavior.
 | Phase 2: Emit `is_propagate` in reduced payload | ✅ Complete | 2026-08-19 | cc27616 | T-5, T-6 green |
 | Phase 3: Scope filter in criteria filter | ✅ Complete | 2026-08-19 | cc27616 | T-7..T-10 green |
 | Phase 4: Thread scope + disclosure through listing function | ✅ Complete | 2026-08-19 | 5ef1339 | T-11..T-19 green; repro-regression red before fix |
-| Phase 5: Tool surface + presentation for `get_playbook_attacks` | ⏳ Pending | - | - | |
-| Phase 6: `get_playbook_attacks_by_tags` parity | ⏳ Pending | - | - | |
-| Phase 7: Propagate marker on `get_playbook_attack_details` | ⏳ Pending | - | - | |
+| Phase 5: Tool surface + presentation for `get_playbook_attacks` | ✅ Complete | 2026-08-19 | ca791e8 | T-20..T-23 green; first tests of this layer |
+| Phase 6: `get_playbook_attacks_by_tags` parity | ✅ Complete | 2026-08-19 | 2d025c2 | T-25..T-27 green |
+| Phase 7: Propagate marker on `get_playbook_attack_details` | ✅ Complete | 2026-08-19 | f661e46 | T-28, T-29 green; T-30 tombstoned |
 
 ### Phase 1: Propagate discriminator
 
@@ -555,13 +555,14 @@ Verification happens on a Propagate-capable console before the change is handed 
 | 2026-08-19 13:26 | PRD created — initial draft |
 | 2026-08-19 14:05 | Phase 1 complete (760cf81) — discriminator + T-1..T-4 |
 | 2026-08-19 14:30 | Phases 2-4 complete (cc27616, 5ef1339) — payload field, scope filter, validate default + disclosure |
+| 2026-08-19 14:55 | Phases 5-7 complete (ca791e8, 2d025c2, f661e46) — presentation, by_tags parity, details marker. SAF-33946 DoD item re-scoped; T-30 tombstoned. |
 
 ## 12. Current Implementation State
 
 **Progress Summary**
-- Last completed phase: Phase 4 — scope default, validation, ordered counting, disclosure
-- Next phase to implement: Phase 5 — Tool surface + presentation for `get_playbook_attacks`
-- Overall progress: 4 of 7 phases complete
+- Last completed phase: Phase 7 — details reachability marker (all 7 phases complete)
+- Next phase to implement: none — remaining work is the e2e tests (T-24, T-31, T-32, T-33) against a Propagate-capable console, plus the strict review
+- Overall progress: 7 of 7 phases complete
 
 **Blockers**: None
 

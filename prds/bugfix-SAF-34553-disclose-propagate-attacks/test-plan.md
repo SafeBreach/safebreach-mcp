@@ -25,7 +25,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 | R8 | `get_playbook_attacks_by_tags` honors `test_type` with the same default | T-25, T-26, T-27 | Covered |
 | R9 | `get_playbook_attack_details` marks a Propagate attack as not reachable from the Playbook | T-28, T-31 | Covered |
 | R10 | Invalid `test_type` raises an error naming the valid values | T-13, T-34 | Covered |
-| R11 | No regression of SAF-33946 (Propagate-disabled metadata behaviour) | T-30 | Covered |
+| R11 | No regression of SAF-33946 (Propagate-disabled metadata behaviour) | — | **Out of scope — justified.** T-30 tombstoned: the guarded behaviour is absent from this repo (no SAF-33946 commit, no entitlement branch in the details path). Phase 7 adds a line and modifies no existing branch, so there is no code path here to regress. Entitlement lives upstream in content-manager. |
 | R12 | Verified on a Propagate-capable console; staging cannot exercise this path | T-24, T-31, T-33 | Covered |
 
 ## Change Coverage
@@ -34,7 +34,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 |------|------------|---------------------------------|
 | `safebreach_mcp_playbook/playbook_types.py` | T-1, T-2, T-3, T-4, T-5, T-6, T-7, T-8, T-9, T-10 | — |
 | `safebreach_mcp_playbook/playbook_functions.py` | T-11, T-12, T-13, T-14, T-15, T-16, T-17, T-18, T-19, T-25, T-26, T-27, T-28 | — |
-| `safebreach_mcp_playbook/playbook_server.py` | T-20, T-21, T-22, T-23, T-29, T-30, T-34 | — |
+| `safebreach_mcp_playbook/playbook_server.py` | T-20, T-21, T-22, T-23, T-28, T-29, T-34 | — |
 
 ## Risk Landscape
 
@@ -61,7 +61,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 30   | 0           | 0      | 3   | 33    |
+| Automatic | 29   | 0           | 0      | 3   | 32    |
 | Manual    | 0    | 0           | 0      | 1   | 1     |
 
 ## Environment Requirements (aggregated)
@@ -81,7 +81,7 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 ## Regression
 
 - **CI that must pass**: the repo's `.pre-commit-config.yaml` hooks plus the local playbook suite (`uv run pytest safebreach_mcp_playbook/tests/ -m "not e2e"`). **Known gap, confirmed at the gate**: `safebreach-mcp` has no CI job that runs its unit suites — `.github/workflows/` contains only `release.yml` and `security-scan.yml`. "The relevant CI is green" is therefore currently unenforceable for this repo and deserves its own ticket. The automation-repo Helm suite (`Jenkins-jobs/pen-testing/helm/Jenkinsfile.HelmTests.groovy`) is **not** in scope for this change.
-- **Regression tests in this plan**: T-19 (repro-regression keyed to the reported defect), T-30 (SAF-33946 no-regression), T-22 (existing single-total header preserved), T-17 (existing next-page hint preserved), T-24 (real-API coherence). No Manual regression test — justified in the Risk Landscape.
+- **Regression tests in this plan**: T-19 (repro-regression keyed to the reported defect), T-22 (existing single-total header preserved), T-17 (existing next-page hint preserved), T-24 (real-API coherence). No Manual regression test — justified in the Risk Landscape.
 
 ## Tests
 
@@ -117,7 +117,6 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | T-27 | Tag search echoes scope without losing the tags filter | regression | Phase 6 | safebreach_mcp_playbook |
 | T-28 | Details marks a Propagate attack as unreachable | — | Phase 7 | safebreach_mcp_playbook |
 | T-29 | Details output is unchanged for a Validate attack | regression | Phase 7 | safebreach_mcp_playbook |
-| T-30 | SAF-33946 Propagate-disabled metadata behaviour is unchanged | regression | Phase 7 | safebreach_mcp_playbook |
 | T-34 | Valid-value enum and user-facing copy are exact | API-contract | Final | safebreach_mcp_playbook |
 
 **E2E**
@@ -578,7 +577,7 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 ### T-30 — SAF-33946 Propagate-disabled metadata behaviour is unchanged
 
 - Description: Explicit no-regression guard for the previously-fixed metadata leak, since this change touches the same tool.
-- Status: Active
+- Status: Removed — **the behaviour this test guards does not exist in this repo.** Verified during Phase 7: no commit in `safebreach-mcp` references SAF-33946, there is no PRD folder for it, and `sb_get_playbook_attack_details` contains no entitlement or Propagate-disabled branch at all — it locates the attack and transforms it. Package entitlement is enforced upstream in content-manager (`getLicensedContentPackageIds`, `PROPAGATE_PACKAGE_IDS`), so a Propagate-disabled console would not receive ALM moves from the KB moves API in the first place; that upstream location is **inference, not verified**. Writing a test here would have asserted invented behaviour. R11 is consequently not covered by this plan — see the traceability note.
 - Passes after: Phase 7
 - Level: unit
 - Execution: Automatic
@@ -667,7 +666,7 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | Phase 4 | T-11, T-12, T-13, T-14, T-15, T-16, T-17, T-18, T-19 | T-1..T-19 |
 | Phase 5 | T-20, T-21, T-22, T-23, T-24 | T-1..T-24 |
 | Phase 6 | T-25, T-26, T-27 | T-1..T-27 |
-| Phase 7 | T-28, T-29, T-30, T-31 | T-1..T-31 |
+| Phase 7 | T-28, T-29, T-31 | T-1..T-31 (T-30 removed) |
 | Final | T-32, T-33, T-34 | all |
 
 ## Sign-off
@@ -678,10 +677,11 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 - [ ] Progression evidence — T-33 executed with transcript
 - [ ] validating-test-plan: RESULT: clean
 - [ ] All tests green (cumulative through Final) — evidence: test-results/<phase-or-date>.md
-- [ ] Accepted gaps listed and approved: Helm UI/LLM route out of scope; Manual regression absent by justification; repo has no unit-test CI
+- [ ] Accepted gaps listed and approved: Helm UI/LLM route out of scope; Manual regression absent by justification; repo has no unit-test CI; R11/T-30 out of scope (guarded behaviour absent from repo)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-08-19 13:26 | Test plan created from PRD v1 |
+| 2026-08-19 14:55 | T-30 tombstoned — SAF-33946's guarded behaviour is absent from this repo; R11 moved to justified out-of-scope. Status stays Draft (material change). |
