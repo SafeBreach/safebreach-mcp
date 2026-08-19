@@ -738,9 +738,9 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | Phase 4 | T-11, T-12, T-13, T-14, T-15, T-16, T-17, T-18, T-19 | T-1..T-19 |
 | Phase 5 | T-20, T-21, T-22, T-23, T-24 | T-1..T-24 |
 | Phase 6 | T-25, T-26, T-27 | T-1..T-27 |
-| Phase 7 | T-28, T-29, T-31 | T-1..T-31 (T-30 removed) |
-| Phase 8 | T-35..T-51 | T-1..T-51 (T-30 removed) |
-| Final | T-32, T-33, T-34 | all |
+| Phase 7 | T-28, T-29, T-31 | T-1..T-31 (30 tests; T-30 tombstoned) |
+| Phase 8 | T-35..T-51 | T-1..T-31, T-35..T-51 (47 tests; T-30 tombstoned; T-32/T-33/T-34 are Final) |
+| Final | T-32, T-33, T-34 | all 50 active tests |
 
 ## Sign-off
 
@@ -759,3 +759,4 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | 2026-08-19 13:26 | Test plan created from PRD v1 |
 | 2026-08-19 14:55 | T-30 tombstoned — SAF-33946's guarded behaviour is absent from this repo; R11 moved to justified out-of-scope. Status stays Draft (material change). |
 | 2026-08-19 16:10 | Added T-35..T-51 for Phase 8 (draft exclusion) and the strict-review null-description guards. R13-R15 added. Status stays Draft (material change). |
+| 2026-08-19 16:25 | Fixed the Phase 8 cumulative cell — it wrongly implied the three Final tests were green at Phase 8. Correct cumulative is 47, not 50. |
