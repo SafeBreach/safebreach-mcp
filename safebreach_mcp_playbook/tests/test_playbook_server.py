@@ -214,3 +214,58 @@ class TestPlaybookAttacksPresentation:
             assert value in description
         assert 'ALM' in description
         assert 'Playbook' in description
+
+
+class TestAttackDetailsPropagateMarker:
+    """T-28, T-29 — reachability marker on get_playbook_attack_details."""
+
+    @staticmethod
+    def _details(is_propagate):
+        return {
+            'id': 9001,
+            'name': 'Kerberoasting via SPN enumeration',
+            'description': 'Request service tickets for accounts with SPNs',
+            'modifiedDate': '2024-10-07T07:28:05.000Z',
+            'publishedDate': '2019-05-29T15:18:44.000Z',
+            'is_propagate': is_propagate,
+        }
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_details')
+    def test_propagate_attack_marked_unreachable(self, mock_sb):
+        """T-28: a customer handed a Propagate id is told why they cannot find it."""
+        mock_sb.return_value = self._details(True)
+
+        output = _tool_fn('get_playbook_attack_details')(attack_id=9001, console='c')
+
+        assert 'not reachable from the Playbook' in output
+        assert 'Propagate' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_details')
+    def test_validate_attack_output_unchanged(self, mock_sb):
+        """T-29: the marker is additive — ordinary attacks render exactly as before."""
+        mock_sb.return_value = self._details(False)
+
+        output = _tool_fn('get_playbook_attack_details')(attack_id=9001, console='c')
+
+        assert 'not reachable from the Playbook' not in output
+        assert 'Propagate' not in output
+        assert '## Kerberoasting via SPN enumeration (ID: 9001)' in output
+        assert '**Modified Date:** 2024-10-07T07:28:05.000Z' in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_details')
+    def test_marker_absent_when_flag_missing(self, mock_sb):
+        """T-29 (cont.): a payload without the flag must not raise or mark."""
+        details = self._details(False)
+        del details['is_propagate']
+        mock_sb.return_value = details
+
+        output = _tool_fn('get_playbook_attack_details')(attack_id=9001, console='c')
+
+        assert 'not reachable from the Playbook' not in output
+
+    @patch('safebreach_mcp_playbook.playbook_server.sb_get_playbook_attack_details')
+    def test_details_takes_no_scope_param(self, mock_sb):
+        """T-28 (cont.): scope is deliberately absent here - the caller named a specific id."""
+        import inspect
+        params = inspect.signature(_tool_fn('get_playbook_attack_details')).parameters
+        assert 'test_type' not in params

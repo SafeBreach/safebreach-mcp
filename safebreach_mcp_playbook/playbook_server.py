@@ -251,6 +251,9 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
                     f"**Modified Date:** {result.get('modifiedDate', 'Unknown')}",
                     f"**Published Date:** {result.get('publishedDate', 'Unknown')}"
                 ]
+
+                if result.get('is_propagate'):
+                    response_parts.append(PROPAGATE_ROW_MARKER)
                 
                 # Add optional fields based on verbosity
                 if include_fix_suggestions and result.get('fix_suggestions'):
