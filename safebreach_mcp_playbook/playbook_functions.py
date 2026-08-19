@@ -24,7 +24,8 @@ from .playbook_types import (
     VALID_TEST_TYPES,
     TEST_TYPE_VALIDATE,
     TEST_TYPE_PROPAGATE,
-    TEST_TYPE_ALL
+    TEST_TYPE_ALL,
+    DRAFT_STATUS
 )
 
 logger = logging.getLogger(__name__)
@@ -145,8 +146,31 @@ def _compose_scope_hint(existing_hint: Optional[str], propagate_count: int) -> s
     return disclosure
 
 
+def _compose_draft_hint(existing_hint: Optional[str], draft_count: int) -> str:
+    """
+    Build the disclosure telling the agent that unpublished drafts were hidden.
+
+    Args:
+        existing_hint: Any hint already set.
+        draft_count: Draft moves that matched the other filters but were hidden.
+
+    Returns:
+        The disclosure, appended to the existing hint when there is one.
+    """
+    plural = '' if draft_count == 1 else 's'
+    disclosure = (
+        f"{draft_count} unpublished draft attack{plural} also matched your filters but were hidden, "
+        f"because the Playbook UI shows published content only. Pass include_drafts=True to include them."
+    )
+    if existing_hint:
+        separator = ' ' if existing_hint.rstrip().endswith('.') else '. '
+        return f"{existing_hint.rstrip()}{separator}{disclosure}"
+    return disclosure
+
+
 def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
-                 page_number: int, page_size: int) -> Dict[str, Any]:
+                 page_number: int, page_size: int,
+                 include_drafts: bool = False) -> Dict[str, Any]:
     """
     Scope a criteria-filtered attack list, paginate it, and disclose what the scope hid.
 
@@ -164,6 +188,10 @@ def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
         The paginated result, carrying validate_count / propagate_count when the scope is 'all'
         and a composed disclosure hint when a Validate scope excluded anything.
     """
+    draft_count = sum(1 for attack in filtered_attacks if attack.get('is_draft'))
+    if not include_drafts:
+        filtered_attacks = [attack for attack in filtered_attacks if not attack.get('is_draft')]
+
     propagate_count = sum(1 for attack in filtered_attacks if attack.get('is_propagate'))
     validate_count = len(filtered_attacks) - propagate_count
 
@@ -185,6 +213,11 @@ def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
             paginated_result.get('hint_to_agent'), propagate_count
         )
 
+    if not include_drafts and draft_count:
+        paginated_result['hint_to_agent'] = _compose_draft_hint(
+            paginated_result.get('hint_to_agent'), draft_count
+        )
+
     return paginated_result
 
 
@@ -204,7 +237,8 @@ def sb_get_playbook_attacks(
     mitre_tactic_filter: Optional[str] = None,
     attacker_platform_filter: Optional[str] = None,
     target_platform_filter: Optional[str] = None,
-    test_type: Optional[str] = TEST_TYPE_VALIDATE
+    test_type: Optional[str] = TEST_TYPE_VALIDATE,
+    include_drafts: bool = False
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated playbook attacks.
@@ -283,7 +317,8 @@ def sb_get_playbook_attacks(
         )
 
         # Paginate results
-        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number, PAGE_SIZE)
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number,
+                                        PAGE_SIZE, include_drafts)
 
         # Add applied filters info
         applied_filters = {}
@@ -312,6 +347,7 @@ def sb_get_playbook_attacks(
         if target_platform_filter:
             applied_filters['target_platform_filter'] = target_platform_filter
         applied_filters['test_type'] = test_type_normalized
+        applied_filters['include_drafts'] = include_drafts
 
         paginated_result['applied_filters'] = applied_filters
 
@@ -392,7 +428,8 @@ def sb_get_playbook_attacks_by_tags(
     console: str = "default",
     tags: Optional[str] = None,
     page_number: int = 0,
-    test_type: Optional[str] = TEST_TYPE_VALIDATE
+    test_type: Optional[str] = TEST_TYPE_VALIDATE,
+    include_drafts: bool = False
 ) -> Dict[str, Any]:
     """
     Get playbook attacks filtered by one or more custom tags.
@@ -435,8 +472,13 @@ def sb_get_playbook_attacks_by_tags(
         filtered_attacks = filter_attacks_by_criteria(reduced_attacks, tag_filter=tags)
 
         # Paginate results
-        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number, PAGE_SIZE)
-        paginated_result['applied_filters'] = {'tags': tags, 'test_type': test_type_normalized}
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number,
+                                        PAGE_SIZE, include_drafts)
+        paginated_result['applied_filters'] = {
+            'tags': tags,
+            'test_type': test_type_normalized,
+            'include_drafts': include_drafts,
+        }
 
         return paginated_result
 

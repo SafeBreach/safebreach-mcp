@@ -48,6 +48,10 @@ def _truncate_description(description: object, limit: int = 200) -> str:
     return f"{text[:limit]}..." if len(text) > limit else text
 
 
+DRAFT_ROW_MARKER = (
+    "**Status:** unpublished draft - not shown in the Playbook UI, which lists published content only"
+)
+
 PROPAGATE_ROW_MARKER = (
     "**Test Type:** Propagate (ALM) - not reachable from the Playbook UI; "
     "the customer cannot find, open or run this attack there"
@@ -121,7 +125,10 @@ test_type (catalog scope, default 'validate'):
   'all' - both catalogs. The response then reports a per-catalog split of the total.
   Propagate attacks are NOT reachable from the Playbook UI - the customer cannot find, open or run
   them there - so never present them as Playbook content. When a default-scoped answer excluded
-  Propagate attacks, the response says so; relay that rather than implying the total is everything."""
+  Propagate attacks, the response says so; relay that rather than implying the total is everything.
+include_drafts (default False): unpublished Breach Studio drafts are hidden by default, because the
+  Playbook UI shows published content only. Leave this False so your totals match what the customer
+  sees in the Playbook. Pass True only when the user explicitly asks about drafts or work in progress."""
         )
         def get_playbook_attacks(
             console: str = "default",
@@ -139,7 +146,8 @@ test_type (catalog scope, default 'validate'):
             mitre_tactic_filter: Optional[str] = None,
             attacker_platform_filter: Optional[str] = None,
             target_platform_filter: Optional[str] = None,
-            test_type: Optional[str] = "validate"
+            test_type: Optional[str] = "validate",
+            include_drafts: bool = False
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -159,7 +167,8 @@ test_type (catalog scope, default 'validate'):
                     mitre_tactic_filter=mitre_tactic_filter,
                     attacker_platform_filter=attacker_platform_filter,
                     target_platform_filter=target_platform_filter,
-                    test_type=test_type
+                    test_type=test_type,
+                    include_drafts=include_drafts
                 )
                 
                 if 'error' in result:
@@ -218,6 +227,8 @@ test_type (catalog scope, default 'validate'):
 
                     if attack.get('is_propagate'):
                         response_parts.append(PROPAGATE_ROW_MARKER)
+                    if attack.get('is_draft'):
+                        response_parts.append(DRAFT_ROW_MARKER)
 
                     response_parts.append("")
                 
@@ -271,6 +282,8 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
 
                 if result.get('is_propagate'):
                     response_parts.append(PROPAGATE_ROW_MARKER)
+                if result.get('is_draft'):
+                    response_parts.append(DRAFT_ROW_MARKER)
                 
                 # Add optional fields based on verbosity
                 if include_fix_suggestions and result.get('fix_suggestions'):
@@ -360,14 +373,16 @@ Tag matching is case-insensitive and exact per tag token (a filter of "net" does
 Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0),
 test_type ('validate' | 'propagate' | 'all', default 'validate' - same catalog scope as get_playbook_attacks:
   the default returns Playbook (Validate) attacks only; Propagate (ALM) attacks are NOT reachable from the
-  Playbook UI, so never present them as Playbook content).
+  Playbook UI, so never present them as Playbook content),
+include_drafts (default False - unpublished drafts are hidden so totals match the Playbook UI).
 Results are paginated with 10 items per page; each attack includes its normalized tags list."""
         )
         def get_playbook_attacks_by_tags(
             console: str = "default",
             tags: Optional[str] = None,
             page_number: int = 0,
-            test_type: Optional[str] = "validate"
+            test_type: Optional[str] = "validate",
+            include_drafts: bool = False
         ) -> str:
             """Get playbook attacks filtered by one or more custom tags."""
             try:
@@ -375,7 +390,8 @@ Results are paginated with 10 items per page; each attack includes its normalize
                     console=console,
                     tags=tags,
                     page_number=page_number,
-                    test_type=test_type
+                    test_type=test_type,
+                    include_drafts=include_drafts
                 )
 
                 if 'error' in result:
@@ -410,6 +426,8 @@ Results are paginated with 10 items per page; each attack includes its normalize
                         )
                     if attack.get('is_propagate'):
                         response_parts.append(PROPAGATE_ROW_MARKER)
+                    if attack.get('is_draft'):
+                        response_parts.append(DRAFT_ROW_MARKER)
                     response_parts.append("")
 
                 if result.get('hint_to_agent'):

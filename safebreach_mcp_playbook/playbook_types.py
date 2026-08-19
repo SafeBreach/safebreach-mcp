@@ -149,6 +149,8 @@ def _extract_custom_tag_values(tags_data: Any) -> List[str]:
     return values
 
 
+DRAFT_STATUS = 'draft'
+
 VALID_TEST_TYPES = ('validate', 'propagate', 'all')
 TEST_TYPE_VALIDATE = 'validate'
 TEST_TYPE_PROPAGATE = 'propagate'
@@ -157,6 +159,25 @@ TEST_TYPE_ALL = 'all'
 PROPAGATE_TAG_ID = 44
 PROPAGATE_TAG_NAME = 'ALM'
 PROPAGATE_TAG_VALUE = '1'
+
+
+def _is_draft_attack(attack_data: Any) -> bool:
+    """
+    Decide whether a move is an unpublished draft.
+
+    The Playbook UI shows published content only, so a draft returned by the knowledge-base API is
+    content the customer cannot find there. Moves with no status field at all are out-of-the-box
+    content and are NOT drafts.
+
+    Args:
+        attack_data: Raw move as the API supplied it.
+
+    Returns:
+        True only when the move explicitly carries the draft status.
+    """
+    if not isinstance(attack_data, dict):
+        return False
+    return attack_data.get('status') == DRAFT_STATUS
 
 
 def _is_propagate_attack(tags_data: Any) -> bool:
@@ -395,6 +416,7 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
     result.update(platform_data)
 
     result['is_propagate'] = _is_propagate_attack(attack_data.get('tags', []))
+    result['is_draft'] = _is_draft_attack(attack_data)
 
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))

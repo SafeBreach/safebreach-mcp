@@ -258,7 +258,7 @@ class TestTransformationFunctions:
         
         # Verify all required fields are present
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform', 'is_propagate']
+                          'attacker_platform', 'target_platform', 'is_propagate', 'is_draft']
         assert set(result.keys()) == set(expected_fields)
 
         # Verify field values
@@ -280,7 +280,7 @@ class TestTransformationFunctions:
         
         # Should still have all expected keys, with None for missing values
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform', 'is_propagate']
+                          'attacker_platform', 'target_platform', 'is_propagate', 'is_draft']
         assert set(result.keys()) == set(expected_fields)
         assert result['id'] == 123
         assert result['name'] == "Test Attack"
@@ -294,7 +294,7 @@ class TestTransformationFunctions:
         
         # Should include all reduced fields plus all optional fields (default behavior)
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform', 'is_propagate',
+                          'attacker_platform', 'target_platform', 'is_propagate', 'is_draft',
                           'fix_suggestions', 'tags', 'params']
         assert set(result.keys()) == set(expected_fields)
         

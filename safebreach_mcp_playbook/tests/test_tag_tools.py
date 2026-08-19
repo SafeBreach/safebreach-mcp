@@ -403,3 +403,21 @@ class TestTestTypeByTags:
 
         assert result['validate_count'] == 2
         assert result['propagate_count'] == 1
+
+
+class TestDraftExclusionByTags:
+    """Parity: the tag-search door must not reintroduce unpublished drafts."""
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_excludes_drafts_by_default(self, mock_get_all):
+        """Parity: the tag-search door must not reintroduce drafts."""
+        tagged = []
+        for aid, status in ((201, 'published'), (202, 'draft')):
+            a = _tagged_raw_attack(aid, f'tagged {aid}', 'shared', False)
+            a['status'] = status
+            tagged.append(a)
+        mock_get_all.return_value = tagged
+
+        result = sb_get_playbook_attacks_by_tags('test-console', tags='shared')
+
+        assert [a['id'] for a in result['attacks_in_page']] == [201]

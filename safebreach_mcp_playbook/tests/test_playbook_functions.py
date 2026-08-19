@@ -1016,3 +1016,113 @@ class TestTestTypeGetPlaybookAttacks:
         assert result['validate_count'] == 3
         assert result['propagate_count'] == 2
         assert result['validate_count'] + result['propagate_count'] == result['total_attacks']
+
+
+def _draft_raw_attack(attack_id, name, status=None, is_alm=False):
+    """Raw move with an explicit publication status."""
+    a = _raw_attack(attack_id, name, is_alm)
+    if status is not None:
+        a['status'] = status
+    return a
+
+
+@pytest.fixture
+def draft_mix_raw_attacks():
+    """2 published + 1 statusless (legacy OOB) + 2 drafts, one of which is also Propagate."""
+    return [
+        _draft_raw_attack(101, 'published one', status='published'),
+        _draft_raw_attack(102, 'legacy no status'),
+        _draft_raw_attack(103, 'published two', status='published'),
+        _draft_raw_attack(901, 'draft one', status='draft'),
+        _draft_raw_attack(902, 'draft propagate', status='draft', is_alm=True),
+    ]
+
+
+class TestDraftExclusion:
+    """Draft moves are hidden by the Playbook UI, so Helm must hide them by default (SAF-34553)."""
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_drafts_excluded_by_default(self, mock_get_all, draft_mix_raw_attacks):
+        """The default answer counts only what the Playbook UI shows."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert sorted(a['id'] for a in result['attacks_in_page']) == [101, 102, 103]
+        assert result['total_attacks'] == 3
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_statusless_moves_are_not_treated_as_drafts(self, mock_get_all, draft_mix_raw_attacks):
+        """OOB moves carry no status field at all — they must stay visible."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert 102 in [a['id'] for a in result['attacks_in_page']]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_include_drafts_brings_them_back(self, mock_get_all, draft_mix_raw_attacks):
+        """An author asking for their drafts can still reach them."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', include_drafts=True)
+
+        assert 901 in [a['id'] for a in result['attacks_in_page']]
+        assert result['total_attacks'] == 4
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_draft_exclusion_is_disclosed(self, mock_get_all, draft_mix_raw_attacks):
+        """Silently dropping drafts would repeat the very defect this ticket fixes."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console')
+
+        hint = result['hint_to_agent']
+        assert 'draft' in hint.lower()
+        assert 'include_drafts=True' in hint
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_no_draft_hint_when_none_excluded(self, mock_get_all):
+        """No noise on a console with no drafts."""
+        mock_get_all.return_value = [_draft_raw_attack(1, 'published', status='published')]
+
+        result = sb_get_playbook_attacks('test-console')
+
+        assert not result['hint_to_agent'] or 'draft' not in result['hint_to_agent'].lower()
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_scope_counts_exclude_drafts(self, mock_get_all, draft_mix_raw_attacks):
+        """The per-catalog split must describe visible attacks, or it won't match the UI."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        result = sb_get_playbook_attacks('test-console', test_type='all')
+
+        assert result['validate_count'] == 3
+        assert result['propagate_count'] == 0
+        assert result['total_attacks'] == 3
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_drafts_and_propagate_are_independent(self, mock_get_all, draft_mix_raw_attacks):
+        """The draft Propagate attack appears only when both gates are opened."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        both = sb_get_playbook_attacks('test-console', test_type='all', include_drafts=True)
+        assert 902 in [a['id'] for a in both['attacks_in_page']]
+
+        propagate_only = sb_get_playbook_attacks('test-console', test_type='propagate')
+        assert propagate_only['total_attacks'] == 0
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_applied_filters_records_draft_handling(self, mock_get_all, draft_mix_raw_attacks):
+        """The active draft gate is disclosed like every other filter."""
+        mock_get_all.return_value = draft_mix_raw_attacks
+
+        assert sb_get_playbook_attacks('test-console')['applied_filters']['include_drafts'] is False
+        assert sb_get_playbook_attacks(
+            'test-console', include_drafts=True)['applied_filters']['include_drafts'] is True
