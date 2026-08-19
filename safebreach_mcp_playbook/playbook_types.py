@@ -149,6 +149,11 @@ def _extract_custom_tag_values(tags_data: Any) -> List[str]:
     return values
 
 
+VALID_TEST_TYPES = ('validate', 'propagate', 'all')
+TEST_TYPE_VALIDATE = 'validate'
+TEST_TYPE_PROPAGATE = 'propagate'
+TEST_TYPE_ALL = 'all'
+
 PROPAGATE_TAG_ID = 44
 PROPAGATE_TAG_NAME = 'ALM'
 PROPAGATE_TAG_VALUE = '1'
@@ -389,6 +394,8 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
     platform_data = _extract_platform_data(attack_data.get('content', {}))
     result.update(platform_data)
 
+    result['is_propagate'] = _is_propagate_attack(attack_data.get('tags', []))
+
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))
         result.update(mitre_data)
@@ -453,7 +460,8 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                mitre_tactic_filter: Optional[str] = None,
                                attacker_platform_filter: Optional[str] = None,
                                target_platform_filter: Optional[str] = None,
-                               tag_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                               tag_filter: Optional[str] = None,
+                               test_type: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
 
@@ -473,11 +481,27 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             Attacks with None attacker_platform pass through (are included).
         target_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
             Attacks with None target_platform pass through (are included).
+        test_type: Catalog scope — 'validate' keeps non-Propagate attacks, 'propagate' keeps only
+            Propagate attacks, 'all' or None filters nothing. Compared case-insensitively. Validation
+            of the value belongs to the calling function.
 
     Returns:
         Filtered list of attacks
     """
     filtered_attacks = attacks.copy()
+
+    if test_type:
+        test_type_lower = test_type.lower()
+        if test_type_lower == TEST_TYPE_VALIDATE:
+            filtered_attacks = [
+                attack for attack in filtered_attacks
+                if not attack.get('is_propagate')
+            ]
+        elif test_type_lower == TEST_TYPE_PROPAGATE:
+            filtered_attacks = [
+                attack for attack in filtered_attacks
+                if attack.get('is_propagate')
+            ]
     
     # Filter by name (partial, case-insensitive)
     if name_filter:

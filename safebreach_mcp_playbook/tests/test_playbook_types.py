@@ -18,6 +18,7 @@ from safebreach_mcp_playbook.playbook_types import (
     _attack_matches_platform,
     _resolve_tactic_filter_value,
     _is_propagate_attack,
+    VALID_TEST_TYPES,
     PROPAGATE_TAG_ID,
     PROPAGATE_TAG_NAME,
     PROPAGATE_TAG_VALUE
@@ -257,7 +258,7 @@ class TestTransformationFunctions:
         
         # Verify all required fields are present
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform']
+                          'attacker_platform', 'target_platform', 'is_propagate']
         assert set(result.keys()) == set(expected_fields)
 
         # Verify field values
@@ -279,7 +280,7 @@ class TestTransformationFunctions:
         
         # Should still have all expected keys, with None for missing values
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform']
+                          'attacker_platform', 'target_platform', 'is_propagate']
         assert set(result.keys()) == set(expected_fields)
         assert result['id'] == 123
         assert result['name'] == "Test Attack"
@@ -293,7 +294,7 @@ class TestTransformationFunctions:
         
         # Should include all reduced fields plus all optional fields (default behavior)
         expected_fields = ['name', 'id', 'description', 'modifiedDate', 'publishedDate',
-                          'attacker_platform', 'target_platform',
+                          'attacker_platform', 'target_platform', 'is_propagate',
                           'fix_suggestions', 'tags', 'params']
         assert set(result.keys()) == set(expected_fields)
         
@@ -1330,3 +1331,94 @@ class TestPropagateDiscriminator:
         }
         assert _is_propagate_attack([numeric]) is True
         assert PROPAGATE_TAG_VALUE == "1"
+
+
+class TestPropagateInReducedPayload:
+    """T-5, T-6 — is_propagate on the reduced attack payload."""
+
+    def test_is_propagate_always_present(self, sample_attack_raw):
+        """T-5: the field is unconditional, so downstream code never defends against absence."""
+        result = transform_reduced_playbook_attack(sample_attack_raw)
+        assert 'is_propagate' in result
+        assert result['is_propagate'] is False
+
+        no_tags = {k: v for k, v in sample_attack_raw.items() if k != 'tags'}
+        result_no_tags = transform_reduced_playbook_attack(no_tags)
+        assert 'is_propagate' in result_no_tags
+        assert result_no_tags['is_propagate'] is False
+
+    def test_is_propagate_reflects_tags(self, sample_attack_raw, propagate_tag_group):
+        """T-6: the flag carries the discriminator's verdict, not a constant."""
+        alm_attack = dict(sample_attack_raw)
+        alm_attack['tags'] = list(sample_attack_raw.get('tags') or []) + [propagate_tag_group]
+
+        assert transform_reduced_playbook_attack(alm_attack)['is_propagate'] is True
+        assert transform_reduced_playbook_attack(sample_attack_raw)['is_propagate'] is False
+
+    def test_is_propagate_not_in_field_mapping(self):
+        """T-5 (cont.): the field is derived, so it must not appear in the copy mapping."""
+        assert 'is_propagate' not in get_reduced_playbook_attack_mapping()
+
+
+@pytest.fixture
+def mixed_scope_attacks():
+    """Asymmetric mix: 3 Validate, 2 Propagate — so a collapsed count cannot coincidentally match."""
+    return [
+        {'id': 101, 'name': 'validate one', 'is_propagate': False},
+        {'id': 102, 'name': 'validate two', 'is_propagate': False},
+        {'id': 201, 'name': 'propagate one', 'is_propagate': True},
+        {'id': 103, 'name': 'validate three', 'is_propagate': False},
+        {'id': 202, 'name': 'propagate two', 'is_propagate': True},
+    ]
+
+
+class TestTestTypeFiltering:
+    """T-7 through T-10 — scope filtering in filter_attacks_by_criteria."""
+
+    def test_validate_scope_excludes_propagate(self, mixed_scope_attacks):
+        """T-7: Validate scope removes Propagate attacks."""
+        result = filter_attacks_by_criteria(mixed_scope_attacks, test_type='validate')
+        assert [a['id'] for a in result] == [101, 102, 103]
+        assert 201 not in [a['id'] for a in result]
+        assert 202 not in [a['id'] for a in result]
+
+    def test_propagate_scope_keeps_only_propagate(self, mixed_scope_attacks):
+        """T-8: Propagate scope is never contaminated with Validate content."""
+        result = filter_attacks_by_criteria(mixed_scope_attacks, test_type='propagate')
+        assert [a['id'] for a in result] == [201, 202]
+
+    def test_all_scope_filters_nothing(self, mixed_scope_attacks):
+        """T-9: the escape hatch genuinely returns both catalogs."""
+        result = filter_attacks_by_criteria(mixed_scope_attacks, test_type='all')
+        assert len(result) == 5
+
+    def test_no_scope_filters_nothing(self, mixed_scope_attacks):
+        """T-9 (cont.): the filter itself is neutral when given no scope — the default lives at the caller."""
+        assert len(filter_attacks_by_criteria(mixed_scope_attacks)) == 5
+        assert len(filter_attacks_by_criteria(mixed_scope_attacks, test_type=None)) == 5
+
+    @pytest.mark.parametrize("spelling,expected_ids", [
+        ('VALIDATE', [101, 102, 103]),
+        ('Validate', [101, 102, 103]),
+        ('PROPAGATE', [201, 202]),
+        ('Propagate', [201, 202]),
+    ])
+    def test_scope_comparison_is_case_insensitive(self, mixed_scope_attacks, spelling, expected_ids):
+        """T-10: an agent passing a capitalised value is not silently mis-scoped."""
+        result = filter_attacks_by_criteria(mixed_scope_attacks, test_type=spelling)
+        assert [a['id'] for a in result] == expected_ids
+
+    def test_missing_flag_treated_as_validate(self):
+        """T-7 (cont.): an attack lacking the flag is Validate — the safe direction."""
+        attacks = [{'id': 1, 'name': 'no flag'}]
+        assert len(filter_attacks_by_criteria(attacks, test_type='validate')) == 1
+        assert len(filter_attacks_by_criteria(attacks, test_type='propagate')) == 0
+
+    def test_scope_composes_with_other_criteria(self, mixed_scope_attacks):
+        """T-7 (cont.): scope is one predicate among the existing chain, not a replacement."""
+        result = filter_attacks_by_criteria(mixed_scope_attacks, test_type='validate', name_filter='two')
+        assert [a['id'] for a in result] == [102]
+
+    def test_valid_test_types_exposed(self):
+        """T-34 (partial): the accepted vocabulary is a declared contract with exactly three members."""
+        assert VALID_TEST_TYPES == ('validate', 'propagate', 'all')
