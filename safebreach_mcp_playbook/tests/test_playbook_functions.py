@@ -970,6 +970,8 @@ class TestTestTypeGetPlaybookAttacks:
         hint = result['hint_to_agent']
         assert 'page_number' in hint
         assert 'Propagate' in hint
+        assert 'page_number=1 111' not in hint
+        assert '. 3 Propagate' in hint
 
     @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
     def test_excluded_count_is_after_other_criteria(self, mock_get_all, credential_access_raw_attacks):

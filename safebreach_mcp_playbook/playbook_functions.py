@@ -139,7 +139,8 @@ def _compose_scope_hint(existing_hint: Optional[str], propagate_count: int) -> s
         f"Pass test_type='all' to include them, or test_type='propagate' for only those."
     )
     if existing_hint:
-        return f"{existing_hint} {disclosure}"
+        separator = ' ' if existing_hint.rstrip().endswith('.') else '. '
+        return f"{existing_hint.rstrip()}{separator}{disclosure}"
     return disclosure
 
 
