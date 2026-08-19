@@ -30,13 +30,14 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 | R13 | Unpublished drafts are hidden by default, so a reported total equals what the Playbook UI displays | T-35, T-36, T-40, T-43, T-44, T-46 | Covered |
 | R14 | Drafts remain reachable on request, and their exclusion is disclosed | T-37, T-38, T-39, T-41, T-42, T-47 | Covered |
 | R15 | The render paths tolerate a null description (strict-review crashes in touched lines) | T-48, T-49, T-50, T-51 | Covered |
+| R16 | Each disclosed count describes the scope actually requested, never a wider set | T-18, T-52, T-53, T-54, T-55, T-56 | Covered |
 
 ## Change Coverage
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
 | `safebreach_mcp_playbook/playbook_types.py` | T-1..T-10, T-36 | — |
-| `safebreach_mcp_playbook/playbook_functions.py` | T-11..T-19, T-25..T-28, T-35, T-37..T-43 | — |
+| `safebreach_mcp_playbook/playbook_functions.py` | T-11..T-19, T-25..T-28, T-35, T-37..T-43, T-52..T-56 | — |
 | `safebreach_mcp_playbook/playbook_server.py` | T-20..T-23, T-29, T-34, T-47, T-48..T-51 | — |
 
 ## Risk Landscape
@@ -54,6 +55,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
   - The MCP server layer's Markdown formatting has **no tests at all** today (`tests/test_playbook_server.py` asserts only tool registration and config parsing). Header subtotals and row markers land on untested surface — T-20..T-23 are the first tests of their kind for that layer.
   - No fixture in the repo carries a tag group with id 44 / name `ALM`. One is introduced, captured verbatim from pentest01's real moves payload rather than hand-shaped.
   - `paginate_attacks` has no test covering a caller-supplied `hint_to_agent` — only the next-page one (T-17).
+- **A disclosure can lie, and ours did.** Phase 8 shipped with the hidden-draft count taken *before* the scope filter, so a Propagate-scoped answer claimed 15 drafts were hidden when none were in scope. Caught only by an agent driving the live tools — 319 unit tests were green at the time, because no fixture had drafts confined to the other catalog. T-52..T-56 close it. The lesson generalises: every count this plan discloses needs a test pinning *which population it describes*.
 - **A second cause was missed by the original ticket.** Excluding Propagate alone took the reporter's query from 181 to 136 while the Playbook UI showed 121. The residual 15 were unpublished BREACH_STUDIO drafts — the same defect class (undisclosed scope), different cause. The plan's reconciliation test is now T-46, and the ticket's premise ("Helm's number should agree with the UI") was only satisfied after Phase 8.
 - **The `move` table is not the population the API serves.** The KB API returns 10,056 moves against 9,605 rows in `move`; the difference is custom/Studio content. Any DB-based cross-check in this plan is against a subset — the ALM count (111) matched exactly only because custom moves are not ALM-tagged.
 - **Anti-test — staging-management produces a FALSE PASS**: staging-management has 9,497 moves and **zero** ALM tags. Every scope assertion trivially passes there while proving nothing. Any real-API test must assert a non-zero ALM count as a precondition, or skip loudly. Recorded here because it is the single most likely way a future executor reports a green run that means nothing.
@@ -66,7 +68,7 @@ Sources: JIRA acceptance criteria ∪ PRD §7 Definition of Done (user-confirmed
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 42   | 0           | 0      | 7   | 49    |
+| Automatic | 47   | 0           | 0      | 7   | 54    |
 | Manual    | 0    | 0           | 0      | 1   | 1     |
 
 ## Environment Requirements (aggregated)
@@ -86,7 +88,7 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 ## Regression
 
 - **CI that must pass**: the repo's `.pre-commit-config.yaml` hooks plus the local playbook suite (`uv run pytest safebreach_mcp_playbook/tests/ -m "not e2e"`). **Known gap, confirmed at the gate**: `safebreach-mcp` has no CI job that runs its unit suites — `.github/workflows/` contains only `release.yml` and `security-scan.yml`. "The relevant CI is green" is therefore currently unenforceable for this repo and deserves its own ticket. The automation-repo Helm suite (`Jenkins-jobs/pen-testing/helm/Jenkinsfile.HelmTests.groovy`) is **not** in scope for this change.
-- **Regression tests in this plan**: T-19 (repro-regression keyed to the reported defect), T-22 (existing single-total header preserved), T-17 (existing next-page hint preserved), T-24 (real-API coherence). No Manual regression test — justified in the Risk Landscape.
+- **Regression tests in this plan**: T-19 (repro-regression keyed to the reported defect), T-52..T-55 (scope-aware disclosure counts), T-22 (existing single-total header preserved), T-17 (existing next-page hint preserved), T-24 (real-API coherence). No Manual regression test — justified in the Risk Landscape.
 
 ## Tests
 
@@ -136,6 +138,11 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | T-49 | Listing render truncates a long description | regression | Phase 8 | safebreach_mcp_playbook |
 | T-50 | Listing render keeps a short description verbatim | regression | Phase 8 | safebreach_mcp_playbook |
 | T-51 | Details render survives a null description | regression | Phase 8 | safebreach_mcp_playbook |
+| T-52 | Propagate scope reports no hidden drafts when none are in scope | regression | Phase 8 | safebreach_mcp_playbook |
+| T-53 | Validate scope reports exactly its own hidden drafts | regression | Phase 8 | safebreach_mcp_playbook |
+| T-54 | All scope reports every draft it hid | regression | Phase 8 | safebreach_mcp_playbook |
+| T-55 | A Propagate draft is reported under the Propagate scope only | regression | Phase 8 | safebreach_mcp_playbook |
+| T-56 | Split counts always sum to the reported total | API-contract | Phase 8 | safebreach_mcp_playbook |
 
 **E2E**
 
@@ -728,6 +735,23 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 - Automation lives in: `safebreach_mcp_playbook/tests/test_playbook_server.py` (`TestNullDescriptionRendering`)
 - Environment needs: none
 
+
+### T-52 to T-56 — the disclosed counts are scope-aware
+
+- Description: prove each disclosed count describes the scope the caller asked for, not a wider set — the defect a live agent-driven sanity run exposed after Phase 8 shipped.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: regression (T-52..T-55), API-contract (T-56)
+- Risk: **This is the same ordering trap T-18 guards for the Propagate count, made in the mirror direction for the draft count.** With `test_type='propagate'` the tool claimed 15 drafts were hidden when all 15 were Validate and none were in scope — a fabricated number in the very disclosure this ticket exists to add. A disclosure that over-reports is worse than none: it sends the reader looking for content that was never withheld.
+- Risk source: reviewer input — found by an agent driving the live tools, not by the 319 unit tests that existed at the time
+- Verify: over a dataset of 3 published Validate, 2 published Propagate and 2 Validate drafts (no Propagate draft): a Propagate-scoped call makes no draft claim at all (T-52); a Validate-scoped call reports exactly 2 (T-53); an `all`-scoped call reports 2 (T-54). Then add a Propagate draft and assert each scope reports only its own (T-55). Finally assert `validate_count + propagate_count == total_attacks` both with and without drafts (T-56).
+- Expected: as stated. The two counts require **opposite** orders — the Propagate count is taken across both catalogs before scoping ("what else matched that this scope hid"), the draft count after scoping ("what this scope itself hid").
+- Evidence required: CI run — local pytest output; plus the live three-scope check recorded in `test-results/`.
+- Automation lives in: `safebreach_mcp_playbook/tests/test_playbook_functions.py` (`TestDraftCountIsScopeAware`)
+- Environment needs: none
+
 ## Tests by Phase (readiness view — generated)
 
 | After phase | Newly green | Cumulative green |
@@ -739,8 +763,8 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | Phase 5 | T-20, T-21, T-22, T-23, T-24 | T-1..T-24 |
 | Phase 6 | T-25, T-26, T-27 | T-1..T-27 |
 | Phase 7 | T-28, T-29, T-31 | T-1..T-31 (30 tests; T-30 tombstoned) |
-| Phase 8 | T-35..T-51 | T-1..T-31, T-35..T-51 (47 tests; T-30 tombstoned; T-32/T-33/T-34 are Final) |
-| Final | T-32, T-33, T-34 | all 50 active tests |
+| Phase 8 | T-35..T-51, T-52..T-56 | T-1..T-31, T-35..T-56 (52 tests; T-30 tombstoned; T-32/T-33/T-34 are Final) |
+| Final | T-32, T-33, T-34 | all 55 active tests |
 
 ## Sign-off
 
@@ -760,3 +784,4 @@ Capability checklist — answered from the plan's real-env (e2e) tests only:
 | 2026-08-19 14:55 | T-30 tombstoned — SAF-33946's guarded behaviour is absent from this repo; R11 moved to justified out-of-scope. Status stays Draft (material change). |
 | 2026-08-19 16:10 | Added T-35..T-51 for Phase 8 (draft exclusion) and the strict-review null-description guards. R13-R15 added. Status stays Draft (material change). |
 | 2026-08-19 16:25 | Fixed the Phase 8 cumulative cell — it wrongly implied the three Final tests were green at Phase 8. Correct cumulative is 47, not 50. |
+| 2026-08-19 17:05 | Added T-52..T-56 and R16 after a live agent sanity run found the draft count was taken before the scope filter, over-reporting on a Propagate-scoped query. Status stays Draft (material change). |

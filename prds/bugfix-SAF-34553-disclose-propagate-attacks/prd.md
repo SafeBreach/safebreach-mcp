@@ -27,7 +27,7 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress (awaiting e2e + review) |
-| **Last Updated** | 2026-08-19 16:10 |
+| **Last Updated** | 2026-08-19 17:05 |
 | **Owner** | Itamar Bar Hod |
 | **Current Phase** | All 8 phases complete |
 
@@ -316,7 +316,7 @@ and rendering, not operational behavior.
 | Phase 5: Tool surface + presentation for `get_playbook_attacks` | ✅ Complete | 2026-08-19 | ca791e8 | T-20..T-23 green; first tests of this layer |
 | Phase 6: `get_playbook_attacks_by_tags` parity | ✅ Complete | 2026-08-19 | 2d025c2 | T-25..T-27 green |
 | Phase 7: Propagate marker on `get_playbook_attack_details` | ✅ Complete | 2026-08-19 | f661e46 | T-28, T-29 green; T-30 tombstoned |
-| Phase 8: Hide unpublished drafts by default | ✅ Complete | 2026-08-19 | 92218d7 | T-35..T-43 green; found by live UI cross-check, NOT in the original ticket |
+| Phase 8: Hide unpublished drafts by default | ✅ Complete | 2026-08-19 | 92218d7, fd8c41f | T-35..T-43, T-52..T-56 green. Found by live UI cross-check, NOT in the original ticket. fd8c41f fixes a scope-awareness defect in the draft count found by a live agent run |
 
 ### Phase 1: Propagate discriminator
 
@@ -516,6 +516,13 @@ and rendering, not operational behavior.
 - **What can go wrong**: treating a statusless move as a draft would hide almost the entire catalog;
   counting drafts after removing them always reports zero; excluding drafts after the per-catalog
   counting would leave the split disagreeing with the total.
+- **Defect found after this phase shipped (fixed in `fd8c41f`)**: the draft count was taken *before*
+  the scope filter, so a Propagate-scoped answer claimed 15 drafts hidden when all 15 were Validate
+  and none were in scope. The two counts need **opposite** orders — the Propagate count spans both
+  catalogs (it answers "what else matched that this scope hid"), the draft count is taken after
+  scoping (it answers "what did this scope itself hide"). This is the same trap §8 Phase 4 documents
+  for the Propagate count, made in the mirror direction; it survived 319 green unit tests because no
+  fixture had drafts confined to the opposite catalog. Found by an agent driving the live tools.
 - **Changes**:
 
 | File | Description |
@@ -599,6 +606,7 @@ Verification happens on a Propagate-capable console before the change is handed 
 | 2026-08-19 14:55 | Phases 5-7 complete (ca791e8, 2d025c2, f661e46) — presentation, by_tags parity, details marker. SAF-33946 DoD item re-scoped; T-30 tombstoned. |
 | 2026-08-19 15:40 | Strict review: 9 findings, all pre-existing. Fixed the 2 crashes in touched lines + own duplication; rest filed as SAF-35355. |
 | 2026-08-19 16:10 | Phase 8 added (92218d7) — draft exclusion, found by live UI cross-check. Reconciliation DoD now met: 121 == 121. Two PRD assumptions falsified and recorded. |
+| 2026-08-19 17:05 | fd8c41f — draft count made scope-aware after a live agent sanity run caught it over-reporting on a Propagate-scoped query. T-52..T-56 added. |
 
 ## 12. Current Implementation State
 
