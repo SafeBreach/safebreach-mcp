@@ -26,10 +26,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Review |
-| **Last Updated** | 2026-08-19 13:26 |
+| **PRD Status** | In Progress |
+| **Last Updated** | 2026-08-19 14:05 |
 | **Owner** | Itamar Bar Hod |
-| **Current Phase** | N/A |
+| **Current Phase** | Phase 2 of 7 |
 
 ## 2. Solution Description
 
@@ -280,7 +280,7 @@ and rendering, not operational behavior.
 - [ ] `test_type='all'` reports a split total (overall plus per-catalog) and marks every Propagate row
       as not reachable from the Playbook (expected result 3).
 - [ ] A default-scoped call that excluded attacks discloses the excluded count and how to include them.
-- [ ] The discriminator matches tag group id 44, name `ALM`, value `1`; a value of `0` is treated as
+- [x] The discriminator matches tag group id 44, name `ALM`, value `1`; a value of `0` is treated as
       Validate.
 - [ ] Scope is applied before pagination — the total reflects the scope, not the unfiltered catalog.
 - [ ] Applied scope appears in the applied-filters output.
@@ -308,7 +308,7 @@ and rendering, not operational behavior.
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Propagate discriminator | ⏳ Pending | - | - | |
+| Phase 1: Propagate discriminator | ✅ Complete | 2026-08-19 | 760cf81 | T-1..T-4 green; 262 playbook tests pass |
 | Phase 2: Emit `is_propagate` in reduced payload | ⏳ Pending | - | - | |
 | Phase 3: Scope filter in criteria filter | ⏳ Pending | - | - | |
 | Phase 4: Thread scope + disclosure through listing function | ⏳ Pending | - | - | |
@@ -553,3 +553,31 @@ Verification happens on a Propagate-capable console before the change is handed 
 | Date | Change Description |
 |------|-------------------|
 | 2026-08-19 13:26 | PRD created — initial draft |
+| 2026-08-19 14:05 | Phase 1 complete (760cf81) — discriminator + T-1..T-4 |
+
+## 12. Current Implementation State
+
+**Progress Summary**
+- Last completed phase: Phase 1 — Propagate discriminator
+- Next phase to implement: Phase 2 — Emit `is_propagate` in reduced payload
+- Overall progress: 1 of 7 phases complete
+
+**Blockers**: None
+
+**Files Modified**
+
+| File | Status | Phase |
+|------|--------|-------|
+| `safebreach_mcp_playbook/playbook_types.py` | Modified | Phase 1 |
+| `safebreach_mcp_playbook/tests/test_playbook_types.py` | Modified | Phase 1 |
+
+**Phase Verification Status**
+
+| Phase | Lint | Tests | Code Review | Notes |
+|-------|------|-------|-------------|-------|
+| Phase 1: Propagate discriminator | N/A | ✅ | ⏳ | No linter configured in repo (pre-commit has only check-added-large-files); 262 passed / 0 failed |
+
+**Notes for Next Session**
+- The repo has **no ruff/linter and no unit-test CI** — verification is `uv run pytest safebreach_mcp_playbook/tests/ -m "not e2e"` run locally. Recorded as an accepted gap in `context.md`.
+- `_is_propagate_attack` rejects bare-string values (`values: ["1"]`) as malformed; only dict-shaped value objects match. The real API always sends dicts.
+- Phase 2 adds `is_propagate` in `transform_reduced_playbook_attack` after the platform merge — do NOT add it to `get_reduced_playbook_attack_mapping`, it is derived, not copied.
