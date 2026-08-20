@@ -900,7 +900,7 @@ class TestRedaction:
         connector = {
             "id": "w2", "type": "custom_wiz", "name": "Wiz", "enabled": True,
             "clientId": "public-client-id",
-            "password": "clear-text-pw",  # plaintext, no $PAM:/@enc: prefix
+            "password": "clear-text-pw",  # pragma: allowlist secret  # plaintext test fixture, no $PAM:/@enc: prefix
         }
         result = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["password"] == REDACTED_PLACEHOLDER
