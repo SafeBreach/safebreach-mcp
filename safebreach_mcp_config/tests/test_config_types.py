@@ -893,6 +893,35 @@ class TestRedaction:
         assert result["nested"]["inner"]["secretRef"] == REDACTED_PLACEHOLDER
         assert result["deployments"][0]["name"] == "prod"  # non-secret preserved
 
+    def test_masks_plaintext_secret_on_partially_flagged_type(self):
+        # Bug 1: a known type whose schema omits `sensitive: true` on a secret field must
+        # still fall back to the default set. `password` is a _DEFAULT_SENSITIVE_FIELDS name
+        # but is NOT flagged sensitive on custom_wiz's schema — a plaintext value must not leak.
+        connector = {
+            "id": "w2", "type": "custom_wiz", "name": "Wiz", "enabled": True,
+            "clientId": "public-client-id",
+            "password": "clear-text-pw",  # plaintext, no $PAM:/@enc: prefix
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["password"] == REDACTED_PLACEHOLDER
+        assert result["clientId"] == "public-client-id"
+        import json as _json
+        assert "clear-text-pw" not in _json.dumps(result)
+
+    def test_masks_nested_plaintext_headers(self):
+        # Bug 2: a `headers` block nested under a non-sensitive parent carries a plaintext
+        # bearer token (no $PAM:/@enc: prefix) — it must be masked at any depth.
+        connector = {
+            "id": "s2", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+            "settings": {"headers": {"Authorization": "Bearer TOKEN"}},
+        }
+        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["settings"]["headers"] == REDACTED_PLACEHOLDER
+        import json as _json
+        dumped = _json.dumps(result)
+        assert "Bearer TOKEN" not in dumped
+        assert "TOKEN" not in dumped
+
     def test_detail_view_delegates_to_redaction(self):
         connector = {"id": "a1", "type": "custom_splunkrest", "name": "S", "enabled": True,
                      "token": "$PAM:INTERNAL_VAULT:abc/token"}

@@ -725,47 +725,33 @@ def _schema_sensitive_fields(catalog: Dict[str, Any], connector_type: Optional[s
     return {f.get("key") for f in fields if isinstance(f, dict) and f.get("sensitive") and f.get("key")}
 
 
-def _mask_vault_refs(value: Any) -> Any:
-    """Recursively replace any `$PAM:`/`@enc:` vault-reference string with the placeholder,
-    descending into nested dicts and lists. Returns a redacted copy."""
-    if isinstance(value, dict):
-        return {k: _mask_vault_refs(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_mask_vault_refs(v) for v in value]
-    if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
-        return REDACTED_PLACEHOLDER
-    return value
-
-
 def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
     """Return a redacted copy of a connector config.
 
-    1. Mask every schema-`sensitive` field (from catalog[type].fields) to the placeholder.
-    2. Fail-safe: if the type is absent from the catalog, mask a conservative default set.
-    3. Always force-mask `headers` and `proxyPass` (headers is often not schema-sensitive
-       yet can carry auth tokens).
-    4. Defense-in-depth: recursively mask ANY value that is a `$PAM:`/`@enc:` vault reference
-       — top-level OR nested — so a secret can never leak even if the schema misses it.
+    A single recursive pass masks, at EVERY dict depth:
+    1. any key whose name is in the unified sensitive set — the union of the type's
+       schema-`sensitive` fields, a conservative fail-safe default set, and the
+       always-redacted names (`headers`, `proxyPass`). Unioning (rather than either/or)
+       ensures a partially-flagged schema can never drop the default protections, and
+       recursing ensures a nested `headers`/secret is masked, not just a top-level one.
+    2. any `$PAM:`/`@enc:` vault-reference string value — defense-in-depth for a secret
+       the key-name set misses.
     The input is not mutated.
     """
-    redacted = dict(connector)
+    sensitive = (_schema_sensitive_fields(catalog, connector.get("type")) or set()) \
+        | _DEFAULT_SENSITIVE_FIELDS | set(ALWAYS_REDACTED_FIELDS)
 
-    sensitive = _schema_sensitive_fields(catalog, connector.get("type"))
-    if sensitive is None:
-        sensitive = set(_DEFAULT_SENSITIVE_FIELDS)
+    def _redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: REDACTED_PLACEHOLDER if k in sensitive else _redact(v)
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [_redact(v) for v in value]
+        if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
+            return REDACTED_PLACEHOLDER
+        return value
 
-    for key in list(redacted.keys()):
-        if key in sensitive:
-            redacted[key] = REDACTED_PLACEHOLDER
-
-    for key in ALWAYS_REDACTED_FIELDS:
-        if key in redacted:
-            redacted[key] = REDACTED_PLACEHOLDER
-
-    # Recursive vault-ref sweep (covers top-level AND nested dict/list values).
-    redacted = _mask_vault_refs(redacted)
-
-    return redacted
+    return _redact(connector)
 
 
 def get_installed_integration_detail_view(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
