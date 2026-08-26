@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD v1) |
+| Status | Draft (In Sync with PRD v2) |
 | Offering / surface | Helm AI Agent (JIRA `Offering`) over the **Validate** product surface — scenarios/plans, simulators, plan statistics — via the safebreach-mcp Studio server |
 
 ## Requirements Traceability
@@ -22,9 +22,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R4 | Numbers match the console per view and per parameter set (Checkout `includeDisabled=true, getConstraints=true`; run gating `includeDisabled=false`) | T-30, T-35 | Covered |
 | R5 | `isLimitReached` reported explicitly; `null` (not computed) vs `0` (runs nowhere) preserved; truncated step list surfaced; no zero-impact reporting on that path | T-10, T-15, T-22 | Covered |
 | R6 | Exactly one `plan/statistics` call site; `_get_scenario_statistics` and its two callers routed through it, not a parallel implementation | T-13, T-14, T-16 | Covered |
-| R7 | All 88 emitted reason codes have a description and a concrete suggested fix, keyed on emitted values; a test fails if a code lacks an entry | T-1, T-2, T-4, T-5, T-19 | Covered |
-| R8 | No raw reason code reaches the user; an unrecognised code renders a safe generic explanation | T-3, T-18, T-23, T-32 | Covered |
-| R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22 | Covered |
+| R7 | All 88 emitted codes carry a `kind` and `fix_lever`, keyed on emitted values, with corrective descriptions on the ~20 non-obvious ones; a test fails if a code lacks an entry | T-1, T-2, T-4, T-5, T-19, T-37 | Covered |
+| R8 | No bare code is presented as the explanation; conflicts are normalized against a catalog; `severity` is computed per attack, not asserted per code; an unrecognised code fails safe | T-3, T-18, T-23, T-36, T-32 | Covered |
+| R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22, T-36, T-37 | Covered |
 | R10 | Zero-impact simulator (`simulators[id] === 0`) reported the same way, read from the **union** map not a role map | T-21, T-22 | Covered |
 | R11 | No MCP-side caching, so any change to an earlier decision produces a fresh call | T-12 | Covered |
 | R12 | Registered as `get_plan_statistics` with `readOnlyHint=True`; documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
@@ -34,8 +34,8 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-4, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26 | — |
-| `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-4, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-37 | — |
+| `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
 | `safebreach_mcp_studio/studio_server.py` | T-24, T-25 | — |
 | `CLAUDE.md` | T-34 | — |
 
@@ -47,13 +47,19 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
     positional alignment, would report the user's whole selection as inapplicable.
   - **R2 (High)** — regressing the two existing callers. `_get_scenario_statistics` has 58 test references
     (~20 `@patch` decorators with hardcoded return dicts) plus `sb_quick_run` and `sb_run_scenario`.
-  - **R3 (Med)** — translation-table drift; the vocabulary lives in `orchestrator`, a different repo on a
-    different release cadence.
+  - **R3 (Med-High)** — vendored-catalog drift, **measured not hypothetical**. `ui-react` has vendored the same
+    vocabulary for years (`containers/Studio/utils/constants.ts:166`) and has drifted both ways: 3 dead entries
+    for codes orchestrator no longer emits, and 31 of 88 it cannot translate. This plan's catalog is a third copy.
   - **R4 (Med)** — "matches the console" is not one number; Checkout and run-gating use opposite
     `includeDisabled` values.
   - **R5 (Med)** — cost of correctness; `getAllConstraints=true` disables the validator short-circuit.
   - **R6 (Med)** — vendoring by source key rather than emitted value ships two impossible codes, misses two
     real ones, and would still pass a naive coverage test.
+  - **R7 (Med)** — misclassifying `kind`. Marking one of the 16 `informational` codes as `elimination` restores
+    the false-alarm class; the reverse hides a real blocker, and the fail-safe default does not cover that
+    direction.
+  - **R8 (Med)** — asserting `severity` statically per code instead of computing it from the attack's count
+    would label every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
 - **Existing coverage (investigated)**:
   - `_get_scenario_statistics` happy path + error paths → `safebreach_mcp_studio/tests/test_studio_functions.py`
     (`TestGetScenarioStatistics`, :6212-:6293)
@@ -78,9 +84,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 15 | 13 | 0 | 4 | 32 |
+| Automatic | 17 | 13 | 0 | 4 | 34 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **15** | **13** | **0** | **7** | **35** |
+| **Total** | **17** | **13** | **0** | **7** | **37** |
 
 ## Environment Requirements (aggregated)
 
@@ -121,9 +127,9 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 | Test | Description | Aspect | Passes after | Repo |
 |------|-------------|--------|--------------|------|
-| T-1 | Every vendored reason code carries a usable description and suggested fix | API-contract | Phase 1 | safebreach-mcp |
+| T-1 | Every emitted reason code is classified on both closed enums | API-contract | Phase 1 | safebreach-mcp |
 | T-2 | The two codes whose emitted value differs from their source key are keyed by the emitted value | regression | Phase 1 | safebreach-mcp |
-| T-3 | An unrecognised code never leaks its raw identifier to the user | — | Phase 1 | safebreach-mcp |
+| T-3 | An unrecognised code fails safe rather than hiding or leaking | — | Phase 1 | safebreach-mcp |
 | T-4 | The 14 pre-existing descriptions survive the table replacement verbatim | regression | Phase 1 | safebreach-mcp |
 | T-5 | The vendored table has not drifted from the orchestrator source of truth | regression | Phase 1 | safebreach-mcp |
 | T-18 | A sparse constraint map is never iterated as though dense | — | Phase 4 | safebreach-mcp |
@@ -131,11 +137,13 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-20 | Only a genuine integer zero marks an attack inapplicable — never a null | — | Phase 4 | safebreach-mcp |
 | T-21 | Zero-impact simulators come from the union map, so one-sided nodes are not falsely reported | — | Phase 4 | safebreach-mcp |
 | T-22 | A limit-reached response suppresses zero-impact reporting entirely | — | Phase 4 | safebreach-mcp |
-| T-23 | Every reported conflict is fully translated, with no raw code anywhere in the payload | API-contract | Phase 4 | safebreach-mcp |
+| T-23 | Conflicts are normalized against a catalog, with nothing static repeated per conflict | API-contract | Phase 4 | safebreach-mcp |
 | T-24 | The tool is registered under the agreed wire name and declared read-only | API-contract | Phase 5 | safebreach-mcp |
 | T-25 | A read-only tool takes no rate-limiting gates | — | Phase 5 | safebreach-mcp |
 | T-26 | Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error | — | Phase 5 | safebreach-mcp |
 | T-34 | The tool catalog documents the new tool and the gate table is left alone | — | Phase 6 | safebreach-mcp |
+| T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach-mcp |
+| T-37 | The sixteen informational codes are classified as such and never block | — | Phase 1 | safebreach-mcp |
 
 **Integration** — all Automatic
 
@@ -167,18 +175,18 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-33 | The two shipped run tools still preview correctly against a real console | Manual | regression | Final | — | Validate console environment |
 | T-35 | The tool's Checkout-parameter numbers match what the console itself displays | Manual | API-contract | Final | — | Validate console environment |
 
-### T-1 — Every vendored reason code carries a usable description and suggested fix
+### T-1 — Every emitted reason code is classified on both closed enums
 
-- Description: Proves the translation vocabulary is complete and usable, so no conflict can be surfaced without an explanation and a proposed action.
+- Description: Proves the catalog can answer for any code the API emits, so no conflict is ever surfaced without the two facts a calling model cannot derive.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: An incomplete table is the current defect (14 of 88); a partial fix leaves most conflicts unexplained.
+- Risk: An incomplete catalog is the current defect (14 of 88); a partial fix leaves most conflicts unclassified, and an unclassified conflict cannot be acted on or safely rendered.
 - Risk source: PRD §9 (R3)
-- Verify: Enumerate the vendored table. For each entry assert a non-empty `description`, a non-empty `suggested_fix`, and a boolean `fixable`. Assert the entry count equals 88.
-- Expected: 88 entries, every one with all three fields populated; no entry where `description` equals the code itself.
+- Verify: Enumerate the vendored catalog. For each entry assert `kind` is one of `elimination` / `informational` and `fix_lever` is either `null` or a member of the closed lever enum. Assert the entry count equals 88. Assert no entry carries a `suggested_fix` field.
+- Expected: 88 entries, each with a valid `kind` and a valid-or-null `fix_lever`. No prose `suggested_fix` anywhere — that is Helm's to compose. No entry where a `description`, when present, equals the code itself.
 - Evidence required: pytest run output naming the test, with the asserted entry count visible.
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -199,17 +207,17 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
-### T-3 — An unrecognised code never leaks its raw identifier to the user
+### T-3 — An unrecognised code fails safe rather than hiding or leaking
 
-- Description: Proves the safe fallback replaced the raw-code passthrough, so a reason code added upstream after this ticket degrades into an explanation rather than a leaked internal string.
+- Description: Proves an upstream addition after this ticket degrades into an over-reported blocker rather than a silently-swallowed one or a leaked internal string.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
-- Risk: The current lookup returns the code itself on a miss — the exact failure the requirement forbids, live today for 74 of 88 codes.
+- Risk: The current lookup returns the code itself on a miss. Worse, defaulting an unknown code to `informational` would silently hide a genuine blocker — and drift is measured, not hypothetical (ui-react carries 31 gaps against the same vocabulary).
 - Risk source: PRD §9 (R3)
-- Verify: Resolve a code that is not in the table (e.g. `a_future_upstream_reason`). Inspect every string field of the returned entry.
-- Expected: A generic explanation is returned; the literal input code appears in no field of the result, and a `suggested_fix` is still present.
+- Verify: Resolve a code absent from the catalog (e.g. `a_future_upstream_reason`). Inspect the resolved entry's fields.
+- Expected: `kind` is `elimination` and `fix_lever` is `null` — over-reporting, not hiding. No `description` is fabricated, and the literal input code is never returned as a description or explanation field.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -224,8 +232,8 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Aspect: regression
 - Risk: Rewriting all 88 entries could silently reword the 14 descriptions `quick_run` and `run_scenario` already display.
 - Risk source: PRD §9 (R2)
-- Verify: For each of the 14 codes previously present, assert the `description` string equals the pre-refactor text exactly.
-- Expected: All 14 descriptions byte-identical to their previous values; each now additionally carries a `suggested_fix`.
+- Verify: For each of the 14 codes previously present that survives into the corrective-description subset, assert the `description` string equals the pre-refactor text exactly. For any of the 14 deliberately dropped as self-describing, assert the drop is intentional by checking the code resolves with a valid `kind` and `fix_lever` and no description.
+- Expected: Every retained description byte-identical to its previous value; every dropped one still fully classified. No previously-displayed wording silently changes.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -461,7 +469,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: The constraint leaf is an array and usually holds several reasons under the chosen settings. Reading only the first element discards most of the explanation the extra cost bought.
 - Risk source: PRD §9 (R5, edge cases)
 - Verify: Shape a constraint leaf holding three distinct reasons for one simulator/attack pair, on both the attacker and target sides. Run the reporting layer.
-- Expected: All three reasons appear, each translated, with the side(s) that produced them recorded. Reasons from both sides are merged rather than one side overwriting the other.
+- Expected: All three reasons appear, each classified, with the side(s) that produced them recorded. Reasons from both sides are merged rather than one side overwriting the other.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -511,19 +519,49 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
-### T-23 — Every reported conflict is fully translated, with no raw code anywhere in the payload
+### T-23 — Conflicts are normalized against a catalog, with nothing static repeated per conflict
 
-- Description: Proves the no-raw-code requirement at the payload boundary rather than only at the resolver, since a leak anywhere in the response reaches the user.
+- Description: Proves the response is a catalog plus references rather than repeated blobs — the property that keeps payloads usable on a real console and makes an API-served catalog a drop-in later.
 - Status: Active
 - Passes after: Phase 4
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: The requirement is about what reaches the user. A correct resolver can still be bypassed by a code path that copies the raw reason into a detail or summary field.
+- Risk: Inlining static fields per conflict repeats them across every attack that hit the code, bloating the response and letting two code paths format the same code differently. It would also have to be restructured when the catalog moves to the API.
 - Risk source: PRD §9 (R3)
-- Verify: Run the reporting layer over a response mixing known codes with one unknown code. Walk every string in the resulting payload.
-- Expected: Each reported conflict carries a code identifier plus a description, a suggested fix and a fixability flag. No human-readable field anywhere in the payload equals a bare reason code, and the unknown code's description is the generic explanation.
+- Verify: Run the reporting layer over a response where three distinct attacks share one reason code and one attack carries an unknown code. Inspect the top-level catalog and each conflict entry.
+- Expected: The catalog holds exactly one entry per distinct code present, and only codes present in this response. Each conflict carries `code`, `severity`, `attack_id`, `side`, `simulator_count` and `values` — and none of `kind`, `fix_lever` or `description`, which appear only in the catalog. No field anywhere in the payload presents a bare reason code as its explanation.
 - Evidence required: pytest run output naming the test.
+- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-36 — The same code resolves blocking or reducing depending on the attack's count
+
+- Description: Proves severity is computed from context rather than asserted per code — the distinction that keeps this ticket's hard-failure scope separate from SAF-35484's partial-impact scope.
+- Status: Active
+- Passes after: Phase 4
+- Level: unit
+- Execution: Automatic
+- Risk: A reason lives at (simulator, attack) and means one simulator was eliminated; an attack with surviving candidates still runs. Treating any elimination as a blocker would mislabel every partial-coverage conflict, over-report zero-impact attacks, and drag Story 2's scope in by accident.
+- Risk source: PRD §9 (R8)
+- Verify: Shape one step where the same elimination code appears for two attacks — one whose count is an integer `0`, one whose count is positive. Also include an `informational` code on the positive attack. Run the reporting layer.
+- Expected: The code resolves `blocking` for the zero-count attack and `reducing` for the positive-count attack within the same step, with no contradiction. The informational code resolves `none`. Only the `blocking` entry appears in that attack's `blockers`.
+- Evidence required: pytest run output naming the test, showing both severities for the shared code.
+- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-37 — The sixteen informational codes are classified as such and never block
+
+- Description: Proves the false-alarm class is closed — 18% of the vocabulary describes benign conditions that must never be reported as reasons something failed.
+- Status: Active
+- Passes after: Phase 1
+- Level: unit
+- Execution: Automatic
+- Risk: Read cold inside a list called "constraints", `move_does_not_require_zones_simulator_zone_is_ignored` looks like a problem when nothing is wrong. Misclassifying any of the 16 as `elimination` reintroduces exactly the noise the catalog exists to remove — and the fail-safe default does not protect against this direction.
+- Risk source: PRD §9 (R7)
+- Verify: Assert every catalog code matching the `*_is_ignored` and `ignoring_*_variant` families has `kind` `informational` and `fix_lever` `null`, and that the count of such entries is 16. Then run the reporting layer over a step where an informational code is the only conflict on a zero-count attack.
+- Expected: All 16 classified informational. The zero-count attack's `blockers` list is empty despite the conflict being present, and the conflict resolves `severity: none`.
+- Evidence required: pytest run output naming the test, with the asserted count of 16 visible.
 - Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
@@ -721,13 +759,13 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | After phase | Newly green | Cumulative green |
 |-------------|-------------|------------------|
-| Phase 1 | T-1, T-2, T-3, T-4, T-5 | T-1 … T-5 (5) |
-| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | T-1 … T-12 (12) |
-| Phase 3 | T-13, T-14, T-15, T-16, T-17 | T-1 … T-17 (17) |
-| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23 | T-1 … T-23 (23) |
-| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | T-1 … T-31 (31) |
-| Phase 6 | T-34 | T-1 … T-31, T-34 (32) |
-| Final | T-32, T-33, T-35 | all (35) |
+| Phase 1 | T-1, T-2, T-3, T-4, T-5, T-37 | 6 |
+| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 13 |
+| Phase 3 | T-13, T-14, T-15, T-16, T-17 | 18 |
+| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 25 |
+| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | 33 |
+| Phase 6 | T-34 | 34 |
+| Final | T-32, T-33, T-35 | all (37) |
 
 ## Sign-off
 
@@ -744,3 +782,4 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
+| 2026-08-26 13:20 | Updated for the PRD v2 design revision (MCP is structured, Helm narrates). Rescoped T-1 (classification on two closed enums, no `suggested_fix`), T-3 (fail-safe to `elimination`, not a generic description), T-4 (retained-vs-dropped descriptions), T-23 (catalog normalization rather than per-conflict translation). Added T-36 (computed severity — same code blocking and reducing in one step) and T-37 (the 16 informational codes never block). Regenerated the unit index, Coverage Summary (17/13/0/7 = 37) and Tests by Phase; extended R7/R8/R9 traceability and Change Coverage. Status stays Draft — material change. In Sync with PRD v2. |
