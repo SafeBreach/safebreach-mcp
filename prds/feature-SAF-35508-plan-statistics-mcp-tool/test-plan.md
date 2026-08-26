@@ -58,13 +58,13 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
   - **R7 (Med)** — levers assigned from code names rather than emit sites. No descriptions are authored now,
     but the same trap applies to the lever: `*_is_ignored` reads like a user-changeable setting when nothing
     the caller controls affects it. A wrong lever costs a wasted attempt.
+  - **R8 (Med)** — asserting `severity` per code instead of computing it from the attack's count would label
+    every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
   - **R9 (Med-High)** — meanings are absent until SAF-35568 lands, including the 14 that two shipped tools
     display today. Accepted deliberately; `description: null` is emitted explicitly so a caller can say "a
     conflict was reported" rather than guess from a misleading code name.
   - **R10 (Med)** — SAF-35568 is now on Stage 1's critical path, and its description half carries an open
     localization question. Its lever half can ship alone if that stalls.
-  - **R8 (Med)** — asserting `severity` per code instead of computing it from the attack's count would label
-    every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
 - **Existing coverage (investigated)**:
   - `_get_scenario_statistics` happy path + error paths → `safebreach_mcp_studio/tests/test_studio_functions.py`
     (`TestGetScenarioStatistics`, :6212-:6293)
@@ -123,8 +123,8 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
   (`safebreach_mcp_studio/tests/`, 455 unit tests at baseline, plus the e2e suite) and recording the result in
   `test-results/`. Note the runner needs `uv run --python 3.12 pytest` — a fresh worktree otherwise selects
   Python 3.14, where `pydantic-core` has no wheel and the build fails.
-- **Regression tests in this plan**: T-4, T-5, T-13, T-14, T-15, T-16, T-17 (Automatic) and **T-33** (the
-  mandatory Manual regression).
+- **Regression tests in this plan**: T-2, T-5, T-10, T-13, T-14, T-15, T-16, T-17 (Automatic) and **T-33**
+  (the mandatory Manual regression). This is the complete set carrying `Aspect: regression`.
 
 ## Tests
 
@@ -781,6 +781,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
+| 2026-08-26 16:35 | Fixed the Regression section's test list: dropped tombstoned T-4 and added T-2 and T-10, which carry `Aspect: regression` but were never listed. The list is now the complete regression set. |
 | 2026-08-26 16:20 | Corrected for PRD v4 — the vendored translation table is **deleted**, not extended. **T-4 tombstoned** (Status: Removed, ID retained): its premise was preserving the 14 existing descriptions, which are now deliberately removed (PRD R9). T-1 rescoped to assert `CONSTRAINT_REASON_DESCRIPTIONS` no longer exists and that all 88 codes carry a valid-or-null lever with no meaning-bearing field; T-3 and T-23 assert an explicit `description: null` rather than a fabricated or bare-code explanation. R7 narrowed from descriptions to levers; R3 dropped to Low; R9/R10 added for the accepted regression and the SAF-35568 dependency. Regenerated views: 35 Active (15 unit / 13 integration / 7 e2e), phases 4/11/16/23/31/32/35. In Sync with PRD v4. |
 | 2026-08-26 15:40 | Corrected for PRD v3 and aligned to SAF-35568. Verified at the emit sites that all 88 codes eliminate the node — the `informational` class does not exist, so **T-37 is tombstoned** (Status: Removed, ID retained) and `kind` is gone from T-1/T-3/T-36. T-1 now asserts a description plus a valid fix lever for all 88; T-3 asserts an unknown code is surfaced rather than dropped; T-4 covers all 14 legacy descriptions. R7 rewritten to "descriptions from names, not emit sites". Fixed the non-existent `safebreach-mcp/` path prefix on all automation locations. Regenerated views: 36 Active (16 unit / 13 integration / 7 e2e), phases 5/12/17/24/32/33/36. In Sync with PRD v3. |
 | 2026-08-26 13:20 | Updated for the PRD v2 design revision (MCP is structured, Helm narrates). Rescoped T-1 (classification on two closed enums, no `suggested_fix`), T-3 (fail-safe to `elimination`, not a generic description), T-4 (retained-vs-dropped descriptions), T-23 (catalog normalization rather than per-conflict translation). Added T-36 (computed severity — same code blocking and reducing in one step) and T-37 (the 16 informational codes never block). Regenerated the unit index, Coverage Summary (17/13/0/7 = 37) and Tests by Phase; extended R7/R8/R9 traceability and Change Coverage. Status stays Draft — material change. In Sync with PRD v2. |
