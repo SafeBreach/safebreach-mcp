@@ -497,3 +497,161 @@ thrown away before it reaches a caller.
 
 ## Proposed Improvements
 (Phase 6)
+
+---
+
+# Planning Round (planning-dev-task)
+
+## Status
+Phase 7: Review — DoD gate re-run after the AC-9/AC-10 reword
+
+## Phase 1 — JIRA re-fetch (2026-08-26)
+
+Confirmed the improved description authored by the earlier `preparing-ticket` round is **live** on
+SAF-35508: the "Current state in the MCP layer" section, the resolved `includeDisabled` /
+`getAllConstraints` / vocabulary sections, the `isLimitReached` trap, and the **12 acceptance
+criteria** are all present. Labels are now `CTEM-dev`, `sigi_ee_reminder`.
+
+Board state applied this round:
+- **Status**: `To Do` → **In Progress** (transition id 21).
+- **Sprint**: **not applicable.** JIRA rejected the edit —
+  `"Issue 'SAF-35508' is a subtask and subtasks cannot be associated to a sprint. It's associated to
+  the same sprint as its parent."` The active sprint is **Saf sprint 96** (id 1184, board 159,
+  2026-08-18 → 2026-09-01, field `customfield_10122`). Sprint membership is therefore governed by
+  parent **SAF-34615**, which was left untouched — changing a Story's sprint affects every sibling
+  subtask and was not in scope for this run.
+
+## Phase 2 — Decisions taken by the user (this round)
+
+These close D1, D2 and D3 from the previous round's open-decision list.
+
+| # | Decision | Chosen | Consequence |
+|---|---|---|---|
+| **D1** | Tool wire name | **`get_plan_statistics`** | Mirrors the Core endpoint (`getPlanStatistics`) and the console wrapper exactly. Most discoverable against the API. Supersedes both the parent's `checkout_scenario` (req 13) and the previous round's `evaluate_plan` recommendation. AC-12's "confirmed wire name" is now satisfied. |
+| **D2** | Expected vs runnable | **Runnable default, flag exposed** | `includeDisabled=false` is the default (strictly more informative — it is the only setting that emits `simulator_is_offline`). The flag is a pass-through parameter. A second call is issued **only** when both figures are explicitly requested, and each result is labelled. Matches AC-3 as written. |
+| **D3** | Read-only or mutating | **Read-only: the tool reports, it does not act** → ACs 9/10 **reworded**, not deferred | The tool reports raw + translated statistics plus a zero-impact summary. It shapes no plan body, so it is unambiguously `readOnlyHint=True`. On review the user's framing — *"statistics should return a summary of what's going to run and what not"* — showed the ticket's "auto-removed" wording was the error, not the design: removal is an action on the plan body, which the caller holds. **SAF-35508 ACs 9/10 were reworded to "reported" on 2026-08-26 rather than accepted as gaps — see "Resolution" below.** |
+| **D4** | Vendoring the vocabulary | **Vendor as a static table + coverage test** (carried over; recommendation accepted implicitly, no competing option) | The 88 codes are copied into `safebreach-mcp` with a test that fails when coverage regresses. |
+
+### Resolution of D3 — the ticket was reworded, not narrowed (2026-08-26)
+
+The Phase 7 DoD gate flagged TI-9 and TI-10 as gaps. Presented with them, the user asked *"what does
+it mean remove? statistics should return a summary of what's going to run and what not"* — which
+identified the real problem: the ACs described an **action on the plan body**, while the tool being
+specified is a **statistics call**. The wording was wrong, not the design.
+
+Applied to SAF-35508 (single `editJiraIssue`, description replaced):
+- **AC-9 / AC-10** → the zero-impact attack / simulator is **reported** as inapplicable with a
+  plain-language explanation; reporting never blocks save, and `null` is never reported as
+  zero-impact.
+- **AC-5** aligned — "performs no zero-impact reporting" replaces "performs no auto-removal".
+- **AC-12** now states the rate-limiting gate table is **not** extended (read-only tools are outside
+  that contract).
+- **Scope item 4** → "Hard-failure **reporting**", stating that *acting* on the report belongs to the
+  caller holding the configuration (Helm, or a future scenario-editing tool).
+- **Out-of-scope line** now names plan-body mutation explicitly.
+- **"Decisions to confirm"** → **"Decisions taken (2026-08-26)"**, recording D1–D4.
+- The constraint-vocabulary section gained the by-value vendoring trap (F14).
+
+Net effect: **all 12 ACs are covered by the PRD**; no DoD gap is accepted. No `## Accepted DoD Gaps`
+section is therefore needed.
+
+Parent-story consequence, still open: SAF-34615 **req 7**'s *acting* half (removing an entity from a
+configuration) is owned by no Stage 1 subtask. Parent **DoD items 2 and 5** are covered; **item 6** is
+covered only to the extent that surfacing rather than removing satisfies it. Per the user's decision
+this is **recorded in the PRD and deferred** — not tracked as a follow-up ticket yet. Options remain
+(a) a new SAF-34615 subtask, or (b) fold into SAF-35484 (Story 2).
+
+## Phase 4 — Additional investigation (this round)
+
+Verification of every line reference the previous round recorded, plus four new findings.
+
+### Verified unchanged
+All previous line references are still exact:
+`CONSTRAINT_REASON_DESCRIPTIONS` :2225 · `_summarize_constraints` :2299 ·
+`_summarize_constraints_aggregated` :2350 · `_get_scenario_statistics` :2400 ·
+`sb_quick_run` :2690 (calls at :2737) · `sb_run_scenario` :2864 (calls at :2958).
+`studio_server.py` registers 12 tools; wire names confirmed as
+`validate_studio_code`, `save_studio_attack_draft`, `get_all_studio_attacks`,
+`update_studio_attack_draft`, `get_studio_attack_source`, `run_studio_attack`,
+`get_studio_attack_latest_result`, `create_new_studio_attack`, `set_studio_attack_status`,
+`run_scenario`, `quick_run`, `manage_test`.
+
+### F13 — CORRECTION to F11: this would **not** be the server's first read-only tool
+The previous round claimed a statistics tool "would be the server's first `readOnlyHint=True` entry".
+That is **wrong**. `studio_server.py` already registers four read-only tools:
+`validate_studio_code` (:53), `get_all_studio_attacks` (:281), `get_studio_attack_source` (:461),
+`get_studio_attack_latest_result` (:630). `get_plan_statistics` follows an established in-server
+pattern rather than introducing one. No PRD risk attaches to the annotation choice.
+
+### F14 — The 88-code count is confirmed, but it is 88 **values**, not 88 keys
+Measured directly against `orchestrator/src/server/sbGenerator/validators/constraints.js`
+(21 exported groups, 89 total key entries):
+
+* **87 distinct keys**
+* **88 distinct values** ← this is what actually appears in a response's `reason` field
+* Two entries whose **value differs from their key**, which is the trap:
+  * `advancedActionValidator.some_cloned_advanced_actions_are_disabled` → emits
+    **`some_duplicate_advanced_actions_are_disabled`**
+  * `webApplicationValidator.move_does_not_require_location_simulator_location_is_ignored` → emits
+    **`move_does_not_require_url_simulator_url_is_ignored`**
+
+**Implication for D4:** the vendored table must be keyed on the **values**, not the keys. A
+key-derived vendoring would ship two codes that can never occur while missing the two that do, and
+the coverage test would still pass — a silently wrong 88/88.
+
+Two values are also shared across groups (`incompatible_framework_version` appears in both
+`moveFrameworkConstraintValidator` and `mailSimulationValidator`), so a code cannot be assumed to
+belong to exactly one validator group.
+
+### F15 — Coverage measured exactly: 14 / 88, 74 missing, 0 dead
+Programmatic diff of `CONSTRAINT_REASON_DESCRIPTIONS` against the 88 values:
+`MCP entries: 14 · covered: 14 · MISSING: 74 · DEAD (in MCP but not in orchestrator): none`.
+The previous round's 14/88/74 figures are confirmed precisely, and no entry needs deleting.
+
+### F16 — The regression surface is far larger than R2 assumed: 58 test references
+`_get_scenario_statistics` is referenced **58 times** in
+`safebreach_mcp_studio/tests/test_studio_functions.py`, plus once in `test_e2e_run_scenario.py:350`.
+The majority are `@patch('...studio_functions._get_scenario_statistics', return_value=[...])`
+decorators carrying **hardcoded return dicts** in the helper's current summary shape
+(`simulationCount`, `matchedTargetSimulators`, `matchedAttackerSimulators`, `matchedAttacks`,
+`totalTargetSimulators`, `totalAttackerSimulators`, `totalAttacks`).
+
+Direct-behaviour tests live at :6212-:6293 (`TestGetScenarioStatistics`).
+
+**Implication for the architecture.** Changing the *return shape* of `_get_scenario_statistics`
+would force edits to ~20+ patch decorators across a 10 228-line test file — a large, purely
+mechanical diff with real risk of masking a genuine regression. The safe design is therefore:
+
+> introduce a **new low-level function** that performs the HTTP call and returns the *raw*
+> per-step response (null-safe, parameters fully exposed), and **refactor
+> `_get_scenario_statistics` into a thin summariser on top of it**, preserving its existing return
+> contract byte-for-byte.
+
+This satisfies AC-6 (one and only one path to `plan/statistics`) without touching the two existing
+callers' observable behaviour or the 58 test references. It also isolates the `includeDisabled`
+correction: the new tool defaults to `false` (runnable) per D2, while `_get_scenario_statistics`
+keeps passing `true` explicitly, so `quick_run` / `run_scenario` previews are unchanged by default
+and their correction becomes a separate, deliberate decision rather than a side effect.
+
+### F17 — Confirmed null-unsafety and the discarded union map, in situ
+Reading `_get_scenario_statistics` (:2446-:2492) confirms both defects at the exact expressions:
+* `sum(1 for v in target_sims.values() if v > 0)`, the same for `attacker_sims` and `moves`, and
+  `sorted(moves.items(), key=lambda x: -x[1])` — every one raises `TypeError` on the `None` values a
+  limit-reached response returns.
+* It reads `targetSimulators` and `attackerSimulators` only. The **union `simulators` map is never
+  read at all**, so the map AC-10 was defined against is not merely discarded downstream — it is
+  never extracted from the response.
+* `isLimitReached` is never read.
+* `s.get('simulationCount', 0)` defaults a missing count to `0`, collapsing "absent" into
+  "runs nowhere" — the same `null`/`0` conflation R1 warns about, already present.
+
+### F18 — Conventions for the new code
+* **Cache**: `SafeBreachCache` from `safebreach_mcp_core.safebreach_cache`; the studio server's only
+  instance today is `studio_draft_cache = SafeBreachCache(name="studio_drafts", maxsize=5, ttl=1800)`
+  (`studio_functions.py:41`). Per-user cache keys use `get_cache_user_suffix()` from
+  `safebreach_mcp_core.token_context`.
+* **Auth / URL**: `get_api_base_url(console, 'orchestrator')`, `get_api_account_id(console)`,
+  `get_auth_headers_for_console(console)`, `check_rbac_response(response)`, `timeout=120`.
+* **Tests**: `safebreach_mcp_studio/tests/` — `test_studio_functions.py` (unit, 10 228 lines),
+  `test_e2e*.py` (e2e, `@pytest.mark.e2e`), `test_rate_limiting.py`. A read-only tool needs **no**
+  rate-limiting gates (`readOnlyHint=True` ⇒ outside the `check_limit`/`record_action` contract).
