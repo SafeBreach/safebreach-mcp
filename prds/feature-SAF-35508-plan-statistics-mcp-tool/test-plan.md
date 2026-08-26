@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD v2) |
+| Status | Draft (In Sync with PRD v3) |
 | Offering / surface | Helm AI Agent (JIRA `Offering`) over the **Validate** product surface — scenarios/plans, simulators, plan statistics — via the safebreach-mcp Studio server |
 
 ## Requirements Traceability
@@ -22,9 +22,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R4 | Numbers match the console per view and per parameter set (Checkout `includeDisabled=true, getConstraints=true`; run gating `includeDisabled=false`) | T-30, T-35 | Covered |
 | R5 | `isLimitReached` reported explicitly; `null` (not computed) vs `0` (runs nowhere) preserved; truncated step list surfaced; no zero-impact reporting on that path | T-10, T-15, T-22 | Covered |
 | R6 | Exactly one `plan/statistics` call site; `_get_scenario_statistics` and its two callers routed through it, not a parallel implementation | T-13, T-14, T-16 | Covered |
-| R7 | All 88 emitted codes carry a `kind` and `fix_lever`, keyed on emitted values, with corrective descriptions on the ~20 non-obvious ones; a test fails if a code lacks an entry | T-1, T-2, T-4, T-5, T-19, T-37 | Covered |
-| R8 | No bare code is presented as the explanation; conflicts are normalized against a catalog; `severity` is computed per attack, not asserted per code; an unrecognised code fails safe | T-3, T-18, T-23, T-36, T-32 | Covered |
-| R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22, T-36, T-37 | Covered |
+| R7 | All 88 emitted codes carry a `description` (authored from the emit site) and a `fix_lever`, keyed on emitted values; a test fails if a code lacks either | T-1, T-2, T-4, T-5, T-19 | Covered |
+| R8 | No bare code is presented as the explanation; conflicts are normalized against a catalog; `severity` is computed from the counts alone; an unrecognised code is surfaced without a fabricated explanation | T-3, T-18, T-23, T-36, T-32 | Covered |
+| R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22, T-36 | Covered |
 | R10 | Zero-impact simulator (`simulators[id] === 0`) reported the same way, read from the **union** map not a role map | T-21, T-22 | Covered |
 | R11 | No MCP-side caching, so any change to an earlier decision produces a fresh call | T-12 | Covered |
 | R12 | Registered as `get_plan_statistics` with `readOnlyHint=True`; documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
@@ -34,7 +34,7 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-4, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-37 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-4, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
 | `safebreach_mcp_studio/studio_server.py` | T-24, T-25 | — |
 | `CLAUDE.md` | T-34 | — |
@@ -55,11 +55,12 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
   - **R5 (Med)** — cost of correctness; `getAllConstraints=true` disables the validator short-circuit.
   - **R6 (Med)** — vendoring by source key rather than emitted value ships two impossible codes, misses two
     real ones, and would still pass a naive coverage test.
-  - **R7 (Med)** — misclassifying `kind`. Marking one of the 16 `informational` codes as `elimination` restores
-    the false-alarm class; the reverse hides a real blocker, and the fail-safe default does not cover that
-    direction.
-  - **R8 (Med)** — asserting `severity` statically per code instead of computing it from the attack's count
-    would label every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
+  - **R7 (Med-High)** — descriptions authored from code names rather than emit sites. The names mislead: the
+    `*_is_ignored` family reads as a benign note but sets `valid = false` on a non-canonical node variant. A
+    wrong description is worse than none. The console shows this trap in production, rendering one family
+    three inconsistent ways.
+  - **R8 (Med)** — asserting `severity` per code instead of computing it from the attack's count would label
+    every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
 - **Existing coverage (investigated)**:
   - `_get_scenario_statistics` happy path + error paths → `safebreach_mcp_studio/tests/test_studio_functions.py`
     (`TestGetScenarioStatistics`, :6212-:6293)
@@ -84,9 +85,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 17 | 13 | 0 | 4 | 34 |
+| Automatic | 16 | 13 | 0 | 4 | 33 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **17** | **13** | **0** | **7** | **37** |
+| **Total** | **16** | **13** | **0** | **7** | **36** |
 
 ## Environment Requirements (aggregated)
 
@@ -127,57 +128,56 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 | Test | Description | Aspect | Passes after | Repo |
 |------|-------------|--------|--------------|------|
-| T-1 | Every emitted reason code is classified on both closed enums | API-contract | Phase 1 | safebreach-mcp |
-| T-2 | The two codes whose emitted value differs from their source key are keyed by the emitted value | regression | Phase 1 | safebreach-mcp |
-| T-3 | An unrecognised code fails safe rather than hiding or leaking | — | Phase 1 | safebreach-mcp |
-| T-4 | The 14 pre-existing descriptions survive the table replacement verbatim | regression | Phase 1 | safebreach-mcp |
-| T-5 | The vendored table has not drifted from the orchestrator source of truth | regression | Phase 1 | safebreach-mcp |
-| T-18 | A sparse constraint map is never iterated as though dense | — | Phase 4 | safebreach-mcp |
-| T-19 | Every reason in a multi-reason constraint leaf surfaces, not just the first | API-contract | Phase 4 | safebreach-mcp |
-| T-20 | Only a genuine integer zero marks an attack inapplicable — never a null | — | Phase 4 | safebreach-mcp |
-| T-21 | Zero-impact simulators come from the union map, so one-sided nodes are not falsely reported | — | Phase 4 | safebreach-mcp |
-| T-22 | A limit-reached response suppresses zero-impact reporting entirely | — | Phase 4 | safebreach-mcp |
-| T-23 | Conflicts are normalized against a catalog, with nothing static repeated per conflict | API-contract | Phase 4 | safebreach-mcp |
-| T-24 | The tool is registered under the agreed wire name and declared read-only | API-contract | Phase 5 | safebreach-mcp |
-| T-25 | A read-only tool takes no rate-limiting gates | — | Phase 5 | safebreach-mcp |
-| T-26 | Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error | — | Phase 5 | safebreach-mcp |
-| T-34 | The tool catalog documents the new tool and the gate table is left alone | — | Phase 6 | safebreach-mcp |
-| T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach-mcp |
-| T-37 | The sixteen informational codes are classified as such and never block | — | Phase 1 | safebreach-mcp |
+| T-1 | Every emitted reason code has a description and a valid fix lever | API-contract | Phase 1 | safebreach_mcp_studio |
+| T-2 | The two codes whose emitted value differs from their source key are keyed by the emitted value | regression | Phase 1 | safebreach_mcp_studio |
+| T-3 | An unrecognised code is still surfaced, without a fabricated explanation | — | Phase 1 | safebreach_mcp_studio |
+| T-4 | The 14 pre-existing descriptions survive the table replacement verbatim | regression | Phase 1 | safebreach_mcp_studio |
+| T-5 | The vendored table has not drifted from the orchestrator source of truth | regression | Phase 1 | safebreach_mcp_studio |
+| T-18 | A sparse constraint map is never iterated as though dense | — | Phase 4 | safebreach_mcp_studio |
+| T-19 | Every reason in a multi-reason constraint leaf surfaces, not just the first | API-contract | Phase 4 | safebreach_mcp_studio |
+| T-20 | Only a genuine integer zero marks an attack inapplicable — never a null | — | Phase 4 | safebreach_mcp_studio |
+| T-21 | Zero-impact simulators come from the union map, so one-sided nodes are not falsely reported | — | Phase 4 | safebreach_mcp_studio |
+| T-22 | A limit-reached response suppresses zero-impact reporting entirely | — | Phase 4 | safebreach_mcp_studio |
+| T-23 | Conflicts are normalized against a catalog, with nothing static repeated per conflict | API-contract | Phase 4 | safebreach_mcp_studio |
+| T-24 | The tool is registered under the agreed wire name and declared read-only | API-contract | Phase 5 | safebreach_mcp_studio |
+| T-25 | A read-only tool takes no rate-limiting gates | — | Phase 5 | safebreach_mcp_studio |
+| T-26 | Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error | — | Phase 5 | safebreach_mcp_studio |
+| T-34 | The tool catalog documents the new tool and the gate table is left alone | — | Phase 6 | safebreach_mcp_studio |
+| T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
 | Test | Description | Aspect | Passes after | Repo | Environment |
 |------|-------------|--------|--------------|------|-------------|
-| T-6 | An ad-hoc plan body is scored and the response returned unreduced | API-contract | Phase 2 | safebreach-mcp | repo-harness |
-| T-7 | A scenario_id is passed to Core for native resolution, never via planId | API-contract | Phase 2 | safebreach-mcp | repo-harness |
-| T-8 | A step-less plan is rejected before any network call is made | — | Phase 2 | safebreach-mcp | repo-harness |
-| T-9 | All five query parameters are sent, with the documented defaults and honoured overrides | API-contract | Phase 2 | safebreach-mcp | repo-harness |
-| T-10 | A limit-reached response is survived, and null is kept distinct from zero | regression | Phase 2 | safebreach-mcp | repo-harness |
-| T-11 | An API failure surfaces the full response body, not just a status code | — | Phase 2 | safebreach-mcp | repo-harness |
-| T-12 | Repeated identical calls each hit the API, proving no MCP-side cache | — | Phase 2 | safebreach-mcp | repo-harness |
-| T-13 | The refactored helper's observable contract is byte-for-byte unchanged | regression | Phase 3 | safebreach-mcp | repo-harness |
-| T-14 | The helper still asks for expected counts explicitly, preserving today's numbers | regression | Phase 3 | safebreach-mcp | repo-harness |
-| T-15 | The helper no longer crashes on a limit-reached response | regression | Phase 3 | safebreach-mcp | repo-harness |
-| T-16 | The statistics endpoint is reached from exactly one place in the repo | regression | Phase 3 | safebreach-mcp | repo-harness |
-| T-17 | Both existing callers' evaluate previews are unchanged by the refactor | regression | Phase 3 | safebreach-mcp | repo-harness |
-| T-27 | Counts mode selects one call or two, and labels what it returns | API-contract | Phase 5 | safebreach-mcp | repo-harness |
+| T-6 | An ad-hoc plan body is scored and the response returned unreduced | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-7 | A scenario_id is passed to Core for native resolution, never via planId | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-8 | A step-less plan is rejected before any network call is made | — | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-9 | All five query parameters are sent, with the documented defaults and honoured overrides | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-10 | A limit-reached response is survived, and null is kept distinct from zero | regression | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-11 | An API failure surfaces the full response body, not just a status code | — | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-12 | Repeated identical calls each hit the API, proving no MCP-side cache | — | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-13 | The refactored helper's observable contract is byte-for-byte unchanged | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-14 | The helper still asks for expected counts explicitly, preserving today's numbers | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-15 | The helper no longer crashes on a limit-reached response | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-16 | The statistics endpoint is reached from exactly one place in the repo | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-17 | Both existing callers' evaluate previews are unchanged by the refactor | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-27 | Counts mode selects one call or two, and labels what it returns | API-contract | Phase 5 | safebreach_mcp_studio | repo-harness |
 
 **E2E**
 
 | Test | Description | Exec | Aspect | Passes after | Repo | Environment |
 |------|-------------|------|--------|--------------|------|-------------|
-| T-28 | The tool scores an ad-hoc plan against a real console and returns usable numbers | Automatic | API-contract | Phase 5 | safebreach-mcp | Validate console environment |
-| T-29 | Scoring by scenario_id agrees with scoring the same scenario's body ad hoc | Automatic | API-contract | Phase 5 | safebreach-mcp | Validate console environment |
-| T-30 | Runnable never exceeds expected, and the offline reason explains the gap | Automatic | API-contract | Phase 5 | safebreach-mcp | Validate console environment |
-| T-31 | A step-less plan against a real console yields the typed error, not a raw 400 | Automatic | — | Phase 5 | safebreach-mcp | Validate console environment |
+| T-28 | The tool scores an ad-hoc plan against a real console and returns usable numbers | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
+| T-29 | Scoring by scenario_id agrees with scoring the same scenario's body ad hoc | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
+| T-30 | Runnable never exceeds expected, and the offline reason explains the gap | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
+| T-31 | A step-less plan against a real console yields the typed error, not a raw 400 | Automatic | — | Phase 5 | safebreach_mcp_studio | Validate console environment |
 | T-32 | An agent can answer "what will run and what won't, and why" through the real product | Manual | progression | Final | — | Validate console environment |
 | T-33 | The two shipped run tools still preview correctly against a real console | Manual | regression | Final | — | Validate console environment |
 | T-35 | The tool's Checkout-parameter numbers match what the console itself displays | Manual | API-contract | Final | — | Validate console environment |
 
-### T-1 — Every emitted reason code is classified on both closed enums
+### T-1 — Every emitted reason code has a description and a valid fix lever
 
-- Description: Proves the catalog can answer for any code the API emits, so no conflict is ever surfaced without the two facts a calling model cannot derive.
+- Description: Proves the catalog can answer for any code the API emits, so no conflict is ever surfaced without a meaning and a remedy path.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
@@ -185,10 +185,10 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Aspect: API-contract
 - Risk: An incomplete catalog is the current defect (14 of 88); a partial fix leaves most conflicts unclassified, and an unclassified conflict cannot be acted on or safely rendered.
 - Risk source: PRD §9 (R3)
-- Verify: Enumerate the vendored catalog. For each entry assert `kind` is one of `elimination` / `informational` and `fix_lever` is either `null` or a member of the closed lever enum. Assert the entry count equals 88. Assert no entry carries a `suggested_fix` field.
-- Expected: 88 entries, each with a valid `kind` and a valid-or-null `fix_lever`. No prose `suggested_fix` anywhere — that is Helm's to compose. No entry where a `description`, when present, equals the code itself.
+- Verify: Enumerate the vendored catalog. For each entry assert a non-empty `description` and a `fix_lever` that is either `null` or a member of the closed lever enum. Assert the entry count equals 88. Assert no entry carries a `suggested_fix` or `kind` field.
+- Expected: 88 entries, each with a non-empty `description` and a valid-or-null `fix_lever`. No `suggested_fix` prose (Helm composes that) and no `kind` field (all 88 are eliminations). No `description` equal to its own code.
 - Evidence required: pytest run output naming the test, with the asserted entry count visible.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-2 — The two codes whose emitted value differs from their source key are keyed by the emitted value
@@ -204,22 +204,22 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Assert the table contains `some_duplicate_advanced_actions_are_disabled` and `move_does_not_require_url_simulator_url_is_ignored`. Assert it does NOT contain `some_cloned_advanced_actions_are_disabled`, and does not contain the web-application group's source-key spelling as a distinct entry from the Azure code of the same name.
 - Expected: Both emitted values present and translated; the two source-key-only spellings absent.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
-### T-3 — An unrecognised code fails safe rather than hiding or leaking
+### T-3 — An unrecognised code is still surfaced, without a fabricated explanation
 
-- Description: Proves an upstream addition after this ticket degrades into an over-reported blocker rather than a silently-swallowed one or a leaked internal string.
+- Description: Proves an upstream addition after this ticket is still reported as a conflict rather than silently dropped, and that no explanation is invented for it.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
-- Risk: The current lookup returns the code itself on a miss. Worse, defaulting an unknown code to `informational` would silently hide a genuine blocker — and drift is measured, not hypothetical (ui-react carries 31 gaps against the same vocabulary).
+- Risk: The current lookup returns the code itself on a miss. Silently dropping an unknown code would hide a genuine blocker — exactly what the console does, filtering to `CONSTRAINTS[reason]` at `helpers.tsx:820` and discarding the 31 codes its table lacks. Drift is measured, not hypothetical.
 - Risk source: PRD §9 (R3)
 - Verify: Resolve a code absent from the catalog (e.g. `a_future_upstream_reason`). Inspect the resolved entry's fields.
-- Expected: `kind` is `elimination` and `fix_lever` is `null` — over-reporting, not hiding. No `description` is fabricated, and the literal input code is never returned as a description or explanation field.
+- Expected: `fix_lever` is `null` and no `description` is fabricated, but the conflict is still present in the output — surfaced, not dropped. The literal input code is never returned as a description or explanation field.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-4 — The 14 pre-existing descriptions survive the table replacement verbatim
@@ -232,10 +232,10 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Aspect: regression
 - Risk: Rewriting all 88 entries could silently reword the 14 descriptions `quick_run` and `run_scenario` already display.
 - Risk source: PRD §9 (R2)
-- Verify: For each of the 14 codes previously present that survives into the corrective-description subset, assert the `description` string equals the pre-refactor text exactly. For any of the 14 deliberately dropped as self-describing, assert the drop is intentional by checking the code resolves with a valid `kind` and `fix_lever` and no description.
-- Expected: Every retained description byte-identical to its previous value; every dropped one still fully classified. No previously-displayed wording silently changes.
+- Verify: For each of the 14 codes previously present, assert its `description` still conveys the same meaning and, where the pre-refactor wording was correct, is preserved verbatim. Flag any whose meaning changed as a deliberate correction with the emit site cited.
+- Expected: All 14 still described. Any wording change is an intentional correction traceable to the code's emit site, not an incidental reword — two shipped tools already display these strings.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-5 — The vendored table has not drifted from the orchestrator source of truth
@@ -251,7 +251,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: When an `orchestrator` checkout is resolvable, parse the emitted values of every exported group in its constraints module and compare that set against the vendored table's keys. When the checkout is absent, skip with an explicit reason naming the missing path.
 - Expected: The two sets are equal, or the test skips with a stated reason. A skip is never reported as a pass.
 - Evidence required: pytest run output showing either the equality assertion or the explicit skip reason.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-6 — An ad-hoc plan body is scored and the response returned unreduced
@@ -267,7 +267,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the orchestrator API mocked, call the fetch core with a plan body carrying two steps and no `id`. Inspect the posted body and the returned per-step structures.
 - Expected: The posted body carries the supplied steps and a `name` (defaulted to empty string when absent) and no `id`. Each returned step exposes `simulationCount`, `moves`, `simulators`, `attackerSimulators`, `targetSimulators`, `simulatorConstraints` and `isLimitReached` with the mocked values unmodified.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-7 — A scenario_id is passed to Core for native resolution, never via planId
@@ -283,7 +283,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with a `scenario_id` and no plan body. Inspect the posted body and assert no scenario-fetch call was made.
 - Expected: The posted body carries `id` set to the supplied value plus a `name`; `planId` is absent; no additional scenario or plan lookup is issued.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-8 — A step-less plan is rejected before any network call is made
@@ -298,7 +298,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with a plan body whose `steps` is missing, then again with `steps` empty. Assert the mocked transport was never invoked.
 - Expected: Both calls raise a typed error whose message names the missing steps; the HTTP mock records zero calls.
 - Evidence required: pytest run output naming the test, showing the zero-call assertion.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-9 — All five query parameters are sent, with the documented defaults and honoured overrides
@@ -314,7 +314,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with no parameter overrides and parse the request URL's query string. Repeat with each parameter explicitly overridden to a non-default value.
 - Expected: The default call sends `includeDisabled=false`, `getConstraints=true`, `getAllConstraints=true`, `limit=500000`, `useCache=true`. Each override appears in the URL in place of its default, and no parameter is omitted in either case.
 - Evidence required: pytest run output naming the test, with the asserted query strings visible.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-10 — A limit-reached response is survived, and null is kept distinct from zero
@@ -330,7 +330,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Mock a limit-reached response for a three-step plan: a single returned step with `isLimitReached` true, a null `simulationCount`, and every `moves` value null. Call the fetch core.
 - Expected: No exception. The step's count is reported as not-computed, distinct from zero, and every null `moves` value stays null rather than becoming `0`. The result reports the plan's step count as 3, the returned count as 1, and the truncation flag as set.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-11 — An API failure surfaces the full response body, not just a status code
@@ -345,7 +345,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Mock the API returning a non-2xx status with a JSON body carrying an identifiable error string. Call the fetch core and capture the raised error.
 - Expected: The raised error's message contains both the status code and the identifiable string from the body.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-12 — Repeated identical calls each hit the API, proving no MCP-side cache
@@ -360,7 +360,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core twice with identical arguments. Count transport invocations.
 - Expected: Exactly two invocations. No module-level cache object is consulted for statistics results.
 - Evidence required: pytest run output naming the test, showing the call count.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-13 — The refactored helper's observable contract is byte-for-byte unchanged
@@ -376,7 +376,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: For a fixed mocked statistics response, call the helper and compare the returned structure against the pre-refactor expected value captured as a fixture — full equality, keys and values.
 - Expected: Exact equality. The key set is precisely `simulationCount`, `matchedTargetSimulators`, `matchedAttackerSimulators`, `matchedAttacks`, `totalTargetSimulators`, `totalAttackerSimulators`, `totalAttacks`, plus the constraint and resolved-attack keys under their existing conditions.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py` (extends `TestGetScenarioStatistics`)
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py` (extends `TestGetScenarioStatistics`)
 - Environment needs: repo-harness
 
 ### T-14 — The helper still asks for expected counts explicitly, preserving today's numbers
@@ -392,7 +392,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the helper and parse the resulting request URL.
 - Expected: The URL carries `includeDisabled=true` and `limit=500000`, matching the pre-refactor request exactly.
 - Evidence required: pytest run output naming the test, with the asserted query string visible.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-15 — The helper no longer crashes on a limit-reached response
@@ -408,7 +408,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Call the helper with a mocked limit-reached response containing null counts, in both the constraints-enabled and constraints-disabled modes.
 - Expected: No exception in either mode. A defined result is returned, and the aggregate counts do not claim zero matches where the underlying values were never computed.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-16 — The statistics endpoint is reached from exactly one place in the repo
@@ -424,7 +424,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Scan the repository's Python sources for occurrences of the `plan/statistics` endpoint path, excluding tests.
 - Expected: Exactly one occurrence, inside the fetch core.
 - Evidence required: pytest run output naming the test, with the matched location listed.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-17 — Both existing callers' evaluate previews are unchanged by the refactor
@@ -440,7 +440,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: For a fixed mocked statistics response, invoke the scenario-run and quick-run entry points in evaluate mode and compare each returned preview payload against a pre-refactor fixture.
 - Expected: Both payloads equal their fixtures, including the predicted totals, per-step breakdown and empty-step list.
 - Evidence required: pytest run output naming both assertions.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-18 — A sparse constraint map is never iterated as though dense
@@ -455,7 +455,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Shape a response where three simulators are in scope but only one appears in the constraint map. Run the reporting layer.
 - Expected: Conflicts are reported for the one present simulator only. The two absent simulators produce no conflict entries and are not described as unevaluated or unknown.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-19 — Every reason in a multi-reason constraint leaf surfaces, not just the first
@@ -471,7 +471,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Shape a constraint leaf holding three distinct reasons for one simulator/attack pair, on both the attacker and target sides. Run the reporting layer.
 - Expected: All three reasons appear, each classified, with the side(s) that produced them recorded. Reasons from both sides are merged rather than one side overwriting the other.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-20 — Only a genuine integer zero marks an attack inapplicable — never a null
@@ -486,7 +486,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Shape one step whose `moves` map mixes a positive count, an integer zero, and a null. Run the reporting layer.
 - Expected: Exactly one attack — the integer zero — is reported as zero-impact, with its translated reasons. The null-valued attack appears in no zero-impact list, and the positive one does not either.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-21 — Zero-impact simulators come from the union map, so one-sided nodes are not falsely reported
@@ -501,7 +501,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Shape a step where the union map holds a simulator at zero and another at a positive count, while the attacker and target role maps each omit one of those simulators entirely. Run the reporting layer.
 - Expected: Only the union-map zero is reported as a zero-impact simulator. No simulator is reported on the basis of being absent from a role map.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-22 — A limit-reached response suppresses zero-impact reporting entirely
@@ -516,7 +516,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Run the reporting layer over a limit-reached step whose counts are not computed.
 - Expected: No zero-impact attack list and no zero-impact simulator list are emitted for that step. A truncation explanation is present, and the response makes clear the returned step list is shorter than the plan's.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-23 — Conflicts are normalized against a catalog, with nothing static repeated per conflict
@@ -532,7 +532,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Run the reporting layer over a response where three distinct attacks share one reason code and one attack carries an unknown code. Inspect the top-level catalog and each conflict entry.
 - Expected: The catalog holds exactly one entry per distinct code present, and only codes present in this response. Each conflict carries `code`, `severity`, `attack_id`, `side`, `simulator_count` and `values` — and none of `kind`, `fix_lever` or `description`, which appear only in the catalog. No field anywhere in the payload presents a bare reason code as its explanation.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-36 — The same code resolves blocking or reducing depending on the attack's count
@@ -542,28 +542,27 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Passes after: Phase 4
 - Level: unit
 - Execution: Automatic
-- Risk: A reason lives at (simulator, attack) and means one simulator was eliminated; an attack with surviving candidates still runs. Treating any elimination as a blocker would mislabel every partial-coverage conflict, over-report zero-impact attacks, and drag Story 2's scope in by accident.
+- Risk: A reason lives at (simulator, attack) and eliminates one node variant; an attack with surviving candidates still runs. Treating any elimination as a blocker would mislabel every partial-coverage conflict — including the whole variant-de-duplication family — over-report zero-impact attacks, and drag Story 2's scope in by accident.
 - Risk source: PRD §9 (R8)
-- Verify: Shape one step where the same elimination code appears for two attacks — one whose count is an integer `0`, one whose count is positive. Also include an `informational` code on the positive attack. Run the reporting layer.
-- Expected: The code resolves `blocking` for the zero-count attack and `reducing` for the positive-count attack within the same step, with no contradiction. The informational code resolves `none`. Only the `blocking` entry appears in that attack's `blockers`.
+- Verify: Shape one step where the same reason code appears for two attacks — one whose count is an integer `0`, one whose count is positive. Run the reporting layer and inspect both conflicts' severities.
+- Expected: The code resolves `blocking` for the zero-count attack and `reducing` for the positive-count attack within the same step, with no contradiction. Only the `blocking` entry appears in that attack's `blockers`. No catalog field is consulted to reach either verdict.
 - Evidence required: pytest run output naming the test, showing both severities for the shared code.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-37 — The sixteen informational codes are classified as such and never block
 
-- Description: Proves the false-alarm class is closed — 18% of the vocabulary describes benign conditions that must never be reported as reasons something failed.
-- Status: Active
+- Description: Would have proved the false-alarm class was closed by classifying 16 codes as benign notes.
+- Status: Removed
+- Reason for removal: **The premise was false.** Verified at the emit sites that every one of the 88 codes sets
+  `valid = false`, after which the node is never pushed to `filteredNodes` (`aws_validation.js:96-101`,
+  `gcp_validation.js:77-81`). The `*_is_ignored` / `ignoring_*_variant` families are variant-level
+  de-duplication, not informational notes, so there is no `informational` class to assert and the `kind` field
+  this test asserted through no longer exists. The effect it reached for — a variant de-duplication must not
+  read as a blocker — is covered by **T-36**, which derives severity from the attack's count alone.
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
-- Risk: Read cold inside a list called "constraints", `move_does_not_require_zones_simulator_zone_is_ignored` looks like a problem when nothing is wrong. Misclassifying any of the 16 as `elimination` reintroduces exactly the noise the catalog exists to remove — and the fail-safe default does not protect against this direction.
-- Risk source: PRD §9 (R7)
-- Verify: Assert every catalog code matching the `*_is_ignored` and `ignoring_*_variant` families has `kind` `informational` and `fix_lever` `null`, and that the count of such entries is 16. Then run the reporting layer over a step where an informational code is the only conflict on a zero-count attack.
-- Expected: All 16 classified informational. The zero-count attack's `blockers` list is empty despite the conflict being present, and the conflict resolves `severity: none`.
-- Evidence required: pytest run output naming the test, with the asserted count of 16 visible.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
-- Environment needs: none
 
 ### T-24 — The tool is registered under the agreed wire name and declared read-only
 
@@ -578,7 +577,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Introspect the studio server's registered tools.
 - Expected: A tool named exactly `get_plan_statistics` exists, with the read-only hint true and the destructive hint false. The previously registered tools are all still present.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-25 — A read-only tool takes no rate-limiting gates
@@ -593,7 +592,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With rate limiting enabled and the API mocked, invoke the new tool more times than the configured per-tool limit while observing the limiter.
 - Expected: Every invocation succeeds. Neither the pre-check nor the record-action entry point is called for this tool.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_rate_limiting.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_rate_limiting.py`
 - Environment needs: none
 
 ### T-26 — Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error
@@ -608,7 +607,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Invoke the public function with both a plan body and a scenario id, then with neither. Also invoke with a plan argument that is not valid JSON.
 - Expected: All three raise errors whose messages state which inputs are expected and that exactly one must be supplied. No API call is attempted.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-27 — Counts mode selects one call or two, and labels what it returns
@@ -624,7 +623,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked and call-counting enabled, invoke the tool three ways: default, expected-only, and both. Inspect the request count, each request's `includeDisabled` value, and the returned labels.
 - Expected: Default issues one call with `includeDisabled=false` and labels the result runnable. Expected-only issues one call with `includeDisabled=true` and labels it expected. Both issues exactly two calls, one of each, and returns both results labelled, together with the note that expected cannot be derived from runnable.
 - Evidence required: pytest run output naming the test, with the per-mode call counts visible.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
 ### T-28 — The tool scores an ad-hoc plan against a real console and returns usable numbers
@@ -640,7 +639,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Against the configured e2e console, build a plan body from a step of an existing scenario read through the product's own scenario API, then call the tool with default parameters.
 - Expected: A per-step result is returned. `simulationCount` is an integer, `moves` and the three simulator maps are populated with integer values, and where conflicts exist each carries a translated description and suggested fix. No field contains a bare reason code.
 - Evidence required: pytest e2e run output naming the test, plus the console name and the returned counts.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
 ### T-29 — Scoring by scenario_id agrees with scoring the same scenario's body ad hoc
@@ -656,7 +655,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Against the e2e console, pick an existing scenario or custom plan through the product's own listing APIs. Call the tool once with its id, and once with its steps as an ad-hoc body, using identical parameters.
 - Expected: Both calls return the same number of steps and the same per-step `simulationCount`. If the target is a custom plan, the integer-as-string id is accepted as readily as a scenario UUID.
 - Evidence required: pytest e2e run output naming the test, with both count sequences shown.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
 ### T-30 — Runnable never exceeds expected, and the offline reason explains the gap
@@ -672,7 +671,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Against the e2e console, score the same scenario twice — runnable then expected — and compare. Then inspect the runnable response's conflicts for the offline reason. When the console has no disabled or unapproved simulator, skip the delta and offline-reason assertions with an explicit reason naming that precondition, and still assert the ordering relation.
 - Expected: Runnable `simulationCount` is less than or equal to expected for every step. When a disabled simulator exists, the runnable response reports the offline reason for it and the expected response does not, and the delta is strictly positive for at least one step. A skipped assertion is reported as a skip with its reason, never as a pass.
 - Evidence required: pytest e2e run output naming the test, with both count sequences, the disabled-simulator precondition status, and any skip reason.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
 ### T-31 — A step-less plan against a real console yields the typed error, not a raw 400
@@ -687,7 +686,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Against the e2e console, call the tool with a plan body carrying no steps.
 - Expected: A typed error naming the missing steps, matching T-8's message. No unhandled HTTP error and no raw upstream error code surface to the caller.
 - Evidence required: pytest e2e run output naming the test, with the error message shown.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
 ### T-32 — An agent can answer "what will run and what won't, and why" through the real product
@@ -734,7 +733,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Read the project instruction file. Assert the Studio Server tool catalog contains an entry for the new tool, and that the rate-limiting gate table's row set is unchanged.
 - Expected: The catalog entry is present and names the runnable default and the read-only posture. The gate table contains no row for the new tool.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach-mcp/safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-35 — The tool's Checkout-parameter numbers match what the console itself displays
@@ -759,13 +758,13 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | After phase | Newly green | Cumulative green |
 |-------------|-------------|------------------|
-| Phase 1 | T-1, T-2, T-3, T-4, T-5, T-37 | 6 |
-| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 13 |
-| Phase 3 | T-13, T-14, T-15, T-16, T-17 | 18 |
-| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 25 |
-| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | 33 |
-| Phase 6 | T-34 | 34 |
-| Final | T-32, T-33, T-35 | all (37) |
+| Phase 1 | T-1, T-2, T-3, T-4, T-5 | 5 |
+| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 12 |
+| Phase 3 | T-13, T-14, T-15, T-16, T-17 | 17 |
+| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 24 |
+| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | 32 |
+| Phase 6 | T-34 | 33 |
+| Final | T-32, T-33, T-35 | all (36) |
 
 ## Sign-off
 
@@ -782,4 +781,5 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
+| 2026-08-26 15:40 | Corrected for PRD v3 and aligned to SAF-35568. Verified at the emit sites that all 88 codes eliminate the node — the `informational` class does not exist, so **T-37 is tombstoned** (Status: Removed, ID retained) and `kind` is gone from T-1/T-3/T-36. T-1 now asserts a description plus a valid fix lever for all 88; T-3 asserts an unknown code is surfaced rather than dropped; T-4 covers all 14 legacy descriptions. R7 rewritten to "descriptions from names, not emit sites". Fixed the non-existent `safebreach-mcp/` path prefix on all automation locations. Regenerated views: 36 Active (16 unit / 13 integration / 7 e2e), phases 5/12/17/24/32/33/36. In Sync with PRD v3. |
 | 2026-08-26 13:20 | Updated for the PRD v2 design revision (MCP is structured, Helm narrates). Rescoped T-1 (classification on two closed enums, no `suggested_fix`), T-3 (fail-safe to `elimination`, not a generic description), T-4 (retained-vs-dropped descriptions), T-23 (catalog normalization rather than per-conflict translation). Added T-36 (computed severity — same code blocking and reducing in one step) and T-37 (the 16 informational codes never block). Regenerated the unit index, Coverage Summary (17/13/0/7 = 37) and Tests by Phase; extended R7/R8/R9 traceability and Change Coverage. Status stays Draft — material change. In Sync with PRD v2. |

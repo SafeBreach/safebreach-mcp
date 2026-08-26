@@ -18,8 +18,8 @@
      tools declared as *running a test*, which queue a real one at `evaluate=False`.
   2. **Correct** numbers. Runnable counts become reachable for the first time, along with the
      `simulator_is_offline` reason that explains the gap between expected and runnable.
-  3. **Explained** conflicts. Constraint-reason coverage goes from 14/88 to 88/88, with a suggested fix per
-     code and a safe generic fallback so a raw `snake_case` code can never reach a user again.
+  3. **Explained** conflicts. Constraint-reason coverage goes from 14/88 to 88/88 — each with a verified
+     meaning and the control surface that fixes it — so a raw `snake_case` code can never reach a user again.
 - **Business Alignment**: Implements functional requirements **6** and **7** of parent story SAF-34615
   ("MCP support for Validate scenario creation and update, Stage 1"), and covers parent Definition-of-Done
   items **2** and **5**. See §9 for the DoD-6 caveat introduced by the scope decision.
@@ -45,11 +45,12 @@
 
 Four pieces, in dependency order:
 
-1. **A vendored constraint classification catalog** (`CONSTRAINT_CATALOG`) covering all **88** emitted reason
-   codes, keyed on the codes the API actually emits. Each entry carries `kind`
-   (`elimination` | `informational`) and `fix_lever` — the two facts a calling model cannot derive — plus a
-   `description` **only** for the ~20 codes whose plain reading is wrong or opaque. MCP does not narrate:
-   Helm composes the sentence and the yes/no suggested fix from these structured facts (parent req 13).
+1. **A vendored constraint catalog** (`CONSTRAINT_CATALOG`) covering all **88** emitted reason codes, keyed on
+   the codes the API actually emits. Each entry carries a `description` (what the code *means*, verified
+   against its emit site) and a `fix_lever` (which control surface resolves it). MCP does not narrate: Helm
+   composes the sentence and the yes/no suggested fix from these facts plus the counts (parent req 13). This
+   catalog is **interim by design** — [SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568) asks the
+   API to serve it, and the response shape here is chosen so that becomes a pass-through.
 2. **A new low-level fetch function** that performs the HTTP call, exposes **every** query parameter, and
    returns the **raw, null-safe** per-step response — including the `simulators` union map and
    `isLimitReached`, both of which the current helper never even extracts.
@@ -76,8 +77,10 @@ unchanged by default and correcting them becomes a separate, deliberate decision
 | **Always issue both calls (expected + runnable)** | Fully satisfies parent req 13's "both figures" with no caller decision. | Two round trips on **every** call against an endpoint given a 120 s timeout, with `getAllConstraints=true` already disabling the validator short-circuit (R5). Helm re-checks after *every* changed decision (AC-11). | **Rejected** by user decision D2 — runnable default, second call only on explicit request. |
 | **Derive expected counts client-side from a runnable response** | One call, both numbers. | **Impossible.** `includeDisabled=false` filters disabled simulators out of the counts entirely (F2, `plan_statistics.js:65-66`); the information is not in the response. | **Rejected** — not implementable. |
 | **Generate the translation table at runtime from `constraints.js`** | Never drifts from upstream. | `orchestrator` is not a dependency of `safebreach-mcp`, and the file is JavaScript. Would add a cross-repo build-time coupling to a differently-cadenced release. | **Rejected** — vendor statically, guard with a coverage test (D4). |
-| **Author a plain-language description and a suggested-fix sentence for all 88 codes** (the original plan) | Deterministic, testable prose; MCP fully self-describing. | Most codes are self-describing English sentences (`move_requires_zones_but_the_simulator_is_missing_zones`) — a calling model renders them better than a canned string, and can fill in real simulator UUIDs that a static sentence cannot. 88 hand-written descriptions also rot on every upstream rewording. Contradicts the ticket's own scope item 1 ("no narrative fields — Helm interprets"). | **Rejected** — carry only the non-derivable facts (`kind`, `fix_lever`, and ~20 corrective descriptions). |
-| **Have the orchestrator API serve the catalog** (classification + descriptions) | Single source of truth; a new code is classified in the same commit that adds it; retires ui-react's duplicate table too. | Cross-team, multi-repo change on another release cadence — it would block a Stage 1 subtask scoped as "promote an existing helper". `fix_lever` is MCP-specific and would stay here regardless. | **Right long-term direction, deferred** — §10 files it as follow-up. Adopting the normalized catalog shape now makes that migration a drop-in with **no response-contract change**. |
+| **Describe only the ~20 codes whose plain reading misleads, and let a model infer the rest** | Smallest artifact; less to rot on an upstream rewording. | Rests on the other ~68 being self-describing, which is **false**. The `*_is_ignored` family reads as a benign note and in fact eliminates the node — it means "this node variant is non-canonical and was de-duplicated" (`aws_validation.js:96-101`). Deciding per-code which names can be trusted is an unbounded judgement, and the failure mode is a *confidently wrong* explanation, which is worse than none. | **Rejected** — describe all 88 from their emit sites. |
+| **Classify each code as `elimination` vs `informational`** (a `kind` field) | Would let a consumer drop benign notes rather than report them as problems. | **No such class exists.** Every one of the 88 sets `valid = false` and the node is never pushed to `filteredNodes` — verified in `aws_validation.js:96-101` and `gcp_validation.js:77-81`. The apparent "informational" family is variant-level de-duplication, and the effect it was meant to capture is already covered by severity derived from the counts: a variant elimination on an attack that still runs is `reducing`. | **Rejected — premise was wrong.** No vocabulary metadata is needed for severity. |
+| **Keep `fix_lever` MCP-side permanently** | Core has no `step_overrides` parameter. | `step_overrides` is only MCP's wrapper over `attackerFilter` / `targetFilter`, which are **Core's own `ValidatePlan` fields**, and `os`/`role`/`simulators`/`connection` are fields in Core's `simulatorsFilter` schema. The lever is expressible in Core's vocabulary, and the console needs the identical knowledge. | **Rejected** — SAF-35568 asks the API for it too; only the snake_case rename onto MCP's JSON shape stays here. |
+| **Have the orchestrator API serve the catalog** | Single source of truth; a new code is described in the same commit that adds it; retires ui-react's duplicate table too. | Cross-team, multi-repo change on another release cadence — it would block a Stage 1 subtask scoped as "promote an existing helper", and the description half carries an unresolved localization question. | **Right long-term direction, filed as SAF-35568.** Adopting the normalized catalog shape now makes that migration a drop-in with **no response-contract change**. |
 
 ### Decision rationale
 
@@ -89,43 +92,47 @@ read-only/deferral posture are user decisions **D1–D3**, recorded in `context.
 
 ## 3. Core Feature Components
 
-### Component A — Vendored constraint classification catalog (`CONSTRAINT_CATALOG`)
+### Component A — Vendored constraint catalog (`CONSTRAINT_CATALOG`)
 
 **Purpose**: New data structure replacing the 14-entry `CONSTRAINT_REASON_DESCRIPTIONS`
 (`studio_functions.py:2225`). Satisfies AC-7 and AC-8.
 
-**The division of labour.** MCP carries only what a calling model cannot derive from the code string; Helm
-composes the user-facing sentence. Most of the 88 codes are self-describing English
-(`move_requires_zones_but_the_simulator_is_missing_zones`), and a model renders those better than a canned
-string — it can name the actual simulator UUIDs a static sentence never could. Three things are **not** in the
-code text, and those are what the catalog holds.
+**The division of labour.** The catalog holds facts you have to *look up*: what a code means, and which
+control surface fixes it. Helm composes the user-facing sentence and the yes/no fix, because phrasing is a
+task to delegate and it can name real simulator UUIDs that a canned string never could. Severity is derived
+from the counts, not stored.
 
 **Key features**
 - **88 entries**, one per distinct emitted reason code, across the 21 validator groups in
   `orchestrator/src/server/sbGenerator/validators/constraints.js`.
 - Each entry carries:
-  - **`kind`** — `elimination` (this code means a simulator was excluded; 72 codes) or `informational` (a
-    benign note that never excludes anything; **16** codes — the 12 `*_is_ignored` plus the 4
-    `ignoring_*_variant`). Not derivable: read cold inside a list called "constraints",
-    `move_does_not_require_zones_simulator_zone_is_ignored` looks like a problem when nothing is wrong. That
-    is 18% of the vocabulary primed to generate false alarms.
-  - **`fix_lever`** — a closed enum naming what fixes it: `attacker_filter.role`, `target_filter.os`,
-    `*_filter.simulators`, `*_filter.connection`, `console.simulator_approval`, `console.license`,
-    `console.advanced_actions`, `step.parameters`, or `null` for intrinsic incompatibility. Not derivable:
-    `incompatible_os` is a step filter, `simulator_is_offline` is a console action, and
-    `move_does_not_meets_license_requirements` is a licence — similar-looking codes, unrelated answers. A
-    closed enum is also testable in a way free-text prose is not.
-  - **`description`** — present for **only ~20** codes whose plain reading is wrong or opaque:
-    `incompatible_package` is a *role* mismatch, not a software package; `simulator_is_offline` also covers
-    **unapproved** simulators because `isEnabled = isConnected && approved`; `simulator_variant_is_*` uses
-    internal vocabulary; `move_state_constraint` / `move_model_constraint_invalid_config` are opaque to
-    anyone. **Its absence is a deliberate signal** — "this code says what it means, render it yourself."
-- **`kind` is static; blocker-ness is not.** A reason lives at `[simulatorId][moveId]` and means "this
-  simulator was eliminated for this attack". An attack usually has several candidates, and `moves[id]` is
-  pre-seeded to 0 then incremented per survivor (F5). So ten candidates with nine eliminated by
-  `incompatible_os` still yields a running attack. Whether an elimination **blocks** is therefore contextual
-  and computed per (attack, step) — see Component D. The existing helper already encodes this distinction via
-  `unmatched = sum(... if v == 0)` and its per-attack-versus-aggregated branch.
+  - **`description`** — for **all 88**, authored from the code's **emit site**, never inferred from its name.
+    This is not defensive pedantry: the `*_is_ignored` family reads as a benign note and in fact means *"this
+    node variant is non-canonical and was de-duplicated"* — `aws_validation.js:96-101` records the reason and
+    sets `valid = false`. `incompatible_package` is a *role* mismatch, not a software package.
+    `simulator_is_offline` also covers **unapproved** simulators, since `isEnabled = isConnected && approved`.
+    A name-derived description would be confidently wrong, which is worse than absent.
+  - **`fix_lever`** — a closed enum naming the control surface that resolves it: `target_filter.os`,
+    `attacker_filter.role`, `*_filter.simulators`, `*_filter.connection`, `console.simulator_approval`,
+    `console.license`, `console.advanced_actions`, `step.parameters`, or `null` for intrinsic
+    incompatibility. Knowing the *meaning* does not give the *remedy*, and the remedy diverges sharply
+    between similar-looking codes: `incompatible_os` is a step filter, `simulator_is_offline` is a console
+    action, `move_does_not_meets_license_requirements` is a licence. A closed enum is also testable in a way
+    free-text prose is not. **Naming**: these are snake_case to match `step_overrides`; SAF-35568 will serve
+    the same levers in Core's camelCase schema vocabulary (`attackerFilter.role`, `console.simulatorApproval`),
+    so the migration includes a mechanical rename — see §10.
+- **There is no `elimination` / `informational` distinction — all 88 eliminate.** Every code sets
+  `valid = false`, after which the node is never pushed to `filteredNodes`
+  (`aws_validation.js:96-101`, `gcp_validation.js:77-81`). The `*_is_ignored` and `ignoring_*_variant`
+  families are variant-level de-duplication, not benign notes. An earlier draft of this PRD asserted a
+  72/16 split; it was inferred from code names and is **wrong**.
+- **Blocker-ness is contextual and needs no vocabulary metadata.** A reason lives at `[simulatorId][moveId]`
+  and eliminates one node variant for one attack. An attack usually has several candidates, and `moves[id]`
+  is pre-seeded to 0 then incremented per survivor (F5). So nine of ten candidates eliminated still yields a
+  running attack. Severity therefore falls straight out of the counts — see Component D — which is exactly
+  what makes a variant de-duplication read as low-priority (`reducing`) without anyone classifying it. The
+  existing helper already encodes this distinction via `unmatched = sum(... if v == 0)` and its
+  per-attack-versus-aggregated branch.
 - **Keyed on emitted values, not source keys.** The critical correctness detail (F14): the source file has
   **87 distinct keys but 88 distinct values**, and two entries emit a value differing from their key —
   `some_cloned_advanced_actions_are_disabled` → **`some_duplicate_advanced_actions_are_disabled`**, and
@@ -138,8 +145,8 @@ code text, and those are what the catalog holds.
 - The 14 existing descriptions are preserved verbatim where they remain (all 14 are real codes; F15 confirms
   **zero** dead entries), since two shipped tools already display them.
 - **Fail-safe default**: an unrecognised code — one added upstream after this ticket — resolves to
-  `kind: elimination`, `fix_lever: null` and no description. It **over-reports** rather than hides: a spurious
-  flag is recoverable, a silently-swallowed blocker is not. The code is never presented as the explanation.
+  `fix_lever: null` and no description, and is still surfaced as a conflict. The code is never presented as
+  the explanation.
 - **`unable_to_validate` is not a concern.** `validation_type.js` carries a third outcome, but it is returned
   only from a catch block on the *generation* path (`sbGenerator/validators/index.js:60`), while
   `simulatorConstraints` is populated exclusively by `StatisticsAggregator.addConstraintBySimulator` with
@@ -204,9 +211,9 @@ reporting half of the zero-impact rules.
   and the response documents that expected cannot be derived from a runnable response.
 - **Zero-impact reporting** — the read-only half of the hard-failure rules. Per-step lists of attacks whose
   count is genuinely `0` and simulators whose count is genuinely `0`, each carrying its **`blockers`** — by
-  construction the `severity: blocking` subset. An `informational` code therefore **cannot** be offered as the
-  reason something runs nowhere, and neither can a `reducing` one; the guarantee is derived from the counts
-  rather than statically asserted. Two further correctness rules:
+  construction the `severity: blocking` subset. A `reducing` conflict therefore **cannot** be offered as the
+  reason something runs nowhere; the guarantee is derived from the counts rather than statically asserted.
+  Two further correctness rules:
   - Simulators are read from the **union `simulators` map**, never a single role map — a node present on only
     one side is `undefined` in the other, never `0` (F5). The current helper never extracts this map at all.
   - An entry is reported **only** when its value is an integer `0`. `None` never qualifies.
@@ -222,9 +229,9 @@ reporting half of the zero-impact rules.
   another, because the static and contextual halves now live in different places. And it makes the eventual
   migration to an API-served catalog (§10) a **drop-in with no response-contract change** — only where MCP
   fills the catalog from.
-- **Computed `severity` per conflict**, derived rather than asserted: `blocking` (an `elimination` code on an
-  attack whose count is `0`), `reducing` (an `elimination` code on an attack that still runs, on fewer
-  simulators than offered), or `none` (`informational`). This ticket **acts on** `blocking` only —
+- **Computed `severity` per conflict**, derived from the counts alone: `blocking` when the attack's count is
+  an integer `0`, `reducing` when the attack still runs (on fewer simulators than offered). No vocabulary
+  metadata is consulted. This ticket **acts on** `blocking` only —
   partial-impact and fail-rate conflicts are explicitly SAF-35484's scope — but it **reports** `reducing`,
   which is the honest answer to "why is this number lower than I expected?". Keeping them in separate buckets
   is what stops Story 2 from having to re-plumb the response.
@@ -308,13 +315,15 @@ Static facts live once in `constraint_catalog`; per-conflict entries carry only 
   "params_used": { "includeDisabled": false, "getConstraints": true,
                    "getAllConstraints": true, "limit": 500000, "useCache": true },
   "constraint_catalog": {
-    "incompatible_os":      { "kind": "elimination", "fix_lever": "target_filter.os" },
-    "incompatible_package": { "kind": "elimination", "fix_lever": "attacker_filter.role",
+    "incompatible_os":      { "fix_lever": "target_filter.os",
+                              "description": "The attack requires an OS this simulator does not run." },
+    "incompatible_package": { "fix_lever": "attacker_filter.role",
                               "description": "Simulator role mismatch — requires infiltration/exfiltration." },
-    "simulator_is_offline": { "kind": "elimination", "fix_lever": "console.simulator_approval",
+    "simulator_is_offline": { "fix_lever": "console.simulator_approval",
                               "description": "Disconnected or not approved — excluded from runnable counts." },
     "move_does_not_require_credentials_simulator_credentials_is_ignored":
-                            { "kind": "informational", "fix_lever": null }
+                            { "fix_lever": null,
+                              "description": "This simulator variant's credentials are not the canonical set, so the variant was de-duplicated; other variants may still run the attack." }
   },
   "steps": [
     { "step_index": 0,
@@ -399,7 +408,7 @@ edited — the precise failure this tool exists to prevent. Freshness control st
   unchanged by default (§2, R2).
 - `CONSTRAINT_REASON_DESCRIPTIONS` is superseded by `CONSTRAINT_CATALOG`. The 14 existing description strings
   are preserved wherever they survive into the ~20 corrective descriptions, so both existing tools' output
-  gains `kind`/`fix_lever` without losing wording they already display. Only `_summarize_constraints` reads the
+  gains a verified `description` and a `fix_lever` without losing wording they already display. Only `_summarize_constraints` reads the
   table directly (`:2333`, `:2334`); `_summarize_constraints_aggregated` inherits via `:2357`.
 
 **Observability**
@@ -428,18 +437,17 @@ parameter set actually used, and an error line carrying the full response body o
       zero-impact reporting. *(AC-5)*
 - [ ] `plan/statistics` is called from exactly one place in the repo; `_get_scenario_statistics` and its two
       callers route through it rather than forming a parallel implementation. *(AC-6)*
-- [ ] All **88** emitted reason codes carry a `kind` (`elimination` / `informational`) and a `fix_lever` from
-      the closed enum, keyed on the codes the API emits — including the two whose emitted value differs from
-      their source key. The **16** informational codes are classified as such. A test fails if any emitted code
-      lacks an entry. *(AC-7)*
-- [ ] The ~20 codes whose plain reading is wrong or opaque carry a corrective `description`; the remaining
-      self-describing codes deliberately do not. *(AC-7)*
+- [ ] All **88** emitted reason codes carry a `description` and a `fix_lever` from the closed enum, keyed on
+      the codes the API emits — including the two whose emitted value differs from their source key. A test
+      fails if any emitted code lacks either field. *(AC-7)*
+- [ ] Every `description` is authored from the code's **emit site**, not inferred from its name — the
+      `*_is_ignored` family in particular means variant de-duplication, not a benign note. *(AC-7)*
 - [ ] Conflicts are returned **normalized** — a `constraint_catalog` of the codes present in the response, plus
       per-conflict references carrying only `severity`, `attack_id`, `side`, `simulator_count` and `values`. *(AC-8)*
-- [ ] `severity` is **computed** per (attack, step) — `blocking` when the attack's count is `0`, `reducing` when
-      it still runs, `none` for informational — never asserted statically per code. *(AC-8)*
-- [ ] A bare reason code is never presented as the explanation; an unrecognised code fails safe to
-      `kind: elimination`, `fix_lever: null`, over-reporting rather than hiding. *(AC-8)*
+- [ ] `severity` is **computed** from the counts alone — `blocking` when the attack's count is an integer `0`,
+      `reducing` when it still runs — consulting no vocabulary metadata. *(AC-8)*
+- [ ] A bare reason code is never presented as the explanation; an unrecognised code is still surfaced as a
+      conflict, with a null lever and no fabricated description. *(AC-8)*
 - [ ] An attack with `moves[id] === 0` is **reported** as inapplicable with a plain-language explanation of why
       it runs nowhere; reporting does not block save, and a `null` value is never reported as zero-impact. *(AC-9)*
 - [ ] A simulator with `simulators[id] === 0` is **reported** the same way, read from the **union** `simulators`
@@ -471,10 +479,10 @@ parameter set actually used, and an error line carrying the full response body o
 | Phase 5: Public function + tool registration | ⏳ Pending | - | - | |
 | Phase 6: Documentation | ⏳ Pending | - | - | |
 
-### Phase 1 — Vendored classification catalog + fail-safe resolver
+### Phase 1 — Vendored catalog + fail-safe resolver
 
-**Semantic change**: Replace the 14-entry description table with an 88-entry classification catalog that can
-always answer, and stop the raw-code fallback.
+**Semantic change**: Replace the 14-entry description table with an 88-entry catalog that can always answer,
+and stop the raw-code fallback.
 
 **Deliverables**: `CONSTRAINT_CATALOG`; a resolver that returns a classified entry for any input; the single
 direct consumer switched onto it.
@@ -484,19 +492,21 @@ direct consumer switched onto it.
   `constraints.js`. Enumerate by value, not by key: 87 keys, 88 values, two entries emitting a different
   string than their key (§3 Component A names both). Deduplicate — `incompatible_framework_version` is
   emitted by two groups.
-- Each entry carries `kind` and `fix_lever`; a `description` **only** where the code's plain reading is wrong
-  or opaque (~20 codes). Do **not** author prose for the self-describing majority, and do not author
-  `suggested_fix` at all — Helm composes the sentence from `fix_lever` plus `values`.
-- Classification is largely patternable by validator family, which is what makes 88 rows tractable: the
-  AWS/Azure/GCP/Bedrock/web-application `*_is_ignored` set and the `ignoring_*_variant` set are
-  `informational` / `fix_lever: null`; the `move_requires_X_but_the_simulator_is_missing_X` family is
-  `console.*`; the OS/role/connection families map to their corresponding `*_filter.*` lever. Verify each row
-  rather than trusting the pattern blindly, but the pattern is the starting point.
+- Each entry carries a `description` and a `fix_lever`. Do not author `suggested_fix` prose — Helm composes
+  the sentence from `fix_lever` plus `values`.
+- **Author every description from the code's emit site, not its name.** This is the phase's main cost and its
+  main value. Grep each code in `sbGenerator/validators/*.js`, read the branch that emits it, and describe
+  what that branch actually rejected. The `*_is_ignored` family is the cautionary case: the name suggests a
+  benign note, the code sets `valid = false` on a non-canonical node variant.
+- `fix_lever` is largely patternable by validator family, which keeps 88 rows tractable: the
+  `move_requires_X_but_the_simulator_is_missing_X` family is `console.*`; the OS/role/connection families map
+  to their corresponding `*_filter.*` lever; the variant de-duplication family is `null` (nothing the caller
+  can change). Verify each row rather than trusting the pattern blindly.
 - Preserve the 14 existing description strings verbatim wherever they survive into the ~20 — two shipped
   tools already display them.
-- Introduce a resolver used by every consumer. On a miss it fails safe to `kind: elimination`,
-  `fix_lever: null`, no description — over-reporting rather than hiding — and **never** echoes the code as an
-  explanation. Replaces `...get(code, {}).get('description', code)` at `:2333`.
+- Introduce a resolver used by every consumer. On a miss it returns a null lever and no description, still
+  surfacing the conflict, and **never** echoes the code as an explanation. Replaces
+  `...get(code, {}).get('description', code)` at `:2333`.
 - **Repoint one function, not two.** `_summarize_constraints` (:2299) is the *only* direct reader — the table
   is referenced at exactly `:2333` and `:2334`, both inside it. `_summarize_constraints_aggregated` (:2350)
   consumes it transitively: at `:2357` it calls `_summarize_constraints` and copies the resolved fields off the
@@ -504,9 +514,10 @@ direct consumer switched onto it.
   contract holds; new fields are additive.
 
 **What can go wrong**: enumerating by key silently ships two impossible codes and misses two real ones, and a
-key-based coverage test still reports 88/88 — the guard must compare against emitted values. Misclassifying an
-`*_is_ignored` code as `elimination` reintroduces the false-alarm class. A resolver that falls through to the
-code violates AC-8.
+key-based coverage test still reports 88/88 — the guard must compare against emitted values. Writing a
+description from a code's name rather than its emit site produces a confidently wrong explanation — the
+`*_is_ignored` family is the trap, and an earlier draft of this PRD fell into it. A resolver that falls
+through to the code violates AC-8.
 
 **Changes**
 
@@ -514,7 +525,7 @@ code violates AC-8.
 |---|---|
 | `safebreach_mcp_studio/studio_functions.py` | Replace `CONSTRAINT_REASON_DESCRIPTIONS` (:2225) with `CONSTRAINT_CATALOG`; add fail-safe resolver; repoint `_summarize_constraints` (:2333-:2334) |
 
-**Git commit**: `feat(studio): classify all 88 constraint reason codes with kind and fix lever`
+**Git commit**: `feat(studio): vendor all 88 constraint reason codes with descriptions and fix levers`
 
 ### Phase 2 — Raw fetch core
 
@@ -592,14 +603,14 @@ alters the numbers two shipped tools report.
   containing one entry per code **present in this response**, resolved through Phase 1's resolver; each
   conflict references the catalog by `code` and carries only `severity`, `attack_id`, `side`,
   `simulator_count` and the API's `values`. Attach attack names where resolvable, degrading silently.
-- **Compute `severity`** per conflict from the catalog `kind` plus the attack's own count: `none` when the
-  code is `informational`; otherwise `blocking` when `attacks[attack_id]` is an integer `0`, and `reducing`
-  when it is a positive integer. Never derive severity from the code alone — the same code is legitimately
-  `blocking` for one attack and `reducing` for another in the same step.
+- **Compute `severity`** per conflict from the attack's own count alone: `blocking` when
+  `attacks[attack_id]` is an integer `0`, `reducing` when it is a positive integer. No catalog lookup is
+  involved — the same code is legitimately `blocking` for one attack and `reducing` for another in the same
+  step, which is also why a variant de-duplication reads as low-priority without being classified.
 - **`conflict_detail`**: `summary` (default) groups by code with counts; `per_attack` keys by
   `(attack, code)`; `full` adds a capped `simulator_ids` sample. The default must stay cheap.
 - **Zero-impact attacks**: entries of `attacks` whose value is an integer `0`, each carrying its `blockers` —
-  the `severity: blocking` subset only. An `informational` or `reducing` conflict can never appear here.
+  the `severity: blocking` subset only. A `reducing` conflict can never appear here.
 - **Zero-impact simulators**: entries of the **union `simulators`** map whose value is an integer `0`. Do not
   read the role maps for this — a node on one side only is `undefined` in the other, never `0`.
 - **Suppression**: when the step's counts are not computed (limit-reached), emit **no** zero-impact lists, no
@@ -682,12 +693,12 @@ read-only.
 |---|---|---|---|
 | **R1** | **Misreading a limit-reached response.** The controller returns a sentinel step with `simulationCount: null` and **every** `moves[id] = null`, and returns early so the step list is shorter than the plan's. Treating falsy as zero, or assuming positional alignment, would report the user's entire selection as zero-impact. | **High** | Integer-`0` predicate everywhere; zero-impact reporting suppressed entirely when counts are not computed; truncation reported explicitly (AC-5). Severity is reduced from the original ticket by D3 — the tool now only *reports*, so the worst case is a wrong report rather than a destroyed configuration. |
 | **R2** | **Regressing the two existing callers.** 58 test references, ~20 with hardcoded `@patch` return values, plus `sb_quick_run` and `sb_run_scenario`. | **High** | Contract-preserving layering (§2); `includeDisabled=true` and `limit=500000` passed explicitly in Phase 3; Phase 3's intended visible delta is zero. |
-| **R3** | **Vendored-catalog drift — measured, not hypothetical.** The vocabulary lives in `orchestrator`, on a different release cadence. The console has been vendoring the same vocabulary for years in `ui-react/src/containers/Studio/utils/constants.ts:166` and has demonstrably drifted **in both directions**: **3 dead entries** for codes orchestrator no longer emits (`incompatible_simulator_version`, `assume_role_incompatible_simulator_version`, `move_does_not_support_simulation_user_and_simulator_does_not_allows_default_system_user`), and **31 of 88 codes** it cannot translate at all, plus 4 explicitly commented out. This PRD adds a **third** copy. | **Medium-High** | Interim: fail-safe default (over-report, never hide), the coverage guard (AC-7), and the drift test (T-5). Structural: §10 files the orchestrator ticket to serve the catalog, and the normalized response shape makes that migration a drop-in. Residual, stated plainly — none of this *prevents* drift; it makes it loud and safe. The only real fix is the API serving the classification, which is deliberately out of scope here. |
+| **R3** | **Vendored-catalog drift — measured, not hypothetical.** The vocabulary lives in `orchestrator`, on a different release cadence. The console has been vendoring the same vocabulary for years in `ui-react/src/containers/Studio/utils/constants.ts:166` and has demonstrably drifted **in both directions**: **3 dead entries** for codes orchestrator no longer emits (`incompatible_simulator_version`, `assume_role_incompatible_simulator_version`, `move_does_not_support_simulation_user_and_simulator_does_not_allows_default_system_user`), and **31 of 88 codes** it cannot translate at all, plus 4 explicitly commented out. This PRD adds a **third** copy. | **Medium-High** | Interim: fail-safe default (over-report, never hide), the coverage guard (AC-7), and the drift test (T-5). Structural: **SAF-35568** asks the API to serve the catalog, and the normalized response shape makes that migration a drop-in. Residual, stated plainly — none of this *prevents* drift; it makes it loud and safe. The only real fix is SAF-35568 landing, which is deliberately out of scope here. |
 | **R4** | **"Matches the console" is not one number.** Checkout uses `includeDisabled=true`, run gating `false`. | **Medium** | AC-4 is per-view and per-parameter-set; §4 tabulates which parameters correspond to which view. |
 | **R5** | **Cost of correctness.** `getAllConstraints=true` disables the validator short-circuit; both figures need two round trips, against a 120 s timeout. | **Medium** | Runnable default is one call; the second is opt-in (D2); every parameter is overridable for a cheap count-only call. |
 | **R6** | **Vendoring by key rather than by value** ships two impossible codes, misses two real ones, and passes a naive coverage test. | **Medium** | Called out explicitly in §3 Component A and Phase 1; the guard compares against emitted values (T-2). |
-| **R7** | **Misclassifying `kind`.** Marking one of the 16 `informational` codes as `elimination` reintroduces the false-alarm class the catalog exists to prevent; marking an `elimination` code as `informational` hides a real blocker. | **Medium** | The 16 are a closed, pattern-identifiable set (`*_is_ignored`, `ignoring_*_variant`) enumerated in §3 Component A; the fail-safe default is `elimination`, so an *omission* over-reports rather than hides. A misclassification in the other direction is the one failure the defaults do not cover — hence per-row verification in Phase 1 rather than trusting the family pattern. |
-| **R8** | **Asserting severity statically per code** instead of computing it from the attack's count would label every `reducing` conflict a blocker — pulling SAF-35484's partial-impact scope into this ticket by accident and over-reporting zero-impact attacks. | **Medium** | Severity is derived in Phase 4 from `attacks[attack_id]`; the catalog carries only `kind`. Covered by a test asserting the same code resolves `blocking` and `reducing` within one step. |
+| **R7** | **Descriptions authored from code names rather than emit sites.** The names mislead: the `*_is_ignored` family reads as a benign note but sets `valid = false` on a non-canonical node variant. A wrong description is worse than none, because a caller acts on it confidently. An earlier draft of this PRD made exactly this error and asserted a non-existent `informational` class. | **Medium-High** | Phase 1 requires each description to be traced to the branch that emits the code. Spot-verified: `aws_validation.js:96-101`, `gcp_validation.js:77-81`. The console shows the same trap in production — it renders one variant-de-duplication family three inconsistent ways ("… are not supported" / "… are ignored" / "Select a non-service account"), so this is an observed failure mode, not a hypothetical. |
+| **R8** | **Asserting severity per code** instead of computing it from the attack's count would label every `reducing` conflict a blocker — pulling SAF-35484's partial-impact scope into this ticket by accident and over-reporting zero-impact attacks. | **Medium** | Severity is derived in Phase 4 from `attacks[attack_id]` alone; the catalog holds no severity-like field to be tempted by. Covered by a test asserting the same code resolves `blocking` and `reducing` within one step. |
 
 ### Assumptions under question
 
@@ -727,15 +738,30 @@ above.
 
 ## 10. Future Enhancements
 
-- **Serve the constraint catalog from the orchestrator API** — the structural fix for R3, and the most
-  valuable follow-up here. Today three repos vendor the same vocabulary at three different coverage levels:
-  orchestrator 88 (source), ui-react 57 real + 3 dead, safebreach-mcp 14 → 88. Classification belongs where
-  the constraint is defined, so a developer adding a reason classifies it in the same commit and every consumer
-  inherits it. Concretely: `constraints.js` maps `key → code` today and would map `key → { code, severity }`,
-  surfaced either inline per reason in the statistics response or via a catalog endpoint. Then ui-react retires
-  its table and MCP keeps only `fix_lever` — which is genuinely MCP-specific, since Core has no concept of
-  `step_overrides`. Because this PRD already normalizes the response into a catalog, that swap changes **only
-  where MCP fills the catalog from**, not the response contract.
+- **[SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568) — serve the constraint catalog from the
+  plan/statistics response.** The structural fix for R3, filed 2026-08-26 and linked *relates to* this
+  sub-task. Today three repos vendor one vocabulary at three coverage levels: orchestrator 88 (source),
+  ui-react 57 real + 3 dead + 31 untranslated, safebreach-mcp 14 → 88 under this PRD. That ticket adds a
+  `constraintCatalog` to the statistics response mapping each code **referenced in that response** to
+  `{ description, fixLever }`, gated on `getConstraints=true` — in the response rather than a new endpoint, so
+  there is no second round trip and no way for the catalog to fall out of sync with the response it explains.
+  It deliberately carries **no `severity`** (a function of the counts the consumer already has, and it would
+  drift from them) and **no `kind`** (there is no informational class — all 88 eliminate).
+
+  **What lands here when it ships.** MCP stops vendoring: `CONSTRAINT_CATALOG` is deleted and the response's
+  `constraint_catalog` is filled from the API's instead. Because this PRD already normalizes conflicts into a
+  catalog plus references, that changes **only where the catalog is populated from** — the tool's response
+  contract is unaffected, and no test outside Phase 1 should need to move. The one thing MCP keeps is the
+  **naming rename**: Core expresses levers in its own camelCase schema vocabulary (`attackerFilter.role`,
+  `targetFilter.os`, `console.simulatorApproval`) while this tool exposes snake_case (`attacker_filter.role`,
+  `target_filter.os`, `console.simulator_approval`) to match `step_overrides`. That mapping is mechanical, and
+  worth writing down now so the migration is a rename rather than a surprise.
+
+  **Partial adoption is expected.** SAF-35568 flags localization as an open question — `fixLever` is an enum
+  and unaffected, but descriptions are user-facing prose the console may localize, so Core may ship the lever
+  half first. MCP's resolver should therefore tolerate a catalog that supplies `fixLever` but not
+  `description`, falling back to the vendored description for those codes rather than treating a partial
+  catalog as an error.
 - **Acting on the zero-impact report** — dropping inapplicable attacks/simulators from the plan body being
   assembled. Explicitly out of scope here (§9); needs an owner, either a new SAF-34615 subtask or SAF-35484.
 - **Correcting `quick_run` / `run_scenario` previews** to report runnable rather than expected counts. The
@@ -761,10 +787,10 @@ above.
   depend on the existing helper's shape; runnable counts by default, since `includeDisabled=false` is the only
   setting that explains the gap; no MCP-side cache, because stale impact numbers are the exact failure being
   fixed; vendor the reason vocabulary by **emitted value**, since two of the 88 codes differ from their source
-  key; and **MCP returns structure, Helm narrates** — the catalog carries only what a model cannot derive
-  (`kind`, `fix_lever`, ~20 corrective descriptions), with `severity` computed per attack rather than asserted
-  per code, and the whole conflict list normalized into a catalog plus references so an API-served catalog can
-  later drop in without changing the contract.
+  key; and **MCP returns structure, Helm narrates** — the catalog carries the two facts that must be looked up
+  (a `description` per code, authored from its emit site, and a `fix_lever`), with `severity` computed from the
+  counts rather than stored, and the whole conflict list normalized into a catalog plus references so an
+  API-served catalog can later drop in without changing the contract.
 - **Scope changes**: ACs 9/10 were **reworded** from "auto-removed" to "reported" (D3) — a statistics call
   reports what will and will not run; acting on that report is the plan-holder's job, and is now explicitly
   out of scope on the ticket. All 12 ACs are delivered. The *act* of removal still needs an owner (§9).
@@ -781,4 +807,6 @@ above.
 |------|-------------------|
 | 2026-08-26 | PRD created — initial draft |
 | 2026-08-26 | DoD gate flagged TI-9/TI-10 as gaps. Root cause was the ticket's "auto-removed" wording, not the design: a statistics call reports, it does not act. Reworded SAF-35508 ACs 9/10 to "reported" (plus AC-5/AC-12 alignment, scope item 4, and the out-of-scope line); updated §7, §9, §10 and §11 to match. All 12 ACs now covered. |
+| 2026-08-26 | **Aligned to SAF-35568.** Filed the orchestrator follow-up and linked it *relates to* this sub-task, then pointed every forward reference at the ticket key instead of "§10 files a follow-up" (§2 solution + two alternatives rows, §9 R3 mitigation). Rewrote the §10 entry to match what the ticket actually proposes — `constraintCatalog` of `{ description, fixLever }` in the statistics response, gated on `getConstraints=true`, no `severity`, no `kind` — and added two things the ticket implies for this PRD: the **snake_case ↔ camelCase lever rename** MCP keeps after the migration, and the requirement that the resolver tolerate a **partial catalog** (levers without descriptions) since SAF-35568 may ship the lever half first while localization is resolved. |
+| 2026-08-26 | **Correction — no `kind`, descriptions for all 88.** Checked the emit sites: every one of the 88 codes sets `valid = false` and the node is dropped from `filteredNodes` (`aws_validation.js:96-101`, `gcp_validation.js:77-81`). The `*_is_ignored` / `ignoring_*_variant` families are **variant-level de-duplication, not benign notes** — so the previous row's 72/16 `elimination`/`informational` split did not exist, and `kind` is removed entirely. Severity now derives from the counts alone. Because the names proved misleading, `description` is authored for **all 88** from their emit sites rather than ~20; the "self-describing majority" premise is retracted. R7 is rewritten from "misclassifying kind" to "descriptions written from names". `fix_lever` is no longer claimed to be MCP-specific — `attackerFilter`/`targetFilter` are Core's own `ValidatePlan` fields — so §10 now asks the API for `{ description, fixLever }` and drops the severity/catalog-endpoint proposal. T-37 tombstoned; T-1/T-3/T-36 rescoped. |
 | 2026-08-26 | **Design revision — MCP is structured, Helm narrates.** Resolved the ticket's internal contradiction between scope item 1 ("no narrative fields — Helm interprets") and items 3/7 ("plain-language explanation + suggested fix") in favour of item 1. `CONSTRAINT_REASONS` (88 prose descriptions + 88 suggested fixes) becomes `CONSTRAINT_CATALOG` — `kind` + `fix_lever` for all 88, corrective `description` for ~20 only, `suggested_fix` dropped as model-derivable. Added computed `severity` (`blocking`/`reducing`/`none`), since blocker-ness is contextual per attack, not a property of the code. Normalized the response into a `constraint_catalog` + references, grouped by `(attack, code)`. Verified `unable_to_validate` cannot appear as a reason code, so no `indeterminate` severity. Added R7/R8; reframed R3 with the measured ui-react drift (3 dead entries, 31 gaps). Filed the orchestrator catalog follow-up in §10. Revised §2, §3 A/D, §4, §7, Phases 1 and 4. |
