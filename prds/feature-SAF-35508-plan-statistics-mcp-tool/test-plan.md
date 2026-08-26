@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD v3) |
+| Status | Draft (In Sync with PRD v4) |
 | Offering / surface | Helm AI Agent (JIRA `Offering`) over the **Validate** product surface — scenarios/plans, simulators, plan statistics — via the safebreach-mcp Studio server |
 
 ## Requirements Traceability
@@ -22,8 +22,8 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R4 | Numbers match the console per view and per parameter set (Checkout `includeDisabled=true, getConstraints=true`; run gating `includeDisabled=false`) | T-30, T-35 | Covered |
 | R5 | `isLimitReached` reported explicitly; `null` (not computed) vs `0` (runs nowhere) preserved; truncated step list surfaced; no zero-impact reporting on that path | T-10, T-15, T-22 | Covered |
 | R6 | Exactly one `plan/statistics` call site; `_get_scenario_statistics` and its two callers routed through it, not a parallel implementation | T-13, T-14, T-16 | Covered |
-| R7 | All 88 emitted codes carry a `description` (authored from the emit site) and a `fix_lever`, keyed on emitted values; a test fails if a code lacks either | T-1, T-2, T-4, T-5, T-19 | Covered |
-| R8 | No bare code is presented as the explanation; conflicts are normalized against a catalog; `severity` is computed from the counts alone; an unrecognised code is surfaced without a fabricated explanation | T-3, T-18, T-23, T-36, T-32 | Covered |
+| R7 | `CONSTRAINT_REASON_DESCRIPTIONS` deleted; all 88 emitted codes carry a `fix_lever` keyed on emitted values; no meaning is vendored; a test fails if a code lacks a lever | T-1, T-2, T-5, T-19 | Covered |
+| R8 | Every conflict is surfaced with an explicit `description: null` rather than a bare code; conflicts are normalized against a catalog; `severity` is computed from the counts alone | T-3, T-18, T-23, T-36, T-32 | Covered |
 | R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22, T-36 | Covered |
 | R10 | Zero-impact simulator (`simulators[id] === 0`) reported the same way, read from the **union** map not a role map | T-21, T-22 | Covered |
 | R11 | No MCP-side caching, so any change to an earlier decision produces a fresh call | T-12 | Covered |
@@ -34,7 +34,7 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-4, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-2, T-3, T-5, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
 | `safebreach_mcp_studio/studio_server.py` | T-24, T-25 | — |
 | `CLAUDE.md` | T-34 | — |
@@ -47,18 +47,22 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
     positional alignment, would report the user's whole selection as inapplicable.
   - **R2 (High)** — regressing the two existing callers. `_get_scenario_statistics` has 58 test references
     (~20 `@patch` decorators with hardcoded return dicts) plus `sb_quick_run` and `sb_run_scenario`.
-  - **R3 (Med-High)** — vendored-catalog drift, **measured not hypothetical**. `ui-react` has vendored the same
-    vocabulary for years (`containers/Studio/utils/constants.ts:166`) and has drifted both ways: 3 dead entries
-    for codes orchestrator no longer emits, and 31 of 88 it cannot translate. This plan's catalog is a third copy.
+  - **R3 (Low)** — vendored-meaning drift, largely designed out: the table is deleted, so MCP vendors no
+    meaning that could go stale. `ui-react`'s measured rot (3 dead entries, 31 of 88 missing after years) is
+    the evidence for deleting rather than a risk this plan still carries. Only the lever map remains vendored.
   - **R4 (Med)** — "matches the console" is not one number; Checkout and run-gating use opposite
     `includeDisabled` values.
   - **R5 (Med)** — cost of correctness; `getAllConstraints=true` disables the validator short-circuit.
   - **R6 (Med)** — vendoring by source key rather than emitted value ships two impossible codes, misses two
     real ones, and would still pass a naive coverage test.
-  - **R7 (Med-High)** — descriptions authored from code names rather than emit sites. The names mislead: the
-    `*_is_ignored` family reads as a benign note but sets `valid = false` on a non-canonical node variant. A
-    wrong description is worse than none. The console shows this trap in production, rendering one family
-    three inconsistent ways.
+  - **R7 (Med)** — levers assigned from code names rather than emit sites. No descriptions are authored now,
+    but the same trap applies to the lever: `*_is_ignored` reads like a user-changeable setting when nothing
+    the caller controls affects it. A wrong lever costs a wasted attempt.
+  - **R9 (Med-High)** — meanings are absent until SAF-35568 lands, including the 14 that two shipped tools
+    display today. Accepted deliberately; `description: null` is emitted explicitly so a caller can say "a
+    conflict was reported" rather than guess from a misleading code name.
+  - **R10 (Med)** — SAF-35568 is now on Stage 1's critical path, and its description half carries an open
+    localization question. Its lever half can ship alone if that stalls.
   - **R8 (Med)** — asserting `severity` per code instead of computing it from the attack's count would label
     every `reducing` conflict a blocker, pulling SAF-35484's partial-impact scope in by accident.
 - **Existing coverage (investigated)**:
@@ -85,9 +89,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 16 | 13 | 0 | 4 | 33 |
+| Automatic | 15 | 13 | 0 | 4 | 32 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **16** | **13** | **0** | **7** | **36** |
+| **Total** | **15** | **13** | **0** | **7** | **35** |
 
 ## Environment Requirements (aggregated)
 
@@ -128,10 +132,9 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 | Test | Description | Aspect | Passes after | Repo |
 |------|-------------|--------|--------------|------|
-| T-1 | Every emitted reason code has a description and a valid fix lever | API-contract | Phase 1 | safebreach_mcp_studio |
+| T-1 | The translation table is gone and every emitted code has a valid fix lever | API-contract | Phase 1 | safebreach_mcp_studio |
 | T-2 | The two codes whose emitted value differs from their source key are keyed by the emitted value | regression | Phase 1 | safebreach_mcp_studio |
 | T-3 | An unrecognised code is still surfaced, without a fabricated explanation | — | Phase 1 | safebreach_mcp_studio |
-| T-4 | The 14 pre-existing descriptions survive the table replacement verbatim | regression | Phase 1 | safebreach_mcp_studio |
 | T-5 | The vendored table has not drifted from the orchestrator source of truth | regression | Phase 1 | safebreach_mcp_studio |
 | T-18 | A sparse constraint map is never iterated as though dense | — | Phase 4 | safebreach_mcp_studio |
 | T-19 | Every reason in a multi-reason constraint leaf surfaces, not just the first | API-contract | Phase 4 | safebreach_mcp_studio |
@@ -175,18 +178,18 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-33 | The two shipped run tools still preview correctly against a real console | Manual | regression | Final | — | Validate console environment |
 | T-35 | The tool's Checkout-parameter numbers match what the console itself displays | Manual | API-contract | Final | — | Validate console environment |
 
-### T-1 — Every emitted reason code has a description and a valid fix lever
+### T-1 — The translation table is gone and every emitted code has a valid fix lever
 
-- Description: Proves the catalog can answer for any code the API emits, so no conflict is ever surfaced without a meaning and a remedy path.
+- Description: Proves MCP vendors no constraint meanings at all, and that every code the API can emit still has an actionable remedy path.
 - Status: Active
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: An incomplete catalog is the current defect (14 of 88); a partial fix leaves most conflicts unclassified, and an unclassified conflict cannot be acted on or safely rendered.
+- Risk: Leaving any vendored description behind recreates the third copy this design deletes, and re-opens the possibility of MCP asserting a meaning it is not the source of. A missing lever leaves a conflict with no remedy path.
 - Risk source: PRD §9 (R3)
-- Verify: Enumerate the vendored catalog. For each entry assert a non-empty `description` and a `fix_lever` that is either `null` or a member of the closed lever enum. Assert the entry count equals 88. Assert no entry carries a `suggested_fix` or `kind` field.
-- Expected: 88 entries, each with a non-empty `description` and a valid-or-null `fix_lever`. No `suggested_fix` prose (Helm composes that) and no `kind` field (all 88 are eliminations). No `description` equal to its own code.
+- Verify: Assert the module exposes no `CONSTRAINT_REASON_DESCRIPTIONS` symbol. Enumerate the lever map: assert 88 entries, each a `null` or a member of the closed lever enum, and assert no entry carries a `description`, `suggested_fix` or `kind` field.
+- Expected: `CONSTRAINT_REASON_DESCRIPTIONS` does not exist. The lever map has exactly 88 entries with valid-or-null levers, and carries no meaning-bearing field of any kind. The variant de-duplication family (`*_is_ignored`, `ignoring_*_variant`) resolves to `null`, since nothing the caller controls affects it.
 - Evidence required: pytest run output naming the test, with the asserted entry count visible.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -217,26 +220,23 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: The current lookup returns the code itself on a miss. Silently dropping an unknown code would hide a genuine blocker — exactly what the console does, filtering to `CONSTRAINTS[reason]` at `helpers.tsx:820` and discarding the 31 codes its table lacks. Drift is measured, not hypothetical.
 - Risk source: PRD §9 (R3)
 - Verify: Resolve a code absent from the catalog (e.g. `a_future_upstream_reason`). Inspect the resolved entry's fields.
-- Expected: `fix_lever` is `null` and no `description` is fabricated, but the conflict is still present in the output — surfaced, not dropped. The literal input code is never returned as a description or explanation field.
+- Expected: `fix_lever` is `null` and `description` is explicitly `null` — not the code, not invented prose — and the conflict is still present in the output, surfaced rather than dropped.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-4 — The 14 pre-existing descriptions survive the table replacement verbatim
 
-- Description: Protects user-visible wording that two shipped tools already emit, so replacing the table adds coverage without changing what existing callers show.
-- Status: Active
+- Description: Would have protected the 14 descriptions two shipped tools display, across a table replacement.
+- Status: Removed
+- Reason for removal: **The design changed from replacing the table to deleting it.** `CONSTRAINT_REASON_DESCRIPTIONS`
+  and all 14 of its entries are removed outright (PRD §3 Component A), so there is no wording to preserve —
+  losing those 14 descriptions is now the accepted, recorded consequence (PRD §9 **R9**), not a regression to
+  guard against. The replacement assertion — that no vendored meaning survives anywhere — is covered by the
+  rescoped **T-1**.
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
-- Aspect: regression
-- Risk: Rewriting all 88 entries could silently reword the 14 descriptions `quick_run` and `run_scenario` already display.
-- Risk source: PRD §9 (R2)
-- Verify: For each of the 14 codes previously present, assert its `description` still conveys the same meaning and, where the pre-refactor wording was correct, is preserved verbatim. Flag any whose meaning changed as a deliberate correction with the emit site cited.
-- Expected: All 14 still described. Any wording change is an intentional correction traceable to the code's emit site, not an incidental reword — two shipped tools already display these strings.
-- Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
-- Environment needs: none
 
 ### T-5 — The vendored table has not drifted from the orchestrator source of truth
 
@@ -530,7 +530,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: Inlining static fields per conflict repeats them across every attack that hit the code, bloating the response and letting two code paths format the same code differently. It would also have to be restructured when the catalog moves to the API.
 - Risk source: PRD §9 (R3)
 - Verify: Run the reporting layer over a response where three distinct attacks share one reason code and one attack carries an unknown code. Inspect the top-level catalog and each conflict entry.
-- Expected: The catalog holds exactly one entry per distinct code present, and only codes present in this response. Each conflict carries `code`, `severity`, `attack_id`, `side`, `simulator_count` and `values` — and none of `kind`, `fix_lever` or `description`, which appear only in the catalog. No field anywhere in the payload presents a bare reason code as its explanation.
+- Expected: The catalog holds exactly one entry per distinct code present, and only codes present in this response, each carrying `fix_lever` and an explicit `description: null`. Each conflict carries `code`, `severity`, `attack_id`, `side`, `simulator_count` and `values` — and no `fix_lever` or `description`, which live only in the catalog. No field anywhere in the payload presents a bare reason code as its explanation.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -758,13 +758,13 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | After phase | Newly green | Cumulative green |
 |-------------|-------------|------------------|
-| Phase 1 | T-1, T-2, T-3, T-4, T-5 | 5 |
-| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 12 |
-| Phase 3 | T-13, T-14, T-15, T-16, T-17 | 17 |
-| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 24 |
-| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | 32 |
-| Phase 6 | T-34 | 33 |
-| Final | T-32, T-33, T-35 | all (36) |
+| Phase 1 | T-1, T-2, T-3, T-5 | 4 |
+| Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 11 |
+| Phase 3 | T-13, T-14, T-15, T-16, T-17 | 16 |
+| Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 23 |
+| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 | 31 |
+| Phase 6 | T-34 | 32 |
+| Final | T-32, T-33, T-35 | all (35) |
 
 ## Sign-off
 
@@ -781,5 +781,6 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
+| 2026-08-26 16:20 | Corrected for PRD v4 — the vendored translation table is **deleted**, not extended. **T-4 tombstoned** (Status: Removed, ID retained): its premise was preserving the 14 existing descriptions, which are now deliberately removed (PRD R9). T-1 rescoped to assert `CONSTRAINT_REASON_DESCRIPTIONS` no longer exists and that all 88 codes carry a valid-or-null lever with no meaning-bearing field; T-3 and T-23 assert an explicit `description: null` rather than a fabricated or bare-code explanation. R7 narrowed from descriptions to levers; R3 dropped to Low; R9/R10 added for the accepted regression and the SAF-35568 dependency. Regenerated views: 35 Active (15 unit / 13 integration / 7 e2e), phases 4/11/16/23/31/32/35. In Sync with PRD v4. |
 | 2026-08-26 15:40 | Corrected for PRD v3 and aligned to SAF-35568. Verified at the emit sites that all 88 codes eliminate the node — the `informational` class does not exist, so **T-37 is tombstoned** (Status: Removed, ID retained) and `kind` is gone from T-1/T-3/T-36. T-1 now asserts a description plus a valid fix lever for all 88; T-3 asserts an unknown code is surfaced rather than dropped; T-4 covers all 14 legacy descriptions. R7 rewritten to "descriptions from names, not emit sites". Fixed the non-existent `safebreach-mcp/` path prefix on all automation locations. Regenerated views: 36 Active (16 unit / 13 integration / 7 e2e), phases 5/12/17/24/32/33/36. In Sync with PRD v3. |
 | 2026-08-26 13:20 | Updated for the PRD v2 design revision (MCP is structured, Helm narrates). Rescoped T-1 (classification on two closed enums, no `suggested_fix`), T-3 (fail-safe to `elimination`, not a generic description), T-4 (retained-vs-dropped descriptions), T-23 (catalog normalization rather than per-conflict translation). Added T-36 (computed severity — same code blocking and reducing in one step) and T-37 (the 16 informational codes never block). Regenerated the unit index, Coverage Summary (17/13/0/7 = 37) and Tests by Phase; extended R7/R8/R9 traceability and Change Coverage. Status stays Draft — material change. In Sync with PRD v2. |
