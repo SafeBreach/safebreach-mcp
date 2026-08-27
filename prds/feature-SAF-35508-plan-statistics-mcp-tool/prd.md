@@ -18,9 +18,10 @@
      tools declared as *running a test*, which queue a real one at `evaluate=False`.
   2. **Correct** numbers. Runnable counts become reachable for the first time, along with the
      `simulator_is_offline` reason that explains the gap between expected and runnable.
-  3. **Actionable** conflicts. Every one of the 88 reason codes gets a `fix_lever` naming the control surface
-     that resolves it — the fact a calling model cannot infer. Meanings are **not** MCP's to own: the
-     translation table is deleted outright and descriptions become SAF-35568's deliverable (§9, §10).
+  3. **Explained** conflicts. Every reason code carries the authoritative `description` Core now serves in the
+     `plan/statistics` response ([SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568), delivered).
+     Meanings are **not** MCP's to own: the vendored translation table is deleted outright and the API's
+     catalog is relayed instead (§3 A, §10).
 - **Business Alignment**: Implements functional requirements **6** and **7** of parent story SAF-34615
   ("MCP support for Validate scenario creation and update, Stage 1"), and covers parent Definition-of-Done
   items **2** and **5**. See §9 for the DoD-6 caveat introduced by the scope decision.
@@ -34,7 +35,7 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Review |
-| **Last Updated** | 2026-08-26 |
+| **Last Updated** | 2026-08-27 |
 | **Owner** | Boris Berezovsky (AI-assisted planning) |
 | **Current Phase** | N/A — not started |
 
@@ -46,12 +47,12 @@
 
 Four pieces, in dependency order:
 
-1. **Delete the translation table; keep a fix-lever map.** `CONSTRAINT_REASON_DESCRIPTIONS` is removed
-   outright rather than extended — MCP stops owning constraint *meanings* altogether. What remains is a
-   `CONSTRAINT_FIX_LEVERS` map: for each of the 88 emitted codes, the control surface that resolves it. Helm
-   renders the sentence from the code plus the lever (parent req 13); authoritative meanings arrive from
-   [SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568), which this therefore **depends on** rather
-   than merely anticipating. See §9 for what that trade costs.
+1. **Delete the translation table; relay Core's catalog.** `CONSTRAINT_REASON_DESCRIPTIONS` is removed
+   outright rather than extended — MCP stops owning constraint *meanings* altogether, and vendors **no**
+   replacement of any kind. [SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568) has delivered a
+   `constraintCatalog` in the `plan/statistics` response itself, mapping every code that response references
+   to its authoritative `description`. MCP relays it; Helm renders the sentence from that description (parent
+   req 13). A code the API does not describe reports `description: null` and is still surfaced.
 2. **A new low-level fetch function** that performs the HTTP call, exposes **every** query parameter, and
    returns the **raw, null-safe** per-step response — including the `simulators` union map and
    `isLimitReached`, both of which the current helper never even extracts.
@@ -77,13 +78,14 @@ unchanged by default and correcting them becomes a separate, deliberate decision
 | **New tool as a wholly separate code path, leaving the helper untouched** | Zero regression risk; smallest diff. | Directly violates **AC-6** — two independent paths to the same endpoint, which is exactly what parent req 6 forbids. Translation-table drift would then differ per path. | **Rejected** — violates an acceptance criterion. |
 | **Always issue both calls (expected + runnable)** | Fully satisfies parent req 13's "both figures" with no caller decision. | Two round trips on **every** call against an endpoint given a 120 s timeout, with `getAllConstraints=true` already disabling the validator short-circuit (R5). Helm re-checks after *every* changed decision (AC-11). | **Rejected** by user decision D2 — runnable default, second call only on explicit request. |
 | **Derive expected counts client-side from a runnable response** | One call, both numbers. | **Impossible.** `includeDisabled=false` filters disabled simulators out of the counts entirely (F2, `plan_statistics.js:65-66`); the information is not in the response. | **Rejected** — not implementable. |
-| **Generate the translation table at runtime from `constraints.js`** | Never drifts from upstream. | `orchestrator` is not a dependency of `safebreach-mcp`, and the file is JavaScript. Would add a cross-repo build-time coupling to a differently-cadenced release. | **Rejected** — vendor statically, guard with a coverage test (D4). |
-| **Describe only the ~20 codes whose plain reading misleads, and let a model infer the rest** | Smallest artifact; less to rot on an upstream rewording. | Rests on the other ~68 being self-describing, which is **false**. The `*_is_ignored` family reads as a benign note and in fact eliminates the node (`aws_validation.js:96-101`). Deciding per-code which names can be trusted is an unbounded judgement, and the failure mode is a *confidently wrong* explanation. | **Rejected** — but so was describing all 88; see the next two rows. |
-| **Vendor a description for all 88, authored from their emit sites** | SAF-35508 ships self-sufficient; fixes the live raw-code leak immediately; no dependency on another team. | It is the largest authoring effort in the plan and **entirely throwaway** once SAF-35568 serves descriptions. Worse, it is a pressure-release valve: `ui-react` has carried an "interim" copy of this vocabulary for years — 57 real entries, 3 dead, 31 missing — precisely because vendoring removed the incentive to fix the API. A third copy would do the same. | **Rejected** — deleting is the only option that keeps the forcing function on SAF-35568. |
-| **Delete the table; keep only the fix-lever map** | MCP stops owning meanings it is not the source of. No throwaway authoring, no third copy, no risk of asserting a wrong meaning. Preserves the pressure for SAF-35568 to land. | SAF-35508 can no longer satisfy AC-7/AC-8's description half alone, so **SAF-35568 becomes a dependency** with its localization question on Stage 1's path; and the 14 codes that carry correct descriptions today lose them, which is a visible regression for `quick_run` / `run_scenario`. | **Chosen.** The costs are real and are recorded in §9 (R7, R9) rather than papered over. |
-| **Classify each code as `elimination` vs `informational`** (a `kind` field) | Would let a consumer drop benign notes rather than report them as problems. | **No such class exists.** Every one of the 88 sets `valid = false` and the node is never pushed to `filteredNodes` — verified in `aws_validation.js:96-101` and `gcp_validation.js:77-81`. The apparent "informational" family is variant-level de-duplication, and the effect it was meant to capture is already covered by severity derived from the counts: a variant elimination on an attack that still runs is `reducing`. | **Rejected — premise was wrong.** No vocabulary metadata is needed for severity. |
-| **Keep `fix_lever` MCP-side permanently** | Core has no `step_overrides` parameter. | `step_overrides` is only MCP's wrapper over `attackerFilter` / `targetFilter`, which are **Core's own `ValidatePlan` fields**, and `os`/`role`/`simulators`/`connection` are fields in Core's `simulatorsFilter` schema. The lever is expressible in Core's vocabulary, and the console needs the identical knowledge. | **Rejected** — SAF-35568 asks the API for it too; only the snake_case rename onto MCP's JSON shape stays here. |
-| **Have the orchestrator API serve the catalog** | Single source of truth; a new code is described in the same commit that adds it; retires ui-react's duplicate table too. | Cross-team, multi-repo change on another release cadence — it would block a Stage 1 subtask scoped as "promote an existing helper", and the description half carries an unresolved localization question. | **Right long-term direction, filed as SAF-35568.** Adopting the normalized catalog shape now makes that migration a drop-in with **no response-contract change**. |
+| **Generate the translation table at runtime from `constraints.js`** | Never drifts from upstream. | `orchestrator` is not a dependency of `safebreach-mcp`, and the file is JavaScript. Would add a cross-repo build-time coupling to a differently-cadenced release. | **Rejected, and now moot** — SAF-35568 serves the same vocabulary in the response, which achieves never-drifts without the coupling. |
+| **Describe only the ~20 codes whose plain reading misleads, and let a model infer the rest** | Smallest artifact; less to rot on an upstream rewording. | Rests on the other ~77 being self-describing, which is **false**. The `*_is_ignored` family reads as a benign note and in fact eliminates the node (`aws_validation.js:96-101`). Deciding per-code which names can be trusted is an unbounded judgement, and the failure mode is a *confidently wrong* explanation. | **Rejected** — but so was describing all 97; see the next two rows. |
+| **Vendor a description for all 97, authored from their emit sites** | SAF-35508 ships self-sufficient; fixes the live raw-code leak immediately; no dependency on another team. | It is the largest authoring effort in the plan and **entirely throwaway** once SAF-35568 serves descriptions. Worse, it is a pressure-release valve: `ui-react` has carried an "interim" copy of this vocabulary for years — 57 real entries, 3 dead, 31 missing — precisely because vendoring removed the incentive to fix the API. A third copy would do the same. | **Rejected** — deleting is the only option that keeps the forcing function on SAF-35568. |
+| **Delete the table; keep only the fix-lever map** | MCP stops owning meanings it is not the source of, with no throwaway authoring and no third copy. | Was chosen on the premise that SAF-35568 would serve **both** `description` and `fixLever`. It shipped `description` only — `fixLever` was built and then removed as redundant relative to it — so a lever map here would be a permanently MCP-owned artifact with no upstream counterpart, drifting against 97 codes forever and asserting a remedy from an enum never validated against Core's own `ValidatePlan` / `simulatorsFilter` fields. | **Superseded** by the row below, once SAF-35568's actual shape was known. |
+| **Delete the table; relay Core's `constraintCatalog`** | MCP vendors nothing at all — no meanings, no levers, no coverage guard, nothing to drift. Descriptions arrive in the same payload as the codes they explain, at full coverage rather than the 14/97 MCP vendored. Satisfies AC-7 **and** AC-8's description half without authoring a word. | Descriptions now depend on the console's orchestrator version: one predating SAF-35568 sends no catalog, so those conflicts report `description: null` — including the 14 that had vendored prose (R9, R11). No lever is offered to any caller. | **Chosen.** The residual is a bounded, self-resolving deployment lag recorded in §9 R11, not an authoring debt. |
+| **Classify each code as `elimination` vs `informational`** (a `kind` field) | Would let a consumer drop benign notes rather than report them as problems. | **No such class exists.** Every one of the 97 sets `valid = false` and the node is never pushed to `filteredNodes` — verified in `aws_validation.js:96-101` and `gcp_validation.js:77-81`. The apparent "informational" family is variant-level de-duplication, and the effect it was meant to capture is already covered by severity derived from the counts: a variant elimination on an attack that still runs is `reducing`. | **Rejected — premise was wrong.** No vocabulary metadata is needed for severity. |
+| **Keep `fix_lever` MCP-side permanently** | Core serves no lever, so MCP would be the only place a remedy is stated at all. | `step_overrides` is only MCP's wrapper over `attackerFilter` / `targetFilter`, which are **Core's own `ValidatePlan` fields**, so the lever was never MCP-specific knowledge to begin with. SAF-35568 implemented `fixLever`, reviewed it, and **deleted it as redundant relative to `description`** — a well-written description already names the surface. Keeping it here would re-adopt a rejected design as a permanent single-repo artifact. | **Rejected** — no lever map is vendored; §9 R7 records the residual. |
+| **Have the orchestrator API serve the catalog** | Single source of truth; a new code is described in the same commit that adds it; retires ui-react's duplicate table too. | Cross-team, multi-repo change on another release cadence; carried an unresolved localization question. | **Delivered as SAF-35568** — and consumed here. Because this PRD had already normalized conflicts into a catalog plus references, adopting it changed only *where the catalog is filled from*, with no response-contract change. Localization stayed open and does not block MCP (§10). |
 
 ### Decision rationale
 
@@ -95,48 +97,52 @@ read-only/deferral posture are user decisions **D1–D3**, recorded in `context.
 
 ## 3. Core Feature Components
 
-### Component A — Delete the translation table; add a fix-lever map (`CONSTRAINT_FIX_LEVERS`)
+### Component A — Delete the vendored translation table; relay Core's catalog
 
-**Purpose**: Remove `CONSTRAINT_REASON_DESCRIPTIONS` (`studio_functions.py:2225`) outright and replace it with
-a map of the one fact MCP is genuinely the right owner of. Satisfies AC-7; AC-8's description half moves to
-SAF-35568.
+**Purpose**: Remove `CONSTRAINT_REASON_DESCRIPTIONS` (`studio_functions.py:2225`) outright and fill the
+response's `constraint_catalog` from the `constraintCatalog` Core now serves in the `plan/statistics` response
+([SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568), delivered). Satisfies AC-7 **and** AC-8's
+description half. MCP vendors **no** constraint vocabulary of any kind — no meanings, no levers, no coverage
+guard.
 
-**Why delete rather than extend.** MCP is not the source of truth for what a constraint code means —
-`orchestrator` is. Vendoring a meaning here creates a third copy of one vocabulary, and the evidence that this
-does not stay "interim" is direct: `ui-react` has carried its copy for years and it has drifted both ways (57
-real entries, 3 dead, 31 missing, 4 commented out). A vendored table is a pressure-release valve — it removes
-the incentive to fix the API. Deleting keeps that incentive, and it means MCP can never assert a meaning that
-is wrong.
+**Why relay rather than vendor.** MCP is not the source of truth for what a constraint code means —
+`orchestrator` is, and as of SAF-35568 it says so in the response itself. Vendoring a meaning here would
+create a third copy of one vocabulary, and the evidence that this does not stay "interim" is direct:
+`ui-react` has carried its copy for years and it has drifted both ways (57 real entries, 3 dead, 31 missing,
+4 commented out). A relay cannot drift at all: the catalog arrives in the same payload as the codes it
+explains, so it is impossible for it to describe a different vintage of the vocabulary.
 
-**What remains: `CONSTRAINT_FIX_LEVERS`**
-- One entry per distinct emitted reason code, giving the control surface that resolves it, from a closed enum:
-  `target_filter.os`, `attacker_filter.role`, `*_filter.simulators`, `*_filter.connection`,
-  `console.simulator_approval`, `console.license`, `console.advanced_actions`, `step.parameters`, or `null`
-  for intrinsic incompatibility.
-- This is the fact a calling model **cannot** infer, and the reason it cannot is that the remedy diverges
-  sharply between similar-looking codes: `incompatible_os` is a step filter, `simulator_is_offline` is a
-  console action, `move_does_not_meets_license_requirements` is a licence. A closed enum is also testable in a
-  way free-text prose is not, and it is cheap — largely patternable by validator family.
-- **Naming**: snake_case, to match `step_overrides`. SAF-35568 will serve the same levers in Core's camelCase
-  schema vocabulary (`attackerFilter.role`, `console.simulatorApproval`), so that migration includes a
-  mechanical rename — see §10.
-- **No `description` field, for any code.** Not for the 74 currently untranslated, and not for the 14 that
-  have one today — those are deleted too, so the output is uniform rather than 14 special cases. Helm renders
-  from the code plus the lever until SAF-35568 supplies authoritative meanings.
-- **No `kind` field.** All 88 codes eliminate the node: every one sets `valid = false`, after which the node is
+**How the relay works**
+- Core returns a top-level `constraintCatalog`, keyed by emitted reason code, each entry `{ description }`,
+  **scoped to the codes referenced in that response** and gated on `getConstraints=true` — which is this
+  tool's default (§4). That is the same gate that populates `simulatorConstraints`, so there is no parameter
+  combination in which conflicts arrive without their catalog.
+- MCP renames only the wrapper key (`constraintCatalog` → `constraint_catalog`, snake_case per house style)
+  and narrows it to the codes its own normalized conflict list actually emits — a subset whenever MCP
+  suppresses conflicts, as on a limit-reached response. Code keys and description text pass through
+  **verbatim**: MCP does not edit, re-word, truncate, or reformat them. Re-wording would quietly re-create the
+  third copy this design deletes.
+- **No `fix_lever`, for any code.** SAF-35568 implemented one and then removed it as redundant relative to
+  `description`, so there is no API-served lever to relay — and MCP does not invent one. The remedy is
+  derivable by the caller from the description plus the `step_overrides` schema it already holds. See §2's
+  alternatives and §9 R7.
+- **No `description` authored here, for any code.** Not for the 83 that were never translated, and not for the
+  14 that had one — those are deleted too, so output is uniform rather than 14 locally-authored strings at one
+  vintage and the API's at another.
+- **No `kind` field.** All 97 codes eliminate the node: every one sets `valid = false`, after which the node is
   never pushed to `filteredNodes` (`aws_validation.js:96-101`, `gcp_validation.js:77-81`). The `*_is_ignored`
   and `ignoring_*_variant` families are variant-level de-duplication, not benign notes. An earlier draft
   asserted a 72/16 `elimination`/`informational` split; it was inferred from code names and is **wrong**.
-- **Keyed on emitted values, not source keys.** The source file has **87 distinct keys but 88 distinct
-  values**, and two entries emit a value differing from their key —
-  `some_cloned_advanced_actions_are_disabled` → **`some_duplicate_advanced_actions_are_disabled`**, and
-  `move_does_not_require_location_simulator_location_is_ignored` (web-application group) →
-  **`move_does_not_require_url_simulator_url_is_ignored`**. A key-derived map would ship two levers for codes
-  that can never occur while missing the two that do — and a naive coverage test would still report 88/88.
-  Two codes are also **shared across groups** (`incompatible_framework_version`), so an entry must not assume
-  a single owning validator group.
-- **Fail-safe default**: an unrecognised code — one added upstream after this ticket — resolves to
-  `fix_lever: null` and is still surfaced as a conflict. Never dropped, never given an invented meaning.
+- **Nothing is keyed by hand, so the key-versus-value trap is gone.** It was real: `constraints.js` declared
+  **87 keys for 88 emitted values**, two of them emitting a string differing from their key
+  (`some_cloned_advanced_actions_are_disabled` → **`some_duplicate_advanced_actions_are_disabled`**, and
+  `move_does_not_require_location_simulator_location_is_ignored` → **`move_does_not_require_url_simulator_url_is_ignored`**).
+  SAF-35568 renamed both at source and deleted 5 dead keys, leaving **97 codes across 24 groups with keys 1:1
+  with emitted values**. A relay is immune either way: it keys off what the response contains, never off a
+  locally enumerated list.
+- **Fail-safe default**: a code with no catalog entry — an older console (R11), or one Core added after its own
+  catalog — resolves to `description: null` and is **still surfaced** as a conflict. Never dropped, never given
+  an invented meaning, and never rendered with the raw code standing in as its explanation.
 
 **Blocker-ness is contextual and needs no vocabulary metadata.** A reason lives at `[simulatorId][moveId]` and
 eliminates one node variant for one attack. An attack usually has several candidates, and `moves[id]` is
@@ -188,7 +194,8 @@ identical, so `sb_quick_run` (`:2737`), `sb_run_scenario` (`:2958`) and all 58 t
 - Gains null-safety and limit-reached survival for free from Component B — a latent crash fix for the two
   shipped tools.
 - Its constraint summarisers (`_summarize_constraints` :2299, `_summarize_constraints_aggregated` :2350)
-  switch to `CONSTRAINT_REASONS`, so both existing tools inherit 88/88 coverage and the safe fallback.
+  switch to the relayed catalog, so both existing tools inherit full API-supplied coverage — every code the
+  response references, not the 14 vendored today — plus the `description: null` safe fallback.
 
 ### Component D — Public tool (`get_plan_statistics`)
 
@@ -217,8 +224,8 @@ reporting half of the zero-impact rules.
     surfaced instead.
 - **Normalized conflicts — a catalog plus references.** The response carries a top-level
   `constraint_catalog` holding one entry per code **actually present in this response** (each entry carrying
-  its `fix_lever`; no `description`, per Component A) (so it stays small,
-  typically a handful rather than 88), and each per-conflict entry references it by `code`, carrying only what
+  the API-supplied `description`, relayed verbatim, per Component A — so it stays small,
+  typically a handful rather than 97), and each per-conflict entry references it by `code`, carrying only what
   varies: the computed `severity`, `attack_id`, `side`, `simulator_count`, and the API's own `values` detail
   (which genuinely differs per simulator — `required: WINDOWS, actual: LINUX` versus `actual: MAC`).
   This matters for two reasons beyond payload size. It makes a single code's **contextual** severity legible
@@ -244,8 +251,10 @@ reporting half of the zero-impact rules.
   simulator with no constraints, so an absent simulator means "no constraints", not "not evaluated" (F3). It
   must never be iterated as if dense. The leaf is an **array**: one (simulator, attack) pair can carry several
   reasons, and with `getAllConstraints=true` it usually will.
-- **`hint_to_agent`** on the ambiguous cases: limit-reached truncation, an empty-steps rejection, and the
-  expected-vs-runnable distinction when only one figure was requested.
+- **`hint_to_agent`** on the ambiguous cases: limit-reached truncation, an empty-steps rejection, the
+  expected-vs-runnable distinction when only one figure was requested, and — per R11 — the case where the
+  console supplied no `constraintCatalog` at all, so a caller knows the missing descriptions mean "this
+  console predates SAF-35568" rather than "these conflicts have no meaning".
 
 ---
 
@@ -268,8 +277,8 @@ reporting half of the zero-impact rules.
 | Param | Swagger default | Tool default | What it controls |
 |---|---|---|---|
 | `includeDisabled` | `false` | **`false`** (runnable) | Selects *which question is asked*, not a tuning knob. `true` counts disabled simulators **and** empties `offlineNodes`, so `simulator_is_offline` is **never emitted** — the *expected* number. `false` excludes them from counts but still reports each one with that reason — the *runnable* number plus the explanation. Also governs **unapproved** simulators, since `node.isEnabled` is `isConnected && approved`. |
-| `getConstraints` | `false` | **`true`** | Populates `simulatorConstraints`; without it the key is **absent entirely**. Required for AC-7/AC-8 to mean anything. |
-| `getAllConstraints` | `false` | **`true`** | A **completeness** flag, not a grouping key (its swagger description is stale). `false` chains validators so a simulator records only the *first* reason that eliminated it; `true` runs every validator against the full node set so it records *all* of them, and enables two extra emitters. Console parity. |
+| `getConstraints` | `false` | **`true`** | Populates `simulatorConstraints` **and** `constraintCatalog`; without it both keys are **absent entirely**. Required for AC-7/AC-8 to mean anything, and the reason conflicts can never arrive without their descriptions. |
+| `getAllConstraints` | `false` | **`true`** | A **completeness** flag, not a grouping key. `false` chains validators so a simulator records only the *first* reason that eliminated it; `true` runs every validator against the full node set so it records *all* of them, and enables two extra emitters. Console parity. (Its swagger description said "Param to group constraints by" — corrected by SAF-35568 to state these semantics.) |
 | `limit` | `0` | **`500000`** | Console parity (`PLAN_SIMULATIONS_STATISTICS_LIMIT`). Compared against the **rendered-move** count, not the simulation count. `0` disables the circuit breaker entirely — and with it the limit-reached path. |
 | `useCache` | `true` | **`true`** | Server-side cache. Never sent by the current helper. |
 
@@ -277,9 +286,18 @@ reporting half of the zero-impact rules.
 `attackerFilter` / `targetFilter` (`simulatorsFilter`), `systemFilter`, `successCriteria`, and `draft: true`
 for Studio draft custom attacks.
 
-**Response**: `{ data: { steps: StepStatistics[] } }`. `StepStatistics` requires `simulationCount`, `moves`,
-`simulators`, `targetSimulators`, `attackerSimulators`; `isLimitReached` and `simulatorConstraints` are
-optional. The four maps are declared bare `"type": "object"` with no `properties` — untyped at the source.
+**Response**: `{ data: { steps: StepStatistics[], constraintCatalog?: {...} } }`. `StepStatistics` requires
+`simulationCount`, `moves`, `simulators`, `targetSimulators`, `attackerSimulators`; `isLimitReached` and
+`simulatorConstraints` are optional. `constraintCatalog` is a **top-level sibling of `steps`**, not a per-step
+field: `{ [reasonCode]: { description } }`, present only when `getConstraints=true` and scoped to the codes
+that response references. An unrecognised code appears as `{}` (no `description` key), which MCP normalizes to
+`description: null`.
+
+SAF-35568 also **typed the previously bare maps**: `moves`, `simulators`, `targetSimulators` and
+`attackerSimulators` are now `additionalProperties: {type: number, nullable: true}` — schema confirmation of
+the `null`-versus-`0` distinction Component B preserves — and `simulatorConstraints` carries the nested
+attacker/target shape below rather than a bare `"type": "object"`. Useful as documentation; MCP still validates
+defensively at runtime rather than trusting the schema (R1).
 
 ```
 simulatorConstraints = {
@@ -312,11 +330,11 @@ Static facts live once in `constraint_catalog`; per-conflict entries carry only 
   "params_used": { "includeDisabled": false, "getConstraints": true,
                    "getAllConstraints": true, "limit": 500000, "useCache": true },
   "constraint_catalog": {
-    "incompatible_os":      { "fix_lever": "target_filter.os",      "description": null },
-    "incompatible_package": { "fix_lever": "attacker_filter.role",  "description": null },
-    "simulator_is_offline": { "fix_lever": "console.simulator_approval", "description": null },
+    "incompatible_os":      { "description": "OS is incompatible." },
+    "incompatible_package": { "description": "Role is incompatible." },
+    "simulator_is_offline": { "description": "The simulator is offline and cannot run this move." },
     "move_does_not_require_credentials_simulator_credentials_is_ignored":
-                            { "fix_lever": null,                    "description": null }
+                            { "description": "This attack doesn't use AWS credentials, so only the default variant is used." }
   },
   "steps": [
     { "step_index": 0,
@@ -353,10 +371,15 @@ Static facts live once in `constraint_catalog`; per-conflict entries carry only 
 Note `incompatible_os` appearing as both `blocking` (attack 9012, count 0) and `reducing` (attack 1234,
 count 240) with no contradiction — the static half is in the catalog, the contextual half on the conflict.
 
-`description` is present but **always `null`** until SAF-35568 lands. The key is emitted deliberately rather
-than omitted: it tells a caller that a meaning slot exists and is unfilled, so "not supplied" is
-distinguishable from "described as empty", and the field becomes populated by the migration without a shape
-change.
+The four description strings above are Core's own, relayed verbatim — MCP authors none of them. Note how the
+last one earns its place: `move_does_not_require_credentials_simulator_credentials_is_ignored` reads as a
+benign note, and the description says what actually happened (only the default variant was used). That is the
+gap a caller cannot close from the code name.
+
+`description` is `null` only when the API supplied no entry for that code: a console whose orchestrator
+predates SAF-35568 (§9 R11), a `get_constraints=false` call, or a code Core itself does not recognise. The key
+is always emitted rather than omitted, so "not supplied" stays distinguishable from "described as empty", and
+a caller can tell it must not present the bare code as an explanation.
 
 **Limit-reached variant** — must never be mistaken for "nothing runs":
 
@@ -386,8 +409,9 @@ above: an identical-looking "nothing will run", opposite meaning. Conflating the
   `get_auth_headers_for_console(console)`, `check_rbac_response(response)`.
 - Attack-name resolution reuses `_build_attack_name_map(console)` (:2286), which reads the playbook cache via
   `_get_all_attacks_from_cache_or_api`. Names are cosmetic — that helper already degrades to `{}` on failure.
-- The vendored table lives in `safebreach_mcp_studio` alongside its only consumers rather than in
-  `safebreach_mcp_core`; nothing outside the studio server reads constraint reasons.
+- Nothing is vendored, so there is no table to place: the catalog builder and resolver live in
+  `safebreach_mcp_studio` alongside their only consumers rather than in `safebreach_mcp_core`, since nothing
+  outside the studio server reads constraint reasons.
 
 **Performance**
 - `getAllConstraints=true` disables the validator short-circuit, so full explanation coverage is measurably
@@ -404,10 +428,12 @@ edited — the precise failure this tool exists to prevent. Freshness control st
 **Backward compatibility**
 - `_get_scenario_statistics` keeps its exact contract; `sb_quick_run` and `sb_run_scenario` are behaviourally
   unchanged by default (§2, R2).
-- `CONSTRAINT_REASON_DESCRIPTIONS` is superseded by `CONSTRAINT_CATALOG`. The 14 existing description strings
-  are preserved wherever they survive into the ~20 corrective descriptions, so both existing tools' output
-  gains a verified `description` and a `fix_lever` without losing wording they already display. Only `_summarize_constraints` reads the
-  table directly (`:2333`, `:2334`); `_summarize_constraints_aggregated` inherits via `:2357`.
+- `CONSTRAINT_REASON_DESCRIPTIONS` is superseded by the API-served catalog, not by another local table. Its 14
+  strings are **deleted**, and against a console carrying SAF-35568 both existing tools' output gains Core's
+  authoritative `description` for every referenced code — a strict improvement in coverage, though the wording
+  for those 14 changes to Core's. Against an older console those 14 report `description: null` (§9 R11). Only
+  `_summarize_constraints` reads the table directly (`:2333`, `:2334`);
+  `_summarize_constraints_aggregated` inherits via `:2357`.
 
 **Observability**
 Follows the module's existing `logger` usage: one info line per call with step count, console, and the
@@ -436,20 +462,23 @@ parameter set actually used, and an error line carrying the full response body o
 - [ ] `plan/statistics` is called from exactly one place in the repo; `_get_scenario_statistics` and its two
       callers route through it rather than forming a parallel implementation. *(AC-6)*
 - [ ] `CONSTRAINT_REASON_DESCRIPTIONS` is **deleted**, including its 14 existing entries. No constraint
-      meaning is vendored in this repo. *(AC-7)*
-- [ ] All **88** emitted reason codes carry a `fix_lever` from the closed enum, keyed on the codes the API
-      emits — including the two whose emitted value differs from their source key. A test fails if any
-      emitted code lacks a lever. *(AC-7)*
-- [ ] No `description` is fabricated for any code. Authoritative meanings are SAF-35568's deliverable; until
-      it lands, the response carries the code and its lever and the caller renders. *(AC-7, §9 R9)*
+      meaning — and no `fix_lever` map either — is vendored in this repo. *(AC-7)*
+- [ ] `constraint_catalog` is filled from the response's own `constraintCatalog`, with code keys and
+      `description` text relayed **verbatim**. A test fails if MCP re-words, truncates, or substitutes a
+      description. *(AC-7)*
+- [ ] No `description` is fabricated for any code. Meanings are Core's, served per response by SAF-35568; a
+      code the API does not describe reports `description: null`. *(AC-7, §9 R9)*
+- [ ] An absent `constraintCatalog` — a console predating SAF-35568, or `get_constraints=false` — degrades to
+      `description: null` for every code with the conflicts still surfaced, and never raises. *(AC-7, §9 R11)*
 - [ ] Conflicts are returned **normalized** — a `constraint_catalog` of the codes present in the response, plus
       per-conflict references carrying only `severity`, `attack_id`, `side`, `simulator_count` and `values`. *(AC-8)*
 - [ ] `severity` is **computed** from the counts alone — `blocking` when the attack's count is an integer `0`,
       `reducing` when it still runs — consulting no vocabulary metadata. *(AC-8)*
-- [ ] Every conflict is surfaced — an unrecognised code resolves to a null lever and is still reported, never
-      dropped and never given an invented meaning. *(AC-8)*
-- [ ] The response marks meanings as **not supplied**, so a caller can tell "no description available" from
-      "described as empty" and does not present the bare code as an explanation to a user. *(AC-8, §9 R9)*
+- [ ] Every conflict is surfaced — an unrecognised code resolves to `description: null` and is still reported,
+      never dropped and never given an invented meaning. *(AC-8)*
+- [ ] When a meaning is **not supplied**, the response says so with an explicit `null` rather than omitting the
+      key, so a caller can tell "no description available" from "described as empty" and does not present the
+      bare code as an explanation to a user. *(AC-8, §9 R9, R11)*
 - [ ] An attack with `moves[id] === 0` is **reported** as inapplicable with a plain-language explanation of why
       it runs nowhere; reporting does not block save, and a `null` value is never reported as zero-impact. *(AC-9)*
 - [ ] A simulator with `simulators[id] === 0` is **reported** the same way, read from the **union** `simulators`
@@ -461,7 +490,9 @@ parameter set actually used, and an error line carrying the full response body o
 **Quality gates**
 - [ ] Every test in `test-plan.md` for this feature is green, with evidence in `test-results/`.
 - [ ] `sb_quick_run` and `sb_run_scenario` are verified behaviourally unchanged.
-- [ ] Coverage guard fails when a reason code lacks an entry. *(AC-7)*
+- [ ] A test asserts descriptions are relayed verbatim, and that an absent or partial catalog degrades to
+      `description: null` with conflicts intact. No vendored-vocabulary coverage guard exists to maintain,
+      because no vocabulary is vendored. *(AC-7)*
 - [ ] CLAUDE.md tool catalog updated.
 
 **Deployment readiness**
@@ -474,57 +505,60 @@ parameter set actually used, and an error line carrying the full response body o
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Vendored constraint vocabulary + safe fallback | ⏳ Pending | - | - | |
+| Phase 1: Relay Core's constraint catalog (delete vendored table) | ⏳ Pending | - | - | |
 | Phase 2: Raw fetch core | ⏳ Pending | - | - | |
 | Phase 3: Refactor summariser onto the core | ⏳ Pending | - | - | |
 | Phase 4: Translation + zero-impact reporting layer | ⏳ Pending | - | - | |
 | Phase 5: Public function + tool registration | ⏳ Pending | - | - | |
 | Phase 6: Documentation | ⏳ Pending | - | - | |
 
-### Phase 1 — Delete the translation table; add the fix-lever map
+### Phase 1 — Delete the translation table; relay Core's catalog
 
-**Semantic change**: Remove the vendored constraint meanings entirely and replace them with a lever map.
+**Semantic change**: Remove the vendored constraint meanings entirely and fill the catalog from the API
+response instead. MCP ends this phase vendoring no constraint vocabulary at all.
 
-**Deliverables**: `CONSTRAINT_REASON_DESCRIPTIONS` deleted; `CONSTRAINT_FIX_LEVERS` added; a resolver that
-returns a lever (or `null`) for any code and never a meaning.
+**Deliverables**: `CONSTRAINT_REASON_DESCRIPTIONS` deleted; a catalog builder that reads `constraintCatalog`
+off the raw response; a resolver that returns the API's description or `null` and never authors a meaning.
 
 **Implementation details**
 - **Delete `CONSTRAINT_REASON_DESCRIPTIONS` (`:2225`) outright**, all 14 entries. Do not carry any of them
-  forward. The output becomes uniform across all 88 codes rather than 14 special cases, and MCP stops
-  asserting meanings it is not the source of.
-- Build `CONSTRAINT_FIX_LEVERS` from the **emitted values** of the 21 exported groups in orchestrator's
-  `constraints.js`. Enumerate by value, not by key: 87 keys, 88 values, two entries emitting a different
-  string than their key (§3 Component A names both). Deduplicate — `incompatible_framework_version` is emitted
-  by two groups.
-- Assign each code a lever from the closed enum. Largely patternable by validator family, which is what keeps
-  88 rows cheap: the `move_requires_X_but_the_simulator_is_missing_X` family is `console.*`; the
-  OS/role/connection families map to their corresponding `*_filter.*` lever; the variant de-duplication family
-  (`*_is_ignored`, `ignoring_*_variant`) is `null`, since nothing the caller can change affects it. Verify each
-  row against its emit site rather than trusting the pattern blindly — the lever is a claim about remedy, and a
-  wrong remedy sends someone down a dead end.
-- Introduce a resolver used by every consumer. It returns the lever and an explicit `description: null`; on an
-  unknown code it returns `fix_lever: null` and still reports the conflict. It **never** returns the code as an
-  explanation and never fabricates a meaning. Replaces `...get(code, {}).get('description', code)` at `:2333`.
+  forward. Output becomes uniform across every code the API describes rather than 14 special cases, and MCP
+  stops asserting meanings it is not the source of.
+- **Add no replacement map** — no lever map, no partial table, not even "just the misleading ones". The catalog
+  is built per response, so there is no vendored artifact to keep in step with upstream and no coverage guard
+  to maintain. This is the whole point of the phase; adding a "temporary" local map would recreate exactly the
+  pressure-release valve §3 Component A rejects.
+- Build the catalog by intersecting the response's `constraintCatalog` with the codes MCP's own normalized
+  conflict list emits, preserving each `description` **verbatim**. Read it from the top level of the response
+  body, not from a step.
+- Introduce a resolver used by every consumer: given a code and the response's catalog it returns
+  `{description}` — Core's string, or `null` when the catalog has no entry (or an entry with no `description`,
+  which is how Core represents a code it does not itself recognise). On an unknown code the conflict is still
+  reported. It **never** returns the code as an explanation and never fabricates a meaning. Replaces
+  `...get(code, {}).get('description', code)` at `:2333`.
 - **Repoint one function, not two.** `_summarize_constraints` (:2299) is the *only* direct reader — the table is
   referenced at exactly `:2333` and `:2334`, both inside it. `_summarize_constraints_aggregated` (:2350)
   consumes it transitively at `:2357` and inherits the change automatically.
-- **This changes shipped output** for the 14 codes that currently carry a description: `quick_run` and
-  `run_scenario` previews will report those conflicts without prose. That is a deliberate, accepted regression
-  (§9 R9) — not a contract break, since the key set is unchanged and `description` simply becomes `null`.
+- **This changes shipped output** for `quick_run` and `run_scenario` previews, in both directions. Against a
+  console carrying SAF-35568 the 14 codes that had vendored prose now show Core's wording instead, and the
+  other 83 gain a description they never had. Against an older console all of them report `description: null`
+  — the bounded regression in §9 R11. Not a contract break either way: the key set is unchanged and
+  `description` is nullable by design.
 
-**What can go wrong**: enumerating by key silently assigns levers to two impossible codes and misses two real
-ones, and a key-based coverage test still reports 88/88 — the guard must compare against emitted values.
-Assigning a lever from the code's name rather than its emit site produces a confidently wrong remedy; the
-`*_is_ignored` family is the trap, since its name suggests a setting the user could change when in fact nothing
-can. A resolver that falls through to the code violates AC-8.
+**What can go wrong**: treating an absent `constraintCatalog` as an error rather than as `description: null`
+breaks the tool outright against every console that has not taken SAF-35568. Reading the catalog from a step
+rather than the response root silently yields an empty catalog on every call. "Improving" a relayed
+description recreates the third copy this design deletes, on a slow drift path no test would catch. And a
+resolver that falls through to the code violates AC-8 — `incompatible_package` is a *role* mismatch,
+`*_is_ignored` is variant de-duplication, so the code name misleads precisely where it matters most.
 
 **Changes**
 
 | File | Description |
 |---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Delete `CONSTRAINT_REASON_DESCRIPTIONS` (:2225); add `CONSTRAINT_FIX_LEVERS` + resolver; repoint `_summarize_constraints` (:2333-:2334) |
+| `safebreach_mcp_studio/studio_functions.py` | Delete `CONSTRAINT_REASON_DESCRIPTIONS` (:2225); add the response-catalog builder + resolver; repoint `_summarize_constraints` (:2333-:2334) |
 
-**Git commit**: `feat(studio): delete vendored constraint descriptions, add fix-lever map`
+**Git commit**: `feat(studio): relay Core's constraint catalog, delete vendored descriptions`
 
 ### Phase 2 — Raw fetch core
 
@@ -599,9 +633,10 @@ alters the numbers two shipped tools report.
 - **Normalize conflicts**: walk `attackerConstraints` and `targetConstraints` treating the map as **sparse**
   and each leaf as an **array**. Group by `(attack_id, code)`, merging the two sides and recording which
   side(s) and how many simulators produced each — never one row per simulator. Emit a `constraint_catalog`
-  containing one entry per code **present in this response**, resolved through Phase 1's resolver; each
-  conflict references the catalog by `code` and carries only `severity`, `attack_id`, `side`,
-  `simulator_count` and the API's `values`. Attach attack names where resolvable, degrading silently.
+  containing one entry per code **present in this response**, built by Phase 1's builder from the response's
+  own `constraintCatalog` (verbatim descriptions; `null` where the API supplied none); each conflict references
+  the catalog by `code` and carries only `severity`, `attack_id`, `side`, `simulator_count` and the API's
+  `values`. Attach attack names where resolvable, degrading silently.
 - **Compute `severity`** per conflict from the attack's own count alone: `blocking` when
   `attacks[attack_id]` is an integer `0`, `reducing` when it is a positive integer. No catalog lookup is
   involved — the same code is legitimately `blocking` for one attack and `reducing` for another in the same
@@ -692,20 +727,26 @@ read-only.
 |---|---|---|---|
 | **R1** | **Misreading a limit-reached response.** The controller returns a sentinel step with `simulationCount: null` and **every** `moves[id] = null`, and returns early so the step list is shorter than the plan's. Treating falsy as zero, or assuming positional alignment, would report the user's entire selection as zero-impact. | **High** | Integer-`0` predicate everywhere; zero-impact reporting suppressed entirely when counts are not computed; truncation reported explicitly (AC-5). Severity is reduced from the original ticket by D3 — the tool now only *reports*, so the worst case is a wrong report rather than a destroyed configuration. |
 | **R2** | **Regressing the two existing callers.** 58 test references, ~20 with hardcoded `@patch` return values, plus `sb_quick_run` and `sb_run_scenario`. | **High** | Contract-preserving layering (§2); `includeDisabled=true` and `limit=500000` passed explicitly in Phase 3; Phase 3's intended visible delta is zero. |
-| **R3** | **Vendored-catalog drift — measured, not hypothetical.** The vocabulary lives in `orchestrator`, on a different release cadence. The console has been vendoring the same vocabulary for years in `ui-react/src/containers/Studio/utils/constants.ts:166` and has demonstrably drifted **in both directions**: **3 dead entries** for codes orchestrator no longer emits (`incompatible_simulator_version`, `assume_role_incompatible_simulator_version`, `move_does_not_support_simulation_user_and_simulator_does_not_allows_default_system_user`), and **31 of 88 codes** it cannot translate at all, plus 4 explicitly commented out. This PRD deliberately does **not** add a third copy. | **Low** (was Medium-High) | Largely eliminated by deleting the table: MCP vendors no meanings, so there is no meaning to drift. What remains vendored is the lever map, which is smaller, and the drift test (T-5) plus the coverage guard (AC-7) cover it. The residual risk moves to R9 — meanings are now *absent* until SAF-35568 rather than *stale*. |
+| **R3** | **Vendored-catalog drift — measured, not hypothetical, and now avoided entirely.** The vocabulary lives in `orchestrator`, on a different release cadence. The console has been vendoring the same vocabulary for years in `ui-react/src/containers/Studio/utils/constants.ts:166` and has demonstrably drifted **in both directions**: **3 dead entries** for codes orchestrator no longer emits (`incompatible_simulator_version`, `assume_role_incompatible_simulator_version`, `move_does_not_support_simulation_user_and_simulator_does_not_allows_default_system_user`), and **31 codes** it cannot translate at all, plus 4 explicitly commented out. | **Closed** (was Medium-High) | Eliminated structurally by relaying: MCP vendors no vocabulary at all — no meanings, no levers — so there is nothing to drift and no coverage guard to keep honest. The catalog arrives in the same payload as the codes it explains, so it cannot describe a different vintage than the response. The residual is not drift but **absence** on a console predating SAF-35568 — tracked as R11. |
 | **R4** | **"Matches the console" is not one number.** Checkout uses `includeDisabled=true`, run gating `false`. | **Medium** | AC-4 is per-view and per-parameter-set; §4 tabulates which parameters correspond to which view. |
 | **R5** | **Cost of correctness.** `getAllConstraints=true` disables the validator short-circuit; both figures need two round trips, against a 120 s timeout. | **Medium** | Runnable default is one call; the second is opt-in (D2); every parameter is overridable for a cheap count-only call. |
-| **R6** | **Vendoring by key rather than by value** ships two impossible codes, misses two real ones, and passes a naive coverage test. | **Medium** | Called out explicitly in §3 Component A and Phase 1; the guard compares against emitted values (T-2). |
-| **R7** | **Levers assigned from code names rather than emit sites.** No descriptions are authored any more, but the same trap applies to the lever: `*_is_ignored` reads like a setting the user could change, when in fact it is variant de-duplication and nothing the caller controls affects it. A wrong lever sends someone down a dead end. | **Medium** | Phase 1 requires each lever traced to the branch that emits the code, and the variant-de-duplication family is `null` by rule. The console shows the same trap in production — it renders that one family three inconsistent ways ("… are not supported" / "… are ignored" / "Select a non-service account"), so this is an observed failure mode. Severity is lower than the description version: a null-or-wrong lever costs a wasted attempt, not a false belief about what happened. |
+| **R6** | **Vendoring by key rather than by value** would ship two impossible codes, miss two real ones, and still pass a naive count-based coverage test. | **Closed** | Resolved twice over. Upstream: SAF-35568 renamed both mismatched keys at source and deleted 5 dead ones, so `constraints.js` is now 1:1 (97 codes, 24 groups). Here: MCP enumerates nothing, so it has no local list to key wrongly — the relay keys off what the response actually contains. Retained as the record of *why* the catalog is built from the response rather than a local enumeration. |
+| **R7** | **A remedy inferred from a code's name rather than its emit site sends someone down a dead end.** `*_is_ignored` reads like a setting the user could change, when in fact it is variant de-duplication and nothing the caller controls affects it. The console shows this trap in production — it renders that one family three inconsistent ways ("… are not supported" / "… are ignored" / "Select a non-service account"). | **Low** (was Medium) | No longer MCP's exposure. `fixLever` was dropped upstream as redundant relative to `description` (SAF-35568 Phase 5) and no lever is vendored here, so MCP asserts **no remedy at all** — it cannot assert a wrong one. The relayed description carries the emit-site meaning, authored and reviewed at source, and the caller derives the remedy from it plus the `step_overrides` schema. Residual: a caller can still misread a description, but the text is Core's rather than MCP's inference. |
 | **R8** | **Asserting severity per code** instead of computing it from the attack's count would label every `reducing` conflict a blocker — pulling SAF-35484's partial-impact scope into this ticket by accident and over-reporting zero-impact attacks. | **Medium** | Severity is derived in Phase 4 from `attacks[attack_id]` alone; the catalog holds no severity-like field to be tempted by. Covered by a test asserting the same code resolves `blocking` and `reducing` within one step. |
 
-| **R9** | **Meanings are absent until SAF-35568 lands.** Deleting the table removes the 14 descriptions two shipped tools display today, and leaves all 88 codes without a vendored meaning. A caller renders from the code — and the code names mislead (`incompatible_package` is a *role* mismatch; `*_is_ignored` is variant de-duplication). So for the codes that matter most, the rendered explanation may be wrong until the API supplies one. | **Medium-High** | Accepted deliberately (§2 alternatives): vendoring is a pressure-release valve and `ui-react` proves an "interim" copy becomes permanent. Mitigations are honest rather than complete — the response emits `description: null` explicitly so a caller can tell "not supplied" from "empty" and choose to say *"a compatibility conflict was reported"* rather than guess; the lever still gives an actionable remedy; and SAF-35568 is tracked as a **dependency**, not a nice-to-have. Residual: this is a knowing regression on 14 codes' output. |
-| **R10** | **SAF-35568 is now on Stage 1's critical path**, and its description half carries an unresolved localization question (`ui-react`'s strings are user-facing prose the console may localize). If that stalls, MCP has no meanings indefinitely. | **Medium** | SAF-35568 is explicitly scoped so the **lever half can ship alone** if localization stalls, and §10 requires MCP's resolver to tolerate a partial catalog — levers without descriptions — rather than treating it as an error. If the description half stalls past Stage 1, the fallback is to reopen the vendoring decision with that evidence in hand, not to discover the gap late. |
+| **R9** | **Meanings are not MCP's to supply, so their availability is someone else's deployment.** Deleting the table removes the 14 descriptions two shipped tools display today. If the API supplied nothing, a caller would be left rendering from the code — and the code names mislead (`incompatible_package` is a *role* mismatch; `*_is_ignored` is variant de-duplication), so the explanation would be wrong exactly where it matters most. | **Low** (was Medium-High) | Resolved by SAF-35568 shipping: every code a response references now arrives with an authoritative `description`, at full coverage rather than the 14-of-97 MCP vendored — a net gain of 83 codes that previously leaked raw. The 14 change wording (to Core's) rather than losing it. What remains is the version-dependent case, split out as R11. |
+| **R10** | **SAF-35568 was on Stage 1's critical path** — MCP had no meanings of its own to fall back on. | **Closed** | Delivered. `constraintCatalog` ships `{ description }` per referenced code, gated on `getConstraints=true`. Two details of *how* it landed matter here and are handled: it shipped **without** the `fixLever` half (removed as redundant), which is why this PRD carries no lever map; and the localization question it flagged was **deferred, not answered**, which does not block MCP — the relay is agnostic to which string Core serves (§10). |
+| **R11** | **Console-version straddle.** MCP talks to consoles on their own upgrade cadence. One whose orchestrator predates SAF-35568 returns no `constraintCatalog`, so every conflict reports `description: null` — including the 14 that carried vendored prose before this ticket. This is the residue of R3/R9, and it is a real (if bounded) regression on those consoles. | **Medium** | Designed for rather than discovered: the absent-catalog path is the *same* `description: null` contract as an unrecognised code, so it degrades instead of raising, and the conflict is always still surfaced. `hint_to_agent` states when no catalog was supplied, so a caller says *"a compatibility conflict was reported"* rather than guessing from the code name. Self-resolving as consoles take the orchestrator change, and cheap to verify — one field's presence. |
 
 ### Assumptions under question
 
-- **The 88 codes are complete and current.** Measured on 2026-08-26 against the orchestrator working copy
-  (21 groups, 89 entries, 87 keys, 88 values). Point-in-time by nature — R3 owns the consequence.
+- **MCP no longer depends on the code list being complete or current** — it relays whatever the response
+  describes, so a code added upstream tomorrow arrives already explained. For reference, the shipped vocabulary
+  is **97 codes across 24 groups, keys 1:1 with emitted values**, measured against SAF-35568's
+  `constraints.js` (its Phase 6 invariant: 102 declared keys − 5 dead = 97; 101 distinct emitted values − 4 =
+  97). Note that SAF-35568's own narrative sections still quote the pre-implementation estimate of **88**,
+  inherited from this PRD's earlier drafts; **97** is the implementation-verified figure and the one used
+  throughout here.
 - **The endpoint's by-id resolution is sufficient for AC-1.** Read from `plan_statistics.js:51-53`; not yet
   exercised against a live console from MCP.
 - **`getAllConstraints=true` is affordable as a default.** It is the console's own setting, but the console
@@ -741,31 +782,32 @@ above.
 ## 10. Future Enhancements
 
 - **[SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568) — serve the constraint catalog from the
-  plan/statistics response.** Not merely a follow-up: since this PRD deletes the vendored table, SAF-35568 is
-  the **only** source of constraint meanings and is therefore a **dependency** of the parent story (R9, R10).
-  Filed 2026-08-26 and linked to this sub-task. Today three repos vendor one vocabulary at three coverage levels: orchestrator 88 (source),
-  ui-react 57 real + 3 dead + 31 untranslated, safebreach-mcp 14 → 88 under this PRD. That ticket adds a
-  `constraintCatalog` to the statistics response mapping each code **referenced in that response** to
-  `{ description, fixLever }`, gated on `getConstraints=true` — in the response rather than a new endpoint, so
-  there is no second round trip and no way for the catalog to fall out of sync with the response it explains.
-  It deliberately carries **no `severity`** (a function of the counts the consumer already has, and it would
-  drift from them) and **no `kind`** (there is no informational class — all 88 eliminate).
+  plan/statistics response: delivered, and consumed by this PRD rather than anticipated by it.** Recorded here
+  because it began as this section's follow-up and moved onto the critical path (R9, R10) once the vendored
+  table was deleted; it is no longer an enhancement. Core's response now carries a `constraintCatalog` mapping
+  each code **referenced in that response** to `{ description }`, gated on `getConstraints=true` — in the
+  response rather than behind a new endpoint, so there is no second round trip and no way for the catalog to
+  fall out of sync with the response it explains. It deliberately carries **no `severity`** (a function of the
+  counts the consumer already has, and it would drift from them) and **no `kind`** (there is no informational
+  class — all 97 eliminate).
 
-  **What lands here when it ships.** MCP stops vendoring: `CONSTRAINT_CATALOG` is deleted and the response's
-  `constraint_catalog` is filled from the API's instead. Because this PRD already normalizes conflicts into a
-  catalog plus references, that changes **only where the catalog is populated from** — the tool's response
-  contract is unaffected, and no test outside Phase 1 should need to move. The one thing MCP keeps is the
-  **naming rename**: Core expresses levers in its own camelCase schema vocabulary (`attackerFilter.role`,
-  `targetFilter.os`, `console.simulatorApproval`) while this tool exposes snake_case (`attacker_filter.role`,
-  `target_filter.os`, `console.simulator_approval`) to match `step_overrides`. That mapping is mechanical, and
-  worth writing down now so the migration is a rename rather than a surprise.
+  **Two things landed differently than this section predicted**, both absorbed above rather than left as
+  surprises. It ships **no `fixLever`**: one was implemented and then removed on review as redundant relative
+  to `description`. The camelCase↔snake_case lever rename this section reserved is therefore moot, and MCP
+  vendors no lever map either — see §2's alternatives and §3 Component A. And the vocabulary is **97 codes
+  across 24 groups with keys 1:1 with emitted values**, not 88 with two key/value mismatches: SAF-35568 fixed
+  both spellings at source and deleted 5 dead keys, which closes R6 upstream.
 
-  **Partial adoption is expected.** SAF-35568 flags localization as an open question — `fixLever` is an enum
-  and unaffected, but descriptions are user-facing prose the console may localize, so Core may ship the lever
-  half first. MCP's resolver must therefore tolerate a catalog that supplies `fixLever` but not `description`,
-  leaving `description: null` for those codes rather than treating a partial catalog as an error. Since MCP
-  vendors no descriptions to fall back on, "partial" is the expected steady state for a while, not an edge
-  case.
+  **What actually landed here.** MCP vendors nothing: no table, no lever map, no coverage guard. Because this
+  PRD had already normalized conflicts into a catalog plus references, adopting the API's catalog changed
+  **only where the catalog is filled from** — the tool's response contract is unaffected, and no change outside
+  Phase 1 was needed. The one adaptation is the wrapper-key rename (`constraintCatalog` → `constraint_catalog`).
+
+  **Localization remains open**, and is now the only unresolved question from that ticket. Descriptions are
+  user-facing prose the console may want localized, and Core currently serves one English string per code;
+  SAF-35568 deferred the decision to its own follow-up rather than answering it. MCP is unaffected by the
+  outcome — the relay passes through whatever string arrives — but a caller rendering for a non-English user
+  should treat the text as English until that is settled.
 - **Acting on the zero-impact report** — dropping inapplicable attacks/simulators from the plan body being
   assembled. Explicitly out of scope here (§9); needs an owner, either a new SAF-34615 subtask or SAF-35484.
 - **Correcting `quick_run` / `run_scenario` previews** to report runnable rather than expected counts. The
@@ -784,26 +826,30 @@ above.
   belonging to two test-running tools.
 - **What was built**: `get_plan_statistics`, a read-only MCP tool over Core's `plan/statistics` endpoint. It
   accepts an ad-hoc plan body (or a `scenario_id`), exposes every query parameter, and returns per-step
-  simulation, attack and simulator counts, translated constraint conflicts, and a zero-impact report. The
+  simulation, attack and simulator counts, constraint conflicts explained by Core's own catalog, and a
+  zero-impact report. The
   existing private helper is refactored to route through the same code, so exactly one path to the endpoint
   exists.
 - **Key technical decisions**: layer rather than rewrite, because 58 test references and two shipped tools
   depend on the existing helper's shape; runnable counts by default, since `includeDisabled=false` is the only
   setting that explains the gap; no MCP-side cache, because stale impact numbers are the exact failure being
-  fixed; vendor the reason vocabulary by **emitted value**, since two of the 88 codes differ from their source
-  key; and **MCP returns structure, Helm narrates** — the vendored translation table is **deleted** rather than
-  extended, because vendoring is a pressure-release valve that has already let `ui-react`'s copy rot for years.
-  What MCP keeps is the one fact it is the right owner of, a `fix_lever` per code; `severity` is computed from
-  the counts rather than stored; and the conflict list is normalized into a catalog plus references so
-  SAF-35568's API-served meanings drop in without a contract change.
-- **Scope changes**: the constraint-description work is **out**, and SAF-35568 is now a **dependency** rather
-  than a follow-up — a deliberate trade recorded in §9 R9/R10, which costs 14 codes their current descriptions
-  in exchange for not creating a third copy of a vocabulary that demonstrably rots. Earlier, ACs 9/10 were **reworded** from "auto-removed" to "reported" (D3) — a statistics call
+  fixed; and **MCP returns structure, Helm narrates** — the vendored translation table is **deleted** rather
+  than extended, because vendoring is a pressure-release valve that has already let `ui-react`'s copy rot for
+  years. MCP vendors nothing in its place: constraint descriptions are relayed from the `constraintCatalog`
+  Core now serves in the same response ([SAF-35568](https://safebreach.atlassian.net/browse/SAF-35568)), so
+  there is no local vocabulary to drift and no `fix_lever` map — that half was built upstream and removed as
+  redundant relative to the description. `severity` is computed from the counts rather than stored, and the
+  conflict list is normalized into a catalog plus references, which is what made adopting the API's catalog a
+  change of source rather than of contract.
+- **Scope changes**: the constraint-description authoring work is **out** — SAF-35568 was a **dependency**
+  rather than a follow-up (§9 R9/R10) and has since delivered, so MCP relays meanings instead of owning them.
+  The trade that once cost 14 codes their descriptions now nets **83 codes gaining one**, with the loss
+  confined to consoles whose orchestrator predates that change (§9 R11). Earlier, ACs 9/10 were **reworded** from "auto-removed" to "reported" (D3) — a statistics call
   reports what will and will not run; acting on that report is the plan-holder's job, and is now explicitly
   out of scope on the ticket. All 12 ACs are delivered. The *act* of removal still needs an owner (§9).
 - **Business value delivered**: unblocks parent DoD items 2 and 5; gives Helm a non-destructive impact
   primitive it can call after every changed decision; and fixes three live defects — disconnected simulators
-  counted as runnable, 74 of 88 conflict reasons leaking as raw `snake_case`, and a `TypeError` crash on large
+  counted as runnable, 83 of 97 conflict reasons leaking as raw `snake_case`, and a `TypeError` crash on large
   scenarios.
 
 ---
@@ -812,6 +858,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-08-27 | **Relay Core's catalog; no vendored vocabulary at all (v5).** Reviewed [SAF-35568's PR](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) and aligned to what it actually shipped, which differs from what v4 assumed in two ways. (1) It serves `{ description }` only — `fixLever` was implemented in its Phase 1 and **removed in its Phase 5** as redundant relative to the description. v4's chosen option ("delete the table, keep a fix-lever map") rested on the API serving both, so `CONSTRAINT_FIX_LEVERS` is dropped entirely: MCP now vendors **no** constraint vocabulary — no meanings, no levers, no coverage guard — and fills `constraint_catalog` by relaying the response's own `constraintCatalog` verbatim. (2) The vocabulary is **97 codes across 24 groups with keys 1:1 with emitted values**, not 88 with two key/value mismatches — its Phase 6 renamed both spellings at source and deleted 5 dead keys. Consequences: R3 and R6 **close** (nothing vendored to drift, nothing keyed by hand); R7 drops to Low (MCP asserts no remedy at all); R9 drops to Low and R10 **closes** (SAF-35568 delivered — descriptions now arrive for every referenced code, 83 more than MCP ever vendored); new **R11** records the one genuine residual, a console whose orchestrator predates the change sending no catalog, which degrades to `description: null` with conflicts still surfaced plus a `hint_to_agent`. Also folded in: `getConstraints=true` gates the catalog as well as `simulatorConstraints`, the `getAllConstraints` swagger description is no longer stale, and the four count maps are now typed at the source. Revised §1, §2, §3 A/C/D, §4, §5, §6, §7, §9, §10, §11, Phase 1, Phase 4. **test-plan.md needs the matching update** — T-1/T-3/T-23 rescoped, T-2/T-5 tombstoned, and relay/fallback tests added. |
 | 2026-08-26 | PRD created — initial draft |
 | 2026-08-26 | DoD gate flagged TI-9/TI-10 as gaps. Root cause was the ticket's "auto-removed" wording, not the design: a statistics call reports, it does not act. Reworded SAF-35508 ACs 9/10 to "reported" (plus AC-5/AC-12 alignment, scope item 4, and the out-of-scope line); updated §7, §9, §10 and §11 to match. All 12 ACs now covered. |
 | 2026-08-26 | **Deleted the vendored translation table (v4).** `CONSTRAINT_REASON_DESCRIPTIONS` is removed outright — including its 14 existing entries — rather than extended to 88. Rationale: a vendored table is a pressure-release valve, and `ui-react` proves an "interim" copy becomes permanent (57 real / 3 dead / 31 missing after years). What remains is `CONSTRAINT_FIX_LEVERS`: one closed-enum lever per emitted code, the fact a calling model cannot infer. No `description` is authored for any code; the response emits `description: null` explicitly so "not supplied" is distinguishable from "empty". Consequences recorded rather than hidden: SAF-35568 becomes a **dependency** (new R10) and 14 codes lose descriptions two shipped tools display today (new R9). R3 drops to Low (no meanings vendored, so none to drift); R7 narrows from descriptions to levers. Phase 1 shrinks from "author 88 descriptions from emit sites" to "delete the table, map 88 levers". Revised §1, §2, §3 A/D, §4, §7, §9, §10, §11, Phase 1. |
