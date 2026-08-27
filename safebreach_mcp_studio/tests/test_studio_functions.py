@@ -7573,6 +7573,495 @@ class TestVerboseFailures:
 
 
 # ---------------------------------------------------------------------------
+# constraint catalog relay — SAF-35508
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_constraint_catalog_response():
+    """A plan/statistics response whose catalog sits at the ROOT, with a decoy in a step.
+
+    Descriptions are deliberately awkward — irregular whitespace, inconsistent
+    terminal punctuation, non-ASCII, and one that contradicts its own code name —
+    so a relay that "improves" text is caught.
+    """
+    return {
+        "data": {
+            "constraintCatalog": {
+                "incompatible_os": {
+                    "description": "  Leading and trailing space preserved  "
+                },
+                "incompatible_package": {
+                    "description": "Two  spaces inside, no terminal period"
+                },
+                "simulator_on_both_sides": {
+                    "description": "Ends with a period."
+                },
+                "simulator_is_offline": {
+                    "description": "Sécurité — non-ASCII kept é intact"
+                },
+                # Contradicts its name: says nothing about roots. Must not be "fixed".
+                "simulator_variant_is_not_root_user": {
+                    "description": "The selected package is unavailable on this host"
+                },
+                "described_as_empty": {"description": ""},
+                # Core's representation of a code it does not itself recognise.
+                "present_but_unrecognised": {},
+                # Described by the API but never emitted by MCP — must be narrowed out.
+                "never_emitted_by_mcp": {"description": "Should not reach the caller"},
+            },
+            "steps": [
+                {
+                    "simulationCount": 0,
+                    "targetSimulators": {"sim-1": 0},
+                    "attackerSimulators": {"sim-2": 0},
+                    "moves": {"281": 0},
+                    # Decoy: reading the catalog from a step must yield the root one.
+                    "constraintCatalog": {
+                        "incompatible_os": {"description": "DECOY - read from step"}
+                    },
+                    "simulatorConstraints": {
+                        "targetConstraints": {
+                            "sim-1": {
+                                "281": [
+                                    {"reason": "incompatible_os",
+                                     "required": "WINDOWS", "actual": "LINUX"},
+                                    {"reason": "present_but_unrecognised"},
+                                ]
+                            }
+                        },
+                        "attackerConstraints": {
+                            "sim-2": {
+                                "281": [
+                                    {"reason": "absent_from_catalog_entirely"},
+                                ]
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+    }
+
+
+@pytest.fixture
+def sample_statistics_response_without_catalog(sample_constraint_catalog_response):
+    """The same response as served by a console whose orchestrator predates SAF-35568."""
+    import copy
+    response = copy.deepcopy(sample_constraint_catalog_response)
+    del response["data"]["constraintCatalog"]
+    return response
+
+
+@pytest.fixture
+def sample_simulator_constraints_mixed_codes():
+    """A bare simulatorConstraints dict: multi-reason leaf, same code on both sides."""
+    return {
+        "targetConstraints": {
+            "sim-1": {
+                "281": [
+                    {"reason": "incompatible_os",
+                     "required": "WINDOWS", "actual": "LINUX"},
+                    {"reason": "present_but_unrecognised"},
+                ],
+                "226": [
+                    {"reason": "absent_from_catalog_entirely"},
+                ],
+            }
+        },
+        "attackerConstraints": {
+            "sim-2": {
+                # Same code as the target side — must still dedupe to one entry.
+                "281": [
+                    {"reason": "incompatible_os",
+                     "required": "WINDOWS", "actual": "LINUX"},
+                ]
+            }
+        },
+    }
+
+
+class TestNoVendoredConstraintVocabulary:
+    """T-1 — No constraint vocabulary is vendored anywhere in the repo."""
+
+    def test_constraint_reason_descriptions_symbol_is_gone(self):
+        """The vendored description table no longer exists."""
+        import safebreach_mcp_studio.studio_functions as sf
+        assert not hasattr(sf, 'CONSTRAINT_REASON_DESCRIPTIONS')
+
+    def test_no_constraint_fix_levers_symbol(self):
+        """No lever map is vendored either — MCP asserts no remedy."""
+        import safebreach_mcp_studio.studio_functions as sf
+        assert not hasattr(sf, 'CONSTRAINT_FIX_LEVERS')
+
+    def test_no_module_constant_maps_reason_codes_to_prose(
+        self, sample_constraint_catalog_response
+    ):
+        """No module constant maps reason codes to explanatory text, under any name."""
+        import safebreach_mcp_studio.studio_functions as sf
+
+        sample_codes = set(
+            sample_constraint_catalog_response['data']['constraintCatalog']
+        )
+        offenders = []
+        for name, value in vars(sf).items():
+            if name.startswith('__') or not isinstance(value, dict):
+                continue
+            keyed_by_reason_code = sample_codes & {
+                k for k in value if isinstance(k, str)
+            }
+            if not keyed_by_reason_code:
+                continue
+            for entry in value.values():
+                text = entry.get('description') if isinstance(entry, dict) else entry
+                if isinstance(text, str) and ' ' in text.strip():
+                    offenders.append(name)
+                    break
+        assert offenders == [], (
+            f"Vendored constraint prose found in module constants: {offenders}"
+        )
+
+    def test_no_module_constant_maps_reason_codes_to_a_lever(
+        self, sample_constraint_catalog_response
+    ):
+        """No module constant maps reason codes to a lever-like remedy value."""
+        import safebreach_mcp_studio.studio_functions as sf
+
+        sample_codes = set(
+            sample_constraint_catalog_response['data']['constraintCatalog']
+        )
+        lever_keys = {'fixable', 'fix_lever', 'fixLever', 'fixable_via_overrides',
+                      'remedy', 'suggested_fix'}
+        offenders = []
+        for name, value in vars(sf).items():
+            if name.startswith('__') or not isinstance(value, dict):
+                continue
+            if not (sample_codes & {k for k in value if isinstance(k, str)}):
+                continue
+            for entry in value.values():
+                if isinstance(entry, dict) and (lever_keys & set(entry)):
+                    offenders.append(name)
+                    break
+                if isinstance(entry, bool):
+                    offenders.append(name)
+                    break
+        assert offenders == [], (
+            f"Vendored constraint lever found in module constants: {offenders}"
+        )
+
+
+class TestUnrecognisedConstraintCode:
+    """T-3 — An unrecognised code is still surfaced, without a fabricated explanation."""
+
+    def test_code_absent_from_catalog_resolves_to_null_description(self):
+        """A code the catalog does not mention resolves to None, not to the code."""
+        from safebreach_mcp_studio.studio_functions import (
+            _resolve_constraint_description,
+        )
+        catalog = {'incompatible_os': {'description': 'OS mismatch'}}
+        assert _resolve_constraint_description(
+            'absent_from_catalog_entirely', catalog
+        ) == {'description': None}
+
+    def test_code_present_with_empty_entry_resolves_to_null_description(self):
+        """An empty entry — Core's own 'I do not recognise this' — resolves to None."""
+        from safebreach_mcp_studio.studio_functions import (
+            _resolve_constraint_description,
+        )
+        catalog = {'present_but_unrecognised': {}}
+        assert _resolve_constraint_description(
+            'present_but_unrecognised', catalog
+        ) == {'description': None}
+
+    def test_resolver_never_returns_the_code_as_the_description(self):
+        """The bare code is never handed back as an explanation, in any miss form."""
+        from safebreach_mcp_studio.studio_functions import (
+            _resolve_constraint_description,
+        )
+        code = 'incompatible_package'
+        for catalog in ({}, None, {code: {}}, {code: {'description': None}},
+                        {'other_code': {'description': 'x'}}):
+            assert _resolve_constraint_description(code, catalog)['description'] != code
+
+    def test_unrecognised_code_is_still_surfaced_as_a_conflict(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """An undescribed code is reported, not dropped — with description None."""
+        from safebreach_mcp_studio.studio_functions import _summarize_constraints
+        catalog = {'incompatible_os': {'description': 'OS mismatch'}}
+
+        result = _summarize_constraints(
+            sample_simulator_constraints_mixed_codes, constraint_catalog=catalog
+        )
+
+        by_move = {entry['move_id']: entry for entry in result}
+        codes_281 = {r['code']: r for r in by_move['281']['reasons']}
+        assert 'present_but_unrecognised' in codes_281
+        assert codes_281['present_but_unrecognised']['description'] is None
+        assert codes_281['incompatible_os']['description'] == 'OS mismatch'
+        # The detail assembled from the leaf survives the description change.
+        assert codes_281['incompatible_os']['detail'] == (
+            'requires WINDOWS, simulator has LINUX'
+        )
+        codes_226 = {r['code']: r for r in by_move['226']['reasons']}
+        assert codes_226['absent_from_catalog_entirely']['description'] is None
+
+    def test_aggregated_summary_surfaces_unrecognised_code_with_null_description(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """The aggregated view inherits the relay — no fabricated meaning there either."""
+        from safebreach_mcp_studio.studio_functions import (
+            _summarize_constraints_aggregated,
+        )
+        catalog = {'incompatible_os': {'description': 'OS mismatch'}}
+
+        result = _summarize_constraints_aggregated(
+            sample_simulator_constraints_mixed_codes, constraint_catalog=catalog
+        )
+
+        by_code = {group['code']: group for group in result}
+        assert by_code['present_but_unrecognised']['description'] is None
+        assert by_code['absent_from_catalog_entirely']['description'] is None
+        assert by_code['incompatible_os']['description'] == 'OS mismatch'
+
+
+class TestConstraintDescriptionsRelayedVerbatim:
+    """T-38 — A relayed description reaches the caller byte-for-byte, never re-worded."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_awkward_descriptions_relayed_byte_for_byte(
+        self, sample_constraint_catalog_response
+    ):
+        """Whitespace, punctuation, casing and non-ASCII all survive exactly."""
+        from safebreach_mcp_studio.studio_functions import _build_constraint_catalog
+
+        source = sample_constraint_catalog_response['data']['constraintCatalog']
+        codes = ['incompatible_os', 'incompatible_package',
+                 'simulator_on_both_sides', 'simulator_is_offline']
+
+        built = _build_constraint_catalog(source, codes)
+
+        for code in codes:
+            assert built[code]['description'] == source[code]['description']
+        assert built['incompatible_os']['description'] == (
+            "  Leading and trailing space preserved  "
+        )
+        assert built['incompatible_package']['description'] == (
+            "Two  spaces inside, no terminal period"
+        )
+        assert built['simulator_is_offline']['description'] == (
+            "Sécurité — non-ASCII kept é intact"
+        )
+
+    def test_contradicting_description_is_not_corrected_toward_the_code_name(
+        self, sample_constraint_catalog_response
+    ):
+        """A description that contradicts its code is relayed, not 'fixed'."""
+        from safebreach_mcp_studio.studio_functions import _build_constraint_catalog
+
+        source = sample_constraint_catalog_response['data']['constraintCatalog']
+        built = _build_constraint_catalog(
+            source, ['simulator_variant_is_not_root_user']
+        )
+        assert built['simulator_variant_is_not_root_user']['description'] == (
+            "The selected package is unavailable on this host"
+        )
+
+    def test_catalog_keys_are_the_api_code_strings_unchanged(
+        self, sample_constraint_catalog_response
+    ):
+        """Keys pass through as-is, and codes MCP never emits are narrowed out."""
+        from safebreach_mcp_studio.studio_functions import _build_constraint_catalog
+
+        source = sample_constraint_catalog_response['data']['constraintCatalog']
+        codes = ['incompatible_os', 'absent_from_catalog_entirely']
+
+        built = _build_constraint_catalog(source, codes)
+
+        assert set(built) == set(codes)
+        assert 'never_emitted_by_mcp' not in built
+
+    def test_empty_string_description_is_relayed_not_nulled(
+        self, sample_constraint_catalog_response
+    ):
+        """'described as empty' stays distinguishable from 'not supplied'."""
+        from safebreach_mcp_studio.studio_functions import _build_constraint_catalog
+
+        source = sample_constraint_catalog_response['data']['constraintCatalog']
+        built = _build_constraint_catalog(source, ['described_as_empty'])
+        assert built['described_as_empty']['description'] == ''
+        assert built['described_as_empty']['description'] is not None
+
+    def test_summarize_constraints_relays_description_verbatim(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """The relay reaches the consumer, not just the builder."""
+        from safebreach_mcp_studio.studio_functions import _summarize_constraints
+        awkward = "  Leading and trailing space preserved  "
+        catalog = {'incompatible_os': {'description': awkward}}
+
+        result = _summarize_constraints(
+            sample_simulator_constraints_mixed_codes, constraint_catalog=catalog
+        )
+
+        by_move = {entry['move_id']: entry for entry in result}
+        codes_281 = {r['code']: r for r in by_move['281']['reasons']}
+        assert codes_281['incompatible_os']['description'] == awkward
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_catalog_is_read_from_the_response_root_not_from_a_step(
+        self, mock_base_url, mock_account_id, mock_post, mock_names,
+        sample_constraint_catalog_response
+    ):
+        """The root catalog wins; a catalog planted inside a step is never read."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_constraint_catalog_response
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _get_scenario_statistics(
+            steps=[{"name": "step-1"}], console="test-console",
+            include_constraints=True,
+        )
+
+        reasons = {
+            r['code']: r
+            for r in result[0]['constraint_summary'][0]['reasons']
+        }
+        assert reasons['incompatible_os']['description'] == (
+            "  Leading and trailing space preserved  "
+        )
+        assert reasons['incompatible_os']['description'] != "DECOY - read from step"
+
+
+class TestAbsentConstraintCatalog:
+    """T-39 — A response with no catalog degrades to null descriptions, never an error."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_absent_catalog_does_not_raise_and_nulls_every_description(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """A pre-SAF-35568 console (no catalog at all) degrades instead of raising."""
+        from safebreach_mcp_studio.studio_functions import _summarize_constraints
+
+        result = _summarize_constraints(
+            sample_simulator_constraints_mixed_codes, constraint_catalog=None
+        )
+
+        assert result, "conflicts must still be surfaced with no catalog"
+        for entry in result:
+            for reason in entry['reasons']:
+                assert reason['description'] is None
+                assert reason['description'] != reason['code']
+
+    def test_empty_catalog_does_not_raise_and_nulls_every_description(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """A catalog present but empty behaves identically to an absent one."""
+        from safebreach_mcp_studio.studio_functions import _summarize_constraints
+
+        result = _summarize_constraints(
+            sample_simulator_constraints_mixed_codes, constraint_catalog={}
+        )
+
+        assert result
+        for entry in result:
+            for reason in entry['reasons']:
+                assert reason['description'] is None
+
+    def test_every_referenced_code_key_is_present_not_omitted(self):
+        """The key exists with description None — 'not supplied' is stated, not implied."""
+        from safebreach_mcp_studio.studio_functions import _build_constraint_catalog
+        codes = ['incompatible_os', 'present_but_unrecognised',
+                 'absent_from_catalog_entirely']
+
+        for catalog in (None, {}):
+            built = _build_constraint_catalog(catalog, codes)
+            assert set(built) == set(codes)
+            for code in codes:
+                assert 'description' in built[code]
+                assert built[code]['description'] is None
+
+    def test_conflicts_are_still_surfaced_when_no_catalog_supplied(
+        self, sample_simulator_constraints_mixed_codes
+    ):
+        """Every conflict keeps its code and detail — nothing is dropped for lack of meaning."""
+        from safebreach_mcp_studio.studio_functions import _summarize_constraints
+
+        result = _summarize_constraints(
+            sample_simulator_constraints_mixed_codes, constraint_catalog=None
+        )
+
+        by_move = {entry['move_id']: entry for entry in result}
+        assert set(by_move) == {'281', '226'}
+        codes_281 = {r['code']: r for r in by_move['281']['reasons']}
+        assert set(codes_281) == {'incompatible_os', 'present_but_unrecognised'}
+        assert codes_281['incompatible_os']['detail'] == (
+            'requires WINDOWS, simulator has LINUX'
+        )
+
+    def test_hint_names_the_missing_catalog(self):
+        """The caller can tell 'this console is older' from 'these have no meaning'."""
+        from safebreach_mcp_studio.studio_functions import _constraint_catalog_hint
+
+        for absent in (None, {}):
+            hint = _constraint_catalog_hint(absent)
+            assert hint is not None
+            assert 'catalog' in hint.lower()
+
+        assert _constraint_catalog_hint(
+            {'incompatible_os': {'description': 'OS mismatch'}}
+        ) is None
+
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+           return_value={})
+    @patch('safebreach_mcp_studio.studio_functions.requests.post')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_get_scenario_statistics_survives_a_response_with_no_catalog(
+        self, mock_base_url, mock_account_id, mock_post, mock_names,
+        sample_statistics_response_without_catalog
+    ):
+        """End to end on an older console: no raise, conflicts intact, no meanings."""
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_statistics_response_without_catalog
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        result = _get_scenario_statistics(
+            steps=[{"name": "step-1"}], console="test-console",
+            include_constraints=True,
+        )
+
+        reasons = result[0]['constraint_summary'][0]['reasons']
+        assert reasons, "conflicts must survive an absent catalog"
+        for reason in reasons:
+            assert reason['description'] is None
+            assert reason['description'] != reason['code']
+
+# ---------------------------------------------------------------------------
 # manage_test — SAF-29969
 # ---------------------------------------------------------------------------
 
