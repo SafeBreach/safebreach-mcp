@@ -1269,29 +1269,18 @@ Example (3-turn workflow for non-ready scenarios):
                         if stats.get('constraint_summary'):
                             parts.append("")
                             parts.append("  **Constraint failures:**")
-                            unfixable_count = 0
                             for attack in stats['constraint_summary']:
                                 move_id = attack['move_id']
                                 name = attack.get('attack_name', '')
                                 label = f"Attack {move_id} ({name})" if name else f"Attack {move_id}"
                                 parts.append(f"  - {label}:")
                                 for reason in attack['reasons']:
-                                    desc = reason['description']
+                                    desc = _render_constraint_reason(reason)
                                     detail = reason.get('detail')
-                                    fixable = reason.get('fixable', True)
-                                    tag = "" if fixable else " *(not via step_overrides)*"
-                                    if not fixable:
-                                        unfixable_count += 1
                                     if detail:
-                                        parts.append(f"    - {desc} — {detail}{tag}")
+                                        parts.append(f"    - {desc} — {detail}")
                                     else:
-                                        parts.append(f"    - {desc}{tag}")
-                            if unfixable_count > 0:
-                                parts.append("")
-                                parts.append(
-                                    f"  ⚠ Some constraints require configuration "
-                                    f"not addressable via step_overrides."
-                                )
+                                        parts.append(f"    - {desc}")
                         # Aggregated constraint summary for partial-coverage steps
                         if count > 0 and stats.get('constraint_summary_aggregated'):
                             unmatched = stats.get('unmatched_attack_count', 0)
@@ -1303,17 +1292,12 @@ Example (3-turn workflow for non-ready scenarios):
                                 "  Constraints hit on at least one simulator pairing "
                                 "(an attack may still succeed via other pairings):"
                             )
-                            unfixable_count = 0
                             for reason_group in stats['constraint_summary_aggregated']:
-                                desc = reason_group['description']
+                                desc = _render_constraint_reason(reason_group)
                                 n = reason_group['total_attacks']
-                                fixable = reason_group.get('fixable', True)
                                 subs = reason_group.get('sub_reasons', [])
-                                tag = "" if fixable else " *(not fixable via step_overrides)*"
-                                if not fixable:
-                                    unfixable_count += n
+                                parts.append(f"  - {n} attacks: {desc}")
                                 if subs:
-                                    parts.append(f"  - {n} attacks: {desc}{tag}")
                                     for sub in subs[:3]:
                                         parts.append(
                                             f"    - {sub['attack_count']} attacks: "
@@ -1323,19 +1307,20 @@ Example (3-turn workflow for non-ready scenarios):
                                         parts.append(
                                             f"    - ... and {len(subs) - 3} more variants"
                                         )
-                                else:
-                                    parts.append(f"  - {n} attacks: {desc}{tag}")
-                            if unfixable_count > 0:
-                                parts.append("")
-                                parts.append(
-                                    f"  ⚠ {unfixable_count} attacks require configuration "
-                                    f"not addressable via step_overrides."
-                                )
                         elif count == 0 and not stats.get('constraint_summary'):
                             parts.append(
                                 "  - **0 viable pairings** — rerun with "
                                 "`evaluate=True` for constraint details"
                             )
+
+                    # Stated once for the whole preview, not per reason line.
+                    catalog_hint = next(
+                        (s['constraint_catalog_hint'] for s in step_stats
+                         if s.get('constraint_catalog_hint')),
+                        None,
+                    )
+                    if catalog_hint:
+                        parts.extend(["", f"ℹ {catalog_hint}"])
 
                     if empty_steps:
                         parts.extend([
@@ -1646,6 +1631,23 @@ manage_test(test_id="1776488350786.15", action="delete", console="demo",
             except Exception as e:
                 logger.error(f"Error in manage_test: {e}")
                 return f"Error managing test: {str(e)}"
+
+
+def _render_constraint_reason(reason: dict) -> str:
+    """Render one constraint reason for the preview.
+
+    Descriptions are relayed from the console's own constraint catalog, so a
+    console that supplies none leaves them null. Show the code as an identifier
+    with an explicit marker rather than passing the bare code off as an
+    explanation — and keep "described as empty" distinct from "never supplied",
+    since only the latter means the console could not explain the code.
+    """
+    description = reason.get('description')
+    if description is None:
+        return f"{reason['code']} — (no description supplied by this console)"
+    if description == "":
+        return f"{reason['code']} — (described as empty by this console)"
+    return description
 
 
 def _human_bytes(n: int) -> str:

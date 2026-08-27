@@ -7494,7 +7494,7 @@ class TestVerboseFailures:
              'constraint_summary': [
                  {'move_id': '226', 'attack_name': 'Attack B', 'reasons': [
                      {'code': 'incompatible_os', 'description': 'OS mismatch',
-                      'detail': 'requires LINUX', 'fixable': True}
+                      'detail': 'requires LINUX'}
                  ]}
              ]},
             {'simulationCount': 100, 'matchedTargetSimulators': 3,
@@ -7547,7 +7547,7 @@ class TestVerboseFailures:
              ],
              'constraint_summary_aggregated': [
                  {'code': 'incompatible_os', 'description': 'OS mismatch',
-                  'fixable': True, 'total_attacks': 1, 'sub_reasons': []}
+                  'total_attacks': 1, 'sub_reasons': []}
              ]},
             {'simulationCount': 100, 'matchedTargetSimulators': 3,
              'matchedAttackerSimulators': 2, 'matchedAttacks': 1,
@@ -8060,6 +8060,44 @@ class TestAbsentConstraintCatalog:
         for reason in reasons:
             assert reason['description'] is None
             assert reason['description'] != reason['code']
+
+
+class TestRenderConstraintReason:
+    """The preview must never print `None`, nor pass a bare code off as an explanation."""
+
+    def test_relayed_description_is_rendered_verbatim(self):
+        """Awkward whitespace survives into the rendered line."""
+        from safebreach_mcp_studio.studio_server import _render_constraint_reason
+        awkward = "  Leading and trailing space preserved  "
+        assert _render_constraint_reason(
+            {'code': 'incompatible_os', 'description': awkward}
+        ) == awkward
+
+    def test_absent_description_names_the_code_and_says_it_was_not_supplied(self):
+        """A null description renders the code as an identifier, never as a meaning."""
+        from safebreach_mcp_studio.studio_server import _render_constraint_reason
+        rendered = _render_constraint_reason(
+            {'code': 'incompatible_package', 'description': None}
+        )
+        assert 'None' not in rendered
+        assert rendered.startswith('incompatible_package — (')
+        assert 'no description supplied' in rendered
+
+    def test_empty_description_is_not_reported_as_never_supplied(self):
+        """'Described as empty' stays distinct from 'the console supplied nothing'."""
+        from safebreach_mcp_studio.studio_server import _render_constraint_reason
+        rendered = _render_constraint_reason(
+            {'code': 'described_as_empty', 'description': ''}
+        )
+        assert 'no description supplied' not in rendered
+        assert rendered.startswith('described_as_empty — (')
+
+    def test_missing_description_key_is_treated_as_not_supplied(self):
+        """A reason dict with no description key degrades rather than raising."""
+        from safebreach_mcp_studio.studio_server import _render_constraint_reason
+        rendered = _render_constraint_reason({'code': 'incompatible_os'})
+        assert 'no description supplied' in rendered
+
 
 # ---------------------------------------------------------------------------
 # manage_test — SAF-29969

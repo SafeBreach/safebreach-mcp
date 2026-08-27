@@ -431,8 +431,10 @@ Rate limiting environment variables:
   `step_overrides` + `evaluate=True` → preview with resolved attacks per step, per-step
   simulation breakdown (matched target/attacker simulators, matched attacks), and constraint
   failure details for unmatched attacks. (3) Call with `step_overrides` → queue the test.
-  **Constraint diagnostics**: 14 constraint reason codes mapped to human-readable descriptions.
-  Each tagged as fixable via step_overrides or requiring console-level configuration.
+  **Constraint diagnostics**: reason-code descriptions are relayed verbatim from the response's own
+  `constraintCatalog` — MCP vendors no constraint vocabulary and asserts no fixability. `description`
+  is nullable: an unrecognised code, or a console whose orchestrator predates the catalog, yields
+  `null` and the conflict is still surfaced, alongside a catalog-absent hint.
   Partial-coverage steps show aggregated constraint summary; zero-sim steps show per-attack detail.
   **Simulator capabilities**: `get_console_simulators` includes roles (isInfiltration, isExfiltration,
   isAWSAttacker, etc.), assets (resolved names), simulationUsers (impersonated users),

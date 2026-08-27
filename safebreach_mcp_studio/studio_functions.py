@@ -2221,65 +2221,65 @@ def _fetch_all_plans(console):
     return plans
 
 
-# Each constraint has: description (human-readable) and fixable_via_overrides (bool)
-CONSTRAINT_REASON_DESCRIPTIONS = {
-    "incompatible_os": {
-        "description": "Simulator OS doesn't match attack requirement",
-        "fixable": True,
-    },
-    "incompatible_package": {
-        "description": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
-        "fixable": True,
-    },
-    "simulator_on_both_sides": {
-        "description": "Network attack needs separate attacker and target simulators",
-        "fixable": True,
-    },
-    "simulator_variant_is_not_root_user": {
-        "description": "Attack requires root/admin execution privilege",
-        "fixable": True,
-    },
-    "simulator_variant_is_root_user": {
-        "description": "Attack requires non-root execution",
-        "fixable": True,
-    },
-    "missing_required_advanced_actions": {
-        "description": "Specific advanced action type not enabled on simulator",
-        "fixable": False,
-    },
-    "simulator_failed_schema_validation": {
-        "description": "Simulator missing required software/capability",
-        "fixable": False,
-    },
-    "simulator_is_not_aws_attacker": {
-        "description": "Requires AWS attacker role — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "simulator_is_not_aws_simulator": {
-        "description": "Requires AWS simulator — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "simulator_is_not_mail_virtual_simulator": {
-        "description": "Requires mailbox simulator — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "move_does_not_support_root_simulation_user": {
-        "description": "Attack incompatible with root simulation user",
-        "fixable": False,
-    },
-    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
-        "description": "Proxy configuration mismatch",
-        "fixable": False,
-    },
-    "port_in_use": {
-        "description": "Required port occupied on simulator",
-        "fixable": False,
-    },
-    "simulator_didnt_pass_pre_execution_prerequisite_tests": {
-        "description": "Pre-execution checks failed on simulator",
-        "fixable": False,
-    },
-}
+CONSTRAINT_CATALOG_ABSENT_HINT = (
+    "This console supplied no constraint catalog descriptions, so no meanings are "
+    "available for the reason codes below. The conflicts themselves are complete — "
+    "only their explanations are missing."
+)
+
+
+def _raw_constraint_catalog(statistics_data):
+    """Return the response's top-level constraintCatalog, or None when absent.
+
+    statistics_data is the `data` object of a plan/statistics response — the
+    catalog is a sibling of `steps`, never a per-step field.
+    """
+    if not isinstance(statistics_data, dict):
+        return None
+    catalog = statistics_data.get('constraintCatalog')
+    return catalog if isinstance(catalog, dict) else None
+
+
+def _resolve_constraint_description(code, constraint_catalog):
+    """Resolve one reason code against the response's own catalog.
+
+    Returns Core's string, or None when the catalog has no entry — or an entry
+    with no description, which is how Core represents a code it does not itself
+    recognise. Never returns the code, and never authors a meaning.
+    """
+    if not isinstance(constraint_catalog, dict):
+        return {'description': None}
+    entry = constraint_catalog.get(code)
+    if not isinstance(entry, dict):
+        return {'description': None}
+    # .get() without an `or` fallback: a described-as-empty '' must stay
+    # distinguishable from a description that was never supplied.
+    description = entry.get('description')
+    return {'description': description if isinstance(description, str) else None}
+
+
+def _build_constraint_catalog(constraint_catalog, codes):
+    """Narrow the response's catalog to the codes MCP actually emits.
+
+    One entry per code, key present even when the description is None, each
+    description relayed verbatim. Codes the response describes but MCP does not
+    emit are excluded.
+    """
+    return {
+        code: _resolve_constraint_description(code, constraint_catalog)
+        for code in sorted(codes)
+    }
+
+
+def _constraint_catalog_hint(constraint_catalog):
+    """Return a hint when the response supplied no catalog at all, else None.
+
+    Lets a caller tell "this console predates the catalog" from "these conflicts
+    have no meaning".
+    """
+    if isinstance(constraint_catalog, dict) and constraint_catalog:
+        return None
+    return CONSTRAINT_CATALOG_ABSENT_HINT
 
 
 def _build_attack_name_map(console):
@@ -2296,8 +2296,12 @@ def _build_attack_name_map(console):
         return {}
 
 
-def _summarize_constraints(simulator_constraints, attack_names=None):
+def _summarize_constraints(simulator_constraints, attack_names=None,
+                           constraint_catalog=None):
     """Summarize constraint failures into a per-attack breakdown.
+
+    Descriptions are relayed from the response's own constraint catalog; a code
+    the catalog does not describe is still reported, with description None.
 
     Returns a list of dicts: [{move_id, reasons: [{code, description, detail}]}]
     """
@@ -2330,8 +2334,8 @@ def _summarize_constraints(simulator_constraints, attack_names=None):
 
                         move_reasons[move_id][code] = {
                             'code': code,
-                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('description', code),
-                            'fixable': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('fixable', True),
+                            'description': _resolve_constraint_description(
+                                code, constraint_catalog)['description'],
                             'detail': '; '.join(detail_parts) if detail_parts else None,
                         }
 
@@ -2347,14 +2351,18 @@ def _summarize_constraints(simulator_constraints, attack_names=None):
     return result
 
 
-def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
+def _summarize_constraints_aggregated(simulator_constraints, attack_names=None,
+                                      constraint_catalog=None):
     """Aggregate constraint failures by reason code across all attacks.
 
     Used for partial-coverage steps where per-attack detail is too verbose.
     Returns a list of dicts: [{code, description, count, details: [{detail, attack_count}]}]
     """
     # First get per-attack breakdown
-    per_attack = _summarize_constraints(simulator_constraints, attack_names=attack_names)
+    per_attack = _summarize_constraints(
+        simulator_constraints, attack_names=attack_names,
+        constraint_catalog=constraint_catalog,
+    )
 
     # Aggregate by (code, detail) across attacks
     reason_groups = {}
@@ -2367,7 +2375,6 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
                 reason_groups[key] = {
                     'code': code,
                     'description': reason['description'],
-                    'fixable': reason.get('fixable', True),
                     'detail': detail,
                     'attack_count': 0,
                     'move_ids': [],
@@ -2382,7 +2389,6 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
             code_groups[code] = {
                 'code': code,
                 'description': info['description'],
-                'fixable': info.get('fixable', True),
                 'total_attacks': 0,
                 'sub_reasons': [],
             }
@@ -2439,6 +2445,9 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
 
     data = response.json().get('data', {})
     step_stats = data.get('steps', [])
+    # Read once, from the response root — the catalog is a sibling of `steps`,
+    # so reading it per step would silently yield nothing.
+    raw_catalog = _raw_constraint_catalog(data)
 
     # Build attack name map for evaluate (resolved attacks + constraint rendering)
     attack_names = _build_attack_name_map(console) if include_constraints else {}
@@ -2479,16 +2488,21 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
                 if sim_count == 0 or verbose_failures:
                     # Per-attack detail: zero-sim steps OR verbose mode
                     step_result['constraint_summary'] = _summarize_constraints(
-                        constraints, attack_names=attack_names
+                        constraints, attack_names=attack_names,
+                        constraint_catalog=raw_catalog,
                     )
                 else:
                     # Partial coverage default: aggregated summary
                     step_result['constraint_summary_aggregated'] = (
                         _summarize_constraints_aggregated(
-                            constraints, attack_names=attack_names
+                            constraints, attack_names=attack_names,
+                            constraint_catalog=raw_catalog,
                         )
                     )
                 step_result['unmatched_attack_count'] = unmatched
+                catalog_hint = _constraint_catalog_hint(raw_catalog)
+                if catalog_hint:
+                    step_result['constraint_catalog_hint'] = catalog_hint
 
         result.append(step_result)
 
