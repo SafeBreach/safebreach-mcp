@@ -34,10 +34,10 @@
 
 | Field | Value |
 |-------|-------|
-| **PRD Status** | In Review |
+| **PRD Status** | In Progress |
 | **Last Updated** | 2026-08-27 |
 | **Owner** | Boris Berezovsky (AI-assisted planning) |
-| **Current Phase** | N/A — not started |
+| **Current Phase** | Phase 1 complete; Phase 2 (raw fetch core) next |
 
 ---
 
@@ -484,14 +484,14 @@ parameter set actually used, and an error line carrying the full response body o
       implementation. *(AC-6)*
 - [ ] That fetch core ships in `safebreach_mcp_core` as a shared primitive: no studio-specific types in its
       signature or return value, and importable by any server as `queue_state` already is. *(AC-6, §3 B)*
-- [ ] `CONSTRAINT_REASON_DESCRIPTIONS` is **deleted**, including its 14 existing entries. No constraint
+- [x] `CONSTRAINT_REASON_DESCRIPTIONS` is **deleted**, including its 14 existing entries. No constraint
       meaning — and no `fix_lever` map either — is vendored in this repo. *(AC-7)*
 - [ ] `constraint_catalog` is filled from the response's own `constraintCatalog`, with code keys and
       `description` text relayed **verbatim**. A test fails if MCP re-words, truncates, or substitutes a
       description. *(AC-7)*
-- [ ] No `description` is fabricated for any code. Meanings are Core's, served per response by SAF-35568; a
+- [x] No `description` is fabricated for any code. Meanings are Core's, served per response by SAF-35568; a
       code the API does not describe reports `description: null`. *(AC-7, §9 R9)*
-- [ ] An absent `constraintCatalog` — a console predating SAF-35568, or `get_constraints=false` — degrades to
+- [x] An absent `constraintCatalog` — a console predating SAF-35568, or `get_constraints=false` — degrades to
       `description: null` for every code with the conflicts still surfaced, and never raises. *(AC-7, §9 R11)*
 - [ ] Conflicts are returned **normalized** — a `constraint_catalog` of the codes present in the response, plus
       per-conflict references carrying only `severity`, `attack_id`, `side`, `simulator_count` and `values`. *(AC-8)*
@@ -528,7 +528,7 @@ parameter set actually used, and an error line carrying the full response body o
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |-------|--------|-----------|------------|-------|
-| Phase 1: Relay Core's constraint catalog (delete vendored table) | ⏳ Pending | - | - | |
+| Phase 1: Relay Core's constraint catalog (delete vendored table) | ✅ Complete | 2026-08-27 | 1a69fe0 | Scope extended with user approval: `fixable` dropped with the table; `studio_server.py` renderer guarded against the now-nullable `description`; `CLAUDE.md` constraint-diagnostics wording corrected. T-39's Phase-4 clauses deferred — see §8 Phase 4. |
 | Phase 2: Raw fetch core | ⏳ Pending | - | - | |
 | Phase 3: Refactor summariser onto the core | ⏳ Pending | - | - | |
 | Phase 4: Translation + zero-impact reporting layer | ⏳ Pending | - | - | |
@@ -886,6 +886,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-08-27 | **Phase 1 implemented (`1a69fe0`).** `CONSTRAINT_REASON_DESCRIPTIONS` deleted outright with no replacement map; `_raw_constraint_catalog` / `_resolve_constraint_description` / `_build_constraint_catalog` / `_constraint_catalog_hint` added; both summarisers take the catalog. Tests T-1/T-3/T-38/T-39 green (25 cases; full repo suite 1438 passed / 0 failed) — evidence in `test-results/phase-1.md`. **Three scope extensions beyond §8's Changes table, approved by the PRD owner before implementation.** (1) **`fixable` is dropped with the table** — §8 Phase 1 did not say what became of it; with the table gone its only fallback was `True`, which would assert "fixable via `step_overrides`" for all 97 codes including those that are not — a worse vendored claim than the table being removed. Consequence: `run_scenario` previews lose the "*(not via step_overrides)*" tags and the "⚠ N attacks require configuration" footers (§9 R7-sanctioned, but user-visible). (2) **`safebreach_mcp_studio/studio_server.py` added to the phase** — `:1279`/`:1308` indexed `description` directly, so a null printed the literal string `None` on every reason line of any pre-SAF-35568 console (R11). A `_render_constraint_reason` guard renders the code as an identifier with an explicit not-supplied marker, keeping described-as-empty distinct from never-supplied. (3) **`CLAUDE.md:434-435` corrected** — it documented the deleted behaviour ("14 constraint reason codes… Each tagged as fixable") as shipped, which became false at this phase rather than at Phase 6. **Deferred to Phase 4:** T-39's `Expected` also asserts `severity`, `side`, `simulator_count` and `hint_to_agent`, all of which §8 builds in Phase 4 — its provable half is green now; either re-assert the conflict-shape clauses at Phase 4 or move T-39's `Passes after`. **Open plan gaps** (for `authoring-test-plan`): T-1/T-3/T-38/T-39 still carry a stale `Automation lives in: planned:` prefix; no `T-<n>` covers the preview renderer (4 tests written without a plan item — its lack of coverage let an empty-string/never-supplied conflation through the first review); and **§8 Phase 2's output contract omits `constraintCatalog`**, which would silently regress this phase's relay when Phase 3 routes through the core. |
 | 2026-08-27 | **Fetch core moved to `safebreach_mcp_core` (v6).** User decision: `plan/statistics` is a general orchestrator API and further clients are expected, so the fetch core ships as a shared primitive rather than a studio-private helper promoted later. Phase 2 now delivers a new file `safebreach_mcp_core/plan_statistics.py` exposing **`fetch_plan_statistics`** — public, no leading underscore, since it is cross-package API — mirroring `core/queue_state.py`, which wraps the orchestrator queue endpoint and is already imported by both `data_functions.py` and `studio_functions.py` (:3111). Phase 3 imports it instead of defining it. The split is on generality: core owns the HTTP call, null-safety and truncation facts; the constraint-catalog relay, conflict normalization and zero-impact shaping stay in studio as presentation, and core's signature carries no studio-specific types. Rationale recorded in §3 B — servers are strictly siloed (the only cross-package import anywhere is inside `data`), so a second consumer could not reach a studio-resident helper and would force the move under pressure; `config_types.py:351-358` is an already-visible candidate, now noted in §10. AC-6 is unaffected — still exactly one call site, now in core. Revised §2, §3 B, §6, §7, §8 Phases 2-3, §10. `test-plan.md` retargeted T-6…T-12 and T-16 to `safebreach_mcp_core/tests/test_plan_statistics.py` with a Change Coverage row for the new module; no test added, removed or re-phased. |
 | 2026-08-27 | **Relay Core's catalog; no vendored vocabulary at all (v5).** Reviewed [SAF-35568's PR](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) and aligned to what it actually shipped, which differs from what v4 assumed in two ways. (1) It serves `{ description }` only — `fixLever` was implemented in its Phase 1 and **removed in its Phase 5** as redundant relative to the description. v4's chosen option ("delete the table, keep a fix-lever map") rested on the API serving both, so `CONSTRAINT_FIX_LEVERS` is dropped entirely: MCP now vendors **no** constraint vocabulary — no meanings, no levers, no coverage guard — and fills `constraint_catalog` by relaying the response's own `constraintCatalog` verbatim. (2) The vocabulary is **97 codes across 24 groups with keys 1:1 with emitted values**, not 88 with two key/value mismatches — its Phase 6 renamed both spellings at source and deleted 5 dead keys. Consequences: R3 and R6 **close** (nothing vendored to drift, nothing keyed by hand); R7 drops to Low (MCP asserts no remedy at all); R9 drops to Low and R10 **closes** (SAF-35568 delivered — descriptions now arrive for every referenced code, 83 more than MCP ever vendored); new **R11** records the one genuine residual, a console whose orchestrator predates the change sending no catalog, which degrades to `description: null` with conflicts still surfaced plus a `hint_to_agent`. Also folded in: `getConstraints=true` gates the catalog as well as `simulatorConstraints`, the `getAllConstraints` swagger description is no longer stale, and the four count maps are now typed at the source. Revised §1, §2, §3 A/C/D, §4, §5, §6, §7, §9, §10, §11, Phase 1, Phase 4. `test-plan.md` was updated to match in the same revision — T-1/T-3/T-23 rescoped, T-2/T-5 tombstoned, T-38/T-39/T-40 added, validator clean. |
 | 2026-08-26 | PRD created — initial draft |
