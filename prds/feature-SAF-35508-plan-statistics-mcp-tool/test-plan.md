@@ -34,7 +34,8 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39 | — |
+| `safebreach_mcp_core/plan_statistics.py` | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-16 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
 | `safebreach_mcp_studio/studio_server.py` | T-24, T-25 | — |
 | `CLAUDE.md` | T-34 | — |
@@ -143,8 +144,6 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 |------|-------------|--------|--------------|------|
 | T-1 | No constraint vocabulary is vendored anywhere in the repo | API-contract | Phase 1 | safebreach_mcp_studio |
 | T-3 | An unrecognised code is still surfaced, without a fabricated explanation | — | Phase 1 | safebreach_mcp_studio |
-| T-38 | A relayed description reaches the caller byte-for-byte, never re-worded | API-contract | Phase 1 | safebreach_mcp_studio |
-| T-39 | A response with no catalog degrades to null descriptions, never an error | API-contract | Phase 1 | safebreach_mcp_studio |
 | T-18 | A sparse constraint map is never iterated as though dense | — | Phase 4 | safebreach_mcp_studio |
 | T-19 | Every reason in a multi-reason constraint leaf surfaces, not just the first | API-contract | Phase 4 | safebreach_mcp_studio |
 | T-20 | Only a genuine integer zero marks an attack inapplicable — never a null | — | Phase 4 | safebreach_mcp_studio |
@@ -156,22 +155,24 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-26 | Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error | — | Phase 5 | safebreach_mcp_studio |
 | T-34 | The tool catalog documents the new tool and the gate table is left alone | — | Phase 6 | safebreach_mcp_studio |
 | T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach_mcp_studio |
+| T-38 | A relayed description reaches the caller byte-for-byte, never re-worded | API-contract | Phase 1 | safebreach_mcp_studio |
+| T-39 | A response with no catalog degrades to null descriptions, never an error | API-contract | Phase 1 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
 | Test | Description | Aspect | Passes after | Repo | Environment |
 |------|-------------|--------|--------------|------|-------------|
-| T-6 | An ad-hoc plan body is scored and the response returned unreduced | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-7 | A scenario_id is passed to Core for native resolution, never via planId | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-8 | A step-less plan is rejected before any network call is made | — | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-9 | All five query parameters are sent, with the documented defaults and honoured overrides | API-contract | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-10 | A limit-reached response is survived, and null is kept distinct from zero | regression | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-11 | An API failure surfaces the full response body, not just a status code | — | Phase 2 | safebreach_mcp_studio | repo-harness |
-| T-12 | Repeated identical calls each hit the API, proving no MCP-side cache | — | Phase 2 | safebreach_mcp_studio | repo-harness |
+| T-6 | An ad-hoc plan body is scored and the response returned unreduced | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-7 | A scenario_id is passed to Core for native resolution, never via planId | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-8 | A step-less plan is rejected before any network call is made | — | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-9 | All five query parameters are sent, with the documented defaults and honoured overrides | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-10 | A limit-reached response is survived, and null is kept distinct from zero | regression | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-11 | An API failure surfaces the full response body, not just a status code | — | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-12 | Repeated identical calls each hit the API, proving no MCP-side cache | — | Phase 2 | safebreach_mcp_core | repo-harness |
 | T-13 | The refactored helper's observable contract is byte-for-byte unchanged | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
 | T-14 | The helper still asks for expected counts explicitly, preserving today's numbers | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
 | T-15 | The helper no longer crashes on a limit-reached response | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
-| T-16 | The statistics endpoint is reached from exactly one place in the repo | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
+| T-16 | The statistics endpoint is reached from exactly one place in the repo | regression | Phase 3 | safebreach_mcp_core | repo-harness |
 | T-17 | Both existing callers' evaluate previews are unchanged by the refactor | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
 | T-27 | Counts mode selects one call or two, and labels what it returns | API-contract | Phase 5 | safebreach_mcp_studio | repo-harness |
 
@@ -304,7 +305,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the orchestrator API mocked, call the fetch core with a plan body carrying two steps and no `id`. Inspect the posted body and the returned per-step structures.
 - Expected: The posted body carries the supplied steps and a `name` (defaulted to empty string when absent) and no `id`. Each returned step exposes `simulationCount`, `moves`, `simulators`, `attackerSimulators`, `targetSimulators`, `simulatorConstraints` and `isLimitReached` with the mocked values unmodified.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-7 — A scenario_id is passed to Core for native resolution, never via planId
@@ -320,7 +321,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with a `scenario_id` and no plan body. Inspect the posted body and assert no scenario-fetch call was made.
 - Expected: The posted body carries `id` set to the supplied value plus a `name`; `planId` is absent; no additional scenario or plan lookup is issued.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-8 — A step-less plan is rejected before any network call is made
@@ -335,7 +336,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with a plan body whose `steps` is missing, then again with `steps` empty. Assert the mocked transport was never invoked.
 - Expected: Both calls raise a typed error whose message names the missing steps; the HTTP mock records zero calls.
 - Evidence required: pytest run output naming the test, showing the zero-call assertion.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-9 — All five query parameters are sent, with the documented defaults and honoured overrides
@@ -351,7 +352,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core with no parameter overrides and parse the request URL's query string. Repeat with each parameter explicitly overridden to a non-default value.
 - Expected: The default call sends `includeDisabled=false`, `getConstraints=true`, `getAllConstraints=true`, `limit=500000`, `useCache=true`. Each override appears in the URL in place of its default, and no parameter is omitted in either case.
 - Evidence required: pytest run output naming the test, with the asserted query strings visible.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-10 — A limit-reached response is survived, and null is kept distinct from zero
@@ -367,7 +368,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Mock a limit-reached response for a three-step plan: a single returned step with `isLimitReached` true, a null `simulationCount`, and every `moves` value null. Call the fetch core.
 - Expected: No exception. The step's count is reported as not-computed, distinct from zero, and every null `moves` value stays null rather than becoming `0`. The result reports the plan's step count as 3, the returned count as 1, and the truncation flag as set.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-11 — An API failure surfaces the full response body, not just a status code
@@ -382,7 +383,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Mock the API returning a non-2xx status with a JSON body carrying an identifiable error string. Call the fetch core and capture the raised error.
 - Expected: The raised error's message contains both the status code and the identifiable string from the body.
 - Evidence required: pytest run output naming the test.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-12 — Repeated identical calls each hit the API, proving no MCP-side cache
@@ -397,7 +398,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: With the API mocked, call the fetch core twice with identical arguments. Count transport invocations.
 - Expected: Exactly two invocations. No module-level cache object is consulted for statistics results.
 - Evidence required: pytest run output naming the test, showing the call count.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-13 — The refactored helper's observable contract is byte-for-byte unchanged
@@ -461,7 +462,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Verify: Scan the repository's Python sources for occurrences of the `plan/statistics` endpoint path, excluding tests.
 - Expected: Exactly one occurrence, inside the fetch core.
 - Evidence required: pytest run output naming the test, with the matched location listed.
-- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
 ### T-17 — Both existing callers' evaluate previews are unchanged by the refactor
@@ -833,6 +834,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-08-27 15:40 | Fetch core relocated to `safebreach_mcp_core` per user decision — `plan/statistics` is a general orchestrator API with further clients expected, so it ships as a shared primitive (`safebreach_mcp_core/plan_statistics.py`, public `fetch_plan_statistics`) rather than a studio-private helper, mirroring `core/queue_state.py`. Retargeted the eight tests that exercise the fetch core itself — T-6, T-7, T-8, T-9, T-10, T-11, T-12 and T-16 (the single-call-site scan) — to `safebreach_mcp_core/tests/test_plan_statistics.py`, and updated their Repo column. T-13/T-14/T-15/T-17 stay in the studio suite: they assert the summariser's own contract. Added a Change Coverage row for the new core module. No test was added, removed or re-phased and no assertion changed — placement only. |
 | 2026-08-27 14:57 | Corrected for PRD v5 — MCP vendors **no** constraint vocabulary and relays Core's `constraintCatalog` instead, after [SAF-35568](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) shipped `{ description }` only (its `fixLever` was implemented then removed as redundant) over 97 codes with keys 1:1 with emitted values. **T-2 tombstoned** (Status: Removed, ID retained) — there is no vendored map to key, and the upstream key/value mismatch it policed was fixed at source. **T-5 tombstoned** — nothing is vendored, so nothing can drift; the cross-repo checkout dependency goes with it. T-1 rescoped from "every code has a valid fix lever" to "no constraint vocabulary is vendored anywhere", including a scan for substitute mappings; T-3 rescoped to both forms of an undescribed code (absent entry and empty `{}`); T-23's catalog assertion moved from `fix_lever` to a relayed `description`. **Added T-38** (descriptions relayed byte-for-byte, never re-worded), **T-39** (absent/empty catalog degrades to `description: null` with conflicts intact and a hint, per new R11) and **T-40** (e2e — a real console actually supplies the descriptions the relay depends on, skipping with a stated reason on a pre-SAF-35568 console). Also fixed stale v1 wording in T-28's Expected, which still demanded a "suggested fix" dropped back in v2. R7 restated to the relay contract, R8 to conditional-null; R3/R6/R10 closed, R7/R9 dropped to Low, R11 added. Regenerated views: 36 Active (15 unit / 13 integration / 8 e2e), phases 4/11/16/23/32/33/36. Status stays Draft — material change. In Sync with PRD v5. |
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
 | 2026-08-26 16:35 | Fixed the Regression section's test list: dropped tombstoned T-4 and added T-2 and T-10, which carry `Aspect: regression` but were never listed. The list is now the complete regression set. |

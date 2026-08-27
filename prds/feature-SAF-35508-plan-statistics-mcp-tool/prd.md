@@ -53,9 +53,11 @@ Four pieces, in dependency order:
    `constraintCatalog` in the `plan/statistics` response itself, mapping every code that response references
    to its authoritative `description`. MCP relays it; Helm renders the sentence from that description (parent
    req 13). A code the API does not describe reports `description: null` and is still surfaced.
-2. **A new low-level fetch function** that performs the HTTP call, exposes **every** query parameter, and
-   returns the **raw, null-safe** per-step response — including the `simulators` union map and
-   `isLimitReached`, both of which the current helper never even extracts.
+2. **A new low-level fetch function in `safebreach_mcp_core`** that performs the HTTP call, exposes **every**
+   query parameter, and returns the **raw, null-safe** per-step response — including the `simulators` union map
+   and `isLimitReached`, both of which the current helper never even extracts. `plan/statistics` is a general
+   orchestrator API rather than a studio concern, and further clients are expected, so it ships as a shared
+   core primitive from the start rather than being promoted later (§3 B).
 3. **`_get_scenario_statistics` refactored into a thin summariser** over that fetch function, preserving its
    current return contract **byte-for-byte**.
 4. **A new public function + registered tool** `get_plan_statistics` (`readOnlyHint=True`) that returns raw
@@ -155,12 +157,29 @@ only from a catch block on the *generation* path (`sbGenerator/validators/index.
 `simulatorConstraints` is populated exclusively by `StatisticsAggregator.addConstraintBySimulator` with reasons
 from `constraints.js`. It is a separate return channel and cannot appear as a reason code.
 
-### Component B — Raw fetch core (`_fetch_plan_statistics`)
+### Component B — Shared fetch core (`fetch_plan_statistics`, in `safebreach_mcp_core`)
 
-**Purpose**: New private function; the single point at which `plan/statistics` is called. Satisfies AC-1,
-AC-2, AC-5 and AC-6.
+**Purpose**: New shared module `safebreach_mcp_core/plan_statistics.py`; the single point at which
+`plan/statistics` is called, by any server. Satisfies AC-1, AC-2, AC-5 and AC-6.
+
+**Why core rather than studio.** `plan/statistics` is a general orchestrator API, not a studio concept — it
+answers "what would this plan do", which any server holding a plan may need. Studio is merely its first
+consumer. The precedent is exact: `safebreach_mcp_core/queue_state.py` wraps the orchestrator queue endpoint
+the same way and is imported by both `data_functions.py` and `studio_functions.py` (:3111), so the shape and
+the import style are already established. Placing it in core from the start also avoids a later migration
+becoming a breaking move: servers are strictly siloed — the only cross-package import anywhere is within
+`data` — so a second consumer could not reach a studio-resident helper at all, and would force the promotion
+under time pressure. A concrete candidate already exists: `config_types.py:351-358` tells the agent that
+`total_attack_count` is indeterminate for criteria-based steps and to run a scenario to find out, which is
+precisely what this function computes.
 
 **Key features**
+- **Public, not private.** Named `fetch_plan_statistics` with no leading underscore, because it is now
+  cross-package API — matching `queue_state.get_orchestrator_test_state`. It takes and returns plain
+  dicts/primitives with no studio-specific types in its signature, so no consumer inherits studio's vocabulary.
+- **Nothing studio-specific inside it.** Constraint-catalog relaying, conflict normalization and zero-impact
+  reporting are presentation and stay in studio (Component D). Core returns the response, null-safety and
+  truncation facts; each consumer shapes its own output.
 - Accepts a **plan body** (ad-hoc, no saved scenario needed) or a `scenario_id`. Per F1 the endpoint natively
   resolves a saved plan when the body carries `id` or `testId` (`plan_statistics.js:51-53`), so `scenario_id`
   is a **passthrough** as `{id: ...}` — no client-side resolution. `planId` is present in the `ValidatePlan`
@@ -409,9 +428,10 @@ above: an identical-looking "nothing will run", opposite meaning. Conflating the
   `get_auth_headers_for_console(console)`, `check_rbac_response(response)`.
 - Attack-name resolution reuses `_build_attack_name_map(console)` (:2286), which reads the playbook cache via
   `_get_all_attacks_from_cache_or_api`. Names are cosmetic — that helper already degrades to `{}` on failure.
-- Nothing is vendored, so there is no table to place: the catalog builder and resolver live in
-  `safebreach_mcp_studio` alongside their only consumers rather than in `safebreach_mcp_core`, since nothing
-  outside the studio server reads constraint reasons.
+- **Placement splits on generality.** The fetch core is a general orchestrator-API wrapper and lives in
+  `safebreach_mcp_core` (§3 B). The constraint-catalog builder/resolver and the zero-impact shaping are
+  presentation, live in `safebreach_mcp_studio` alongside their only consumers, and are not vendored
+  vocabulary — nothing outside the studio server reads constraint reasons today.
 
 **Performance**
 - `getAllConstraints=true` disables the validator short-circuit, so full explanation coverage is measurably
@@ -459,8 +479,11 @@ parameter set actually used, and an error line carrying the full response body o
 - [ ] When `isLimitReached` is true the tool reports it explicitly, preserves `null` (not computed) versus `0`
       (runs nowhere), surfaces that the returned step list is shorter than the plan's, and performs no
       zero-impact reporting. *(AC-5)*
-- [ ] `plan/statistics` is called from exactly one place in the repo; `_get_scenario_statistics` and its two
-      callers route through it rather than forming a parallel implementation. *(AC-6)*
+- [ ] `plan/statistics` is called from exactly one place in the repo — `safebreach_mcp_core/plan_statistics.py`;
+      `_get_scenario_statistics` and its two callers route through it rather than forming a parallel
+      implementation. *(AC-6)*
+- [ ] That fetch core ships in `safebreach_mcp_core` as a shared primitive: no studio-specific types in its
+      signature or return value, and importable by any server as `queue_state` already is. *(AC-6, §3 B)*
 - [ ] `CONSTRAINT_REASON_DESCRIPTIONS` is **deleted**, including its 14 existing entries. No constraint
       meaning — and no `fix_lever` map either — is vendored in this repo. *(AC-7)*
 - [ ] `constraint_catalog` is filled from the response's own `constraintCatalog`, with code keys and
@@ -564,7 +587,7 @@ resolver that falls through to the code violates AC-8 — `incompatible_package`
 
 **Semantic change**: Introduce the single, fully-parameterised, null-safe call site for `plan/statistics`.
 
-**Deliverables**: `_fetch_plan_statistics`.
+**Deliverables**: `safebreach_mcp_core/plan_statistics.py`, exposing `fetch_plan_statistics`.
 
 **Implementation details**
 - **Inputs**: `console`; either a plan body or a `scenario_id`; the five query parameters; nothing else.
@@ -591,7 +614,7 @@ response.
 
 | File | Description |
 |---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Add `_fetch_plan_statistics` |
+| `safebreach_mcp_core/plan_statistics.py` | **New file** — add `fetch_plan_statistics` (module docstring with a Usage block, per `queue_state.py`) |
 
 **Git commit**: `feat(studio): add null-safe plan statistics fetch core with full parameter passthrough`
 
@@ -619,7 +642,7 @@ alters the numbers two shipped tools report.
 
 | File | Description |
 |---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Rewrite `_get_scenario_statistics` (:2400) body onto `_fetch_plan_statistics` |
+| `safebreach_mcp_studio/studio_functions.py` | Rewrite `_get_scenario_statistics` (:2400) body onto `fetch_plan_statistics`, imported from `safebreach_mcp_core.plan_statistics` |
 
 **Git commit**: `refactor(studio): route _get_scenario_statistics through the fetch core`
 
@@ -808,6 +831,11 @@ above.
   SAF-35568 deferred the decision to its own follow-up rather than answering it. MCP is unaffected by the
   outcome — the relay passes through whatever string arrives — but a caller rendering for a non-English user
   should treat the text as English until that is settled.
+- **Config server resolving its own indeterminate attack counts.** `config_types.py:351-358` currently returns
+  `total_attack_count: None` for criteria-based steps and hints the agent to run a scenario to find out. With
+  the fetch core in `safebreach_mcp_core` (§3 B) that server can import `fetch_plan_statistics` and answer it
+  directly — no promotion, no migration, just an import. Left out of this ticket because it changes
+  `get_scenarios`' cost profile (a statistics call per indeterminate scenario) and so deserves its own decision.
 - **Acting on the zero-impact report** — dropping inapplicable attacks/simulators from the plan body being
   assembled. Explicitly out of scope here (§9); needs an owner, either a new SAF-34615 subtask or SAF-35484.
 - **Correcting `quick_run` / `run_scenario` previews** to report runnable rather than expected counts. The
@@ -858,6 +886,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-08-27 | **Fetch core moved to `safebreach_mcp_core` (v6).** User decision: `plan/statistics` is a general orchestrator API and further clients are expected, so the fetch core ships as a shared primitive rather than a studio-private helper promoted later. Phase 2 now delivers a new file `safebreach_mcp_core/plan_statistics.py` exposing **`fetch_plan_statistics`** — public, no leading underscore, since it is cross-package API — mirroring `core/queue_state.py`, which wraps the orchestrator queue endpoint and is already imported by both `data_functions.py` and `studio_functions.py` (:3111). Phase 3 imports it instead of defining it. The split is on generality: core owns the HTTP call, null-safety and truncation facts; the constraint-catalog relay, conflict normalization and zero-impact shaping stay in studio as presentation, and core's signature carries no studio-specific types. Rationale recorded in §3 B — servers are strictly siloed (the only cross-package import anywhere is inside `data`), so a second consumer could not reach a studio-resident helper and would force the move under pressure; `config_types.py:351-358` is an already-visible candidate, now noted in §10. AC-6 is unaffected — still exactly one call site, now in core. Revised §2, §3 B, §6, §7, §8 Phases 2-3, §10. `test-plan.md` retargeted T-6…T-12 and T-16 to `safebreach_mcp_core/tests/test_plan_statistics.py` with a Change Coverage row for the new module; no test added, removed or re-phased. |
 | 2026-08-27 | **Relay Core's catalog; no vendored vocabulary at all (v5).** Reviewed [SAF-35568's PR](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) and aligned to what it actually shipped, which differs from what v4 assumed in two ways. (1) It serves `{ description }` only — `fixLever` was implemented in its Phase 1 and **removed in its Phase 5** as redundant relative to the description. v4's chosen option ("delete the table, keep a fix-lever map") rested on the API serving both, so `CONSTRAINT_FIX_LEVERS` is dropped entirely: MCP now vendors **no** constraint vocabulary — no meanings, no levers, no coverage guard — and fills `constraint_catalog` by relaying the response's own `constraintCatalog` verbatim. (2) The vocabulary is **97 codes across 24 groups with keys 1:1 with emitted values**, not 88 with two key/value mismatches — its Phase 6 renamed both spellings at source and deleted 5 dead keys. Consequences: R3 and R6 **close** (nothing vendored to drift, nothing keyed by hand); R7 drops to Low (MCP asserts no remedy at all); R9 drops to Low and R10 **closes** (SAF-35568 delivered — descriptions now arrive for every referenced code, 83 more than MCP ever vendored); new **R11** records the one genuine residual, a console whose orchestrator predates the change sending no catalog, which degrades to `description: null` with conflicts still surfaced plus a `hint_to_agent`. Also folded in: `getConstraints=true` gates the catalog as well as `simulatorConstraints`, the `getAllConstraints` swagger description is no longer stale, and the four count maps are now typed at the source. Revised §1, §2, §3 A/C/D, §4, §5, §6, §7, §9, §10, §11, Phase 1, Phase 4. `test-plan.md` was updated to match in the same revision — T-1/T-3/T-23 rescoped, T-2/T-5 tombstoned, T-38/T-39/T-40 added, validator clean. |
 | 2026-08-26 | PRD created — initial draft |
 | 2026-08-26 | DoD gate flagged TI-9/TI-10 as gaps. Root cause was the ticket's "auto-removed" wording, not the design: a statistics call reports, it does not act. Reworded SAF-35508 ACs 9/10 to "reported" (plus AC-5/AC-12 alignment, scope item 4, and the out-of-scope line); updated §7, §9, §10 and §11 to match. All 12 ACs now covered. |
