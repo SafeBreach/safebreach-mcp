@@ -1313,15 +1313,6 @@ Example (3-turn workflow for non-ready scenarios):
                                 "`evaluate=True` for constraint details"
                             )
 
-                    # Stated once for the whole preview, not per reason line.
-                    catalog_hint = next(
-                        (s['constraint_catalog_hint'] for s in step_stats
-                         if s.get('constraint_catalog_hint')),
-                        None,
-                    )
-                    if catalog_hint:
-                        parts.extend(["", f"ℹ {catalog_hint}"])
-
                     if empty_steps:
                         parts.extend([
                             "",

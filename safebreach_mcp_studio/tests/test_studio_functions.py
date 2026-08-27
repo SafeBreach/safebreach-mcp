@@ -8019,19 +8019,6 @@ class TestAbsentConstraintCatalog:
             'requires WINDOWS, simulator has LINUX'
         )
 
-    def test_hint_names_the_missing_catalog(self):
-        """The caller can tell 'this console is older' from 'these have no meaning'."""
-        from safebreach_mcp_studio.studio_functions import _constraint_catalog_hint
-
-        for absent in (None, {}):
-            hint = _constraint_catalog_hint(absent)
-            assert hint is not None
-            assert 'catalog' in hint.lower()
-
-        assert _constraint_catalog_hint(
-            {'incompatible_os': {'description': 'OS mismatch'}}
-        ) is None
-
     @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
            return_value={})
     @patch('safebreach_mcp_studio.studio_functions.requests.post')

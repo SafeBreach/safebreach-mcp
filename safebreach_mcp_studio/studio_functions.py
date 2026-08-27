@@ -2221,13 +2221,6 @@ def _fetch_all_plans(console):
     return plans
 
 
-CONSTRAINT_CATALOG_ABSENT_HINT = (
-    "This console supplied no constraint catalog descriptions, so no meanings are "
-    "available for the reason codes below. The conflicts themselves are complete — "
-    "only their explanations are missing."
-)
-
-
 def _raw_constraint_catalog(statistics_data):
     """Return the response's top-level constraintCatalog, or None when absent.
 
@@ -2270,16 +2263,6 @@ def _build_constraint_catalog(constraint_catalog, codes):
         for code in sorted(codes)
     }
 
-
-def _constraint_catalog_hint(constraint_catalog):
-    """Return a hint when the response supplied no catalog at all, else None.
-
-    Lets a caller tell "this console predates the catalog" from "these conflicts
-    have no meaning".
-    """
-    if isinstance(constraint_catalog, dict) and constraint_catalog:
-        return None
-    return CONSTRAINT_CATALOG_ABSENT_HINT
 
 
 def _build_attack_name_map(console):
@@ -2500,9 +2483,6 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
                         )
                     )
                 step_result['unmatched_attack_count'] = unmatched
-                catalog_hint = _constraint_catalog_hint(raw_catalog)
-                if catalog_hint:
-                    step_result['constraint_catalog_hint'] = catalog_hint
 
         result.append(step_result)
 

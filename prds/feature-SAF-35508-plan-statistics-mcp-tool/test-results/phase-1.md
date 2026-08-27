@@ -72,6 +72,9 @@ uv run --python 3.12 pytest safebreach_mcp_studio/tests/test_studio_functions.py
   `test_get_scenario_statistics_survives_a_response_with_no_catalog` — all PASSED. Neither an absent nor an
   empty catalog raises; every referenced code key is present with `description: None`; conflicts keep their
   `code` and `detail`; the catalog-absent hint is emitted.
+  **Post-run amendment:** `test_hint_names_the_missing_catalog` and the hint it covered were removed after
+  this run, on the PRD owner's ruling that every console serves SAF-35568's catalog. T-39's other five cases
+  are unaffected and still green; the suite total is 1437 (not 1438) as of that removal.
 
 Regression context — full repo suite, same run: **1438 passed, 137 deselected, 0 failed**
 (`safebreach_mcp_config` + `_data` + `_utilities` + `_playbook` + `_studio`, `-m "not e2e"`).
@@ -100,8 +103,10 @@ None.
    `simulator_count`, and that `hint_to_agent` names the missing catalog — but PRD §8 builds `severity`,
    `side` and `simulator_count` in **Phase 4**, and `hint_to_agent` in Phase 4/5. Phase 1 emits
    `{move_id, reasons: [{code, description, detail}]}`. The provable half was implemented and is green
-   (no raise, key present, `description: None`, conflicts surfaced, catalog-absent hint reachable); the
-   conflict-shape clauses must be re-asserted at Phase 4, or T-39's `Passes after` moved to Phase 4.
+   (no raise, key present, `description: None`, conflicts surfaced); the conflict-shape clauses must be
+   re-asserted at Phase 4, or T-39's `Passes after` moved to Phase 4. **The hint clause is now
+   unsatisfiable by design** — the PRD owner ruled that every console serves SAF-35568's catalog, so the
+   catalog-absent hint was removed after this run; T-39 needs rescoping to its remaining assertions.
 3. **No `T-<n>` covers the preview renderer.** `_render_constraint_reason` (`studio_server.py`) was added
    under an approved Phase-1 scope extension because `description` became nullable and the renderer indexed
    it directly, printing the literal string `None`. Four tests were written for it
