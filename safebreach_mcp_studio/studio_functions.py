@@ -2280,6 +2280,25 @@ def _count_matched_entities(counts):
     return sum(1 for v in computed if v > 0)
 
 
+def _sum_computed_counts(counts):
+    """Total only the counts that were actually computed.
+
+    A limit-reached response returns None for every step Core did not reach;
+    summing those raises. An uncomputed step contributes nothing to the total,
+    which is a partial figure by nature — the truncation is what explains it.
+    """
+    return sum(c for c in counts if _is_computed_count(c))
+
+
+def _runs_anywhere(count):
+    """Whether a step is known to produce simulations.
+
+    False for an uncomputed count: not knowing is not the same as knowing it
+    produces nothing, and `> 0` raises on None.
+    """
+    return _is_computed_count(count) and count > 0
+
+
 def _by_descending_simulation_count(item):
     """Sort key for resolved_attacks: computed counts first, descending.
 
@@ -2749,7 +2768,7 @@ def sb_quick_run(
         steps, console, include_constraints=evaluate
     )
     step_counts = [s.get('simulationCount', 0) for s in step_stats]
-    total_predicted = sum(step_counts)
+    total_predicted = _sum_computed_counts(step_counts)
     empty_steps = [i + 1 for i, c in enumerate(step_counts) if c == 0]
 
     # Evaluate: return prediction without queuing
@@ -2801,7 +2820,7 @@ def sb_quick_run(
     if empty_steps:
         exec_steps = []
         for i, step in enumerate(steps):
-            if step_counts[i] > 0:
+            if _runs_anywhere(step_counts[i]):
                 exec_steps.append(step)
             else:
                 attack_id = step["attacksFilter"]["playbook"]["values"][0]
@@ -2970,7 +2989,7 @@ def sb_run_scenario(
                                           include_constraints=evaluate,
                                           verbose_failures=verbose_failures)
     step_counts = [s['simulationCount'] for s in step_stats]
-    total_predicted = sum(step_counts)
+    total_predicted = _sum_computed_counts(step_counts)
     empty_steps = [
         i + 1 for i, count in enumerate(step_counts) if count == 0
     ]

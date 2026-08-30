@@ -8510,6 +8510,43 @@ class TestLimitReachedNoLongerCrashesTheHelper:
         assert step['simulationCount'] is None
 
 
+    def test_run_scenario_evaluate_survives_a_limit_reached_response(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """Fixing the helper alone left the crash one frame up, in sum(step_counts)."""
+        scenario_response = MagicMock()
+        scenario_response.json.return_value = [mock_oob_scenario]
+        scenario_response.raise_for_status.return_value = None
+
+        with _statistics_transport(limit_reached_statistics_response), \
+                patch('safebreach_mcp_studio.studio_functions.requests.get',
+                      return_value=scenario_response):
+            result = sb_run_scenario(
+                scenario_id=mock_oob_scenario['id'],
+                console="test-console",
+                evaluate=True,
+            )
+
+        assert result['status'] == 'evaluating'
+        # Uncomputed steps contribute nothing rather than crashing the sum.
+        assert result['predicted_simulations'] == 0
+        assert result['predicted_per_step'] == [None]
+
+    def test_quick_run_evaluate_survives_a_limit_reached_response(
+        self, limit_reached_statistics_response
+    ):
+        with _statistics_transport(limit_reached_statistics_response), \
+                patch('safebreach_mcp_playbook.playbook_functions'
+                      '._get_all_attacks_from_cache_or_api',
+                      return_value=MOCK_PLAYBOOK_ATTACKS):
+            result = sb_quick_run(
+                attack_ids="8849", console="test-console", evaluate=True,
+            )
+
+        assert result['status'] == 'evaluating'
+        assert result['predicted_simulations'] == 0
+
+
 # ---------------------------------------------------------------------------
 # manage_test — SAF-29969
 # ---------------------------------------------------------------------------
