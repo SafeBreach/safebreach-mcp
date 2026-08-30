@@ -579,12 +579,21 @@ _CAPABILITY_CATEGORY = {
 }
 
 
-def derive_categories(raw_def: Dict[str, Any]) -> List[str]:
+def derive_categories(raw_def: Dict[str, Any], catalog: Optional[Dict[str, Any]] = None,
+                      type_key: Optional[str] = None) -> List[str]:
     """Derive a connector type's full category membership: the raw `category` label unioned
     with every capability-flag-implied category. This resolves the `custom` bucket — e.g.
     a `custom` connector that is `isTiV2` derives `["custom", "ti"]` — so category filtering
-    matches the connector's real function, not just its origin label. Order follows
-    CATEGORY_TAXONOMY for stable output; unknown raw labels are appended last."""
+    matches the connector's real function, not just its origin label.
+
+    One category pair — `siem` vs `security_control` — shares the same `isSecEvents` flag, so
+    a capability flag alone cannot recover `siem` for a `custom` SIEM variant. A custom
+    connector is a clone of a base type (`custom_<base>`), so when a `catalog` + `type_key`
+    are supplied we also inherit the base type's category (e.g. `custom_splunkrest` →
+    `splunkrest` → `siem`). Note `siem` connectors also carry `security_control` (siem is a
+    subset), matching the platform's own categorization.
+
+    Order follows CATEGORY_TAXONOMY for stable output; unknown raw labels are appended last."""
     if not isinstance(raw_def, dict):
         return []
     cats = set()
@@ -594,6 +603,13 @@ def derive_categories(raw_def: Dict[str, Any]) -> List[str]:
     for flag, category in _CAPABILITY_CATEGORY.items():
         if raw_def.get(flag):
             cats.add(category)
+    # custom connectors are clones of a base type — inherit its category (recovers `siem`,
+    # which `isSecEvents` cannot distinguish from `security_control`).
+    if raw == "custom" and type_key and type_key.startswith("custom_") and isinstance(catalog, dict):
+        base = catalog.get(type_key[len("custom_"):])
+        base_cat = base.get("category") if isinstance(base, dict) else None
+        if base_cat and base_cat != "custom":
+            cats.add(base_cat)
     ordered = [c for c in CATEGORY_TAXONOMY if c in cats]
     ordered += sorted(c for c in cats if c not in CATEGORY_TAXONOMY)
     return ordered
@@ -603,22 +619,24 @@ def categories_for_type(catalog: Dict[str, Any], type_key: Optional[str]) -> Lis
     """Derived category membership for an installed connector, joined from the catalog by
     type. Empty when the type is absent from the catalog (conservative — never guesses)."""
     type_def = catalog.get(type_key) if isinstance(catalog, dict) else None
-    return derive_categories(type_def) if isinstance(type_def, dict) else []
+    return derive_categories(type_def, catalog, type_key) if isinstance(type_def, dict) else []
 
 
-def get_integration_catalog_entry(type_key: str, raw_def: Dict[str, Any]) -> Dict[str, Any]:
+def get_integration_catalog_entry(type_key: str, raw_def: Dict[str, Any],
+                                  catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Map a raw catalog type-def (from /config/integrations, keyed by type) to the
     public catalog entry. Allow-list only — internal fields (fields[], featureFlag,
     guideLink, raw is* flags) are never exposed.
 
     `category` is the raw origin label; `categories` is the derived functional membership
-    (see derive_categories) and is what `category_filter` matches against."""
+    (see derive_categories) and is what `category_filter` matches against. Passing `catalog`
+    lets a `custom_<base>` type inherit its base type's category."""
     return {
         "type": type_key,
         "name": raw_def.get("displayName") or type_key,
         "description": raw_def.get("description"),
         "category": raw_def.get("category"),
-        "categories": derive_categories(raw_def),
+        "categories": derive_categories(raw_def, catalog, type_key),
         "vendor": raw_def.get("vendor"),
         "product": raw_def.get("product"),
     }

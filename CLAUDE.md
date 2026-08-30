@@ -351,9 +351,12 @@ Rate limiting environment variables:
 connectors); `categories` is the derived functional membership — the raw label unioned with the
 capability-flag categories (`isTiV2`→`ti`, `isVm`→`vulnerability_management`, `isPam`→`secret_provider`,
 `isFileProvider`→`file_provider`, `isSendSimResult`→`workflow`, `isSecEvents`→`security_control`).
-`category_filter` matches `categories`, so a `custom`-labelled connector that is TI-capable still lists
-under `ti`. Canonical categories: custom, siem, security_control, ti, workflow, file_provider,
-deployment, secret_provider, vulnerability_management.
+`isSecEvents` cannot distinguish `siem` from `security_control`, so a `custom_<base>` connector also
+inherits its base type's category (e.g. `custom_splunkrest`→`splunkrest`→`siem`). `category_filter`
+matches `categories`, so a `custom`-labelled connector that is TI-capable still lists under `ti`.
+Note `siem` connectors also carry `security_control` (siem is a subset), matching the platform UI —
+so a `security_control` query includes SIEMs. Canonical categories: custom, siem, security_control, ti,
+workflow, file_provider, deployment, secret_provider, vulnerability_management.
 
 **Data Server (Port 8001):**
 3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering.

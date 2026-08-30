@@ -992,3 +992,27 @@ class TestCategoryDerivation:
         catalog = {"custom_mitreattack": {"category": "custom", "isTiV2": True}}
         assert categories_for_type(catalog, "custom_mitreattack") == ["custom", "ti"]
         assert categories_for_type(catalog, "absent") == []
+
+    def test_custom_siem_variant_inherits_base_category(self):
+        # isSecEvents alone cannot distinguish siem from security_control; the base type does.
+        catalog = {
+            "custom_splunkrest": {"category": "custom", "isSecEvents": True},
+            "splunkrest": {"category": "siem", "isSecEvents": True},
+        }
+        cats = derive_categories(catalog["custom_splunkrest"], catalog, "custom_splunkrest")
+        assert cats == ["custom", "siem", "security_control"]
+
+    def test_custom_edr_variant_stays_security_control(self):
+        # a custom EDR clone must NOT gain 'siem' (its base is security_control)
+        catalog = {
+            "custom_crowdstrike": {"category": "custom", "isSecEvents": True},
+            "crowdstrike": {"category": "security_control", "isSecEvents": True},
+        }
+        cats = derive_categories(catalog["custom_crowdstrike"], catalog, "custom_crowdstrike")
+        assert "security_control" in cats and "siem" not in cats
+
+    def test_custom_variant_without_base_falls_back(self):
+        # no base type present → only raw + capability flags (no guess)
+        catalog = {"custom_akeyless": {"category": "custom", "isPam": True}}
+        cats = derive_categories(catalog["custom_akeyless"], catalog, "custom_akeyless")
+        assert cats == ["custom", "secret_provider"]

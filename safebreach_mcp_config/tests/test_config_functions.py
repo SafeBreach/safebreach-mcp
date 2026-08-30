@@ -1043,6 +1043,15 @@ class TestGetIntegrations:
         assert r["total_integrations"] == 0
         assert "hint_to_agent" in r
 
+    # invalid category_filter → zero + hint names the valid categories (parity with order_by)
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_invalid_category_filter_names_valid_categories(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", category_filter="not_a_category")
+        assert r["total_integrations"] == 0
+        assert "vulnerability_management" in r["hint_to_agent"]
+        assert "not_a_category" in r["hint_to_agent"]
+
 
 # --- Integration-discovery: get_installed_integrations (SAF-32798, Phase 2) ---
 
@@ -1068,10 +1077,11 @@ def _installed_fixture():
 def _installed_catalog_fixture():
     """Catalog keyed by type for enriching the installed fixture with categories."""
     catalog = {
-        "custom_splunkrest": {"category": "siem"},
+        # custom SIEM clone: category 'custom', recovers 'siem' from its base type below
+        "custom_splunkrest": {"category": "custom", "isSecEvents": True},
         "cortexxdr": {"category": "security_control", "isSecEvents": True},
         "alienvault": {"category": "ti", "isTiV2": True},
-        "splunkrest": {"category": "siem"},
+        "splunkrest": {"category": "siem", "isSecEvents": True},
         "threatconnect": {"category": "ti", "isTiV2": True},
         # a custom-labelled TI connector — proves category_filter='ti' catches it on the installed side
         "custom_mitreattack": {"category": "custom", "isTiV2": True},
@@ -1192,9 +1202,12 @@ class TestGetInstalledIntegrations:
         # each carries the derived membership
         for i in ti["installed_integrations_in_page"]:
             assert "ti" in i["categories"]
-        # siem grouping works too
+        # siem grouping works too — incl. the custom SIEM clone (a1=custom_splunkrest),
+        # whose 'siem' is recovered from its base type (New Issue 1 fix)
         siem = sb_get_installed_integrations(console="c", category_filter="siem")
         assert sorted(i["id"] for i in siem["installed_integrations_in_page"]) == ["a1", "d4"]
+        a1 = next(i for i in siem["installed_integrations_in_page"] if i["id"] == "a1")
+        assert a1["category"] == "custom" and "siem" in a1["categories"]
 
 
 # --- Integration-discovery: get_installed_integration (SAF-32798, Phase 3) ---

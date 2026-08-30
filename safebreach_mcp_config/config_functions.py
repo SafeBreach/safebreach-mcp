@@ -29,7 +29,19 @@ from .config_types import (
     get_minimal_installed_integration,
     filter_installed_integrations,
     get_installed_integration_detail_view,
+    CATEGORY_TAXONOMY,
 )
+
+
+def _augment_category_hint(paginated: Dict[str, Any], total: int, category_filter: Optional[str]) -> None:
+    """When a category_filter matched nothing, name the valid categories in the hint (parity
+    with the order_by/order_direction validation messages)."""
+    if category_filter and total == 0:
+        base = paginated.get("hint_to_agent") or ""
+        paginated["hint_to_agent"] = (
+            f"{base} No category matched '{category_filter}'. "
+            f"Valid categories: {', '.join(CATEGORY_TAXONOMY)}."
+        ).strip()
 
 logger = logging.getLogger(__name__)
 
@@ -801,7 +813,7 @@ def sb_get_integrations(
 
     try:
         catalog = _get_integrations_catalog_from_cache_or_api(console)
-        entries = [get_integration_catalog_entry(type_key, raw) for type_key, raw in catalog.items()]
+        entries = [get_integration_catalog_entry(type_key, raw, catalog) for type_key, raw in catalog.items()]
 
         filtered = filter_integration_catalog(
             entries,
@@ -824,6 +836,7 @@ def sb_get_integrations(
         applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
+        _augment_category_hint(paginated, paginated.get('total_integrations', 0), category_filter)
         return paginated
 
     except Exception as e:
@@ -936,6 +949,7 @@ def sb_get_installed_integrations(
         applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
+        _augment_category_hint(paginated, paginated.get('total_installed_integrations', 0), category_filter)
         return paginated
 
     except Exception as e:
