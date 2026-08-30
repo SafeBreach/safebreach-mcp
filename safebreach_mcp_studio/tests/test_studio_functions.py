@@ -9172,6 +9172,89 @@ def _statistics_queries(post):
     return [parse_qs(urlparse(call[0][0]).query) for call in post.call_args_list]
 
 
+class TestTruncatedResponsesRenderHonestly:
+    """The limit-reached crash moved three frames before it was caught for good.
+
+    Helper -> caller sum() -> renderer format(). These pin the last of them, at
+    the layer a user actually sees, and pin that nothing is reported as zero
+    when it was never measured. No plan item covers the renderer.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @staticmethod
+    def _run_scenario_tool():
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        server = SafeBreachStudioServer()
+        return server.mcp._tool_manager._tools['run_scenario'].fn
+
+    def _preview(self, mock_oob_scenario, payload):
+        scenario_response = MagicMock()
+        scenario_response.json.return_value = [mock_oob_scenario]
+        scenario_response.raise_for_status.return_value = None
+
+        with _statistics_transport(payload), \
+                patch('safebreach_mcp_studio.studio_functions.requests.get',
+                      return_value=scenario_response):
+            return self._run_scenario_tool()(
+                scenario_id=mock_oob_scenario['id'], console="test-console", evaluate=True
+            )
+
+    def test_truncated_preview_does_not_error(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """The whole preview used to collapse into an error string."""
+        preview = self._preview(mock_oob_scenario, limit_reached_statistics_response)
+
+        assert 'Error' not in preview
+        assert 'Evaluating Test' in preview
+
+    def test_truncated_preview_never_renders_a_count_as_zero(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        preview = self._preview(mock_oob_scenario, limit_reached_statistics_response)
+
+        assert 'not computed' in preview
+        assert '0 total' not in preview
+        assert '0 simulations**' not in preview
+
+    def test_normal_preview_is_unchanged(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """The guards must not alter the shape of a fully computed response."""
+        preview = self._preview(mock_oob_scenario, mock_statistics_response_all_good)
+
+        assert '**Predicted Simulations:** 3,874 total' in preview
+        assert '**Step 1: 1,676 simulations**' in preview
+        assert 'not computed' not in preview
+
+    def test_a_truncated_run_is_refused_without_claiming_nothing_matched(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """'No matching simulators' is a measured verdict; nothing was measured."""
+        scenario_response = MagicMock()
+        scenario_response.json.return_value = [mock_oob_scenario]
+        scenario_response.raise_for_status.return_value = None
+
+        with _statistics_transport(limit_reached_statistics_response), \
+                patch('safebreach_mcp_studio.studio_functions.requests.get',
+                      return_value=scenario_response):
+            with pytest.raises(ValueError) as excinfo:
+                sb_run_scenario(
+                    scenario_id=mock_oob_scenario['id'], console="test-console"
+                )
+
+        message = str(excinfo.value)
+        assert 'could not be scored' in message
+        assert 'NOT a report that nothing runs' in message
+        assert 'No matching simulators' not in message
+
+
 class TestPlanStatisticsToolRegistration:
     """T-24 — the tool is registered under the agreed wire name and declared read-only."""
 
@@ -9193,11 +9276,17 @@ class TestPlanStatisticsToolRegistration:
     def test_tool_is_declared_non_destructive(self):
         assert self._tools()['get_plan_statistics'].annotations.destructiveHint is False
 
-    def test_the_existing_tools_are_still_registered(self):
+    def test_the_twelve_existing_tools_are_still_registered(self):
+        """Registration is additive: the 12 that existed, plus this one."""
         tools = self._tools()
-        for name in ('run_scenario', 'quick_run', 'manage_test', 'get_scenarios',
-                     'get_scenario_details', 'save_studio_attack_draft'):
+        for name in ('validate_studio_code', 'save_studio_attack_draft',
+                     'get_all_studio_attacks', 'update_studio_attack_draft',
+                     'get_studio_attack_source', 'run_studio_attack',
+                     'get_studio_attack_latest_result', 'create_new_studio_attack',
+                     'set_studio_attack_status', 'run_scenario', 'quick_run',
+                     'manage_test'):
             assert name in tools
+        assert len(tools) == 13
 
     def test_description_states_include_disabled_selects_the_question(self):
         """Omitting the inversion invites the caller to reproduce the defect being fixed."""
@@ -9253,6 +9342,22 @@ class TestPlanInputIsExclusiveAndParsed:
                 with pytest.raises(ValueError, match="must be a JSON object"):
                     sb_get_plan_statistics(console="test-console", plan=payload)
                 post.assert_not_called()
+
+    def test_a_blank_plan_does_not_defeat_the_exclusivity_check(self):
+        """A calling model routinely fills an unused optional with an empty string."""
+        with _statistics_transport({"data": {"steps": []}}) as post:
+            sb_get_plan_statistics(
+                console="test-console", plan="", scenario_id="abc-123"
+            )
+            assert post.call_count == 1
+            assert post.call_args.kwargs["json"]["id"] == "abc-123"
+
+    def test_a_blank_scenario_id_is_rejected_not_sent_to_core(self):
+        """Empty is absent, so this is 'neither supplied' — never an empty id on the wire."""
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                sb_get_plan_statistics(console="test-console", scenario_id="   ")
+            post.assert_not_called()
 
     def test_every_rejection_names_both_inputs_and_the_exclusivity(self):
         cases = [

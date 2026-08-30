@@ -343,8 +343,6 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-PLAN_STATISTICS_COUNTS_MODES = ('runnable', 'expected')
-
 _TRUNCATION_HINT = (
     "Core hit its evaluation limit and stopped early: {returned} of {plan} steps "
     "returned, no counts computed for the steps it did not reach. null means "
@@ -376,8 +374,29 @@ _EXPECTED_COUNTS_HINT = (
 )
 
 
-def _plan_statistics_hint(truncated, plan_step_count, returned_step_count, counts_mode):
-    """Assemble the caller-facing hints. A counts-mode note is always emitted."""
+_RUNNABLE_COUNTS_HINT_BOTH = (
+    "These are runnable counts (includeDisabled=false): offline, disabled and "
+    "unapproved simulators are excluded from the numbers, though they are still "
+    "reported with their reason. The expected figure cannot be derived from this "
+    "response — it was fetched by a second call and is under this response's "
+    "'expected' key."
+)
+
+_EXPECTED_COUNTS_HINT_BOTH = (
+    "These are expected counts (includeDisabled=true): every simulator is scored "
+    "whether or not it could run now, so simulator_is_offline is never reported. "
+    "The runnable figure cannot be derived from this response — it was fetched by a "
+    "second call and is under this response's 'runnable' key."
+)
+
+
+def _plan_statistics_hint(truncated, plan_step_count, returned_step_count, counts_mode,
+                          both_present=False):
+    """Assemble the caller-facing hints. A counts-mode note is always emitted.
+
+    `both_present` says the sibling figure is already in the same payload, so the
+    note points at it rather than advising a second call that was already made.
+    """
     hints = []
     if truncated:
         if plan_step_count is None:
@@ -391,9 +410,9 @@ def _plan_statistics_hint(truncated, plan_step_count, returned_step_count, count
             ))
 
     if counts_mode == 'expected':
-        hints.append(_EXPECTED_COUNTS_HINT)
+        hints.append(_EXPECTED_COUNTS_HINT_BOTH if both_present else _EXPECTED_COUNTS_HINT)
     else:
-        hints.append(_RUNNABLE_COUNTS_HINT)
+        hints.append(_RUNNABLE_COUNTS_HINT_BOTH if both_present else _RUNNABLE_COUNTS_HINT)
 
     return " ".join(hints)
 
@@ -402,6 +421,7 @@ def get_plan_statistics_response_mapping(
     statistics: Dict[str, Any],
     steps: List[Dict[str, Any]],
     constraint_catalog: Dict[str, Any],
+    both_present: bool = False,
 ) -> Dict[str, Any]:
     """Assemble the caller-facing plan statistics report.
 
@@ -435,5 +455,6 @@ def get_plan_statistics_response_mapping(
             statistics['plan_step_count'],
             statistics['returned_step_count'],
             counts_mode,
+            both_present=both_present,
         ),
     }

@@ -28,6 +28,7 @@ from .studio_functions import (
     sb_run_scenario,
     sb_quick_run,
     sb_manage_test,
+    sb_get_plan_statistics,
 )
 
 logger = logging.getLogger(__name__)
@@ -1228,7 +1229,7 @@ Example (3-turn workflow for non-ready scenarios):
                         "",
                         f"**Scenario:** {result.get('scenario_name')} "
                         f"(`{result.get('scenario_id')}`, {result.get('source_type')})",
-                        f"**Predicted Simulations:** {predicted_total:,} total",
+                        f"**Predicted Simulations:** {_format_predicted_total(predicted_total, predicted_per_step)}",
                         f"**Steps:** {result.get('step_count', 0)}",
                         "",
                         "### Per-Step Breakdown",
@@ -1237,7 +1238,9 @@ Example (3-turn workflow for non-ready scenarios):
 
                     for i, count in enumerate(predicted_per_step):
                         stats = step_stats[i] if i < len(step_stats) else {}
-                        parts.append(f"**Step {i + 1}: {count:,} simulations**")
+                        parts.append(
+                            f"**Step {i + 1}: {_format_simulation_count(count)} simulations**"
+                        )
                         if stats:
                             matched_t = stats.get('matchedTargetSimulators', '?')
                             total_t = stats.get('totalTargetSimulators', '?')
@@ -1262,7 +1265,12 @@ Example (3-turn workflow for non-ready scenarios):
                                 name = ra.get('name', '')
                                 label = f"#{ra['move_id']} ({name})" if name else f"#{ra['move_id']}"
                                 sc = ra.get('simulationCount', 0)
-                                marker = f" — {sc:,} sims" if sc > 0 else " — **0 sims**"
+                                if not (isinstance(sc, int) and not isinstance(sc, bool)):
+                                    marker = " — **not computed**"
+                                elif sc > 0:
+                                    marker = f" — {sc:,} sims"
+                                else:
+                                    marker = " — **0 sims**"
                                 parts.append(f"    - {label}{marker}")
 
                         # Per-attack constraint detail (zero-sim or verbose_failures)
@@ -1282,7 +1290,9 @@ Example (3-turn workflow for non-ready scenarios):
                                     else:
                                         parts.append(f"    - {desc}")
                         # Aggregated constraint summary for partial-coverage steps
-                        if count > 0 and stats.get('constraint_summary_aggregated'):
+                        if _is_computed_positive(count) and stats.get(
+                            'constraint_summary_aggregated'
+                        ):
                             unmatched = stats.get('unmatched_attack_count', 0)
                             parts.append("")
                             parts.append(
@@ -1359,7 +1369,9 @@ Example (3-turn workflow for non-ready scenarios):
                     response_parts.append("")
                     for i, count in enumerate(predicted_per_step):
                         marker = " (0 simulations)" if count == 0 else ""
-                        response_parts.append(f"- Step {i + 1}: {count:,}{marker}")
+                        response_parts.append(
+                            f"- Step {i + 1}: {_format_simulation_count(count)}{marker}"
+                        )
 
                 if empty_steps:
                     response_parts.append("")
@@ -1475,7 +1487,7 @@ Example (rerun with exact simulators from a previous simulation):
                         marker = f" — **0 simulations**" if count == 0 else ""
                         parts.append(
                             f"- **{attack_name}** (#{attack_id}): "
-                            f"{count:,} sims{marker}"
+                            f"{_format_simulation_count(count)} sims{marker}"
                         )
 
                     if empty_steps:
@@ -1622,6 +1634,132 @@ manage_test(test_id="1776488350786.15", action="delete", console="demo",
             except Exception as e:
                 logger.error(f"Error in manage_test: {e}")
                 return f"Error managing test: {str(e)}"
+
+        @self.mcp.tool(
+            name="get_plan_statistics",
+            annotations=ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+            ),
+            description="""Reports what a SafeBreach plan would actually do on a console — how many simulations each
+step produces, which attacks and simulators contribute nothing, and why — WITHOUT running
+anything. Read-only and safe to call repeatedly; call it again after every configuration
+change, because nothing here is cached.
+
+Scores either an ad-hoc plan body that was never saved, or a saved scenario / custom plan by
+id. Exactly one of `plan` or `scenario_id` — supplying both or neither is an error.
+
+THREE THINGS THAT ARE NOT WHAT THEY LOOK LIKE:
+
+1. `include_disabled` selects WHICH QUESTION IS ASKED, it does not merely widen a set.
+   include_disabled=false (the default) gives RUNNABLE counts — what would run right now —
+   and reports every offline, disabled or unapproved simulator with the reason it was left
+   out. include_disabled=true gives EXPECTED counts — what would run if every simulator were
+   available — and therefore NEVER reports simulator_is_offline at all. The two numbers cannot
+   be derived from each other in either direction. Set both_counts=true to get both, at the
+   cost of a second call — when both_counts is true, include_disabled is not ignored: both of
+   its values are used, one per call.
+
+2. This tool REPORTS zero-impact attacks and simulators. It REMOVES NOTHING and CHANGES
+   NOTHING. `zero_impact_attacks` and `zero_impact_simulators` name entities whose count is a
+   genuine integer 0 — they are still in the plan. Use them to explain what will not
+   contribute, not to prune.
+
+3. A limit-reached response means counts were NOT COMPUTED — not that nothing runs.
+   When Core hits its evaluation limit it stops early: `truncated` is true,
+   `returned_step_count` is smaller than `plan_step_count`, `counts_computed` is false, and
+   `simulation_count` and every per-attack count are null. NULL MEANS NOT MEASURED; 0 means
+   measured and runs nowhere. Zero-impact reporting is suppressed entirely on that path, so
+   empty zero-impact lists there mean "not evaluated", not "nothing is inapplicable".
+
+Each conflict carries a computed `severity`: "blocking" when that attack\'s count is an
+integer 0, "reducing" when it still runs on fewer simulators. The SAME code can be blocking
+for one attack and reducing for another in the same step — severity is contextual, the
+description in the catalog is not. Descriptions are Core\'s own, relayed verbatim, and null
+where Core supplied none; never present a bare reason code to a user as an explanation.
+
+Examples:
+get_plan_statistics(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
+get_plan_statistics(console="demo", scenario_id="3b8eade5-...", both_counts=True)
+get_plan_statistics(console="demo", plan=\'{"steps": [{"attacksFilter": {"playbook": {"values": [8849]}}}]}\')
+get_plan_statistics(console="demo", scenario_id="1771...", conflict_detail="full")"""
+        )
+        def get_plan_statistics(
+            console: str = "default",
+            plan: str = None,
+            scenario_id: str = None,
+            include_disabled: bool = False,
+            both_counts: bool = False,
+            get_constraints: bool = True,
+            get_all_constraints: bool = True,
+            limit: int = 500000,
+            use_cache: bool = True,
+            conflict_detail: str = "summary",
+        ) -> dict:
+            """Score a plan and report its impact, without running anything."""
+            try:
+                # Single-tenant console auto-resolve
+                from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+                if not safebreach_envs:
+                    console_name = get_console_name()
+                    if console_name != 'default' and console not in safebreach_envs:
+                        console = console_name
+
+                return sb_get_plan_statistics(
+                    console=console,
+                    plan=plan,
+                    scenario_id=scenario_id,
+                    include_disabled=include_disabled,
+                    both_counts=both_counts,
+                    get_constraints=get_constraints,
+                    get_all_constraints=get_all_constraints,
+                    limit=limit,
+                    use_cache=use_cache,
+                    conflict_detail=conflict_detail,
+                )
+            except PermissionError as e:
+                logger.error(f"Plan statistics permission error: {e}")
+                return {"error": str(e)}
+            except ValueError as e:
+                logger.error(f"Plan statistics error: {e}")
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error in get_plan_statistics: {e}")
+                return {"error": f"Error getting plan statistics: {str(e)}"}
+
+
+def _is_computed_positive(count) -> bool:
+    """Whether a count is a real number greater than zero.
+
+    Not knowing a count is not the same as knowing it is zero, and `> 0` raises
+    on the null a limit-reached response returns.
+    """
+    return isinstance(count, int) and not isinstance(count, bool) and count > 0
+
+
+def _format_predicted_total(total, per_step) -> str:
+    """Render the headline total, saying so when it is a partial figure.
+
+    Summing only the computed counts gives 0 when none were computed, which
+    would read as "nothing runs" beside per-step lines saying "not computed".
+    """
+    computed = [c for c in (per_step or []) if _is_computed_positive(c) or c == 0]
+    if per_step and not computed:
+        return "not computed — SafeBreach stopped evaluating before any step was scored"
+    if len(computed) < len(per_step or []):
+        return f"{total:,} total, across the {len(computed)} step(s) that were scored"
+    return f"{total:,} total"
+
+
+def _format_simulation_count(count) -> str:
+    """Render a simulation count for display.
+
+    Counts are nullable: null means Core never computed the number, which must
+    never be rendered as 0 — nor blow up the whole preview in str.format.
+    """
+    if isinstance(count, int) and not isinstance(count, bool):
+        return f"{count:,}"
+    return "not computed"
 
 
 def _render_constraint_reason(reason: dict) -> str:

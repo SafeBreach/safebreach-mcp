@@ -18,7 +18,15 @@ from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_he
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
-from safebreach_mcp_core.plan_statistics import fetch_plan_statistics, _is_computed_count
+from safebreach_mcp_core.plan_statistics import (
+    fetch_plan_statistics,
+    _is_computed_count,
+    DEFAULT_LIMIT,
+    DEFAULT_INCLUDE_DISABLED,
+    DEFAULT_GET_CONSTRAINTS,
+    DEFAULT_GET_ALL_CONSTRAINTS,
+    DEFAULT_USE_CACHE,
+)
 from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
@@ -2281,6 +2289,29 @@ def _count_matched_entities(counts):
     return sum(1 for v in computed if v > 0)
 
 
+def _nothing_was_computed(counts):
+    """True when Core returned counts but computed none of them.
+
+    Distinguishes a truncated response from a genuinely empty selection: an
+    empty list means no steps at all, which is a different problem.
+    """
+    return bool(counts) and not any(_is_computed_count(c) for c in counts)
+
+
+def _truncated_scoring_error(subject, counts):
+    """The message for a scoring run Core stopped early.
+
+    Never says "no matching simulators": that is a measured verdict, and on this
+    path nothing was measured.
+    """
+    return (
+        f"{subject} could not be scored: SafeBreach stopped evaluating before computing "
+        f"any simulation counts for the {len(counts)} step(s) it returned, so how much "
+        f"would run is unknown — this is NOT a report that nothing runs. Lower `limit`, "
+        f"or score fewer steps at a time, then try again."
+    )
+
+
 def _sum_computed_counts(counts):
     """Total only the counts that were actually computed.
 
@@ -2783,7 +2814,8 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
 
 
 def _build_plan_statistics_report(statistics, conflict_detail='summary',
-                                  attack_names=None, simulator_names=None):
+                                  attack_names=None, simulator_names=None,
+                                  both_present=False):
     """Turn a fetch_plan_statistics result into the caller-facing report.
 
     Static facts live once in `constraint_catalog`; each conflict references it
@@ -2792,10 +2824,7 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
     # Validated here rather than in _build_conflicts, which runs per step and
     # only when counts were computed — a fully truncated response would
     # otherwise accept an invalid mode and return a normal-looking report.
-    if conflict_detail not in CONFLICT_DETAIL_MODES:
-        raise ValueError(
-            f"conflict_detail must be one of {CONFLICT_DETAIL_MODES}, got {conflict_detail!r}"
-        )
+    _validate_conflict_detail(conflict_detail)
 
     steps = [
         _shape_statistics_step(
@@ -2812,7 +2841,167 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
         statistics['constraint_catalog'], emitted_codes
     )
 
-    return get_plan_statistics_response_mapping(statistics, steps, constraint_catalog)
+    return get_plan_statistics_response_mapping(
+        statistics, steps, constraint_catalog, both_present=both_present
+    )
+
+
+PLAN_INPUT_HINT = (
+    "Provide exactly one of 'plan' (a JSON string carrying an ad-hoc plan body, e.g. "
+    "'{\"steps\": [...]}') or 'scenario_id' (a saved scenario or custom plan, resolved "
+    "by Core)."
+)
+
+BOTH_COUNTS_HINT = (
+    "Two separate calls were issued. 'runnable' (includeDisabled=false) is what would "
+    "actually run right now; 'expected' (includeDisabled=true) is what would run if every "
+    "simulator were available. Expected cannot be derived from runnable, nor the reverse — "
+    "includeDisabled=false filters disabled, unapproved and offline simulators out of the "
+    "counts entirely, so the expected number is simply not present in a runnable response. "
+    "Compare them per step; the difference is explained by the simulator_is_offline "
+    "conflicts that appear in 'runnable' and never in 'expected'."
+)
+
+
+def _blank_to_none(value):
+    """Treat a blank string as absent.
+
+    A calling model routinely fills an unused optional with "" rather than
+    omitting it; taken literally that both defeats the exclusivity check and
+    sends an empty id to Core.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _parse_plan_argument(plan, scenario_id):
+    """Validate the tool-boundary inputs and parse the plan JSON string.
+
+    Exclusivity is checked before the parse, so a caller who supplies both a
+    malformed plan and a scenario id is told about the real problem.
+    """
+    plan = _blank_to_none(plan)
+    scenario_id = _blank_to_none(scenario_id)
+
+    if plan is not None and scenario_id is not None:
+        raise ValueError(f"Both 'plan' and 'scenario_id' were supplied. {PLAN_INPUT_HINT}")
+    if plan is None and scenario_id is None:
+        raise ValueError(f"Neither 'plan' nor 'scenario_id' was supplied. {PLAN_INPUT_HINT}")
+
+    if scenario_id is not None:
+        return None, scenario_id
+
+    try:
+        parsed = json.loads(plan)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Invalid plan JSON: {e}. 'plan' must be a JSON object string carrying the "
+            f"plan body, e.g. '{{\"steps\": [{{...}}]}}'. {PLAN_INPUT_HINT}"
+        ) from e
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"'plan' must be a JSON object, got {type(parsed).__name__}. {PLAN_INPUT_HINT}"
+        )
+    return parsed, None
+
+
+def _validate_conflict_detail(conflict_detail):
+    """Reject an unknown verbosity mode before any I/O."""
+    if conflict_detail not in CONFLICT_DETAIL_MODES:
+        raise ValueError(
+            f"conflict_detail must be one of {CONFLICT_DETAIL_MODES}, got {conflict_detail!r}"
+        )
+
+
+def _fetch_and_shape(console, plan, scenario_id, include_disabled, get_constraints,
+                     get_all_constraints, limit, use_cache, attack_names,
+                     conflict_detail, both_present):
+    """One scoring pass: fetch, then shape into the caller-facing report."""
+    statistics = fetch_plan_statistics(
+        console,
+        plan=plan,
+        scenario_id=scenario_id,
+        include_disabled=include_disabled,
+        get_constraints=get_constraints,
+        get_all_constraints=get_all_constraints,
+        limit=limit,
+        use_cache=use_cache,
+    )
+    return _build_plan_statistics_report(
+        statistics,
+        conflict_detail=conflict_detail,
+        attack_names=attack_names,
+        both_present=both_present,
+    )
+
+
+def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
+                           scenario_id: str | None = None,
+                           include_disabled: bool = DEFAULT_INCLUDE_DISABLED,
+                           both_counts: bool = False,
+                           get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
+                           get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+                           limit: int = DEFAULT_LIMIT,
+                           use_cache: bool = DEFAULT_USE_CACHE,
+                           conflict_detail: str = "summary"):
+    """
+    Report what a plan would do on a console, without running anything.
+
+    Args:
+        console: SafeBreach console identifier
+        plan: JSON string of an ad-hoc plan body. Mutually exclusive with scenario_id.
+        scenario_id: A saved scenario UUID or custom plan id. Mutually exclusive with plan.
+        include_disabled: False = runnable counts, True = expected counts.
+        both_counts: Issue two calls and return both figures, labelled.
+        get_constraints: Populate conflicts and the catalog that describes them.
+        get_all_constraints: Report every reason a pairing was eliminated, not just the first.
+        limit: Simulations Core evaluates before stopping early.
+        use_cache: Whether Core may answer from its own cache.
+        conflict_detail: 'summary', 'per_attack' or 'full'.
+
+    Returns:
+        The report (see get_plan_statistics_response_mapping), or — with
+        both_counts — {counts_mode: 'both', runnable: {...}, expected: {...},
+        hint_to_agent: ...}.
+    """
+    parsed_plan, resolved_scenario_id = _parse_plan_argument(plan, scenario_id)
+    _validate_conflict_detail(conflict_detail)
+
+    # Resolved once and reused across both passes: zero_impact_attacks is
+    # meaningful without constraints, and a bare attack id is unusable.
+    attack_names = _build_attack_name_map(console)
+
+    def score(with_disabled, both_present):
+        return _fetch_and_shape(
+            console,
+            plan=parsed_plan,
+            scenario_id=resolved_scenario_id,
+            include_disabled=with_disabled,
+            get_constraints=get_constraints,
+            get_all_constraints=get_all_constraints,
+            limit=limit,
+            use_cache=use_cache,
+            attack_names=attack_names,
+            conflict_detail=conflict_detail,
+            both_present=both_present,
+        )
+
+    if not both_counts:
+        logger.info(
+            f"Plan statistics for console '{console}': one call, "
+            f"{'expected' if include_disabled else 'runnable'} counts"
+        )
+        return score(include_disabled, False)
+
+    logger.info(f"Plan statistics for console '{console}': two calls, both counts modes")
+    return {
+        'counts_mode': 'both',
+        'runnable': score(False, True),
+        'expected': score(True, True),
+        'hint_to_agent': BOTH_COUNTS_HINT,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3097,6 +3286,9 @@ def sb_quick_run(
         }
 
     # Execution validation
+    if _nothing_was_computed(step_counts):
+        raise ValueError(_truncated_scoring_error("Quick Run", step_counts))
+
     if total_predicted == 0:
         raise ValueError(
             f"Quick Run would produce 0 simulations across all "
@@ -3301,6 +3493,11 @@ def sb_run_scenario(
         }
 
     # Validate simulation counts (only for actual runs, not evaluate)
+    if _nothing_was_computed(step_counts):
+        raise ValueError(_truncated_scoring_error(
+            f"Scenario '{scenario.get('name', scenario_id)}'", step_counts
+        ))
+
     if total_predicted == 0:
         step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
         raise ValueError(
