@@ -91,6 +91,12 @@ def _posted_body(mock_post):
     return mock_post.call_args.kwargs["json"]
 
 
+_CACHE_TYPE_NAMES = {
+    "SafeBreachCache", "TTLCache", "LRUCache", "LFUCache", "Cache",
+    "_lru_cache_wrapper",
+}
+
+
 @pytest.fixture(autouse=True)
 def _console_env():
     """Resolve console metadata and auth without real environments or secrets."""
@@ -405,6 +411,16 @@ class TestLimitReachedResponseKeepsNullDistinctFromZero:
         assert result["truncated"] is True
 
     @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_index_is_into_the_returned_list_not_the_plan(self, mock_post):
+        """Core's sentinel step is returned-list position 0, not plan step 0."""
+        mock_post.return_value = _mock_response(_limit_reached_payload())
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body(3))
+
+        assert [s["response_step_index"] for s in result["steps"]] == [0]
+        assert "step_index" not in result["steps"][0]
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
     def test_untruncated_response_is_not_flagged(self, mock_post):
         mock_post.return_value = _mock_response(_two_step_payload())
 
@@ -447,6 +463,32 @@ class TestApiFailureSurfacesTheFullResponseBody:
         assert "NOT_ALLOWED: plan has no steps" in str(excinfo.value)
 
     @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_rbac_403_propagates_as_permission_error(self, mock_post):
+        """Only HTTPError is caught, so the 403 hint reaches the caller unchanged."""
+        forbidden = MagicMock()
+        forbidden.status_code = 403
+        forbidden.url = "https://test.safebreach.com/plan/statistics"
+        mock_post.return_value = forbidden
+
+        with pytest.raises(PermissionError):
+            fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_non_json_body_on_a_2xx_is_reported_not_raised_raw(self, mock_post):
+        """A gateway HTML page must not surface as a bare JSONDecodeError."""
+        gateway = MagicMock()
+        gateway.status_code = 200
+        gateway.text = "<html>502 Bad Gateway</html>"
+        gateway.raise_for_status.return_value = None
+        gateway.json.side_effect = ValueError("Expecting value")
+        mock_post.return_value = gateway
+
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert "non-JSON" in str(excinfo.value)
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
     def test_raised_error_is_a_value_error(self, mock_post):
         """studio's shipped e2e asserts ValueError + 'Statistics API error'."""
         mock_post.return_value = self._failing_response()
@@ -455,6 +497,28 @@ class TestApiFailureSurfacesTheFullResponseBody:
             fetch_plan_statistics(console="test-console", plan=_plan_body())
 
         assert "Statistics API error" in str(excinfo.value)
+
+
+class TestMutuallyExclusiveInputs:
+    """Neither `plan` nor `scenario_id`, or both, is a caller error caught before any I/O."""
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_neither_plan_nor_scenario_id_is_rejected(self, mock_post):
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(console="test-console")
+
+        assert "scenario_id" in str(excinfo.value)
+        mock_post.assert_not_called()
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_both_plan_and_scenario_id_is_rejected(self, mock_post):
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(
+                console="test-console", plan=_plan_body(), scenario_id="abc-123"
+            )
+
+        assert "scenario_id" in str(excinfo.value)
+        mock_post.assert_not_called()
 
 
 class TestNoMcpSideCaching:
@@ -471,12 +535,20 @@ class TestNoMcpSideCaching:
         assert mock_post.call_count == 2
 
     def test_module_exposes_no_cache_object(self):
-        """A TTL cache here would serve numbers for a config the user already edited."""
+        """A TTL cache here would serve numbers for a config the user already edited.
+
+        Keyed on the *type*, not the name: a cache is an object that stores
+        results, so a scalar like DEFAULT_USE_CACHE — which names Core's own
+        server-side query parameter — is not one.
+        """
         import safebreach_mcp_core.plan_statistics as plan_statistics
 
-        suspicious = [
-            name for name, value in vars(plan_statistics).items()
-            if not name.startswith("__")
-            and ("cache" in name.lower() or "Cache" in type(value).__name__)
-        ]
+        suspicious = []
+        for name, value in vars(plan_statistics).items():
+            if name.startswith("__"):
+                continue
+            if isinstance(value, (bool, int, float, str, tuple, type(None))):
+                continue
+            if type(value).__name__ in _CACHE_TYPE_NAMES or "cache" in name.lower():
+                suspicious.append(f"{name} ({type(value).__name__})")
         assert suspicious == [], f"cache-like module globals found: {suspicious}"
