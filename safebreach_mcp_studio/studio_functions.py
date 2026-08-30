@@ -23,6 +23,7 @@ from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
     get_all_attacks_response_mapping,
+    get_plan_statistics_response_mapping,
     paginate_studio_attacks,
     PAGE_SIZE
 )
@@ -2525,6 +2526,293 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     logger.info(f"Statistics: {counts} "
                 f"({len(computed)}/{len(counts)} computed, total: {sum(computed)})")
     return result
+
+
+CONFLICT_DETAIL_MODES = ('summary', 'per_attack', 'full')
+CONFLICT_SIMULATOR_ID_SAMPLE = 10
+CONFLICT_VALUES_VARIANT_CAP = 5
+
+_CONSTRAINT_SIDES = (('attackerConstraints', 'attacker'), ('targetConstraints', 'target'))
+
+
+def _iter_constraint_leaves(simulator_constraints):
+    """Yield (side, simulator_id, attack_id, reason) for every reason present.
+
+    Iterates only what the map contains. Core prunes empty leaves and then any
+    simulator left with no constraints, so a simulator's absence means it had no
+    conflicts — never that it went unevaluated. Each leaf is a list and every
+    element is yielded: under getAllConstraints a pairing accumulates several
+    reasons, and reading only the first discards most of the explanation.
+    """
+    if not isinstance(simulator_constraints, dict):
+        return
+    for key, side in _CONSTRAINT_SIDES:
+        side_map = simulator_constraints.get(key)
+        if not isinstance(side_map, dict):
+            continue
+        for simulator_id, attacks in side_map.items():
+            if not isinstance(attacks, dict):
+                continue
+            for attack_id, leaf in attacks.items():
+                if isinstance(leaf, dict):
+                    leaf = [leaf]
+                if not isinstance(leaf, list):
+                    continue
+                for reason in leaf:
+                    if not isinstance(reason, dict):
+                        continue
+                    code = reason.get('reason')
+                    # A reason with no code is skipped rather than given a
+                    # synthetic one, which would inject a code the API never
+                    # emitted into the catalog.
+                    if isinstance(code, str) and code:
+                        yield side, simulator_id, attack_id, reason
+
+
+def _constraint_leaf_values(reason):
+    """The API's own detail for one reason.
+
+    Prefers a `values` object; where the reason carries its detail as flat
+    sibling keys instead — which is what every shipped payload does — those are
+    returned instead. `{}` when it carried no detail at all.
+    """
+    values = reason.get('values')
+    if isinstance(values, dict):
+        return values
+    return {k: v for k, v in reason.items() if k not in ('reason', 'values')}
+
+
+def _group_constraint_conflicts(simulator_constraints):
+    """Group constraint leaves by (attack_id, code) — never one row per simulator.
+
+    Exploding per simulator makes the response unusable on a real console, where
+    one code routinely eliminates the same attack across dozens of nodes.
+    """
+    groups = {}
+    for side, simulator_id, attack_id, reason in _iter_constraint_leaves(simulator_constraints):
+        key = (attack_id, reason['reason'])
+        group = groups.setdefault(key, {
+            'sides': set(), 'simulator_ids': {}, 'values_variants': {},
+        })
+        group['sides'].add(side)
+        # dict-as-ordered-set: one code routinely eliminates an attack across
+        # dozens of nodes, so list membership would be quadratic here.
+        group['simulator_ids'][simulator_id] = None
+
+        values = _constraint_leaf_values(reason)
+        if values:
+            # Keyed on the serialized detail: _constraint_leaf_values falls
+            # back to every sibling key, so a future per-simulator field would
+            # make each variant unique and a linear scan quadratic.
+            variant_key = json.dumps(values, sort_keys=True, default=str)
+            variant = group['values_variants'].setdefault(
+                variant_key, {'values': values, 'simulator_ids': {}}
+            )
+            variant['simulator_ids'][simulator_id] = None
+    return groups
+
+
+def _index_constraints_by_simulator(simulator_constraints):
+    """Return {simulator_id: {code: {'sides': set, 'attack_ids': [...]}}}."""
+    index = {}
+    for side, simulator_id, attack_id, reason in _iter_constraint_leaves(simulator_constraints):
+        entry = index.setdefault(simulator_id, {}).setdefault(
+            reason['reason'], {'sides': set(), 'attack_ids': set()}
+        )
+        entry['sides'].add(side)
+        # Only its size is ever read, so a set is both correct and linear.
+        entry['attack_ids'].add(attack_id)
+    return index
+
+
+def _attack_sort_key(attack_id):
+    """Order numeric attack ids naturally; fall back to the string form."""
+    try:
+        return (0, int(attack_id), '')
+    except (TypeError, ValueError):
+        return (1, 0, str(attack_id))
+
+
+def _conflict_severity(attack_count):
+    """Severity from the attack's own count alone — no vocabulary is consulted.
+
+    A reason eliminates one node variant for one attack; an attack with surviving
+    candidates still runs. The same code is therefore legitimately blocking for
+    one attack and reducing for another in the same step.
+    """
+    if not _is_computed_count(attack_count):
+        return 'unknown'
+    return 'blocking' if attack_count == 0 else 'reducing'
+
+
+def _build_conflicts(simulator_constraints, moves, attack_names=None,
+                     conflict_detail='summary'):
+    """Normalized conflict rows: catalog references, not repeated static blobs."""
+    conflicts = []
+    for (attack_id, code), group in _group_constraint_conflicts(simulator_constraints).items():
+        conflict = {
+            'code': code,
+            'severity': _conflict_severity(moves.get(attack_id)),
+            'attack_id': attack_id,
+            'side': sorted(group['sides']),
+            'simulator_count': len(group['simulator_ids']),
+        }
+
+        variants = list(group['values_variants'].values())
+        if len(variants) == 1:
+            conflict['values'] = variants[0]['values']
+        elif variants:
+            # Simulators disagreed on the detail; report each rather than
+            # silently keeping whichever was seen first. The true total is
+            # always stated, so a capped list is never mistaken for the whole.
+            conflict['values_variants'] = [
+                {'values': v['values'], 'simulator_count': len(v['simulator_ids'])}
+                for v in variants[:CONFLICT_VALUES_VARIANT_CAP]
+            ]
+            conflict['values_variant_count'] = len(variants)
+
+        if conflict_detail in ('per_attack', 'full'):
+            name = (attack_names or {}).get(attack_id)
+            if name:
+                conflict['attack_name'] = name
+        if conflict_detail == 'full':
+            conflict['simulator_ids'] = list(
+                group['simulator_ids']
+            )[:CONFLICT_SIMULATOR_ID_SAMPLE]
+
+        conflicts.append(conflict)
+
+    return sorted(conflicts, key=lambda c: (_attack_sort_key(c['attack_id']), c['code']))
+
+
+def _zero_impact_attacks(moves, conflicts, attack_names=None):
+    """Attacks whose count is an integer 0, each carrying its blocking conflicts.
+
+    A null count is never included: not computed is not the same as runs nowhere.
+    """
+    blockers_by_attack = {}
+    for conflict in conflicts:
+        if conflict['severity'] == 'blocking':
+            blocker = {k: conflict[k] for k in ('code', 'side', 'simulator_count')}
+            # Carry whichever detail form the conflict has: dropping variants
+            # would leave the primary "why did this run nowhere" surface with no
+            # explanation at all whenever simulators disagreed.
+            for detail in ('values', 'values_variants', 'values_variant_count'):
+                if detail in conflict:
+                    blocker[detail] = conflict[detail]
+            blockers_by_attack.setdefault(conflict['attack_id'], []).append(blocker)
+
+    entries = []
+    for attack_id, count in sorted(moves.items(), key=lambda kv: _attack_sort_key(kv[0])):
+        if not (_is_computed_count(count) and count == 0):
+            continue
+        entry = {'attack_id': attack_id}
+        name = (attack_names or {}).get(attack_id)
+        if name:
+            entry['attack_name'] = name
+        entry['blockers'] = blockers_by_attack.get(attack_id, [])
+        entries.append(entry)
+    return entries
+
+
+def _zero_impact_simulators(simulators, simulator_index, simulator_names=None):
+    """Simulators whose UNION-map count is an integer 0.
+
+    Read only the union map: a node present on one side is absent from the other
+    role map, never zero in it, so a role map would both miss real zero-impact
+    simulators and invent ones that are simply single-role.
+    """
+    entries = []
+    for simulator_id, count in sorted(simulators.items()):
+        if not (_is_computed_count(count) and count == 0):
+            continue
+        entry = {'simulator_id': simulator_id}
+        name = (simulator_names or {}).get(simulator_id)
+        if name:
+            entry['simulator_name'] = name
+        entry['blockers'] = [
+            {
+                'code': code,
+                'side': sorted(info['sides']),
+                # For a per-simulator blocker the informative number is how many
+                # attacks this node was eliminated from.
+                'attack_count': len(info['attack_ids']),
+            }
+            for code, info in sorted(simulator_index.get(simulator_id, {}).items())
+        ]
+        entries.append(entry)
+    return entries
+
+
+def _shape_statistics_step(step, attack_names=None, simulator_names=None,
+                           conflict_detail='summary'):
+    """One caller-facing step, with all reporting suppressed when nothing was computed."""
+    shaped = {
+        'step_index': step['response_step_index'],
+        'simulation_count': step['simulationCount'],
+        'counts_computed': step['counts_computed'],
+        'is_limit_reached': step['isLimitReached'],
+        'attacks': step['moves'],
+        'simulators': step['simulators'],
+        'attacker_simulators': step['attackerSimulators'],
+        'target_simulators': step['targetSimulators'],
+    }
+
+    # The R1 guard: when Core did not compute the numbers, draw no conclusions
+    # from them. Emptiness here is by construction, not by filtering.
+    if not step['counts_computed']:
+        shaped['zero_impact_attacks'] = []
+        shaped['zero_impact_simulators'] = []
+        shaped['conflicts'] = []
+        return shaped
+
+    conflicts = _build_conflicts(
+        step['simulatorConstraints'], step['moves'],
+        attack_names=attack_names, conflict_detail=conflict_detail,
+    )
+    shaped['zero_impact_attacks'] = _zero_impact_attacks(
+        step['moves'], conflicts, attack_names=attack_names
+    )
+    shaped['zero_impact_simulators'] = _zero_impact_simulators(
+        step['simulators'],
+        _index_constraints_by_simulator(step['simulatorConstraints']),
+        simulator_names=simulator_names,
+    )
+    shaped['conflicts'] = conflicts
+    return shaped
+
+
+def _build_plan_statistics_report(statistics, conflict_detail='summary',
+                                  attack_names=None, simulator_names=None):
+    """Turn a fetch_plan_statistics result into the caller-facing report.
+
+    Static facts live once in `constraint_catalog`; each conflict references it
+    by code and carries only what varies.
+    """
+    # Validated here rather than in _build_conflicts, which runs per step and
+    # only when counts were computed — a fully truncated response would
+    # otherwise accept an invalid mode and return a normal-looking report.
+    if conflict_detail not in CONFLICT_DETAIL_MODES:
+        raise ValueError(
+            f"conflict_detail must be one of {CONFLICT_DETAIL_MODES}, got {conflict_detail!r}"
+        )
+
+    steps = [
+        _shape_statistics_step(
+            step, attack_names=attack_names, simulator_names=simulator_names,
+            conflict_detail=conflict_detail,
+        )
+        for step in statistics['steps']
+    ]
+
+    emitted_codes = {
+        conflict['code'] for step in steps for conflict in step['conflicts']
+    }
+    constraint_catalog = _build_constraint_catalog(
+        statistics['constraint_catalog'], emitted_codes
+    )
+
+    return get_plan_statistics_response_mapping(statistics, steps, constraint_catalog)
 
 
 # ---------------------------------------------------------------------------

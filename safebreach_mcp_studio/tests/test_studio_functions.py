@@ -29,6 +29,8 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_all_plans,
     _get_scenario_statistics,
     _build_plan_statistics_report,
+    CONFLICT_SIMULATOR_ID_SAMPLE,
+    CONFLICT_VALUES_VARIANT_CAP,
     sb_run_scenario,
     sb_manage_test,
     sb_delete_test,
@@ -8737,11 +8739,15 @@ class TestSparseConstraintMapIsNotDense:
         assert conflicts[0]['simulator_count'] == 1
 
     def test_absent_simulators_produce_no_conflict_entries(self):
-        report = _build_plan_statistics_report(PHASE4_SPARSE_STATISTICS)
+        """They stay in the relayed count maps; they gain no conflict rows."""
+        step = _phase4_step_of(_build_plan_statistics_report(PHASE4_SPARSE_STATISTICS))
 
-        blob = json.dumps(report)
-        assert 'sim-2' not in blob
-        assert 'sim-3' not in blob
+        reported = json.dumps([step['conflicts'], step['zero_impact_attacks'],
+                               step['zero_impact_simulators']])
+        assert 'sim-2' not in reported
+        assert 'sim-3' not in reported
+        # Still present in the counts, because they are genuinely in scope.
+        assert set(step['simulators']) == {'sim-1', 'sim-2', 'sim-3'}
 
     def test_absent_simulators_are_not_described_as_unevaluated_or_unknown(self):
         """Absence means 'no conflicts', not 'missing data'."""
@@ -8958,6 +8964,149 @@ class TestConflictsAreNormalizedAgainstTheCatalog:
                   if c['code'] == 'incompatible_os']
         assert len(shared) == 3
         assert list(report['constraint_catalog']).count('incompatible_os') == 1
+
+
+class TestConflictDetailModesAndNameResolution:
+    """Non-default branches of the shaping layer — no plan item covers these yet."""
+
+    def test_invalid_conflict_detail_is_rejected_before_any_shaping(self):
+        """Validated at report entry, so a truncated response cannot slip past it."""
+        with pytest.raises(ValueError, match="conflict_detail"):
+            _build_plan_statistics_report(
+                PHASE4_LIMIT_REACHED_STATISTICS, conflict_detail='verbose'
+            )
+
+    def test_summary_mode_omits_attack_names(self):
+        report = _build_plan_statistics_report(
+            PHASE4_SHARED_CODE_STATISTICS, attack_names={'9012': 'Write EICAR to disk'}
+        )
+
+        assert all('attack_name' not in c for c in _phase4_conflicts(report))
+
+    def test_per_attack_mode_resolves_attack_names(self):
+        report = _build_plan_statistics_report(
+            PHASE4_SHARED_CODE_STATISTICS,
+            conflict_detail='per_attack',
+            attack_names={'9012': 'Write EICAR to disk'},
+        )
+
+        named = {c['attack_id']: c.get('attack_name') for c in _phase4_conflicts(report)}
+        assert named['9012'] == 'Write EICAR to disk'
+
+    def test_per_attack_mode_degrades_silently_without_a_name_map(self):
+        report = _build_plan_statistics_report(
+            PHASE4_SHARED_CODE_STATISTICS, conflict_detail='per_attack'
+        )
+
+        assert all('attack_name' not in c for c in _phase4_conflicts(report))
+
+    def test_full_mode_adds_a_capped_simulator_id_sample(self):
+        many = {f'sim-{i}': {'281': [{'reason': 'port_in_use'}]} for i in range(25)}
+        statistics = _phase4_statistics([_phase4_step(
+            moves={'281': 0},
+            simulators={f'sim-{i}': 4 for i in range(25)},
+            simulatorConstraints={'targetConstraints': many, 'attackerConstraints': {}},
+        )])
+
+        report = _build_plan_statistics_report(statistics, conflict_detail='full')
+
+        conflict = _phase4_conflicts(report)[0]
+        assert len(conflict['simulator_ids']) == CONFLICT_SIMULATOR_ID_SAMPLE
+        # The sample is capped; the true total is not.
+        assert conflict['simulator_count'] == 25
+
+    def test_zero_impact_simulator_name_is_resolved_when_supplied(self):
+        report = _build_plan_statistics_report(
+            PHASE4_UNION_MAP_STATISTICS, simulator_names={'e5f6': 'lab-linux-02'}
+        )
+
+        entry = _phase4_step_of(report)['zero_impact_simulators'][0]
+        assert entry['simulator_name'] == 'lab-linux-02'
+
+    def test_zero_impact_simulator_name_is_omitted_when_unresolvable(self):
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        entry = _phase4_step_of(report)['zero_impact_simulators'][0]
+        assert 'simulator_name' not in entry
+
+
+class TestDisagreeingValuesAreAllReported:
+    """Two simulators can fail one attack for one code with different detail."""
+
+    @staticmethod
+    def _statistics(simulator_count):
+        constraints = {
+            f'sim-{i}': {'281': [{'reason': 'incompatible_os',
+                                  'required': 'WINDOWS', 'actual': f'OS-{i}'}]}
+            for i in range(simulator_count)
+        }
+        return _phase4_statistics([_phase4_step(
+            moves={'281': 0},
+            simulators={f'sim-{i}': 0 for i in range(simulator_count)},
+            simulatorConstraints={'targetConstraints': constraints,
+                                  'attackerConstraints': {}},
+        )])
+
+    def test_a_single_agreed_value_is_emitted_as_values(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        conflict = next(c for c in _phase4_conflicts(report) if c['attack_id'] == '1234')
+        assert conflict['values'] == {'required': 'WINDOWS', 'actual': 'MAC'}
+        assert 'values_variants' not in conflict
+
+    def test_disagreeing_values_are_reported_as_variants(self):
+        report = _build_plan_statistics_report(self._statistics(3))
+
+        conflict = _phase4_conflicts(report)[0]
+        assert 'values' not in conflict
+        assert len(conflict['values_variants']) == 3
+        assert {v['values']['actual'] for v in conflict['values_variants']} == {
+            'OS-0', 'OS-1', 'OS-2'
+        }
+
+    def test_capped_variants_still_state_the_true_total(self):
+        """A capped list must never be mistaken for the whole."""
+        report = _build_plan_statistics_report(self._statistics(9))
+
+        conflict = _phase4_conflicts(report)[0]
+        assert len(conflict['values_variants']) == CONFLICT_VALUES_VARIANT_CAP
+        assert conflict['values_variant_count'] == 9
+
+
+class TestCountsModeIsDerivedFromTheParametersSent:
+    """The response cannot describe itself as runnable over expected numbers."""
+
+    @staticmethod
+    def _with_include_disabled(value):
+        statistics = _phase4_statistics([_phase4_step()])
+        statistics['params_used'] = dict(statistics['params_used'],
+                                         includeDisabled=value)
+        return statistics
+
+    def test_runnable_when_disabled_simulators_were_excluded(self):
+        report = _build_plan_statistics_report(self._with_include_disabled(False))
+
+        assert report['counts_mode'] == 'runnable'
+        assert 'includeDisabled=false' in report['hint_to_agent']
+
+    def test_expected_when_disabled_simulators_were_included(self):
+        report = _build_plan_statistics_report(self._with_include_disabled(True))
+
+        assert report['counts_mode'] == 'expected'
+        assert 'includeDisabled=true' in report['hint_to_agent']
+        assert 'simulator_is_offline' in report['hint_to_agent']
+
+    def test_runnable_states_that_expected_is_not_derivable(self):
+        hint = _build_plan_statistics_report(
+            self._with_include_disabled(False)
+        )['hint_to_agent']
+        assert 'cannot be derived' in hint
+
+    def test_expected_states_that_runnable_is_not_derivable(self):
+        hint = _build_plan_statistics_report(
+            self._with_include_disabled(True)
+        )['hint_to_agent']
+        assert 'cannot be derived' in hint
 
 
 class TestSeverityIsComputedFromTheAttackCount:
