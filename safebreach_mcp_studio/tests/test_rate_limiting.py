@@ -10,6 +10,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_update_studio_attack_draft,
     sb_run_studio_attack,
     sb_set_studio_attack_status,
+    sb_get_plan_statistics,
 )
 from safebreach_mcp_core.token_context import _user_auth_artifacts
 
@@ -842,3 +843,59 @@ class TestSetStudioAttackStatusRateLimitingGate:
 
         mock_rate_limiter.check_limit.assert_called_once()
         mock_rate_limiter.record_action.assert_not_called()
+
+
+class TestPlanStatisticsTakesNoRateLimitingGates:
+    """T-25 — a read-only tool takes no rate-limiting gates."""
+
+    PLAN = '{"steps": [{"n": 0}]}'
+    STATISTICS_RESPONSE = {"data": {"steps": [{
+        "simulationCount": 10, "moves": {}, "simulators": {},
+        "attackerSimulators": {}, "targetSimulators": {},
+        "simulatorConstraints": {}, "isLimitReached": False,
+    }]}}
+
+    def _transport(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = self.STATISTICS_RESPONSE
+        response.raise_for_status.return_value = None
+        return MagicMock(return_value=response)
+
+    @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
+    @patch('safebreach_mcp_core.plan_statistics.get_auth_headers_for_console',
+           return_value={"x-apitoken": "test-token"})
+    @patch('safebreach_mcp_core.plan_statistics.get_api_account_id', return_value="1234567890")
+    @patch('safebreach_mcp_core.plan_statistics.get_api_base_url',
+           return_value="https://test.safebreach.com")
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map', return_value={})
+    def test_repeated_calls_never_reach_the_limiter(
+        self, mock_names, mock_url, mock_account, mock_headers, mock_rate_limiter
+    ):
+        """Well past both the total and per-tool limits, neither gate is touched."""
+        with patch('safebreach_mcp_core.plan_statistics.requests.post', self._transport()):
+            for _ in range(12):
+                sb_get_plan_statistics(console="test-console", plan=self.PLAN)
+
+        mock_rate_limiter.check_limit.assert_not_called()
+        mock_rate_limiter.record_action.assert_not_called()
+
+    @patch('safebreach_mcp_core.rate_limiter._rate_limit_enabled', True)
+    @patch('safebreach_mcp_core.plan_statistics.get_auth_headers_for_console',
+           return_value={"x-apitoken": "test-token"})
+    @patch('safebreach_mcp_core.plan_statistics.get_api_account_id', return_value="1234567890")
+    @patch('safebreach_mcp_core.plan_statistics.get_api_base_url',
+           return_value="https://test.safebreach.com")
+    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map', return_value={})
+    def test_no_caller_state_is_recorded_with_limiting_enabled(
+        self, mock_names, mock_url, mock_account, mock_headers
+    ):
+        """With the limiter genuinely on, the tool leaves no trace in its store."""
+        from safebreach_mcp_core.rate_limiter import _rate_limit_store
+
+        with patch('safebreach_mcp_core.plan_statistics.requests.post', self._transport()):
+            for _ in range(12):
+                result = sb_get_plan_statistics(console="test-console", plan=self.PLAN)
+                assert 'counts_mode' in result
+
+        assert _rate_limit_store == {}

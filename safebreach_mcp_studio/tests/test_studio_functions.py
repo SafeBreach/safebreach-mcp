@@ -28,6 +28,7 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_all_scenarios,
     _fetch_all_plans,
     _get_scenario_statistics,
+    sb_get_plan_statistics,
     _build_plan_statistics_report,
     CONFLICT_SIMULATOR_ID_SAMPLE,
     CONFLICT_VALUES_VARIANT_CAP,
@@ -9158,6 +9159,218 @@ class TestSeverityIsComputedFromTheAttackCount:
 
         assert self._by_attack(report)['9012']['severity'] == 'blocking'
         assert self._by_attack(report)['1234']['severity'] == 'reducing'
+
+
+
+# ---------------------------------------------------------------------------
+# get_plan_statistics tool — SAF-35508 Phase 5
+# ---------------------------------------------------------------------------
+
+
+def _statistics_queries(post):
+    """One parsed query string per statistics call the tool actually issued."""
+    return [parse_qs(urlparse(call[0][0]).query) for call in post.call_args_list]
+
+
+class TestPlanStatisticsToolRegistration:
+    """T-24 — the tool is registered under the agreed wire name and declared read-only."""
+
+    @staticmethod
+    def _tools():
+        import asyncio
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+
+        server = SafeBreachStudioServer()
+        return {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+
+    def test_tool_is_registered_under_the_wire_name(self):
+        """The wire name carries no sb_ prefix."""
+        assert 'get_plan_statistics' in self._tools()
+
+    def test_tool_is_declared_read_only(self):
+        assert self._tools()['get_plan_statistics'].annotations.readOnlyHint is True
+
+    def test_tool_is_declared_non_destructive(self):
+        assert self._tools()['get_plan_statistics'].annotations.destructiveHint is False
+
+    def test_the_existing_tools_are_still_registered(self):
+        tools = self._tools()
+        for name in ('run_scenario', 'quick_run', 'manage_test', 'get_scenarios',
+                     'get_scenario_details', 'save_studio_attack_draft'):
+            assert name in tools
+
+    def test_description_states_include_disabled_selects_the_question(self):
+        """Omitting the inversion invites the caller to reproduce the defect being fixed."""
+        description = self._tools()['get_plan_statistics'].description
+        assert 'include_disabled' in description
+        assert 'WHICH QUESTION IS ASKED' in description
+
+    def test_description_states_the_tool_reports_but_removes_nothing(self):
+        description = self._tools()['get_plan_statistics'].description
+        assert 'REMOVES NOTHING' in description
+
+    def test_description_states_limit_reached_means_not_computed(self):
+        description = self._tools()['get_plan_statistics'].description
+        assert 'NOT COMPUTED' in description
+        assert 'NULL MEANS NOT MEASURED' in description
+
+
+class TestPlanInputIsExclusiveAndParsed:
+    """T-26 — ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_both_plan_and_scenario_id_is_rejected(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                sb_get_plan_statistics(
+                    console="test-console", plan='{"steps": [{"n": 0}]}',
+                    scenario_id="abc-123",
+                )
+            post.assert_not_called()
+
+    def test_neither_plan_nor_scenario_id_is_rejected(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                sb_get_plan_statistics(console="test-console")
+            post.assert_not_called()
+
+    def test_malformed_plan_json_is_rejected(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="Invalid plan JSON"):
+                sb_get_plan_statistics(console="test-console", plan='{"steps": [')
+            post.assert_not_called()
+
+    def test_plan_json_that_is_not_an_object_is_rejected(self):
+        """`null` and `[]` parse cleanly but are not plan bodies."""
+        for payload in ('null', '[]', '3'):
+            with _statistics_transport({}) as post:
+                with pytest.raises(ValueError, match="must be a JSON object"):
+                    sb_get_plan_statistics(console="test-console", plan=payload)
+                post.assert_not_called()
+
+    def test_every_rejection_names_both_inputs_and_the_exclusivity(self):
+        cases = [
+            {'plan': '{"steps": [{"n": 0}]}', 'scenario_id': 'abc'},
+            {},
+            {'plan': '{"steps": ['},
+            {'plan': 'null'},
+        ]
+        for kwargs in cases:
+            with pytest.raises(ValueError) as excinfo:
+                sb_get_plan_statistics(console="test-console", **kwargs)
+            message = str(excinfo.value)
+            assert "'plan'" in message
+            assert "'scenario_id'" in message
+            assert "exactly one" in message
+
+
+class TestCountsModeSelectsOneCallOrTwo:
+    """T-27 — counts mode selects one call or two, and labels what it returns."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    PLAN = '{"steps": [{"n": 0}]}'
+
+    def test_default_issues_one_call_with_include_disabled_false(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_plan_statistics(console="test-console", plan=self.PLAN)
+
+        queries = _statistics_queries(post)
+        assert len(queries) == 1
+        assert queries[0]['includeDisabled'] == ['false']
+
+    def test_default_labels_the_result_runnable(self, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(console="test-console", plan=self.PLAN)
+
+        assert result['counts_mode'] == 'runnable'
+
+    def test_expected_only_issues_one_call_with_include_disabled_true(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, include_disabled=True
+            )
+
+        queries = _statistics_queries(post)
+        assert len(queries) == 1
+        assert queries[0]['includeDisabled'] == ['true']
+
+    def test_expected_only_labels_the_result_expected(self, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, include_disabled=True
+            )
+
+        assert result['counts_mode'] == 'expected'
+
+    def test_both_issues_exactly_two_calls_one_of_each(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, both_counts=True
+            )
+
+        queries = _statistics_queries(post)
+        assert len(queries) == 2
+        assert {q['includeDisabled'][0] for q in queries} == {'false', 'true'}
+
+    def test_both_returns_two_labelled_reports(self, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, both_counts=True
+            )
+
+        assert result['counts_mode'] == 'both'
+        assert set(result) == {'counts_mode', 'runnable', 'expected', 'hint_to_agent'}
+
+    def test_both_reports_carry_their_own_derived_counts_mode(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, both_counts=True
+            )
+
+        assert result['runnable']['counts_mode'] == 'runnable'
+        assert result['expected']['counts_mode'] == 'expected'
+
+    def test_both_states_expected_is_not_derivable_from_runnable(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, both_counts=True
+            )
+
+        assert 'cannot be derived' in result['hint_to_agent']
+
+    def test_both_mode_does_not_advise_a_redundant_second_call(
+        self, mock_statistics_response_all_good
+    ):
+        """The sibling key already holds the other figure."""
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", plan=self.PLAN, both_counts=True
+            )
+
+        assert 'request it with include_disabled=true' not in result['runnable']['hint_to_agent']
+        assert 'request it with include_disabled=false' not in result['expected']['hint_to_agent']
 
 
 # ---------------------------------------------------------------------------
