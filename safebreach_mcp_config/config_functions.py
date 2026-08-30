@@ -46,9 +46,11 @@ users_cache = SafeBreachCache(name="users", maxsize=5, ttl=3600)
 assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
 
 # Integration-discovery caches (SAF-32798)
-integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=1800)
-installed_integrations_cache = SafeBreachCache(name="installed_integrations", maxsize=5, ttl=600)
-siem_config_cache = SafeBreachCache(name="siem_config", maxsize=5, ttl=600)
+# Short 1-minute TTL: integrations change on demand (a user may install one and
+# immediately expect Helm to reach it), so freshness is preferred over cache reuse.
+integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=60)
+installed_integrations_cache = SafeBreachCache(name="installed_integrations", maxsize=5, ttl=60)
+siem_config_cache = SafeBreachCache(name="siem_config", maxsize=5, ttl=60)
 
 # Configuration constants
 PAGE_SIZE = 10
