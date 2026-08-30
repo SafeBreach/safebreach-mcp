@@ -9172,6 +9172,65 @@ def _statistics_queries(post):
     return [parse_qs(urlparse(call[0][0]).query) for call in post.call_args_list]
 
 
+class TestToolCatalogDocumentsThePlanStatisticsTool:
+    """T-34 — the tool catalog documents the new tool and the gate table is left alone."""
+
+    @staticmethod
+    def _claude_md():
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        return (repo_root / "CLAUDE.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _gate_table_tools(text):
+        """The tool names in the rate-limiting gate table, by its header."""
+        lines = text.splitlines()
+        header = next(
+            i for i, line in enumerate(lines)
+            if line.startswith("| Tool |") and "check_limit" in line
+        )
+        tools = []
+        for line in lines[header + 2:]:
+            if not line.startswith("|"):
+                break
+            tools.append(line.split("|")[1].strip().strip('`'))
+        return tools
+
+    def test_the_studio_catalog_documents_the_tool(self):
+        text = self._claude_md()
+
+        assert "`get_plan_statistics`" in text
+
+    def test_the_entry_names_the_runnable_default(self):
+        """The includeDisabled inversion is the thing a reader most needs."""
+        text = self._claude_md()
+        entry = text.split("`get_plan_statistics`", 1)[1][:2500]
+
+        assert "runnable" in entry
+        assert "include_disabled" in entry or "includeDisabled" in entry
+
+    def test_the_entry_names_the_read_only_posture(self):
+        text = self._claude_md()
+        entry = text.split("`get_plan_statistics`", 1)[1][:2500]
+
+        assert "read-only" in entry.lower()
+
+    def test_the_gate_table_has_no_row_for_the_new_tool(self):
+        """A read-only tool takes no gates; a row here would contradict the rule."""
+        tools = self._gate_table_tools(self._claude_md())
+
+        assert "get_plan_statistics" not in tools
+
+    def test_the_gate_table_row_set_is_unchanged(self):
+        tools = self._gate_table_tools(self._claude_md())
+
+        assert tools == [
+            'save_studio_attack_draft', 'update_studio_attack_draft', 'run_studio_attack',
+            'set_studio_attack_status', 'run_scenario', 'quick_run', 'manage_test',
+        ]
+
+
 class TestTruncatedResponsesRenderHonestly:
     """The limit-reached crash moved three frames before it was caught for good.
 

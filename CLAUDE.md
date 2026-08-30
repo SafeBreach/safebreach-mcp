@@ -478,6 +478,33 @@ Rate limiting environment variables:
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
+25. `get_plan_statistics` ✨ **NEW** 📖 **Read-only** - Reports what a plan **would** do on a console —
+  per-step simulation counts, which attacks and simulators contribute nothing, and why — **without running
+  anything**. Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics`. Scores an **ad-hoc plan body that
+  was never saved** (`plan`, a JSON string) or a **saved scenario / custom plan** (`scenario_id`, passed to
+  Core as `id` for native resolution — never `planId`, which the controller ignores); exactly one, and a
+  blank string counts as absent. **Not rate-limited** — it is read-only, so it takes neither gate and adds no
+  row to the table above.
+  **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
+  **runnable** counts — what would run right now, with every offline/disabled/unapproved simulator reported
+  with its reason — and `true` gives **expected** counts, which therefore never report `simulator_is_offline`
+  at all. Neither is derivable from the other; `both_counts=True` issues two calls and returns both intact
+  reports, labelled, each carrying its own derived `counts_mode`.
+  **Reports, removes nothing**: `zero_impact_attacks` and `zero_impact_simulators` name entities whose count
+  is a genuine integer `0`; they stay in the plan. Zero-impact simulators come from the **union** `simulators`
+  map, never the role maps, since a one-sided node is absent from the other rather than zero in it.
+  **`null` means not computed, never zero**: on a limit-reached response `truncated` is true,
+  `counts_computed` is false, every count is `null`, and **all zero-impact reporting is suppressed by
+  construction** — empty lists there mean "not evaluated", not "nothing is inapplicable".
+  Conflicts are returned **normalized**: a top-level `constraint_catalog` of the codes this response
+  references, each `description` relayed **verbatim from Core** (`null` where Core supplied none — MCP
+  vendors no constraint vocabulary), plus per-conflict rows carrying only `code`, `severity`, `attack_id`,
+  `side`, `simulator_count` and the API's `values`. `severity` is **computed from the attack's own count**
+  (`blocking` at integer `0`, `reducing` when it still runs), so the same code is legitimately blocking for
+  one attack and reducing for another in the same step. `conflict_detail` controls verbosity: `summary`
+  (default), `per_attack` (adds attack names), `full` (adds a capped `simulator_ids` sample).
+  **No MCP-side cache** — a re-check after a changed decision must never be answered from a stale local copy;
+  `use_cache` controls only Core's own server-side cache.
 
 
 ## Filtering and Search Capabilities
