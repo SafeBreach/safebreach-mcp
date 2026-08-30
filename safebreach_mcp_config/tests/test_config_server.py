@@ -33,12 +33,14 @@ class TestIntegrationToolsRegistration:
         for p in ("console", "page_number", "name_filter", "category_filter",
                   "vendor_filter", "order_by", "order_direction"):
             assert p in gi, f"get_integrations missing param {p}"
-        # capability flags were removed in favour of category_filter
-        assert "ti_only" not in gi and "vm_only" not in gi
+        # ti_only/vm_only are retained as reject-only params: passing them raises a helpful
+        # error pointing at category_filter (rather than being silently ignored).
+        assert "ti_only" in gi and "vm_only" in gi
 
         gii = tools["get_installed_integrations"].inputSchema["properties"]
         for p in ("console", "page_number", "name_filter", "type_filter",
-                  "enabled_filter", "category_filter", "order_by", "order_direction"):
+                  "enabled_filter", "category_filter", "order_by", "order_direction",
+                  "ti_only", "vm_only"):
             assert p in gii, f"get_installed_integrations missing param {p}"
 
         gi1 = tools["get_installed_integration"].inputSchema["properties"]

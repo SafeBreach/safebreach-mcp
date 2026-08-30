@@ -169,10 +169,12 @@ Each entry has `category` (the raw origin label) and `categories` (the derived f
 `category_filter` matches against — a connector grouped under 'custom' still lists its real function, e.g. 'ti').
 Results are paginated (10 per page) and ordered by name ascending by default.
 Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
-category_filter (partial match against the connector's categories; valid categories: custom, siem,
+category_filter (must be one of the valid categories, else rejected with the valid list: custom, siem,
 security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
 vendor_filter (partial vendor match),
-order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
+order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc').
+(ti_only/vm_only were removed — pass category_filter='ti' or 'vulnerability_management' instead; passing
+them is rejected with guidance.)"""
         )
         async def get_integrations_tool(
             console: str = "default",
@@ -182,6 +184,8 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
             vendor_filter: Optional[str] = None,
             order_by: str = "name",
             order_direction: str = "asc",
+            ti_only: Optional[bool] = None,
+            vm_only: Optional[bool] = None,
         ) -> dict:
             console = _resolve_console(console)
             return sb_get_integrations(
@@ -192,6 +196,8 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
                 vendor_filter=vendor_filter,
                 order_by=order_by,
                 order_direction=order_direction,
+                ti_only=ti_only,
+                vm_only=vm_only,
             )
 
         @self.mcp.tool(
@@ -206,9 +212,11 @@ feeds and category_filter='vulnerability_management' lists installed Vulnerabili
 Results are paginated (10 per page), ordered by name ascending by default.
 Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
 type_filter (partial connector-type match, e.g. 'splunk'), enabled_filter (True/False - only enabled/disabled),
-category_filter (partial match against the connector's categories; valid categories: custom, siem,
+category_filter (must be one of the valid categories, else rejected with the valid list: custom, siem,
 security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
-order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc')"""
+order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc').
+(ti_only/vm_only were removed — pass category_filter='ti' or 'vulnerability_management' instead; passing
+them is rejected with guidance.)"""
         )
         async def get_installed_integrations_tool(
             console: str = "default",
@@ -219,6 +227,8 @@ order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc
             category_filter: Optional[str] = None,
             order_by: str = "name",
             order_direction: str = "asc",
+            ti_only: Optional[bool] = None,
+            vm_only: Optional[bool] = None,
         ) -> dict:
             console = _resolve_console(console)
             return sb_get_installed_integrations(
@@ -230,6 +240,8 @@ order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc
                 category_filter=category_filter,
                 order_by=order_by,
                 order_direction=order_direction,
+                ti_only=ti_only,
+                vm_only=vm_only,
             )
 
         @self.mcp.tool(

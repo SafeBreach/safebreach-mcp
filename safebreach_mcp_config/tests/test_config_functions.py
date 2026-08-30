@@ -1043,14 +1043,29 @@ class TestGetIntegrations:
         assert r["total_integrations"] == 0
         assert "hint_to_agent" in r
 
-    # invalid category_filter → zero + hint names the valid categories (parity with order_by)
+    # invalid category_filter is REJECTED with the valid values (parity with order_by)
+    def test_invalid_category_filter_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_integrations(console="c", category_filter="not_a_category")
+        msg = str(exc.value)
+        assert "not_a_category" in msg
+        assert "vulnerability_management" in msg  # valid values listed
+
+    # a valid category_filter is accepted (case-insensitive)
     @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
-    def test_invalid_category_filter_names_valid_categories(self, mock_catalog):
+    def test_valid_category_filter_accepted_case_insensitive(self, mock_catalog):
         mock_catalog.return_value = _catalog_fixture()
-        r = sb_get_integrations(console="c", category_filter="not_a_category")
-        assert r["total_integrations"] == 0
-        assert "vulnerability_management" in r["hint_to_agent"]
-        assert "not_a_category" in r["hint_to_agent"]
+        r = sb_get_integrations(console="c", category_filter="VULNERABILITY_MANAGEMENT")
+        assert [e["type"] for e in r["integrations_in_page"]] == ["wiz"]
+
+    # removed ti_only/vm_only flags are rejected with guidance (not silently ignored)
+    def test_removed_ti_vm_flags_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_integrations(console="c", ti_only=True)
+        assert "category_filter='ti'" in str(exc.value)
+        with pytest.raises(ValueError) as exc2:
+            sb_get_integrations(console="c", vm_only=True)
+        assert "vulnerability_management" in str(exc2.value)
 
 
 # --- Integration-discovery: get_installed_integrations (SAF-32798, Phase 2) ---
@@ -1208,6 +1223,17 @@ class TestGetInstalledIntegrations:
         assert sorted(i["id"] for i in siem["installed_integrations_in_page"]) == ["a1", "d4"]
         a1 = next(i for i in siem["installed_integrations_in_page"] if i["id"] == "a1")
         assert a1["category"] == "custom" and "siem" in a1["categories"]
+
+    def test_invalid_category_filter_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_installed_integrations(console="c", category_filter="not_a_category")
+        assert "vulnerability_management" in str(exc.value)
+
+    def test_removed_ti_vm_flags_rejected(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", ti_only=True)
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", vm_only=True)
 
 
 # --- Integration-discovery: get_installed_integration (SAF-32798, Phase 3) ---

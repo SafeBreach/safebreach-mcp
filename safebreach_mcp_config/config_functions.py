@@ -33,15 +33,30 @@ from .config_types import (
 )
 
 
-def _augment_category_hint(paginated: Dict[str, Any], total: int, category_filter: Optional[str]) -> None:
-    """When a category_filter matched nothing, name the valid categories in the hint (parity
-    with the order_by/order_direction validation messages)."""
-    if category_filter and total == 0:
-        base = paginated.get("hint_to_agent") or ""
-        paginated["hint_to_agent"] = (
-            f"{base} No category matched '{category_filter}'. "
-            f"Valid categories: {', '.join(CATEGORY_TAXONOMY)}."
-        ).strip()
+def _validate_category_filter(category_filter: Optional[str]) -> None:
+    """Reject an unrecognized category_filter up front with the valid values (parity with the
+    order_by/order_direction validation), rather than silently returning an empty result."""
+    if category_filter is not None and \
+            category_filter.lower() not in [c.lower() for c in CATEGORY_TAXONOMY]:
+        raise ValueError(
+            f"Invalid category_filter '{category_filter}'. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
+
+
+def _reject_removed_capability_flags(ti_only, vm_only) -> None:
+    """The ti_only/vm_only flags were replaced by category_filter. Reject them explicitly with
+    guidance, so an old caller gets a clear error instead of a silently-unfiltered result."""
+    if ti_only is not None:
+        raise ValueError(
+            "The 'ti_only' filter was removed. Use category_filter='ti' instead. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
+    if vm_only is not None:
+        raise ValueError(
+            "The 'vm_only' filter was removed. Use category_filter='vulnerability_management' instead. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -791,12 +806,17 @@ def sb_get_integrations(
     vendor_filter: Optional[str] = None,
     order_by: str = "name",
     order_direction: str = "asc",
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Get the filtered, paginated catalog of available connector *types*.
 
     Returns the menu of connector types that could be installed (no account data, no secrets).
     `category_filter` matches the derived `categories` membership (see derive_categories).
+    `ti_only`/`vm_only` are removed and rejected — use `category_filter` instead.
     """
+    _reject_removed_capability_flags(ti_only, vm_only)
+    _validate_category_filter(category_filter)
     valid_order_by = ['name', 'type', 'category', 'vendor']
     if order_by not in valid_order_by:
         raise ValueError(
@@ -836,7 +856,6 @@ def sb_get_integrations(
         applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
-        _augment_category_hint(paginated, paginated.get('total_integrations', 0), category_filter)
         return paginated
 
     except Exception as e:
@@ -897,6 +916,8 @@ def sb_get_installed_integrations(
     category_filter: Optional[str] = None,
     order_by: str = "name",
     order_direction: str = "asc",
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Get the filtered, paginated list of INSTALLED integration connectors (slim, no secrets).
 
@@ -904,8 +925,10 @@ def sb_get_installed_integrations(
     membership, joined from the catalog by type. `category_filter` matches the derived
     membership — e.g. `category_filter='ti'` lists installed TI feeds (replacing the former
     get_ti_integrations tool), `category_filter='vulnerability_management'` lists installed
-    VM connectors.
+    VM connectors. `ti_only`/`vm_only` are removed and rejected — use `category_filter`.
     """
+    _reject_removed_capability_flags(ti_only, vm_only)
+    _validate_category_filter(category_filter)
     valid_order_by = ['name', 'type', 'id', 'enabled', 'category']
     if order_by not in valid_order_by:
         raise ValueError(
@@ -949,7 +972,6 @@ def sb_get_installed_integrations(
         applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
-        _augment_category_hint(paginated, paginated.get('total_installed_integrations', 0), category_filter)
         return paginated
 
     except Exception as e:

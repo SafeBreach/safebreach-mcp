@@ -11,6 +11,14 @@
 > `{console, integration_id, integration, redacted_fields}`. Integration-discovery caches were also
 > reduced to a 60s TTL. The four-tool description below is retained as the original planning record; the
 > code, README, and CLAUDE.md reflect the final three-tool design.
+>
+> **Re-review follow-ups (same PR):** (a) custom SIEM variants (`custom_splunkrest`, `custom_qradar`)
+> now recover `siem` — `isSecEvents` can't distinguish siem from security_control, so a `custom_<base>`
+> connector inherits its base type's category; `siem` connectors also carry `security_control` (subset).
+> (b) Invalid filters are **rejected** with the valid values rather than silently ignored: an
+> unrecognized `category_filter` raises with the canonical category list, and the removed
+> `ti_only`/`vm_only` flags are retained as reject-only params that raise pointing at `category_filter`.
+> `get_ti_integrations` remains removed (calling it is an explicit "Unknown tool" error).
 
 ## Section 1: Overview
 
