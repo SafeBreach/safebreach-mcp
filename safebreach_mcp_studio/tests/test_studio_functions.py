@@ -28,6 +28,7 @@ from safebreach_mcp_studio.studio_functions import (
     _fetch_all_scenarios,
     _fetch_all_plans,
     _get_scenario_statistics,
+    _build_plan_statistics_report,
     sb_run_scenario,
     sb_manage_test,
     sb_delete_test,
@@ -8545,6 +8546,469 @@ class TestLimitReachedNoLongerCrashesTheHelper:
 
         assert result['status'] == 'evaluating'
         assert result['predicted_simulations'] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# translation + zero-impact reporting — SAF-35508 Phase 4
+# ---------------------------------------------------------------------------
+
+# These are fetch-core-shaped dicts (what fetch_plan_statistics returns), not raw
+# API payloads: the shaping layer is a pure function over that contract.
+
+
+def _phase4_statistics(steps, catalog=None, plan_step_count=1,
+                       returned_step_count=None, truncated=False):
+    return {
+        'steps': steps,
+        'constraint_catalog': catalog,
+        'plan_step_count': plan_step_count,
+        'returned_step_count': (
+            len(steps) if returned_step_count is None else returned_step_count
+        ),
+        'truncated': truncated,
+        'params_used': {'limit': 500000, 'includeDisabled': False,
+                        'getConstraints': True, 'getAllConstraints': True,
+                        'useCache': True},
+    }
+
+
+def _phase4_step(**overrides):
+    step = {
+        'response_step_index': 0,
+        'simulationCount': 40,
+        'counts_computed': True,
+        'isLimitReached': False,
+        'moves': {},
+        'simulators': {},
+        'attackerSimulators': {},
+        'targetSimulators': {},
+        'simulatorConstraints': {},
+    }
+    step.update(overrides)
+    return step
+
+
+PHASE4_SPARSE_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        moves={'281': 0},
+        # Three simulators in scope, only one carries any constraint. Core prunes
+        # empty leaves and then empty simulators, so absence means "fine".
+        simulators={'sim-1': 0, 'sim-2': 4, 'sim-3': 4},
+        targetSimulators={'sim-1': 0, 'sim-2': 4, 'sim-3': 4},
+        simulatorConstraints={
+            'targetConstraints': {
+                'sim-1': {'281': [{'reason': 'incompatible_os',
+                                   'required': 'WINDOWS', 'actual': 'LINUX'}]},
+            },
+            'attackerConstraints': {},
+        },
+    )],
+    catalog={'incompatible_os': {'description': 'OS is incompatible.'}},
+)
+
+PHASE4_MULTI_REASON_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        moves={'281': 0},
+        simulators={'sim-1': 0},
+        simulatorConstraints={
+            'targetConstraints': {
+                'sim-1': {'281': [
+                    {'reason': 'incompatible_os', 'required': 'WINDOWS', 'actual': 'LINUX'},
+                    {'reason': 'port_in_use'},
+                    {'reason': 'simulator_is_offline'},
+                ]},
+            },
+            # The same simulator on the other side: sides merge, count stays 1.
+            'attackerConstraints': {
+                'sim-1': {'281': [{'reason': 'incompatible_os',
+                                   'required': 'WINDOWS', 'actual': 'LINUX'}]},
+            },
+        },
+    )],
+    catalog={
+        'incompatible_os': {'description': 'OS is incompatible.'},
+        'port_in_use': {'description': 'Required port occupied.'},
+        'simulator_is_offline': {'description': 'The simulator is offline.'},
+    },
+)
+
+PHASE4_MIXED_COUNTS_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        # A positive count, a genuine integer zero, and a never-computed null.
+        moves={'281': 40, '226': 0, '9012': None},
+        simulators={'sim-1': 40},
+        simulatorConstraints={
+            'targetConstraints': {
+                'sim-1': {
+                    '226': [{'reason': 'incompatible_os',
+                             'required': 'WINDOWS', 'actual': 'LINUX'}],
+                    '9012': [{'reason': 'port_in_use'}],
+                },
+            },
+            'attackerConstraints': {},
+        },
+    )],
+    catalog={'incompatible_os': {'description': 'OS is incompatible.'},
+             'port_in_use': {'description': 'Required port occupied.'}},
+)
+
+PHASE4_UNION_MAP_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        moves={'281': 40},
+        # The union map is the only honest source: a node present on one side
+        # only is absent from the other role map, never zero in it.
+        simulators={'e5f6': 0, 'a1b2': 2, 'c3d4': None},
+        attackerSimulators={'a1b2': 2, 'c3d4': None},
+        targetSimulators={'e5f6': 0},
+        simulatorConstraints={
+            'targetConstraints': {
+                'e5f6': {'281': [{'reason': 'simulator_is_offline'}]},
+            },
+            'attackerConstraints': {},
+        },
+    )],
+    catalog={'simulator_is_offline': {'description': 'The simulator is offline.'}},
+)
+
+PHASE4_LIMIT_REACHED_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        simulationCount=None,
+        counts_computed=False,
+        isLimitReached=True,
+        moves={'1234': None, '5678': None},
+        simulators={'sim-1': None},
+        # Deliberately non-empty: suppression must be proved, not trivially met.
+        simulatorConstraints={
+            'targetConstraints': {
+                'sim-1': {'1234': [{'reason': 'incompatible_os'}]},
+            },
+            'attackerConstraints': {},
+        },
+    )],
+    catalog={'incompatible_os': {'description': 'OS is incompatible.'}},
+    plan_step_count=3,
+    returned_step_count=1,
+    truncated=True,
+)
+
+PHASE4_SHARED_CODE_STATISTICS = _phase4_statistics(
+    [_phase4_step(
+        moves={'1234': 240, '5678': 180, '9012': 0},
+        simulators={'sim-1': 240},
+        simulatorConstraints={
+            'targetConstraints': {
+                'sim-1': {
+                    '1234': [{'reason': 'incompatible_os',
+                              'required': 'WINDOWS', 'actual': 'MAC'}],
+                    '5678': [{'reason': 'incompatible_os',
+                              'required': 'WINDOWS', 'actual': 'MAC'}],
+                    '9012': [{'reason': 'incompatible_os',
+                              'required': 'WINDOWS', 'actual': 'LINUX'},
+                             {'reason': 'absent_from_catalog_entirely'}],
+                },
+            },
+            'attackerConstraints': {},
+        },
+    )],
+    catalog={
+        'incompatible_os': {'description': 'OS is incompatible.'},
+        'never_emitted_by_mcp': {'description': 'Should not reach the caller.'},
+    },
+)
+
+
+def _phase4_conflicts(report, step=0):
+    return report['steps'][step]['conflicts']
+
+
+def _phase4_step_of(report, step=0):
+    return report['steps'][step]
+
+
+class TestSparseConstraintMapIsNotDense:
+    """T-18 — a sparse constraint map is never iterated as though dense."""
+
+    def test_only_the_simulator_present_in_the_map_produces_conflicts(self):
+        report = _build_plan_statistics_report(PHASE4_SPARSE_STATISTICS)
+
+        conflicts = _phase4_conflicts(report)
+        assert len(conflicts) == 1
+        assert conflicts[0]['simulator_count'] == 1
+
+    def test_absent_simulators_produce_no_conflict_entries(self):
+        report = _build_plan_statistics_report(PHASE4_SPARSE_STATISTICS)
+
+        blob = json.dumps(report)
+        assert 'sim-2' not in blob
+        assert 'sim-3' not in blob
+
+    def test_absent_simulators_are_not_described_as_unevaluated_or_unknown(self):
+        """Absence means 'no conflicts', not 'missing data'."""
+        report = _build_plan_statistics_report(PHASE4_SPARSE_STATISTICS)
+
+        blob = json.dumps(report).lower()
+        assert 'unevaluated' not in blob
+        assert 'unknown' not in blob
+
+    def test_absent_simulators_are_not_reported_as_zero_impact(self):
+        report = _build_plan_statistics_report(PHASE4_SPARSE_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_simulators']
+        assert [z['simulator_id'] for z in zero_impact] == ['sim-1']
+
+
+class TestEveryReasonInAConstraintLeafSurfaces:
+    """T-19 — every reason in a multi-reason constraint leaf surfaces, not just the first."""
+
+    def test_all_three_reasons_in_one_leaf_are_reported(self):
+        report = _build_plan_statistics_report(PHASE4_MULTI_REASON_STATISTICS)
+
+        codes = {c['code'] for c in _phase4_conflicts(report)}
+        assert codes == {'incompatible_os', 'port_in_use', 'simulator_is_offline'}
+
+    def test_reasons_from_both_sides_are_merged_not_overwritten(self):
+        report = _build_plan_statistics_report(PHASE4_MULTI_REASON_STATISTICS)
+
+        by_code = {c['code']: c for c in _phase4_conflicts(report)}
+        assert by_code['incompatible_os']['side'] == ['attacker', 'target']
+        assert by_code['port_in_use']['side'] == ['target']
+
+    def test_one_simulator_on_both_sides_counts_once(self):
+        report = _build_plan_statistics_report(PHASE4_MULTI_REASON_STATISTICS)
+
+        by_code = {c['code']: c for c in _phase4_conflicts(report)}
+        assert by_code['incompatible_os']['simulator_count'] == 1
+
+    def test_each_reason_carries_its_computed_severity(self):
+        report = _build_plan_statistics_report(PHASE4_MULTI_REASON_STATISTICS)
+
+        assert all(c['severity'] == 'blocking' for c in _phase4_conflicts(report))
+
+
+class TestZeroImpactAttacksRequireIntegerZero:
+    """T-20 — only a genuine integer zero marks an attack inapplicable, never a null."""
+
+    def test_only_the_integer_zero_attack_is_reported_zero_impact(self):
+        report = _build_plan_statistics_report(PHASE4_MIXED_COUNTS_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_attacks']
+        assert [z['attack_id'] for z in zero_impact] == ['226']
+
+    def test_null_counted_attack_is_absent_from_every_zero_impact_list(self):
+        """A limit-reached null must never read as 'runs nowhere'."""
+        report = _build_plan_statistics_report(PHASE4_MIXED_COUNTS_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_attacks']
+        assert '9012' not in {z['attack_id'] for z in zero_impact}
+
+    def test_positive_attack_is_not_reported_zero_impact(self):
+        report = _build_plan_statistics_report(PHASE4_MIXED_COUNTS_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_attacks']
+        assert '281' not in {z['attack_id'] for z in zero_impact}
+
+    def test_zero_impact_attack_carries_its_translated_blockers(self):
+        report = _build_plan_statistics_report(PHASE4_MIXED_COUNTS_STATISTICS)
+
+        blockers = _phase4_step_of(report)['zero_impact_attacks'][0]['blockers']
+        assert [b['code'] for b in blockers] == ['incompatible_os']
+        assert report['constraint_catalog']['incompatible_os']['description'] == (
+            'OS is incompatible.'
+        )
+
+    def test_boolean_false_is_not_treated_as_a_zero_count(self):
+        statistics = _phase4_statistics(
+            [_phase4_step(moves={'281': False}, simulators={'sim-1': False})]
+        )
+        report = _build_plan_statistics_report(statistics)
+
+        assert _phase4_step_of(report)['zero_impact_attacks'] == []
+        assert _phase4_step_of(report)['zero_impact_simulators'] == []
+
+
+class TestZeroImpactSimulatorsComeFromTheUnionMap:
+    """T-21 — zero-impact simulators come from the union map, so one-sided nodes are not falsely reported."""
+
+    def test_only_the_union_map_zero_is_reported(self):
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_simulators']
+        assert [z['simulator_id'] for z in zero_impact] == ['e5f6']
+
+    def test_simulator_absent_from_a_role_map_is_not_reported(self):
+        """a1b2 is missing from targetSimulators — absent, not zero."""
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        reported = {z['simulator_id']
+                    for z in _phase4_step_of(report)['zero_impact_simulators']}
+        assert 'a1b2' not in reported
+
+    def test_positive_union_count_is_not_reported(self):
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        reported = {z['simulator_id']
+                    for z in _phase4_step_of(report)['zero_impact_simulators']}
+        assert 'a1b2' not in reported
+
+    def test_null_union_count_is_not_reported(self):
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        reported = {z['simulator_id']
+                    for z in _phase4_step_of(report)['zero_impact_simulators']}
+        assert 'c3d4' not in reported
+
+    def test_zero_impact_simulator_carries_the_codes_it_produced(self):
+        report = _build_plan_statistics_report(PHASE4_UNION_MAP_STATISTICS)
+
+        blockers = _phase4_step_of(report)['zero_impact_simulators'][0]['blockers']
+        assert [b['code'] for b in blockers] == ['simulator_is_offline']
+        # attack_count, not simulator_count: for a per-simulator blocker the
+        # informative number is how many attacks it was eliminated from.
+        assert blockers[0]['attack_count'] == 1
+
+
+class TestLimitReachedSuppressesZeroImpactReporting:
+    """T-22 — a limit-reached response suppresses zero-impact reporting entirely."""
+
+    def test_no_zero_impact_attack_list_is_emitted(self):
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        assert _phase4_step_of(report)['zero_impact_attacks'] == []
+
+    def test_no_zero_impact_simulator_list_is_emitted(self):
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        assert _phase4_step_of(report)['zero_impact_simulators'] == []
+
+    def test_no_conflicts_and_an_empty_catalog_are_emitted(self):
+        """The fixture carries constraints, so suppression is proved not assumed."""
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        assert _phase4_conflicts(report) == []
+        assert report['constraint_catalog'] == {}
+
+    def test_truncation_explanation_is_present_in_hint_to_agent(self):
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        hint = report['hint_to_agent']
+        assert hint
+        assert 'not' in hint.lower() and 'zero' in hint.lower()
+
+    def test_returned_step_count_is_stated_against_the_plan_step_count(self):
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        assert report['plan_step_count'] == 3
+        assert report['returned_step_count'] == 1
+        assert report['truncated'] is True
+
+    def test_null_counts_are_relayed_as_null_not_zero(self):
+        report = _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+
+        step = _phase4_step_of(report)
+        assert step['simulation_count'] is None
+        assert step['counts_computed'] is False
+        assert step['is_limit_reached'] is True
+        assert step['attacks'] == {'1234': None, '5678': None}
+
+
+class TestConflictsAreNormalizedAgainstTheCatalog:
+    """T-23 — conflicts are normalized against a catalog, with nothing static repeated per conflict."""
+
+    def test_catalog_holds_one_entry_per_distinct_code_present(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        assert set(report['constraint_catalog']) == {
+            'incompatible_os', 'absent_from_catalog_entirely',
+        }
+
+    def test_catalog_excludes_codes_this_response_never_emits(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        assert 'never_emitted_by_mcp' not in report['constraint_catalog']
+
+    def test_unknown_code_appears_in_the_catalog_with_null_description(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        entry = report['constraint_catalog']['absent_from_catalog_entirely']
+        assert entry == {'description': None}
+
+    def test_conflict_entries_carry_exactly_the_varying_fields(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        for conflict in _phase4_conflicts(report):
+            assert set(conflict) <= {
+                'code', 'severity', 'attack_id', 'side', 'simulator_count', 'values',
+                'values_variants',
+            }
+            assert {'code', 'severity', 'attack_id', 'side',
+                    'simulator_count'} <= set(conflict)
+
+    def test_no_conflict_entry_carries_a_description(self):
+        """Static facts live once, in the catalog."""
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        assert all('description' not in c for c in _phase4_conflicts(report))
+
+    def test_shared_code_is_not_repeated_in_the_catalog_per_attack(self):
+        """Three attacks share incompatible_os; the catalog holds it once."""
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        shared = [c for c in _phase4_conflicts(report)
+                  if c['code'] == 'incompatible_os']
+        assert len(shared) == 3
+        assert list(report['constraint_catalog']).count('incompatible_os') == 1
+
+
+class TestSeverityIsComputedFromTheAttackCount:
+    """T-36 — the same code resolves blocking or reducing depending on the attack's count."""
+
+    @staticmethod
+    def _by_attack(report, code='incompatible_os'):
+        return {c['attack_id']: c for c in _phase4_conflicts(report)
+                if c['code'] == code}
+
+    def test_same_code_is_blocking_for_the_zero_count_attack(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        assert self._by_attack(report)['9012']['severity'] == 'blocking'
+
+    def test_same_code_is_reducing_for_the_positive_count_attack(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        assert self._by_attack(report)['1234']['severity'] == 'reducing'
+
+    def test_both_severities_coexist_in_one_step_for_one_code(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        severities = {c['attack_id']: c['severity'] for c in self._by_attack(report).values()}
+        assert severities == {'1234': 'reducing', '5678': 'reducing', '9012': 'blocking'}
+
+    def test_only_the_blocking_entry_appears_in_that_attacks_blockers(self):
+        report = _build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS)
+
+        zero_impact = _phase4_step_of(report)['zero_impact_attacks']
+        assert [z['attack_id'] for z in zero_impact] == ['9012']
+        assert all(b['code'] in {'incompatible_os', 'absent_from_catalog_entirely'}
+                   for b in zero_impact[0]['blockers'])
+
+    def test_severity_is_unchanged_when_the_catalog_is_absent(self):
+        """No catalog field is consulted to reach the verdict."""
+        statistics = dict(PHASE4_SHARED_CODE_STATISTICS, constraint_catalog=None)
+        report = _build_plan_statistics_report(statistics)
+
+        assert self._by_attack(report)['9012']['severity'] == 'blocking'
+        assert self._by_attack(report)['1234']['severity'] == 'reducing'
+
+    def test_severity_is_unchanged_when_the_catalog_describes_the_code_differently(self):
+        statistics = dict(
+            PHASE4_SHARED_CODE_STATISTICS,
+            constraint_catalog={'incompatible_os': {'description': 'Harmless note.'}},
+        )
+        report = _build_plan_statistics_report(statistics)
+
+        assert self._by_attack(report)['9012']['severity'] == 'blocking'
+        assert self._by_attack(report)['1234']['severity'] == 'reducing'
 
 
 # ---------------------------------------------------------------------------
