@@ -46,7 +46,7 @@ idioms, not the TS surface verbatim.
 |-------|-------|
 | Ticket | SAF-32798 (Task, Medium, `CTEM-dev`) |
 | Branch | `feature/SAF-32798-expose-integration-discovery-tools` |
-| Status | PRD drafted; ready for implementation |
+| Status | Implemented + PR-review-revised (3-tool `category_filter` design); full test-plan rerun green incl. Helm E2E; PR #88 open for review |
 | Live API research | Complete — validated on `pentest01` 2026-08-17 (see `api-research.md`) |
 | Reporter confirmation | Gal Turgeman confirmed no dedicated API for single-connector / TI list |
 
@@ -260,7 +260,10 @@ server → tests) still holds. Ordering is dependency-driven: Phase 1 builds the
 | Phase 3 | `get_installed_integration` — `redact_sensitive_fields` + `get_installed_integration_detail_view` + `sb_get_installed_integration` (fetch `/config`, filter by `integration_id`, redact) + registration | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (8f58c52, 2026-08-17) |
 | Phase 4 | `get_ti_integrations` — `get_minimal_ti_integration` + `sb_get_ti_integrations` (isTiV2 derivation, name/type/enabled filters, ordering, pagination) + registration; + cross-tool hardening (403 relay across all four, pagination out-of-range, all-four registration, compose, whole-server regression, full-flow progression) | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/test_config_types.py`, `tests/test_config_functions.py`, `tests/test_config_server.py`, `tests/test_e2e_integrations.py` | ✅ Complete (00c0f5a, 2026-08-17) |
 | Phase 5 | Docs | `CLAUDE.md`, `README.md` | ✅ Complete (2026-08-17) |
-| Phase 6 | PR | — | 🔄 In Progress (PR #88) |
+| Phase 6 | PR | — | ✅ Opened (PR #88, in review) |
+| Phase 7 | **PR-review consolidation** — reduce cache TTL to 60s (`7c24e10`); then drop `get_ti_integrations` + `ti_only`/`vm_only`, add universal `category_filter` on both list tools, derive `categories` (raw label ∪ capability flags) from the backend `/config/categories` taxonomy, and return the `{console, integration_id, integration, redacted_fields}` envelope | `config_types.py`, `config_functions.py`, `config_server.py`, all `tests/*`, `README.md`, `CLAUDE.md`, `prd.md` | ✅ Complete (`c106240`, 2026-08-30) |
+| Phase 8 | **Re-review fixes** — recover `siem` for custom SIEM variants via base-type inheritance (`isSecEvents` can't split siem/security_control); reject invalid/removed filters with valid-value hints instead of silent-ignore | `config_types.py`, `config_functions.py`, `config_server.py`, `tests/*`, `CLAUDE.md`, `prd.md` | ✅ Complete (`cd5aaf9`, `f6402b0`, 2026-08-30) |
+| Phase 9 | **Full test-plan rerun (new contract)** — 145 config unit + 4 live e2e; provisioned a throwaway Validate console (`saf-32798.dev`, build #54935), rebuilt+deployed `mcp-proxy`@`f6402b0`, seeded TI/VM/security_control connectors; ran the Helm E2E lane — in-console MCP protocol lane PASS + AI-agent Bedrock-judge lane 4/4 @ 9/10; console torn down | `tests/test_e2e_integrations.py`, `test-results/helm-e2e-rerun-2026-08-30.md` (+`evidence/helm__newc_*.png`); authored (uncommitted) `automation/…/ai/test_helm_integration_discovery_new_contract.py` | ✅ Complete (2026-08-30) |
 
 ## Section 9: Risks and Assumptions
 
@@ -305,3 +308,6 @@ conventions exactly.
 | 2026-08-17 | Initial PRD from investigation + live pentest01 API research; host=Config, pagination=repo convention, redaction re-implemented in Python. |
 | 2026-08-17 | Added §2.0 explicit tool signatures — full filter/order surface consistent with `get_console_simulators`/`get_scenarios`/`get_playbook_attacks` (`<field>_filter`, bool flags, `order_by`/`order_direction`, `integration_id`). RBAC reframed as ui-server-enforced. |
 | 2026-08-17 | Implemented all 4 phases via TDD (132 config unit tests + 4 live e2e on pentest01; 1584 cross-server unit green). Strict review fixes: `_resolve_console` dedupe + recursive nested vault-ref redaction. RBAC contract corrected to sibling catch-and-return-with-hint. All DoD checked; phases 1-5 ✅. |
+| 2026-08-30 | **PR #88 review — consolidation to 3 tools.** Reduced integration-discovery cache TTL 30/10min→60s (`7c24e10`). Dropped `get_ti_integrations` + `ti_only`/`vm_only`; added universal `category_filter` on `get_integrations` + `get_installed_integrations`, matched against a derived `categories` membership (raw `category` ∪ capability-flag categories, from the backend `/config/categories` taxonomy) — resolving the reviewer's category-vs-capability divergence; `get_installed_integration` now returns `{console, integration_id, integration, redacted_fields}` (`c106240`). See top-of-doc addendum. |
+| 2026-08-30 | **PR #88 re-review fixes.** Custom SIEM variants (`custom_splunkrest`/`custom_qradar`) recover `siem` via base-type inheritance; invalid/removed filters now **rejected** with the valid-category list instead of silently ignored (`cd5aaf9`, `f6402b0`). |
+| 2026-08-30 | **Full test-plan rerun on the new contract** — 145 config unit + 4 live e2e; full-environment **Helm E2E** on a throwaway Validate console (`mcp-proxy`@`f6402b0` deployed+verified): in-console MCP protocol lane PASS + AI-agent Bedrock-judge lane 4/4 @ 9/10 (see `test-results/helm-e2e-rerun-2026-08-30.md`). Env torn down. |
