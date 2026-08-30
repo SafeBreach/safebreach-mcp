@@ -552,3 +552,47 @@ class TestNoMcpSideCaching:
             if type(value).__name__ in _CACHE_TYPE_NAMES or "cache" in name.lower():
                 suspicious.append(f"{name} ({type(value).__name__})")
         assert suspicious == [], f"cache-like module globals found: {suspicious}"
+
+
+class TestSingleStatisticsCallSite:
+    """T-16 — the statistics endpoint is reached from exactly one place in the repo."""
+
+    @staticmethod
+    def _source_files():
+        """Every first-party Python source file, excluding tests and virtualenvs."""
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        for path in repo_root.rglob("*.py"):
+            # Relative to the repo root: an absolute path may itself sit under a
+            # dot-directory (a git worktree lives under .claude/worktrees/).
+            parts = path.relative_to(repo_root).parts
+            if any(p.startswith(".") or p == "__pycache__" for p in parts):
+                continue
+            if "tests" in parts or path.name.startswith("test_"):
+                continue
+            yield path
+
+    def _endpoint_matches(self):
+        matches = []
+        for path in self._source_files():
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if "/plan/statistics" in line:
+                    matches.append(f"{path}:{lineno}")
+        return matches
+
+    def test_endpoint_path_appears_in_exactly_one_source_file(self):
+        """A second estimation path is what the parent requirement forbids."""
+        matches = self._endpoint_matches()
+        files = {m.rsplit(":", 1)[0] for m in matches}
+        assert len(files) == 1, f"plan/statistics reached from {len(files)} files: {matches}"
+
+    def test_that_file_is_the_fetch_core(self):
+        matches = self._endpoint_matches()
+        assert matches, "the endpoint path was not found at all"
+        for match in matches:
+            assert match.rsplit(":", 1)[0].endswith("safebreach_mcp_core/plan_statistics.py"), (
+                f"unexpected statistics call site: {match}"
+            )

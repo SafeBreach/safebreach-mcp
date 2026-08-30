@@ -7,7 +7,9 @@ This module tests the core business logic functions for Studio operations.
 import pytest
 import json
 import requests
+from contextlib import contextmanager
 from unittest.mock import Mock, patch, MagicMock
+from urllib.parse import parse_qs, urlparse
 from safebreach_mcp_studio.studio_functions import (
     sb_validate_studio_code,
     sb_save_studio_attack_draft,
@@ -6218,24 +6220,12 @@ class TestGetScenarioStatistics:
         yield
         _user_auth_artifacts.reset(token)
 
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.requests.post')
     def test_returns_per_step_counts(
-        self, mock_post, mock_base_url, mock_account_id,
-        mock_oob_scenario, mock_statistics_response_all_good
+        self, mock_oob_scenario, mock_statistics_response_all_good
     ):
         """Returns list of simulationCount per step."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_statistics_response_all_good
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
-
-        result = _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
 
         assert len(result) == 2
         assert result[0]['simulationCount'] == 1676
@@ -6244,24 +6234,12 @@ class TestGetScenarioStatistics:
         assert result[0]['matchedAttackerSimulators'] >= 0
         assert result[0]['matchedAttacks'] >= 0
 
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.requests.post')
     def test_correct_url_and_payload(
-        self, mock_post, mock_base_url, mock_account_id,
-        mock_oob_scenario, mock_statistics_response_all_good
+        self, mock_oob_scenario, mock_statistics_response_all_good
     ):
         """Verify correct URL, query params, and payload structure."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_statistics_response_all_good
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
-
-        _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+        with _statistics_transport(mock_statistics_response_all_good) as mock_post:
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
 
         call_args = mock_post.call_args
         url = call_args[0][0]
@@ -6273,24 +6251,14 @@ class TestGetScenarioStatistics:
         assert payload['name'] == ''
         assert len(payload['steps']) == 2
 
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    @patch('safebreach_mcp_studio.studio_functions.requests.post')
-    def test_api_error_propagates(
-        self, mock_post, mock_base_url, mock_account_id,
-        mock_oob_scenario
-    ):
+    def test_api_error_propagates(self, mock_oob_scenario):
         """API errors propagate."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.raise_for_status.side_effect = Exception("Statistics API 500")
-        mock_post.return_value = mock_response
-
-        with pytest.raises(Exception, match="Statistics API 500"):
-            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+        with _statistics_transport(
+            {}, status_code=500,
+            raise_for_status=Exception("Statistics API 500"),
+        ):
+            with pytest.raises(Exception, match="Statistics API 500"):
+                _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
 
 
 class TestRunScenarioWithStatistics:
@@ -7914,28 +7882,15 @@ class TestConstraintDescriptionsRelayedVerbatim:
         codes_281 = {r['code']: r for r in by_move['281']['reasons']}
         assert codes_281['incompatible_os']['description'] == awkward
 
-    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
-           return_value={})
-    @patch('safebreach_mcp_studio.studio_functions.requests.post')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_catalog_is_read_from_the_response_root_not_from_a_step(
-        self, mock_base_url, mock_account_id, mock_post, mock_names,
-        sample_constraint_catalog_response
+        self, sample_constraint_catalog_response
     ):
         """The root catalog wins; a catalog planted inside a step is never read."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = sample_constraint_catalog_response
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
-
-        result = _get_scenario_statistics(
-            steps=[{"name": "step-1"}], console="test-console",
-            include_constraints=True,
-        )
+        with _statistics_transport(sample_constraint_catalog_response):
+            result = _get_scenario_statistics(
+                steps=[{"name": "step-1"}], console="test-console",
+                include_constraints=True,
+            )
 
         reasons = {
             r['code']: r
@@ -8019,28 +7974,15 @@ class TestAbsentConstraintCatalog:
             'requires WINDOWS, simulator has LINUX'
         )
 
-    @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
-           return_value={})
-    @patch('safebreach_mcp_studio.studio_functions.requests.post')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
-    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     def test_get_scenario_statistics_survives_a_response_with_no_catalog(
-        self, mock_base_url, mock_account_id, mock_post, mock_names,
-        sample_statistics_response_without_catalog
+        self, sample_statistics_response_without_catalog
     ):
         """End to end on an older console: no raise, conflicts intact, no meanings."""
-        mock_base_url.return_value = "https://test.safebreach.com"
-        mock_account_id.return_value = "1234567890"
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = sample_statistics_response_without_catalog
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
-
-        result = _get_scenario_statistics(
-            steps=[{"name": "step-1"}], console="test-console",
-            include_constraints=True,
-        )
+        with _statistics_transport(sample_statistics_response_without_catalog):
+            result = _get_scenario_statistics(
+                steps=[{"name": "step-1"}], console="test-console",
+                include_constraints=True,
+            )
 
         reasons = result[0]['constraint_summary'][0]['reasons']
         assert reasons, "conflicts must survive an absent catalog"
@@ -8084,6 +8026,472 @@ class TestRenderConstraintReason:
         from safebreach_mcp_studio.studio_server import _render_constraint_reason
         rendered = _render_constraint_reason({'code': 'incompatible_os'})
         assert 'no description supplied' in rendered
+
+
+
+# ---------------------------------------------------------------------------
+# plan/statistics transport — SAF-35508 Phase 3
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _statistics_transport(payload, status_code=200, raise_for_status=None):
+    """Patch the plan/statistics transport at BOTH seams with one shared mock.
+
+    Phase 3 moves the HTTP call out of studio_functions into
+    safebreach_mcp_core.plan_statistics. Patching both seams with the same mock
+    object keeps these guards seam-agnostic — they assert the identical thing
+    before and after the refactor, which is exactly what "the intended visible
+    delta is none" means. Whichever half is inert is harmless.
+    """
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload
+    if raise_for_status is None:
+        response.raise_for_status.return_value = None
+    else:
+        response.raise_for_status.side_effect = raise_for_status
+    post = MagicMock(return_value=response)
+
+    with patch('safebreach_mcp_studio.studio_functions.requests.post', post), \
+         patch('safebreach_mcp_core.plan_statistics.requests.post', post), \
+         patch('safebreach_mcp_studio.studio_functions.get_api_base_url',
+               return_value="https://test.safebreach.com"), \
+         patch('safebreach_mcp_studio.studio_functions.get_api_account_id',
+               return_value="1234567890"), \
+         patch('safebreach_mcp_core.plan_statistics.get_api_base_url',
+               return_value="https://test.safebreach.com"), \
+         patch('safebreach_mcp_core.plan_statistics.get_api_account_id',
+               return_value="1234567890"), \
+         patch('safebreach_mcp_core.plan_statistics.get_auth_headers_for_console',
+               return_value={"x-apitoken": "test-token"}), \
+         patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
+               return_value={}):
+        yield post
+
+
+def _statistics_query(post):
+    """Parsed query string of the statistics URL that was actually requested."""
+    return parse_qs(urlparse(post.call_args[0][0]).query)
+
+
+@pytest.fixture
+def partial_coverage_statistics_response():
+    """One step that ran, with one of its two attacks blocked — the aggregated branch."""
+    return {
+        "data": {
+            "constraintCatalog": {
+                "incompatible_os": {"description": "Simulator OS mismatch"},
+            },
+            "steps": [
+                {
+                    "simulationCount": 40,
+                    "moves": {"281": 40, "226": 0},
+                    "simulators": {"sim-1": 40},
+                    "attackerSimulators": {"sim-1": 40},
+                    "targetSimulators": {"sim-2": 40},
+                    "simulatorConstraints": {
+                        "targetConstraints": {
+                            "sim-2": {"226": [{"reason": "incompatible_os",
+                                               "required": "WINDOWS", "actual": "LINUX"}]}
+                        },
+                        "attackerConstraints": {},
+                    },
+                    "isLimitReached": False,
+                }
+            ],
+        }
+    }
+
+
+@pytest.fixture
+def limit_reached_statistics_response():
+    """Core stopped early: one sentinel step, every count null."""
+    return {
+        "data": {
+            "steps": [
+                {
+                    "simulationCount": None,
+                    "moves": {"281": None, "226": None},
+                    "simulators": {"sim-1": None},
+                    "attackerSimulators": {"sim-1": None},
+                    "targetSimulators": {"sim-1": None},
+                    "simulatorConstraints": {},
+                    "isLimitReached": True,
+                },
+            ],
+        }
+    }
+
+
+# Captured from the shipped _get_scenario_statistics BEFORE the Phase 3 refactor.
+# These lock the contract two shipped tools and ~20 patched fixtures depend on;
+# if one fails, the refactor changed observable behaviour.
+GOLDEN_NO_CONSTRAINTS = [
+    {'simulationCount': 1676, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0,
+     'matchedAttacks': 1, 'totalTargetSimulators': 0, 'totalAttackerSimulators': 0,
+     'totalAttacks': 1},
+    {'simulationCount': 2198, 'matchedTargetSimulators': 0, 'matchedAttackerSimulators': 0,
+     'matchedAttacks': 1, 'totalTargetSimulators': 0, 'totalAttackerSimulators': 0,
+     'totalAttacks': 1},
+]
+
+GOLDEN_ZERO_SIM_WITH_CONSTRAINTS = [
+    {
+        'simulationCount': 0,
+        'matchedTargetSimulators': 0,
+        'matchedAttackerSimulators': 0,
+        'matchedAttacks': 0,
+        'totalTargetSimulators': 1,
+        'totalAttackerSimulators': 1,
+        'totalAttacks': 1,
+        'resolved_attacks': [{'move_id': '281', 'name': '', 'simulationCount': 0}],
+        'constraint_summary': [{
+            'move_id': '281',
+            'reasons': [
+                {'code': 'incompatible_os',
+                 'description': '  Leading and trailing space preserved  ',
+                 'detail': 'requires WINDOWS, simulator has LINUX'},
+                {'code': 'present_but_unrecognised', 'description': None, 'detail': None},
+                {'code': 'absent_from_catalog_entirely', 'description': None, 'detail': None},
+            ],
+        }],
+        'unmatched_attack_count': 1,
+    },
+]
+
+GOLDEN_PARTIAL_AGGREGATED = [
+    {
+        'simulationCount': 40,
+        'matchedTargetSimulators': 1,
+        'matchedAttackerSimulators': 1,
+        'matchedAttacks': 1,
+        'totalTargetSimulators': 1,
+        'totalAttackerSimulators': 1,
+        'totalAttacks': 2,
+        'resolved_attacks': [
+            {'move_id': '281', 'name': '', 'simulationCount': 40},
+            {'move_id': '226', 'name': '', 'simulationCount': 0},
+        ],
+        'constraint_summary_aggregated': [{
+            'code': 'incompatible_os',
+            'description': 'Simulator OS mismatch',
+            'total_attacks': 1,
+            'sub_reasons': [{'detail': 'requires WINDOWS, simulator has LINUX',
+                             'attack_count': 1}],
+        }],
+        'unmatched_attack_count': 1,
+    },
+]
+
+GOLDEN_PARTIAL_VERBOSE = [
+    {
+        'simulationCount': 40,
+        'matchedTargetSimulators': 1,
+        'matchedAttackerSimulators': 1,
+        'matchedAttacks': 1,
+        'totalTargetSimulators': 1,
+        'totalAttackerSimulators': 1,
+        'totalAttacks': 2,
+        'resolved_attacks': [
+            {'move_id': '281', 'name': '', 'simulationCount': 40},
+            {'move_id': '226', 'name': '', 'simulationCount': 0},
+        ],
+        'constraint_summary': [{
+            'move_id': '226',
+            'reasons': [{'code': 'incompatible_os',
+                         'description': 'Simulator OS mismatch',
+                         'detail': 'requires WINDOWS, simulator has LINUX'}],
+        }],
+        'unmatched_attack_count': 1,
+    },
+]
+
+
+class TestScenarioStatisticsContractUnchanged:
+    """T-13 — the refactored helper's observable contract is byte-for-byte unchanged."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_contract_is_unchanged_without_constraints(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )
+
+        assert result == GOLDEN_NO_CONSTRAINTS
+
+    def test_contract_is_unchanged_with_constraints(
+        self, mock_oob_scenario, sample_constraint_catalog_response
+    ):
+        with _statistics_transport(sample_constraint_catalog_response):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=True
+            )
+
+        assert result == GOLDEN_ZERO_SIM_WITH_CONSTRAINTS
+
+    def test_aggregated_branch_contract_is_unchanged(
+        self, mock_oob_scenario, partial_coverage_statistics_response
+    ):
+        with _statistics_transport(partial_coverage_statistics_response):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console",
+                include_constraints=True, verbose_failures=False,
+            )
+
+        assert result == GOLDEN_PARTIAL_AGGREGATED
+
+    def test_verbose_failures_branch_contract_is_unchanged(
+        self, mock_oob_scenario, partial_coverage_statistics_response
+    ):
+        with _statistics_transport(partial_coverage_statistics_response):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console",
+                include_constraints=True, verbose_failures=True,
+            )
+
+        assert result == GOLDEN_PARTIAL_VERBOSE
+
+    def test_key_set_is_exactly_the_seven_mandatory_keys(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Without constraints, nothing optional leaks into the result."""
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )
+
+        for step in result:
+            assert set(step) == {
+                'simulationCount', 'matchedTargetSimulators', 'matchedAttackerSimulators',
+                'matchedAttacks', 'totalTargetSimulators', 'totalAttackerSimulators',
+                'totalAttacks',
+            }
+
+
+class TestStatisticsRequestParameters:
+    """T-14 — the helper still asks for expected counts, preserving today's numbers."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_request_asks_for_expected_counts_not_runnable(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """includeDisabled=true is what the two shipped previews have always sent."""
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        assert _statistics_query(post)["includeDisabled"] == ["true"]
+
+    def test_request_keeps_the_five_hundred_thousand_limit(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        assert _statistics_query(post)["limit"] == ["500000"]
+
+    def test_constraint_params_follow_include_constraints(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Pre-refactor these were absent when off (swagger default false) and true when on."""
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=True
+            )
+        query = _statistics_query(post)
+        assert query["getConstraints"] == ["true"]
+        assert query["getAllConstraints"] == ["true"]
+
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )
+        query = _statistics_query(post)
+        assert query.get("getConstraints", ["false"]) == ["false"]
+        assert query.get("getAllConstraints", ["false"]) == ["false"]
+
+    def test_use_cache_is_left_at_the_server_default(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        """Pre-refactor the parameter was omitted, whose swagger default is true."""
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        assert _statistics_query(post).get("useCache", ["true"]) == ["true"]
+
+    def test_posted_body_is_an_unnamed_plan_of_the_given_steps(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            _get_scenario_statistics(mock_oob_scenario['steps'], "test-console")
+
+        body = post.call_args.kwargs["json"]
+        assert body["name"] == ""
+        assert body["steps"] == mock_oob_scenario['steps']
+
+
+# Captured from the shipped sb_run_scenario BEFORE the Phase 3 refactor. The
+# helper's contract holding is not by itself proof the previews are unchanged —
+# both callers reshape its output before display.
+GOLDEN_RUN_SCENARIO_PREVIEW = {
+    'status': 'evaluating',
+    'scenario_id': '3b8eade5-9285-43b8-b3e7-6350420983a5',
+    'scenario_name': 'Step 1 - Fortify your Network Perimeter',
+    'source_type': 'oob',
+    'predicted_simulations': 3874,
+    'predicted_per_step': [1676, 2198],
+    'step_stats': [
+        {'simulationCount': 1676, 'matchedTargetSimulators': 0,
+         'matchedAttackerSimulators': 0, 'matchedAttacks': 1,
+         'totalTargetSimulators': 0, 'totalAttackerSimulators': 0, 'totalAttacks': 1,
+         'resolved_attacks': [{'move_id': '281', 'name': '', 'simulationCount': 216}]},
+        {'simulationCount': 2198, 'matchedTargetSimulators': 0,
+         'matchedAttackerSimulators': 0, 'matchedAttacks': 1,
+         'totalTargetSimulators': 0, 'totalAttackerSimulators': 0, 'totalAttacks': 1,
+         'resolved_attacks': [{'move_id': '226', 'name': '', 'simulationCount': 144}]},
+    ],
+    'empty_steps': [],
+    'step_count': 2,
+}
+
+
+class TestCallerPreviewsUnchangedByRefactor:
+    """T-17 — both existing callers' evaluate previews are unchanged by the refactor."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_run_scenario_evaluate_preview_matches_fixture(
+        self, mock_oob_scenario, mock_statistics_response_all_good
+    ):
+        scenario_response = MagicMock()
+        scenario_response.json.return_value = [mock_oob_scenario]
+        scenario_response.raise_for_status.return_value = None
+
+        with _statistics_transport(mock_statistics_response_all_good), \
+                patch('safebreach_mcp_studio.studio_functions.requests.get',
+                      return_value=scenario_response):
+            result = sb_run_scenario(
+                scenario_id=mock_oob_scenario['id'],
+                console="test-console",
+                evaluate=True,
+            )
+
+        assert result == GOLDEN_RUN_SCENARIO_PREVIEW
+
+    def test_quick_run_evaluate_preview_is_unchanged(
+        self, mock_statistics_response_all_good
+    ):
+        """quick_run reshapes the same helper output through its own path."""
+        with _statistics_transport(mock_statistics_response_all_good), \
+                patch('safebreach_mcp_playbook.playbook_functions'
+                      '._get_all_attacks_from_cache_or_api',
+                      return_value=MOCK_PLAYBOOK_ATTACKS):
+            result = sb_quick_run(
+                attack_ids="8849,217", console="test-console", evaluate=True,
+            )
+
+        assert result['status'] == 'evaluating'
+        assert result['predicted_simulations'] == 3874
+        assert result['predicted_per_step'] == [1676, 2198]
+        assert [s['simulationCount'] for s in result['step_stats']] == [1676, 2198]
+
+
+class TestLimitReachedNoLongerCrashesTheHelper:
+    """T-15 — the helper no longer crashes on a limit-reached response."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_limit_reached_does_not_raise_without_constraints(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        with _statistics_transport(limit_reached_statistics_response):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )
+
+        assert len(result) == 1
+
+    def test_limit_reached_does_not_raise_with_constraints(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        with _statistics_transport(limit_reached_statistics_response):
+            result = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=True
+            )
+
+        assert len(result) == 1
+
+    def test_uncomputed_maps_do_not_report_zero_matches(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """'Nothing measured' must not be reported as 'nothing matched'."""
+        with _statistics_transport(limit_reached_statistics_response):
+            step = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )[0]
+
+        assert step['matchedTargetSimulators'] != 0
+        assert step['matchedAttackerSimulators'] != 0
+        assert step['matchedAttacks'] != 0
+
+    def test_totals_still_report_map_cardinality(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """The totals are lengths, which stay knowable even when counts are not."""
+        with _statistics_transport(limit_reached_statistics_response):
+            step = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )[0]
+
+        assert step['totalTargetSimulators'] == 1
+        assert step['totalAttackerSimulators'] == 1
+        assert step['totalAttacks'] == 2
+
+    def test_resolved_attacks_sort_tolerates_null_counts(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        """The old `key=lambda x: -x[1]` raised the instant a count was null."""
+        with _statistics_transport(limit_reached_statistics_response):
+            step = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=True
+            )[0]
+
+        assert {a['move_id'] for a in step['resolved_attacks']} == {'281', '226'}
+        assert all(a['simulationCount'] is None for a in step['resolved_attacks'])
+
+    def test_simulation_count_stays_null_not_zero(
+        self, mock_oob_scenario, limit_reached_statistics_response
+    ):
+        with _statistics_transport(limit_reached_statistics_response):
+            step = _get_scenario_statistics(
+                mock_oob_scenario['steps'], "test-console", include_constraints=False
+            )[0]
+
+        assert step['simulationCount'] is None
 
 
 # ---------------------------------------------------------------------------
