@@ -18,6 +18,7 @@ from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_he
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
+from safebreach_mcp_core.plan_statistics import fetch_plan_statistics, _is_computed_count
 from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
@@ -2265,6 +2266,32 @@ def _build_constraint_catalog(constraint_catalog, codes):
 
 
 
+def _count_matched_entities(counts):
+    """Count entries whose value is a computed, positive integer.
+
+    Returns None — not 0 — when a map has entries but none were computed. A
+    limit-reached step must not report "nothing matched" when the truth is
+    "nothing was measured". An empty map still returns 0, as before.
+    """
+    values = list(counts)
+    computed = [v for v in values if _is_computed_count(v)]
+    if values and not computed:
+        return None
+    return sum(1 for v in computed if v > 0)
+
+
+def _by_descending_simulation_count(item):
+    """Sort key for resolved_attacks: computed counts first, descending.
+
+    The previous `key=lambda x: -x[1]` raised the instant a count was null,
+    which is exactly what a limit-reached response sends. Uncomputed counts park
+    at the tail; the ordering is otherwise identical, and sort stability keeps
+    ties in response order.
+    """
+    _, count = item
+    return (0, -count) if _is_computed_count(count) else (1, 0)
+
+
 def _build_attack_name_map(console):
     """Build a move_id→name map from the playbook cache.
 
@@ -2403,50 +2430,37 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         List of per-step stat dicts with simulationCount, matched counts,
         resolved_attacks, and optionally constraint details.
     """
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
-
-    constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
-    api_url = (
-        f"{base_url}/api/orch/v1/accounts/{account_id}"
-        f"/plan/statistics?limit=500000&includeDisabled=true{constraint_params}"
-    )
-    payload = {"name": "", "steps": steps}
-
     logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
                 f"{' (with constraints)' if include_constraints else ''}")
-    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
-    try:
-        check_rbac_response(response)
-    except requests.exceptions.HTTPError:
-        body = getattr(response, 'text', '')
-        logger.error(f"Statistics API error {response.status_code}: {body}")
-        raise ValueError(
-            f"Statistics API error ({response.status_code}): {body}"
-        )
-
-    data = response.json().get('data', {})
-    step_stats = data.get('steps', [])
-    # Read once, from the response root — the catalog is a sibling of `steps`,
-    # so reading it per step would silently yield nothing.
-    raw_catalog = _raw_constraint_catalog(data)
+    statistics = fetch_plan_statistics(
+        console,
+        plan={"name": "", "steps": steps},
+        # includeDisabled=true asks for EXPECTED counts. The fetch core defaults
+        # it to false (runnable); inheriting that default would silently change
+        # the numbers both shipped previews have always reported.
+        include_disabled=True,
+        get_constraints=include_constraints,
+        get_all_constraints=include_constraints,
+        limit=500000,
+    )
+    step_stats = statistics['steps']
+    raw_catalog = statistics['constraint_catalog']
 
     # Build attack name map for evaluate (resolved attacks + constraint rendering)
     attack_names = _build_attack_name_map(console) if include_constraints else {}
 
     result = []
     for s in step_stats:
-        sim_count = s.get('simulationCount', 0)
-        target_sims = s.get('targetSimulators', {})
-        attacker_sims = s.get('attackerSimulators', {})
-        moves = s.get('moves', {})
+        sim_count = s['simulationCount']
+        target_sims = s['targetSimulators']
+        attacker_sims = s['attackerSimulators']
+        moves = s['moves']
 
         step_result = {
             'simulationCount': sim_count,
-            'matchedTargetSimulators': sum(1 for v in target_sims.values() if v > 0),
-            'matchedAttackerSimulators': sum(1 for v in attacker_sims.values() if v > 0),
-            'matchedAttacks': sum(1 for v in moves.values() if v > 0),
+            'matchedTargetSimulators': _count_matched_entities(target_sims.values()),
+            'matchedAttackerSimulators': _count_matched_entities(attacker_sims.values()),
+            'matchedAttacks': _count_matched_entities(moves.values()),
             'totalTargetSimulators': len(target_sims),
             'totalAttackerSimulators': len(attacker_sims),
             'totalAttacks': len(moves),
@@ -2460,13 +2474,14 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
                     'name': attack_names.get(mid, ''),
                     'simulationCount': count,
                 }
-                for mid, count in sorted(moves.items(), key=lambda x: -x[1])
+                for mid, count in sorted(moves.items(),
+                                         key=_by_descending_simulation_count)
             ]
 
         # Add constraint diagnostics when there are unmatched attacks
         if include_constraints:
             unmatched = sum(1 for v in moves.values() if v == 0)
-            constraints = s.get('simulatorConstraints', {})
+            constraints = s['simulatorConstraints']
             if constraints and unmatched > 0:
                 if sim_count == 0 or verbose_failures:
                     # Per-attack detail: zero-sim steps OR verbose mode
@@ -2487,7 +2502,9 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         result.append(step_result)
 
     counts = [s['simulationCount'] for s in result]
-    logger.info(f"Statistics: {counts} (total: {sum(counts)})")
+    computed = [c for c in counts if _is_computed_count(c)]
+    logger.info(f"Statistics: {counts} "
+                f"({len(computed)}/{len(counts)} computed, total: {sum(computed)})")
     return result
 
 

@@ -6271,6 +6271,22 @@ class TestRunScenarioWithStatistics:
         yield
         _user_auth_artifacts.reset(token)
 
+    @pytest.fixture(autouse=True)
+    def resolve_core_console(self):
+        """The statistics call resolves the console inside the fetch core now.
+
+        `requests` is one module object, so these tests' existing
+        `studio_functions.requests.post` patch still intercepts the call; only
+        the resolver names, imported per-module, need patching here.
+        """
+        with patch('safebreach_mcp_core.plan_statistics.get_api_base_url',
+                   return_value="https://test.safebreach.com"), \
+             patch('safebreach_mcp_core.plan_statistics.get_api_account_id',
+                   return_value="1234567890"), \
+             patch('safebreach_mcp_core.plan_statistics.get_auth_headers_for_console',
+                   return_value={"x-apitoken": "test-token"}):
+            yield
+
     def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
