@@ -556,22 +556,71 @@ def get_scenario_detail_view(
 # Integration-discovery transforms & helpers (SAF-32798)
 # =============================================================================
 
+# Canonical integration-category taxonomy — the backend's own set (GET /config/categories).
+# Kept here so tool docstrings can advertise the real, filterable values.
+CATEGORY_TAXONOMY = [
+    "custom", "siem", "security_control", "ti", "workflow",
+    "file_provider", "deployment", "secret_provider", "vulnerability_management",
+]
+
+# Capability-flag → functional-category map. The raw `category` field is an *origin*
+# label (notably "custom" for user-created connectors), so it can hide a connector's real
+# function; the per-type capability flags are authoritative for that function. Mapping is
+# 1:1 in the live data — no type carries more than one core capability flag. This mirrors
+# how the console UI derives a connector's categories from capability probes.
+_CAPABILITY_CATEGORY = {
+    "isTi": "ti",
+    "isTiV2": "ti",
+    "isVm": "vulnerability_management",
+    "isPam": "secret_provider",
+    "isFileProvider": "file_provider",
+    "isSendSimResult": "workflow",
+    "isSecEvents": "security_control",
+}
+
+
+def derive_categories(raw_def: Dict[str, Any]) -> List[str]:
+    """Derive a connector type's full category membership: the raw `category` label unioned
+    with every capability-flag-implied category. This resolves the `custom` bucket — e.g.
+    a `custom` connector that is `isTiV2` derives `["custom", "ti"]` — so category filtering
+    matches the connector's real function, not just its origin label. Order follows
+    CATEGORY_TAXONOMY for stable output; unknown raw labels are appended last."""
+    if not isinstance(raw_def, dict):
+        return []
+    cats = set()
+    raw = raw_def.get("category")
+    if raw:
+        cats.add(raw)
+    for flag, category in _CAPABILITY_CATEGORY.items():
+        if raw_def.get(flag):
+            cats.add(category)
+    ordered = [c for c in CATEGORY_TAXONOMY if c in cats]
+    ordered += sorted(c for c in cats if c not in CATEGORY_TAXONOMY)
+    return ordered
+
+
+def categories_for_type(catalog: Dict[str, Any], type_key: Optional[str]) -> List[str]:
+    """Derived category membership for an installed connector, joined from the catalog by
+    type. Empty when the type is absent from the catalog (conservative — never guesses)."""
+    type_def = catalog.get(type_key) if isinstance(catalog, dict) else None
+    return derive_categories(type_def) if isinstance(type_def, dict) else []
+
+
 def get_integration_catalog_entry(type_key: str, raw_def: Dict[str, Any]) -> Dict[str, Any]:
     """Map a raw catalog type-def (from /config/integrations, keyed by type) to the
     public catalog entry. Allow-list only — internal fields (fields[], featureFlag,
-    guideLink, raw isTi/isTiV2) are never exposed.
+    guideLink, raw is* flags) are never exposed.
 
-    `is_ti` derives from `isTiV2` (the current TI capability, matching get_ti_integrations).
-    """
+    `category` is the raw origin label; `categories` is the derived functional membership
+    (see derive_categories) and is what `category_filter` matches against."""
     return {
         "type": type_key,
         "name": raw_def.get("displayName") or type_key,
         "description": raw_def.get("description"),
         "category": raw_def.get("category"),
+        "categories": derive_categories(raw_def),
         "vendor": raw_def.get("vendor"),
         "product": raw_def.get("product"),
-        "is_ti": bool(raw_def.get("isTiV2")),
-        "is_vm": bool(raw_def.get("isVm")),
     }
 
 
@@ -582,25 +631,29 @@ def _partial_ci_match(value: Optional[str], term: Optional[str]) -> bool:
     return term.lower() in (value or "").lower()
 
 
+def _partial_ci_match_any(values: Optional[List[str]], term: Optional[str]) -> bool:
+    """True when `term` is a case-insensitive substring of any value in `values`
+    (or term is falsy). Used for the derived `categories` list."""
+    if not term:
+        return True
+    return any(_partial_ci_match(v, term) for v in (values or []))
+
+
 def filter_integration_catalog(
     entries: List[Dict[str, Any]],
     name_filter: Optional[str] = None,
     category_filter: Optional[str] = None,
     vendor_filter: Optional[str] = None,
-    ti_only: Optional[bool] = None,
-    vm_only: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
-    """Filter catalog entries by partial/case-insensitive string filters and boolean flags."""
+    """Filter catalog entries by partial/case-insensitive string filters. `category_filter`
+    matches against the derived `categories` membership (so e.g. 'ti' also matches a `custom`
+    connector that is TI-capable)."""
     def keep(e: Dict[str, Any]) -> bool:
         if not _partial_ci_match(e.get("name"), name_filter):
             return False
-        if not _partial_ci_match(e.get("category"), category_filter):
+        if not _partial_ci_match_any(e.get("categories"), category_filter):
             return False
         if not _partial_ci_match(e.get("vendor"), vendor_filter):
-            return False
-        if ti_only is not None and bool(e.get("is_ti")) != ti_only:
-            return False
-        if vm_only is not None and bool(e.get("is_vm")) != vm_only:
             return False
         return True
 
@@ -670,16 +723,25 @@ def paginate_integration_list(
     return result
 
 
-def get_minimal_installed_integration(raw: Dict[str, Any]) -> Dict[str, Any]:
+def get_minimal_installed_integration(raw: Dict[str, Any], catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Project a raw installed connector to the slim public shape — never secrets.
 
-    Allow-list `id/type/name/enabled` only; `enabled` defaults to False when absent."""
-    return {
+    Allow-list `id/type/name/enabled`; `enabled` defaults to False when absent. When a
+    `catalog` is supplied, the connector is enriched with its `category` (raw origin label)
+    and derived `categories` membership, joined from the catalog by type — the installed
+    payload itself carries no category, so it must come from the catalog."""
+    type_key = raw.get("type")
+    entry = {
         "id": raw.get("id"),
-        "type": raw.get("type"),
+        "type": type_key,
         "name": raw.get("name"),
         "enabled": bool(raw.get("enabled", False)),
     }
+    if catalog is not None:
+        type_def = catalog.get(type_key) if isinstance(catalog, dict) else None
+        entry["category"] = type_def.get("category") if isinstance(type_def, dict) else None
+        entry["categories"] = categories_for_type(catalog, type_key)
+    return entry
 
 
 def filter_installed_integrations(
@@ -687,14 +749,18 @@ def filter_installed_integrations(
     name_filter: Optional[str] = None,
     type_filter: Optional[str] = None,
     enabled_filter: Optional[bool] = None,
+    category_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Filter installed connectors by partial/case-insensitive name/type and boolean enabled."""
+    """Filter installed connectors by partial/case-insensitive name/type, boolean enabled,
+    and `category_filter` (matched against the derived `categories` membership)."""
     def keep(e: Dict[str, Any]) -> bool:
         if not _partial_ci_match(e.get("name"), name_filter):
             return False
         if not _partial_ci_match(e.get("type"), type_filter):
             return False
         if enabled_filter is not None and bool(e.get("enabled")) != enabled_filter:
+            return False
+        if not _partial_ci_match_any(e.get("categories"), category_filter):
             return False
         return True
 
@@ -725,8 +791,8 @@ def _schema_sensitive_fields(catalog: Dict[str, Any], connector_type: Optional[s
     return {f.get("key") for f in fields if isinstance(f, dict) and f.get("sensitive") and f.get("key")}
 
 
-def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a redacted copy of a connector config.
+def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]):
+    """Return `(redacted_copy, redacted_field_names)` for a connector config.
 
     A single recursive pass masks, at EVERY dict depth:
     1. any key whose name is in the unified sensitive set — the union of the type's
@@ -741,38 +807,33 @@ def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]) 
     sensitive = (_schema_sensitive_fields(catalog, connector.get("type")) or set()) \
         | _DEFAULT_SENSITIVE_FIELDS | set(ALWAYS_REDACTED_FIELDS)
 
+    redacted_keys: set = set()
+
     def _redact(value: Any) -> Any:
         if isinstance(value, dict):
-            return {k: REDACTED_PLACEHOLDER if k in sensitive else _redact(v)
-                    for k, v in value.items()}
+            out = {}
+            for k, v in value.items():
+                if k in sensitive:
+                    out[k] = REDACTED_PLACEHOLDER
+                    redacted_keys.add(k)
+                else:
+                    masked = _redact(v)
+                    if isinstance(v, str) and masked == REDACTED_PLACEHOLDER and v != REDACTED_PLACEHOLDER:
+                        redacted_keys.add(k)
+                    out[k] = masked
+            return out
         if isinstance(value, list):
             return [_redact(v) for v in value]
         if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
             return REDACTED_PLACEHOLDER
         return value
 
-    return _redact(connector)
+    return _redact(connector), sorted(redacted_keys)
 
 
 def get_installed_integration_detail_view(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
-    """Full config of a single installed connector, with sensitive fields redacted."""
-    return redact_sensitive_fields(connector, catalog)
-
-
-def get_minimal_ti_integration(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Project a raw TI connector to the slim public shape (id/type/name/enabled)."""
-    return get_minimal_installed_integration(raw)
-
-
-def select_ti_connectors(
-    installed: List[Dict[str, Any]],
-    catalog: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """Keep only installed connectors whose catalog type is Threat-Intelligence-capable
-    (catalog[type].isTiV2 == True). Returns a new list; input is not mutated.
-    """
-    def is_ti(connector: Dict[str, Any]) -> bool:
-        type_def = catalog.get(connector.get("type")) if isinstance(catalog, dict) else None
-        return bool(isinstance(type_def, dict) and type_def.get("isTiV2"))
-
-    return [c for c in installed if is_ti(c)]
+    """Full config of a single installed connector, with sensitive fields redacted, plus a
+    machine-readable `redacted_fields` list of the field names that were masked (so an agent
+    need not scan values for the placeholder)."""
+    redacted, redacted_fields = redact_sensitive_fields(connector, catalog)
+    return {"integration": redacted, "redacted_fields": redacted_fields}

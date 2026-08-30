@@ -743,13 +743,12 @@ class TestIntegrationCatalogEntry:
             "name": "Splunk (REST)",
             "description": "Splunk SIEM over REST",
             "category": "siem",
+            "categories": ["siem"],
             "vendor": "Splunk Inc.",
             "product": "Splunk",
-            "is_ti": False,
-            "is_vm": False,
         }
-        # no internal keys leaked
-        for leaked in ("fields", "featureFlag", "guideLink", "isTiV2"):
+        # no internal keys / raw flags leaked
+        for leaked in ("fields", "featureFlag", "guideLink", "isTiV2", "is_ti", "is_vm"):
             assert leaked not in entry
 
     def test_name_falls_back_to_type_when_no_display_name(self):
@@ -758,17 +757,21 @@ class TestIntegrationCatalogEntry:
         entry = get_integration_catalog_entry("custom_splunkrest", raw)
         assert entry["name"] == "custom_splunkrest"
 
-    def test_is_ti_derives_from_isTiV2(self):
+    def test_categories_derives_ti_from_isTiV2(self):
+        # A 'custom'-labelled connector that is isTiV2 must derive the 'ti' category.
         raw = self._raw()
+        raw["category"] = "custom"
         raw["isTiV2"] = True
-        entry = get_integration_catalog_entry("alienvault", raw)
-        assert entry["is_ti"] is True
+        entry = get_integration_catalog_entry("custom_mitreattack", raw)
+        assert entry["category"] == "custom"          # raw origin label preserved
+        assert entry["categories"] == ["custom", "ti"]  # functional membership derived
 
-    def test_is_vm_flag(self):
+    def test_categories_derives_vm_from_isVm(self):
         raw = self._raw()
+        raw["category"] = "custom"
         raw["isVm"] = True
-        entry = get_integration_catalog_entry("wiz", raw)
-        assert entry["is_vm"] is True
+        entry = get_integration_catalog_entry("custom_tenablevmmodule", raw)
+        assert "vulnerability_management" in entry["categories"]
 
 
 from safebreach_mcp_config.config_types import get_minimal_installed_integration
@@ -798,6 +801,24 @@ class TestMinimalInstalledIntegration:
     def test_missing_enabled_defaults_false(self):
         result = get_minimal_installed_integration({"id": "x", "type": "t", "name": "n"})
         assert result["enabled"] is False
+
+    def test_enriched_with_categories_from_catalog(self):
+        # With a catalog, the connector is enriched with raw category + derived categories,
+        # joined by type. A custom TI connector derives 'ti'.
+        catalog = {"custom_mitreattack": {"category": "custom", "isTiV2": True}}
+        raw = {"id": "m1", "type": "custom_mitreattack", "name": "MITRE", "enabled": True}
+        result = get_minimal_installed_integration(raw, catalog)
+        assert result["category"] == "custom"
+        assert result["categories"] == ["custom", "ti"]
+        # still no secrets/config keys
+        assert set(result.keys()) == {"id", "type", "name", "enabled", "category", "categories"}
+
+    def test_enriched_type_absent_from_catalog(self):
+        # Type not in catalog → no categories guessed (conservative).
+        result = get_minimal_installed_integration(
+            {"id": "z", "type": "unknown", "name": "n", "enabled": True}, {})
+        assert result["category"] is None
+        assert result["categories"] == []
 
 
 from safebreach_mcp_config.config_types import (
@@ -836,7 +857,7 @@ class TestRedaction:
             "token": "$PAM:INTERNAL_VAULT:abc/token",
             "password": "$PAM:INTERNAL_VAULT:abc/password",
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["token"] == REDACTED_PLACEHOLDER
         assert result["password"] == REDACTED_PLACEHOLDER
         assert result["host"] == "splunk.internal"  # non-sensitive untouched
@@ -844,6 +865,8 @@ class TestRedaction:
         assert not any(isinstance(v, str) and v.startswith("$PAM:") for v in result.values())
         # original not mutated
         assert connector["token"].startswith("$PAM:")
+        # redacted_fields reports exactly what was masked (Bug 3)
+        assert set(redacted_fields) == {"token", "password"}
 
     def test_force_masks_headers_and_proxypass(self):
         connector = {
@@ -852,7 +875,7 @@ class TestRedaction:
             "headers": {"Authorization": "Bearer super-secret"},
             "proxyPass": "$PAM:INTERNAL_VAULT:xyz/proxyPass",
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["headers"] == REDACTED_PLACEHOLDER
         assert result["proxyPass"] == REDACTED_PLACEHOLDER
         assert result["clientId"] == "public-client-id"
@@ -869,7 +892,7 @@ class TestRedaction:
             "proxyPass": "$PAM:INTERNAL_VAULT:q/proxyPass",
             "host": "mystery.internal",
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["token"] == REDACTED_PLACEHOLDER
         assert result["apiSecret"] == REDACTED_PLACEHOLDER
         assert result["headers"] == REDACTED_PLACEHOLDER
@@ -886,7 +909,7 @@ class TestRedaction:
             "deployments": [{"name": "prod", "apiKey": "$PAM:INTERNAL_VAULT:n/apiKey"}],
             "nested": {"inner": {"secretRef": "$PAM:INTERNAL_VAULT:n/inner"}},
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         import json as _json
         assert "$PAM:" not in _json.dumps(result)
         assert result["deployments"][0]["apiKey"] == REDACTED_PLACEHOLDER
@@ -902,7 +925,7 @@ class TestRedaction:
             "clientId": "public-client-id",
             "password": "clear-text-pw",  # pragma: allowlist secret  # plaintext test fixture, no $PAM:/@enc: prefix
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["password"] == REDACTED_PLACEHOLDER
         assert result["clientId"] == "public-client-id"
         import json as _json
@@ -915,43 +938,57 @@ class TestRedaction:
             "id": "s2", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
             "settings": {"headers": {"Authorization": "Bearer TOKEN"}},
         }
-        result = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
         assert result["settings"]["headers"] == REDACTED_PLACEHOLDER
         import json as _json
         dumped = _json.dumps(result)
         assert "Bearer TOKEN" not in dumped
         assert "TOKEN" not in dumped
 
-    def test_detail_view_delegates_to_redaction(self):
+    def test_detail_view_envelope_and_redacted_fields(self):
         connector = {"id": "a1", "type": "custom_splunkrest", "name": "S", "enabled": True,
                      "token": "$PAM:INTERNAL_VAULT:abc/token"}
         view = get_installed_integration_detail_view(connector, _catalog_with_sensitive())
-        assert view["token"] == REDACTED_PLACEHOLDER
-        assert view["id"] == "a1"
+        # detail view now wraps the redacted config + the redacted_fields list
+        assert view["integration"]["token"] == REDACTED_PLACEHOLDER
+        assert view["integration"]["id"] == "a1"
+        assert view["redacted_fields"] == ["token"]
 
 
-from safebreach_mcp_config.config_types import get_minimal_ti_integration, select_ti_connectors
+from safebreach_mcp_config.config_types import derive_categories, categories_for_type, CATEGORY_TAXONOMY
 
 
-class TestTiTransforms:
-    """T-6 — slim TI transform; TI derivation via catalog isTiV2."""
+class TestCategoryDerivation:
+    """Category membership derivation (Option 3) — raw label ∪ capability-flag categories."""
 
-    def test_minimal_ti_slim_shape(self):
-        raw = {"id": "c3", "type": "alienvault", "name": "AlienVault", "enabled": True,
-               "apiToken": "$PAM:INTERNAL_VAULT:x/apiToken"}
-        result = get_minimal_ti_integration(raw)
-        assert result == {"id": "c3", "type": "alienvault", "name": "AlienVault", "enabled": True}
+    def test_non_custom_label_passthrough(self):
+        assert derive_categories({"category": "siem"}) == ["siem"]
 
-    def test_select_ti_connectors_by_isTiV2(self):
-        installed = [
-            {"id": "1", "type": "alienvault", "name": "AV", "enabled": True},
-            {"id": "2", "type": "splunkrest", "name": "Splunk", "enabled": True},
-            {"id": "3", "type": "threatconnect", "name": "TC", "enabled": False},
-        ]
-        catalog = {
-            "alienvault": {"isTiV2": True},
-            "splunkrest": {"isTiV2": False},
-            "threatconnect": {"isTiV2": True},
-        }
-        ti = select_ti_connectors(installed, catalog)
-        assert sorted(c["id"] for c in ti) == ["1", "3"]
+    def test_custom_bucket_refined_by_capability(self):
+        # custom_mitreattack: origin 'custom' but isTiV2 → derives 'ti'
+        assert derive_categories({"category": "custom", "isTiV2": True}) == ["custom", "ti"]
+
+    def test_isVm_maps_to_vulnerability_management(self):
+        assert derive_categories({"category": "custom", "isVm": True}) == ["custom", "vulnerability_management"]
+
+    def test_isPam_maps_to_secret_provider(self):
+        assert "secret_provider" in derive_categories({"category": "custom", "isPam": True})
+
+    def test_isTi_labelled_ti_stays_ti(self):
+        # timockconnector: category 'ti', isTi (not isTiV2) → still 'ti'
+        assert derive_categories({"category": "ti", "isTi": True}) == ["ti"]
+
+    def test_output_ordered_by_taxonomy(self):
+        cats = derive_categories({"category": "ti", "isVm": True})
+        # taxonomy order: ti (index 3) before vulnerability_management (index 8)
+        assert cats.index("ti") < cats.index("vulnerability_management")
+        assert all(c in CATEGORY_TAXONOMY for c in cats)
+
+    def test_empty_when_no_def(self):
+        assert derive_categories(None) == []
+        assert derive_categories({}) == []
+
+    def test_categories_for_type_joins_catalog(self):
+        catalog = {"custom_mitreattack": {"category": "custom", "isTiV2": True}}
+        assert categories_for_type(catalog, "custom_mitreattack") == ["custom", "ti"]
+        assert categories_for_type(catalog, "absent") == []

@@ -206,7 +206,7 @@ This is a Model Context Protocol (MCP) server that bridges AI agents with SafeBr
   - `config_functions.py`: Business logic for simulator management
   - `config_types.py`: Data transformations for simulator data
   - **Tools**: `get_console_simulators`, `get_simulator_details`, `get_scenarios`, `get_scenario_details`,
-    `get_integrations`, `get_installed_integrations`, `get_installed_integration`, `get_ti_integrations`
+    `get_integrations`, `get_installed_integrations`, `get_installed_integration`
 
 - **`safebreach_mcp_data/`**: Data Server (Port 8001)
   - `data_server.py`: FastMCP server for test and simulation data
@@ -334,15 +334,26 @@ Rate limiting environment variables:
   `ti_only`, `vm_only`; ordering by name/type/category/vendor. Sourced from the SIEM
   `/config/integrations` API. PAGE_SIZE=10 with hint_to_agent.
 6. `get_installed_integrations` ✨ **NEW** - Filtered, paginated list of INSTALLED integration connectors,
-  slim `id/type/name/enabled` (no secrets). Filters: name, type, `enabled_filter`; ordering by
-  name/type/id/enabled. Sourced from `/config/integrations/installed`.
+  `id/type/name/enabled` plus a raw `category` label and derived `categories` membership (no secrets),
+  joined from the catalog by type. Filters: name, type, `enabled_filter`, `category_filter`; ordering by
+  name/type/id/enabled/category. Sourced from `/config/integrations/installed`. Capability queries are
+  category filters: `category_filter='ti'` lists installed Threat-Intelligence feeds,
+  `category_filter='vulnerability_management'` lists installed VM connectors (this replaces the former
+  standalone `get_ti_integrations` tool).
 7. `get_installed_integration` ✨ **NEW** - Full config of ONE installed connector by `integration_id`,
-  with secrets REDACTED to `@enc:SENSITIVE_FIELD` (schema-`sensitive` fields + `headers`/`proxyPass` +
-  any `$PAM:` vault-ref value; fail-safe default set for unknown types). Located in the SIEM `/config`
-  blob (no dedicated single-connector API). RBAC enforced via the ui-server gateway.
-8. `get_ti_integrations` ✨ **NEW** - Filtered, paginated list of installed Threat-Intelligence feeds
-  (installed connectors whose catalog type is `isTiV2`-capable), slim `id/type/name/enabled`. Filters:
-  name, type, `enabled_filter`; ordering by name/type/id/enabled.
+  returned as `{console, integration_id, integration, redacted_fields}` with secrets REDACTED to
+  `@enc:SENSITIVE_FIELD` (schema-`sensitive` fields + `headers`/`proxyPass` + any `$PAM:` vault-ref
+  value; fail-safe default set for unknown types). `redacted_fields` lists exactly which fields were
+  masked. Located in the SIEM `/config` blob (no dedicated single-connector API). RBAC enforced via the
+  ui-server gateway.
+
+**Category model**: `category` is the backend's raw origin label (notably `custom` for user-created
+connectors); `categories` is the derived functional membership — the raw label unioned with the
+capability-flag categories (`isTiV2`→`ti`, `isVm`→`vulnerability_management`, `isPam`→`secret_provider`,
+`isFileProvider`→`file_provider`, `isSendSimResult`→`workflow`, `isSecEvents`→`security_control`).
+`category_filter` matches `categories`, so a `custom`-labelled connector that is TI-capable still lists
+under `ti`. Canonical categories: custom, siem, security_control, ti, workflow, file_provider,
+deployment, secret_provider, vulnerability_management.
 
 **Data Server (Port 8001):**
 3. `get_tests` ✨ **Enhanced** - Filtered and paginated test execution history with advanced filtering options (test type, time windows, status, name patterns) and customizable ordering.

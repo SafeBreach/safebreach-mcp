@@ -23,7 +23,6 @@ from .config_functions import (
     sb_get_integrations,
     sb_get_installed_integrations,
     sb_get_installed_integration,
-    sb_get_ti_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -166,10 +165,13 @@ Parameters: scenario_id (required, UUID string), console (required)"""
 for a given console — the menu of what COULD be installed (e.g. Splunk, QRadar, CrowdStrike, AlienVault),
 NOT what is currently configured. Contains no account data and no secrets. To see installed connectors use
 get_installed_integrations; for a single installed connector's config use get_installed_integration.
+Each entry has `category` (the raw origin label) and `categories` (the derived functional membership that
+`category_filter` matches against — a connector grouped under 'custom' still lists its real function, e.g. 'ti').
 Results are paginated (10 per page) and ordered by name ascending by default.
 Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
-category_filter (partial category match, e.g. 'siem'/'ti'/'security_control'), vendor_filter (partial vendor match),
-ti_only (True/False - only Threat-Intelligence-capable types), vm_only (True/False - only vulnerability-management types),
+category_filter (partial match against the connector's categories; valid categories: custom, siem,
+security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
+vendor_filter (partial vendor match),
 order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
         )
         async def get_integrations_tool(
@@ -178,8 +180,6 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
             name_filter: Optional[str] = None,
             category_filter: Optional[str] = None,
             vendor_filter: Optional[str] = None,
-            ti_only: Optional[bool] = None,
-            vm_only: Optional[bool] = None,
             order_by: str = "name",
             order_direction: str = "asc",
         ) -> dict:
@@ -190,8 +190,6 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
                 name_filter=name_filter,
                 category_filter=category_filter,
                 vendor_filter=vendor_filter,
-                ti_only=ti_only,
-                vm_only=vm_only,
                 order_by=order_by,
                 order_direction=order_direction,
             )
@@ -200,13 +198,17 @@ order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc')"""
             name="get_installed_integrations",
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered, paginated list of integration connectors currently INSTALLED and
-configured for a given console. Returns a slim id/type/name/enabled per connector (no secrets). To browse the
-catalog of connector TYPES that could be installed use get_integrations; for one connector's full (redacted)
-config use get_installed_integration with its id. Results are paginated (10 per page), ordered by name ascending
-by default.
+configured for a given console. Each connector is id/type/name/enabled plus `category` (raw label) and `categories`
+(derived functional membership) — no secrets. To browse the catalog of connector TYPES that could be installed use
+get_integrations; for one connector's full (redacted) config use get_installed_integration with its id.
+Use category_filter to answer capability questions, e.g. category_filter='ti' lists installed Threat-Intelligence
+feeds and category_filter='vulnerability_management' lists installed Vulnerability-Management connectors.
+Results are paginated (10 per page), ordered by name ascending by default.
 Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
 type_filter (partial connector-type match, e.g. 'splunk'), enabled_filter (True/False - only enabled/disabled),
-order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
+category_filter (partial match against the connector's categories; valid categories: custom, siem,
+security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
+order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc')"""
         )
         async def get_installed_integrations_tool(
             console: str = "default",
@@ -214,6 +216,7 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
             name_filter: Optional[str] = None,
             type_filter: Optional[str] = None,
             enabled_filter: Optional[bool] = None,
+            category_filter: Optional[str] = None,
             order_by: str = "name",
             order_direction: str = "asc",
         ) -> dict:
@@ -224,6 +227,7 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
                 name_filter=name_filter,
                 type_filter=type_filter,
                 enabled_filter=enabled_filter,
+                category_filter=category_filter,
                 order_by=order_by,
                 order_direction=order_direction,
             )
@@ -232,45 +236,17 @@ order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
             name="get_installed_integration",
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns the full configuration and status of a single INSTALLED integration connector,
-by its id, with credentials and other sensitive fields REDACTED. Any field whose value is '@enc:SENSITIVE_FIELD'
-is a redacted secret (credentials, tokens, proxy passwords, and request headers are always redacted). Obtain a
-valid id from get_installed_integrations first.
+by its id, with credentials and other sensitive fields REDACTED. On success returns an envelope
+{console, integration_id, integration: {<full redacted config>}, redacted_fields: [<names of masked fields>]}.
+Any field whose value is '@enc:SENSITIVE_FIELD' is a redacted secret (credentials, tokens, proxy passwords, and
+request headers are always redacted); `redacted_fields` lists exactly which fields were masked. Obtain a valid id
+from get_installed_integrations first.
 Parameters: console (required), integration_id (required - the connector id from get_installed_integrations)"""
         )
         async def get_installed_integration_tool(integration_id: str, console: str = "default") -> dict:
             console = _resolve_console(console)
             return sb_get_installed_integration(console=console, integration_id=integration_id)
 
-        @self.mcp.tool(
-            name="get_ti_integrations",
-            annotations=ToolAnnotations(readOnlyHint=True),
-            description="""Returns a filtered, paginated list of installed Threat Intelligence (TI) feeds/connectors
-for a given console — the subset of installed integrations that are TI-capable (e.g. AlienVault, ThreatConnect,
-recorded-future-style feeds). Returns a slim id/type/name/enabled per connector (no secrets). Results are
-paginated (10 per page), ordered by name ascending by default.
-Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
-type_filter (partial connector-type match), enabled_filter (True/False - only enabled/disabled),
-order_by ('name'/'type'/'id'/'enabled'), order_direction ('asc'/'desc')"""
-        )
-        async def get_ti_integrations_tool(
-            console: str = "default",
-            page_number: int = 0,
-            name_filter: Optional[str] = None,
-            type_filter: Optional[str] = None,
-            enabled_filter: Optional[bool] = None,
-            order_by: str = "name",
-            order_direction: str = "asc",
-        ) -> dict:
-            console = _resolve_console(console)
-            return sb_get_ti_integrations(
-                console=console,
-                page_number=page_number,
-                name_filter=name_filter,
-                type_filter=type_filter,
-                enabled_filter=enabled_filter,
-                order_by=order_by,
-                order_direction=order_direction,
-            )
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""

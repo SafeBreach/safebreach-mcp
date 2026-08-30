@@ -1,5 +1,17 @@
 # MCP: Migrate Integration-Discovery Tools into the Config Server — SAF-32798
 
+> **Post-review update (PR #88, 2026-08-30)** — PR review reshaped the tool surface from four
+> tools to **three**. `get_ti_integrations` was **removed**; TI listing is now
+> `get_installed_integrations(category_filter='ti')`. Both list tools gained a universal
+> `category_filter` covering all backend categories (siem, security_control, ti, vulnerability_management,
+> …), and the `ti_only`/`vm_only` capability flags were dropped. Each connector now exposes a raw
+> `category` label plus a derived `categories` membership (raw label ∪ capability-flag categories),
+> which resolves the reviewer's category-vs-capability divergence: a `custom`-labelled connector that is
+> TI-capable now lists under `ti`. `get_installed_integration` now returns an envelope
+> `{console, integration_id, integration, redacted_fields}`. Integration-discovery caches were also
+> reduced to a 60s TTL. The four-tool description below is retained as the original planning record; the
+> code, README, and CLAUDE.md reflect the final three-tool design.
+
 ## Section 1: Overview
 
 ### Driver

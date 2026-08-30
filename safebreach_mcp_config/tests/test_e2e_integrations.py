@@ -21,7 +21,6 @@ from safebreach_mcp_config.config_functions import (
     sb_get_integrations,
     sb_get_installed_integrations,
     sb_get_installed_integration,
-    sb_get_ti_integrations,
     clear_integrations_catalog_cache,
 )
 
@@ -64,7 +63,7 @@ class TestIntegrationsE2E:
         assert result['total_integrations'] > 0
         assert result['integrations_in_page'], "expected at least one connector type"
         first = result['integrations_in_page'][0]
-        for key in ('type', 'name', 'category', 'is_ti', 'is_vm'):
+        for key in ('type', 'name', 'category', 'categories'):
             assert key in first
 
         # pick a category present in the live catalog, then filter by it
@@ -73,48 +72,57 @@ class TestIntegrationsE2E:
         filtered = sb_get_integrations(console=E2E_CONSOLE, category_filter=category)
         assert 'error' not in filtered
         assert filtered['total_integrations'] >= 1
-        assert all(category.lower() in (e.get('category') or '').lower()
+        # category_filter matches the derived `categories` membership
+        assert all(any(category.lower() in c.lower() for c in (e.get('categories') or []))
                    for e in filtered['integrations_in_page'])
 
-    # T-15 — live installed-integrations slim list
+    # T-15 — live installed-integrations slim + category-enriched list
     def test_get_installed_integrations_slim(self):
         result = _resilient_call(lambda: sb_get_installed_integrations(console=E2E_CONSOLE, page_number=0))
         assert result['total_installed_integrations'] > 0
         for item in result['installed_integrations_in_page']:
-            assert set(item.keys()) == {"id", "type", "name", "enabled"}
+            assert set(item.keys()) == {"id", "type", "name", "enabled", "category", "categories"}
 
     # T-16 — live redaction + cross-layer identity consistency (self-discovered id)
     def test_get_installed_integration_redaction(self):
         listing = _resilient_call(lambda: sb_get_installed_integrations(console=E2E_CONSOLE, page_number=0))
         assert listing['installed_integrations_in_page'], "need at least one installed connector"
         target = listing['installed_integrations_in_page'][0]
-        detail = _resilient_call(lambda: sb_get_installed_integration(console=E2E_CONSOLE, integration_id=target['id']))
+        result = _resilient_call(lambda: sb_get_installed_integration(console=E2E_CONSOLE, integration_id=target['id']))
+        # envelope shape
+        assert result['console'] == E2E_CONSOLE
+        assert result['integration_id'] == target['id']
+        assert isinstance(result['redacted_fields'], list)
+        detail = result['integration']
         # cross-layer identity consistency
         assert detail['id'] == target['id']
         assert detail['type'] == target['type']
         assert detail['name'] == target['name']
         # no secret material leaks: no vault refs anywhere in the payload
-        dumped = json.dumps(detail)
+        dumped = json.dumps(result)
         assert "$PAM:" not in dumped
         # headers, when present, must be redacted (never a raw object)
         if "headers" in detail:
             assert detail["headers"] == "@enc:SENSITIVE_FIELD"
         if "proxyPass" in detail:
             assert detail["proxyPass"] == "@enc:SENSITIVE_FIELD"
+        # redacted_fields is consistent with the placeholders present
+        for f in result['redacted_fields']:
+            assert detail.get(f) == "@enc:SENSITIVE_FIELD"
 
-    # T-17 — live TI integrations list, cross-checked against catalog isTiV2
-    def test_get_ti_integrations_matches_catalog(self):
-        ti = _resilient_call(lambda: sb_get_ti_integrations(console=E2E_CONSOLE, page_number=0))
-        for item in ti['ti_integrations_in_page']:
-            assert set(item.keys()) == {"id", "type", "name", "enabled"}
-        # every returned TI type must be isTiV2 in the live catalog
-        catalog = _resilient_call(lambda: sb_get_integrations(console=E2E_CONSOLE, ti_only=True))
+    # T-17 — live installed TI list via category_filter='ti', cross-checked against the catalog
+    def test_installed_ti_via_category_matches_catalog(self):
+        ti = _resilient_call(lambda: sb_get_installed_integrations(
+            console=E2E_CONSOLE, category_filter="ti", page_number=0))
+        for item in ti['installed_integrations_in_page']:
+            assert 'ti' in (item.get('categories') or []), f"{item['type']} lacks derived 'ti'"
+        # collect every catalog type that derives 'ti', paging through the catalog
+        catalog = _resilient_call(lambda: sb_get_integrations(console=E2E_CONSOLE, category_filter="ti"))
         ti_types = {e['type'] for e in catalog['integrations_in_page']}
-        # (catalog may paginate; page through to collect all ti types)
         page = 1
         while catalog.get('total_pages', 0) > page:
-            catalog = sb_get_integrations(console=E2E_CONSOLE, ti_only=True, page_number=page)
+            catalog = sb_get_integrations(console=E2E_CONSOLE, category_filter="ti", page_number=page)
             ti_types |= {e['type'] for e in catalog['integrations_in_page']}
             page += 1
-        for item in ti['ti_integrations_in_page']:
-            assert item['type'] in ti_types, f"{item['type']} returned but not isTiV2 in catalog"
+        for item in ti['installed_integrations_in_page']:
+            assert item['type'] in ti_types, f"{item['type']} returned but not a 'ti' catalog type"

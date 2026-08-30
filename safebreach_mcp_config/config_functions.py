@@ -29,8 +29,6 @@ from .config_types import (
     get_minimal_installed_integration,
     filter_installed_integrations,
     get_installed_integration_detail_view,
-    get_minimal_ti_integration,
-    select_ti_connectors,
 )
 
 logger = logging.getLogger(__name__)
@@ -741,8 +739,8 @@ def _get_integrations_catalog_from_cache_or_api(console: str) -> Dict[str, Any]:
 
     Source: GET /api/siem/v1/accounts/{account}/config/integrations, whose response is
     wrapped in the SIEM envelope {"error": 0, "result": {<type>: <def>, ...}}.
-    Reused by get_integrations, get_installed_integration (redaction schema) and
-    get_ti_integrations (isTiV2 derivation).
+    Reused by get_integrations, get_installed_integrations (category enrichment) and
+    get_installed_integration (redaction schema + category enrichment).
     """
     cache_key = f"integrations_catalog_{console}{get_cache_user_suffix()}"
 
@@ -779,14 +777,13 @@ def sb_get_integrations(
     name_filter: Optional[str] = None,
     category_filter: Optional[str] = None,
     vendor_filter: Optional[str] = None,
-    ti_only: Optional[bool] = None,
-    vm_only: Optional[bool] = None,
     order_by: str = "name",
     order_direction: str = "asc",
 ) -> Dict[str, Any]:
     """Get the filtered, paginated catalog of available connector *types*.
 
     Returns the menu of connector types that could be installed (no account data, no secrets).
+    `category_filter` matches the derived `categories` membership (see derive_categories).
     """
     valid_order_by = ['name', 'type', 'category', 'vendor']
     if order_by not in valid_order_by:
@@ -811,8 +808,6 @@ def sb_get_integrations(
             name_filter=name_filter,
             category_filter=category_filter,
             vendor_filter=vendor_filter,
-            ti_only=ti_only,
-            vm_only=vm_only,
         )
         ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
         paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'integrations')
@@ -824,14 +819,9 @@ def sb_get_integrations(
             applied_filters['category_filter'] = category_filter
         if vendor_filter:
             applied_filters['vendor_filter'] = vendor_filter
-        if ti_only is not None:
-            applied_filters['ti_only'] = ti_only
-        if vm_only is not None:
-            applied_filters['vm_only'] = vm_only
-        if order_by != "name":
-            applied_filters['order_by'] = order_by
-        if order_direction != "asc":
-            applied_filters['order_direction'] = order_direction
+        # Always record the effective ordering so a response self-documents how it was sorted.
+        applied_filters['order_by'] = order_by
+        applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
         return paginated
@@ -891,11 +881,19 @@ def sb_get_installed_integrations(
     name_filter: Optional[str] = None,
     type_filter: Optional[str] = None,
     enabled_filter: Optional[bool] = None,
+    category_filter: Optional[str] = None,
     order_by: str = "name",
     order_direction: str = "asc",
 ) -> Dict[str, Any]:
-    """Get the filtered, paginated list of INSTALLED integration connectors (slim, no secrets)."""
-    valid_order_by = ['name', 'type', 'id', 'enabled']
+    """Get the filtered, paginated list of INSTALLED integration connectors (slim, no secrets).
+
+    Each connector is enriched with its `category` (raw label) and derived `categories`
+    membership, joined from the catalog by type. `category_filter` matches the derived
+    membership — e.g. `category_filter='ti'` lists installed TI feeds (replacing the former
+    get_ti_integrations tool), `category_filter='vulnerability_management'` lists installed
+    VM connectors.
+    """
+    valid_order_by = ['name', 'type', 'id', 'enabled', 'category']
     if order_by not in valid_order_by:
         raise ValueError(
             f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
@@ -911,13 +909,15 @@ def sb_get_installed_integrations(
 
     try:
         raw_installed = _get_installed_integrations_from_cache_or_api(console)
-        entries = [get_minimal_installed_integration(c) for c in raw_installed]
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+        entries = [get_minimal_installed_integration(c, catalog) for c in raw_installed]
 
         filtered = filter_installed_integrations(
             entries,
             name_filter=name_filter,
             type_filter=type_filter,
             enabled_filter=enabled_filter,
+            category_filter=category_filter,
         )
         ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
         paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'installed_integrations')
@@ -929,10 +929,11 @@ def sb_get_installed_integrations(
             applied_filters['type_filter'] = type_filter
         if enabled_filter is not None:
             applied_filters['enabled_filter'] = enabled_filter
-        if order_by != "name":
-            applied_filters['order_by'] = order_by
-        if order_direction != "asc":
-            applied_filters['order_direction'] = order_direction
+        if category_filter:
+            applied_filters['category_filter'] = category_filter
+        # Always record the effective ordering so a response self-documents how it was sorted.
+        applied_filters['order_by'] = order_by
+        applied_filters['order_direction'] = order_direction
 
         paginated['applied_filters'] = applied_filters
         return paginated
@@ -1004,7 +1005,13 @@ def sb_get_installed_integration(console: str = "default", integration_id: Optio
 
         for connector in connectors:
             if str(connector.get("id")) == integration_id:
-                return get_installed_integration_detail_view(connector, catalog)
+                detail = get_installed_integration_detail_view(connector, catalog)
+                return {
+                    "console": console,
+                    "integration_id": integration_id,
+                    "integration": detail["integration"],
+                    "redacted_fields": detail["redacted_fields"],
+                }
 
         return {
             "error": f"Installed integration with id '{integration_id}' not found",
@@ -1016,72 +1023,5 @@ def sb_get_installed_integration(console: str = "default", integration_id: Optio
         logger.error(f"Error getting installed integration '{integration_id}' for console '{console}': {str(e)}")
         return {
             "error": f"Failed to get installed integration: {str(e)}",
-            "console": console,
-        }
-
-
-def sb_get_ti_integrations(
-    console: str = "default",
-    page_number: int = 0,
-    name_filter: Optional[str] = None,
-    type_filter: Optional[str] = None,
-    enabled_filter: Optional[bool] = None,
-    order_by: str = "name",
-    order_direction: str = "asc",
-) -> Dict[str, Any]:
-    """Get the filtered, paginated list of installed Threat-Intelligence (TI) connectors (slim).
-
-    Derived from the installed connectors whose catalog type is `isTiV2`-capable, since there
-    is no dedicated TI-list endpoint.
-    """
-    valid_order_by = ['name', 'type', 'id', 'enabled']
-    if order_by not in valid_order_by:
-        raise ValueError(
-            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
-        )
-    valid_order_direction = ['asc', 'desc']
-    if order_direction not in valid_order_direction:
-        raise ValueError(
-            f"Invalid order_direction parameter '{order_direction}'. "
-            f"Valid values are: {', '.join(valid_order_direction)}"
-        )
-    if page_number < 0:
-        raise ValueError(f"page_number must be >= 0, got {page_number}")
-
-    try:
-        raw_installed = _get_installed_integrations_from_cache_or_api(console)
-        catalog = _get_integrations_catalog_from_cache_or_api(console)
-
-        ti_raw = select_ti_connectors(raw_installed, catalog)
-        entries = [get_minimal_ti_integration(c) for c in ti_raw]
-
-        filtered = filter_installed_integrations(
-            entries,
-            name_filter=name_filter,
-            type_filter=type_filter,
-            enabled_filter=enabled_filter,
-        )
-        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
-        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'ti_integrations')
-
-        applied_filters: Dict[str, Any] = {}
-        if name_filter:
-            applied_filters['name_filter'] = name_filter
-        if type_filter:
-            applied_filters['type_filter'] = type_filter
-        if enabled_filter is not None:
-            applied_filters['enabled_filter'] = enabled_filter
-        if order_by != "name":
-            applied_filters['order_by'] = order_by
-        if order_direction != "asc":
-            applied_filters['order_direction'] = order_direction
-
-        paginated['applied_filters'] = applied_filters
-        return paginated
-
-    except Exception as e:
-        logger.error(f"Error getting TI integrations for console '{console}': {str(e)}")
-        return {
-            "error": f"Failed to get TI integrations: {str(e)}",
             "console": console,
         }

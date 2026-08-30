@@ -812,10 +812,9 @@ The MCP server exposes the following tools for SafeBreach operations:
 **Config Server (Port 8000):**
 1. **`get_console_simulators`** ✨ **Enhanced with Filtering**
 2. **`get_simulator_details`**
-3. **`get_integrations`** ✨ **NEW** - Catalog of available integration connector TYPES (no secrets), with name/category/vendor/ti_only/vm_only filters
-4. **`get_installed_integrations`** ✨ **NEW** - Installed integration connectors, slim id/type/name/enabled (no secrets), with name/type/enabled filters
-5. **`get_installed_integration`** ✨ **NEW** - One installed connector's full config by `integration_id`, secrets redacted to `@enc:SENSITIVE_FIELD`
-6. **`get_ti_integrations`** ✨ **NEW** - Installed Threat-Intelligence feeds (isTiV2-capable), slim id/type/name/enabled, with filters
+3. **`get_integrations`** ✨ **NEW** - Catalog of available integration connector TYPES (no secrets), with name/category/vendor filters. Each entry carries a raw `category` label and a derived `categories` membership that `category_filter` matches.
+4. **`get_installed_integrations`** ✨ **NEW** - Installed integration connectors (id/type/name/enabled + category/categories, no secrets), with name/type/enabled/category filters. Use `category_filter='ti'` for installed Threat-Intelligence feeds or `category_filter='vulnerability_management'` for installed VM connectors.
+5. **`get_installed_integration`** ✨ **NEW** - One installed connector's full config by `integration_id`, returned as `{console, integration_id, integration, redacted_fields}` with secrets redacted to `@enc:SENSITIVE_FIELD`
 
 **Data Server (Port 8001):**
 3. **`get_tests`** ✨ **Enhanced with Filtering**
