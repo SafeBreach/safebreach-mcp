@@ -5,6 +5,25 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.13.0 — 2026-08-31
+
+### Changed
+
+- `get_playbook_attacks` and `get_playbook_attacks_by_tags` now default to Validate-scope,
+  published attacks, so the reported total matches the Playbook UI beside it. Two new optional
+  filters control the scope: `test_type` (`validate` default, `propagate`, or `all`) and
+  `include_drafts` (default `False`). Both apply before pagination so the total self-corrects,
+  and both disclose what they excluded through `hint_to_agent` rather than hiding it silently.
+  **Behaviour change**: the default result set narrows twice — a consumer asserting the old
+  merged total will see a different number. The schema stays compatible (both params optional)
+- `test_type='all'` renders a split total (Validate vs Propagate) and marks Propagate and draft
+  rows as unreachable from the Playbook. `get_playbook_attack_details` carries the same markers
+
+### Fixed
+
+- Two `TypeError` crashes on a null attack description in the playbook render blocks. A missing
+  API description arrives as `None` rather than absent, so `dict.get`'s default never fired
+
 ## 1.12.0 — 2026-08-31
 
 ### Changed
