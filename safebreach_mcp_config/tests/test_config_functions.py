@@ -880,3 +880,421 @@ class TestSbGetScenarioDetails:
             assert "attack_selection" in step
             assert "target_criteria" in step
             assert "attacker_criteria" in step
+
+
+# --- Integration-discovery: get_integrations (SAF-32798, Phase 1) ---
+
+from safebreach_mcp_config.config_functions import sb_get_integrations
+
+
+def _catalog_fixture():
+    """A catalog dict keyed by type, modeled on pentest01 /config/integrations."""
+    catalog = {
+        "custom_splunkrest": {"displayName": "Splunk REST", "description": "d", "category": "siem",
+                              "vendor": "Splunk Inc.", "product": "Splunk", "isTiV2": False, "isVm": False},
+        "crowdstrike": {"displayName": "CrowdStrike Falcon", "description": "d", "category": "security_control",
+                        "vendor": "CrowdStrike", "product": "Falcon", "isTiV2": False, "isVm": False},
+        "alienvault": {"displayName": "AlienVault OTX", "description": "d", "category": "ti",
+                       "vendor": "AT&T", "product": "OTX", "isTiV2": True, "isVm": False},
+        "threatconnect": {"displayName": "ThreatConnect", "description": "d", "category": "ti",
+                          "vendor": "ThreatConnect", "product": "TC", "isTiV2": True, "isVm": False},
+        "wiz": {"displayName": "Wiz CSPM", "description": "d", "category": "vulnerability_management",
+                "vendor": "Wiz", "product": "Wiz", "isTiV2": False, "isVm": True},
+        # A 'custom'-labelled connector that is TI-capable — proves category_filter='ti'
+        # matches by derived function, not just the raw origin label (Option 3 / Bug 1).
+        "custom_mitreattack": {"displayName": "MITRE ATT&CK", "description": "d", "category": "custom",
+                               "vendor": "MITRE", "product": "ATT&CK", "isTiV2": True, "isVm": False},
+    }
+    # filler to exceed PAGE_SIZE (10) → 12 total
+    for i in range(6):
+        catalog[f"filler{i}"] = {"displayName": f"Filler {i}", "description": "d", "category": "misc",
+                                 "vendor": f"Vendor{i}", "product": "P", "isTiV2": False, "isVm": False}
+    return catalog
+
+
+class TestGetIntegrations:
+    """Phase 1 — get_integrations catalog tool."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # T-7 — core: endpoint, envelope unwrap, pagination, metadata
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_core_endpoint_envelope_pagination(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"error": 0, "result": _catalog_fixture()}
+        mock_get.return_value = resp
+
+        result = sb_get_integrations(console="c", page_number=0)
+
+        called_url = mock_get.call_args[0][0]
+        assert "/api/siem/v1/accounts/999/config/integrations" in called_url
+        assert result["total_integrations"] == 12
+        assert result["total_pages"] == 2
+        assert len(result["integrations_in_page"]) == 10
+        assert result["page_number"] == 0
+        assert "hint_to_agent" in result  # more pages exist
+        assert "applied_filters" in result
+
+        page2 = sb_get_integrations(console="c", page_number=1)
+        assert len(page2["integrations_in_page"]) == 2
+
+    # T-11 — 403 surfaced with RBAC hint via catch-and-return
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_403_returns_error_dict_with_rbac_hint(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.url = "https://console.example/api/siem/v1/accounts/999/config/integrations"
+        mock_get.return_value = resp
+
+        result = sb_get_integrations(console="c")
+        assert "integrations_in_page" not in result
+        assert "error" in result
+        assert "Access denied" in result["error"]
+
+    # T-12 — out-of-range page_number
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_out_of_range_page(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        result = sb_get_integrations(console="c", page_number=5)
+        assert result["integrations_in_page"] == []
+        assert "error" in result and "page_number" in result["error"]
+
+    # T-20 — name_filter partial, case-insensitive
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_name_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", name_filter="splunk")
+        names = [e["name"] for e in r["integrations_in_page"]]
+        assert names == ["Splunk REST"]
+        assert r["applied_filters"]["name_filter"] == "splunk"
+        r2 = sb_get_integrations(console="c", name_filter="CONNECT")
+        assert [e["type"] for e in r2["integrations_in_page"]] == ["threatconnect"]
+
+    # T-21 — category_filter matches the derived membership (incl. the custom TI connector)
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_category_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", category_filter="TI")
+        # alienvault + threatconnect (category 'ti') AND custom_mitreattack (category 'custom'
+        # but isTiV2 → derived 'ti') — this is the Option 3 fix for Bug 1.
+        assert sorted(e["type"] for e in r["integrations_in_page"]) == \
+            ["alienvault", "custom_mitreattack", "threatconnect"]
+        # entries carry both the raw label and the derived membership
+        mitre = next(e for e in r["integrations_in_page"] if e["type"] == "custom_mitreattack")
+        assert mitre["category"] == "custom"
+        assert mitre["categories"] == ["custom", "ti"]
+
+    # T-22 — vendor_filter
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_vendor_filter(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", vendor_filter="splunk")
+        assert [e["type"] for e in r["integrations_in_page"]] == ["custom_splunkrest"]
+
+    # T-23 — capability categories via category_filter (replaces the former ti_only/vm_only flags)
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_capability_categories(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        vm = sb_get_integrations(console="c", category_filter="vulnerability_management")
+        assert [e["type"] for e in vm["integrations_in_page"]] == ["wiz"]
+        all_ = sb_get_integrations(console="c")
+        assert all_["total_integrations"] == 12
+
+    # T-24 — ordering
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_ordering(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+
+        def all_names(order_direction):
+            p0 = sb_get_integrations(console="c", order_by="name", order_direction=order_direction, page_number=0)
+            p1 = sb_get_integrations(console="c", order_by="name", order_direction=order_direction, page_number=1)
+            return [e["name"] for e in p0["integrations_in_page"]] + [e["name"] for e in p1["integrations_in_page"]]
+
+        asc_names = all_names("asc")
+        desc_names = all_names("desc")
+        assert asc_names == sorted(asc_names, key=str.lower)
+        assert desc_names == sorted(asc_names, key=str.lower, reverse=True)
+
+        by_type = sb_get_integrations(console="c", order_by="type")
+        assert by_type["applied_filters"]["order_by"] == "type"
+
+    def test_invalid_order_by_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_integrations(console="c", order_by="bogus")
+
+    # T-34 — zero-match filter → empty page + hint
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_zero_match_filter_hint(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", name_filter="zzzz-no-such")
+        assert r["integrations_in_page"] == []
+        assert r["total_integrations"] == 0
+        assert "hint_to_agent" in r
+
+    # invalid category_filter is REJECTED with the valid values (parity with order_by)
+    def test_invalid_category_filter_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_integrations(console="c", category_filter="not_a_category")
+        msg = str(exc.value)
+        assert "not_a_category" in msg
+        assert "vulnerability_management" in msg  # valid values listed
+
+    # a valid category_filter is accepted (case-insensitive)
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    def test_valid_category_filter_accepted_case_insensitive(self, mock_catalog):
+        mock_catalog.return_value = _catalog_fixture()
+        r = sb_get_integrations(console="c", category_filter="VULNERABILITY_MANAGEMENT")
+        assert [e["type"] for e in r["integrations_in_page"]] == ["wiz"]
+
+    # removed ti_only/vm_only flags are rejected with guidance (not silently ignored)
+    def test_removed_ti_vm_flags_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_integrations(console="c", ti_only=True)
+        assert "category_filter='ti'" in str(exc.value)
+        with pytest.raises(ValueError) as exc2:
+            sb_get_integrations(console="c", vm_only=True)
+        assert "vulnerability_management" in str(exc2.value)
+
+
+# --- Integration-discovery: get_installed_integrations (SAF-32798, Phase 2) ---
+
+from safebreach_mcp_config.config_functions import sb_get_installed_integrations
+
+
+def _installed_fixture():
+    """Installed connector list, modeled on pentest01 /config/integrations/installed
+    (already slim), with a couple of extra fields to prove slimming."""
+    items = [
+        {"id": "a1", "type": "custom_splunkrest", "name": "Splunk Prod", "enabled": True,
+         "token": "$PAM:INTERNAL_VAULT:x/token"},
+        {"id": "b2", "type": "cortexxdr", "name": "Cortex XDR", "enabled": True},
+        {"id": "c3", "type": "alienvault", "name": "AlienVault Feed", "enabled": False},
+        {"id": "d4", "type": "splunkrest", "name": "Splunk Notable", "enabled": True},
+        {"id": "e5", "type": "threatconnect", "name": "ThreatConnect", "enabled": False},
+    ]
+    for i in range(7):
+        items.append({"id": f"f{i}", "type": f"filler{i}", "name": f"Filler {i}", "enabled": True})
+    return items
+
+
+def _installed_catalog_fixture():
+    """Catalog keyed by type for enriching the installed fixture with categories."""
+    catalog = {
+        # custom SIEM clone: category 'custom', recovers 'siem' from its base type below
+        "custom_splunkrest": {"category": "custom", "isSecEvents": True},
+        "cortexxdr": {"category": "security_control", "isSecEvents": True},
+        "alienvault": {"category": "ti", "isTiV2": True},
+        "splunkrest": {"category": "siem", "isSecEvents": True},
+        "threatconnect": {"category": "ti", "isTiV2": True},
+        # a custom-labelled TI connector — proves category_filter='ti' catches it on the installed side
+        "custom_mitreattack": {"category": "custom", "isTiV2": True},
+    }
+    for i in range(7):
+        catalog[f"filler{i}"] = {"category": "misc"}
+    return catalog
+
+
+class TestGetInstalledIntegrations:
+    """Phase 2 — get_installed_integrations."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @pytest.fixture(autouse=True)
+    def patch_catalog(self):
+        # The installed getter joins the catalog by type for category enrichment; keep it
+        # off the network for every test in this class.
+        with patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api',
+                   return_value=_installed_catalog_fixture()):
+            yield
+
+    # T-8 — core: endpoint, slim + category-enriched passthrough, pagination
+    @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
+    @patch('safebreach_mcp_config.config_functions.get_api_base_url', return_value='https://console.example')
+    @patch('safebreach_mcp_config.config_functions.get_api_account_id', return_value='999')
+    @patch('safebreach_mcp_config.config_functions.requests.get')
+    def test_core_endpoint_slim_pagination(self, mock_get, *_):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"error": 0, "result": _installed_fixture()}
+        mock_get.return_value = resp
+
+        result = sb_get_installed_integrations(console="c", page_number=0)
+        # the installed endpoint is the one hit via requests.get (catalog is mocked at the helper)
+        called_url = mock_get.call_args[0][0]
+        assert "/api/siem/v1/accounts/999/config/integrations/installed" in called_url
+        assert result["total_installed_integrations"] == 12
+        assert result["total_pages"] == 2
+        assert len(result["installed_integrations_in_page"]) == 10
+        # enriched shape — slim + category/categories, no secrets leaked
+        for item in result["installed_integrations_in_page"]:
+            assert set(item.keys()) == {"id", "type", "name", "enabled", "category", "categories"}
+            assert "token" not in item
+
+    # T-25 — name_filter
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_name_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        r = sb_get_installed_integrations(console="c", name_filter="notable")
+        assert [i["id"] for i in r["installed_integrations_in_page"]] == ["d4"]
+
+    # T-26 — type_filter
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_type_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        r = sb_get_installed_integrations(console="c", type_filter="splunk")
+        assert sorted(i["id"] for i in r["installed_integrations_in_page"]) == ["a1", "d4"]
+
+    # T-27 — enabled_filter boolean
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_enabled_filter(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        only_disabled = sb_get_installed_integrations(console="c", enabled_filter=False)
+        assert sorted(i["id"] for i in only_disabled["installed_integrations_in_page"]) == ["c3", "e5"]
+        only_enabled = sb_get_installed_integrations(console="c", enabled_filter=True)
+        assert all(i["enabled"] for i in only_enabled["installed_integrations_in_page"])
+        assert only_enabled["total_installed_integrations"] == 10
+        all_ = sb_get_installed_integrations(console="c")
+        assert all_["total_installed_integrations"] == 12
+
+    # T-28 — ordering
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_ordering(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        by_type = sb_get_installed_integrations(console="c", order_by="type", order_direction="asc", page_number=0)
+        types_p0 = [i["type"] for i in by_type["installed_integrations_in_page"]]
+        assert types_p0 == sorted(types_p0)
+        assert by_type["applied_filters"]["order_by"] == "type"
+
+    def test_invalid_order_by_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", order_by="bogus")
+
+    # T-33 — filters compose (AND semantics) + applied_filters echoes all
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_filters_compose_and(self, mock_list):
+        # g1 matches name+type but is DISABLED — must be excluded by the AND with enabled_filter=True.
+        data = _installed_fixture() + [
+            {"id": "g1", "type": "splunkrest", "name": "Splunk Dev", "enabled": False},
+        ]
+        mock_list.return_value = data
+        r = sb_get_installed_integrations(console="c", name_filter="splunk",
+                                          type_filter="splunkrest", enabled_filter=True)
+        # a1 (custom_splunkrest, enabled) + d4 (splunkrest, enabled) satisfy all three; g1 fails enabled.
+        assert sorted(i["id"] for i in r["installed_integrations_in_page"]) == ["a1", "d4"]
+        af = r["applied_filters"]
+        assert af["name_filter"] == "splunk"
+        assert af["type_filter"] == "splunkrest"
+        assert af["enabled_filter"] is True
+        # ordering is always echoed now (Bug 7)
+        assert af["order_by"] == "name"
+        assert af["order_direction"] == "asc"
+
+    # category_filter on installed — replaces the former get_ti_integrations / get_vm_integrations.
+    @patch('safebreach_mcp_config.config_functions._get_installed_integrations_from_cache_or_api')
+    def test_category_filter_ti_and_vm(self, mock_list):
+        mock_list.return_value = _installed_fixture()
+        ti = sb_get_installed_integrations(console="c", category_filter="ti")
+        # alienvault (c3) + threatconnect (e5) are the installed TI connectors (derived from catalog)
+        assert sorted(i["id"] for i in ti["installed_integrations_in_page"]) == ["c3", "e5"]
+        assert ti["applied_filters"]["category_filter"] == "ti"
+        # each carries the derived membership
+        for i in ti["installed_integrations_in_page"]:
+            assert "ti" in i["categories"]
+        # siem grouping works too — incl. the custom SIEM clone (a1=custom_splunkrest),
+        # whose 'siem' is recovered from its base type (New Issue 1 fix)
+        siem = sb_get_installed_integrations(console="c", category_filter="siem")
+        assert sorted(i["id"] for i in siem["installed_integrations_in_page"]) == ["a1", "d4"]
+        a1 = next(i for i in siem["installed_integrations_in_page"] if i["id"] == "a1")
+        assert a1["category"] == "custom" and "siem" in a1["categories"]
+
+    def test_invalid_category_filter_rejected(self):
+        with pytest.raises(ValueError) as exc:
+            sb_get_installed_integrations(console="c", category_filter="not_a_category")
+        assert "vulnerability_management" in str(exc.value)
+
+    def test_removed_ti_vm_flags_rejected(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", ti_only=True)
+        with pytest.raises(ValueError):
+            sb_get_installed_integrations(console="c", vm_only=True)
+
+
+# --- Integration-discovery: get_installed_integration (SAF-32798, Phase 3) ---
+
+from safebreach_mcp_config.config_functions import sb_get_installed_integration
+
+
+class TestGetInstalledIntegration:
+    """Phase 3 — single connector, redacted."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _connectors(self):
+        return [
+            {"id": "a1", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+             "host": "splunk.internal", "token": "$PAM:INTERNAL_VAULT:abc/token"},
+            {"id": "b2", "type": "cortexxdr", "name": "Cortex", "enabled": True,
+             "apiToken": "$PAM:INTERNAL_VAULT:b/apiToken"},
+        ]
+
+    def _catalog(self):
+        return {
+            "custom_splunkrest": {"fields": [{"key": "token", "sensitive": True},
+                                             {"key": "host", "sensitive": False}]},
+            "cortexxdr": {"fields": [{"key": "apiToken", "sensitive": True}]},
+        }
+
+    # T-9 — fetch /config, filter by integration_id, redact
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_siem_config_connectors_from_cache_or_api')
+    def test_found_returns_redacted(self, mock_conn, mock_cat):
+        mock_conn.return_value = self._connectors()
+        mock_cat.return_value = self._catalog()
+        result = sb_get_installed_integration(console="c", integration_id="a1")
+        # envelope shape (Bug 2)
+        assert result["console"] == "c"
+        assert result["integration_id"] == "a1"
+        integration = result["integration"]
+        assert integration["id"] == "a1"
+        assert integration["type"] == "custom_splunkrest"
+        assert integration["host"] == "splunk.internal"
+        assert integration["token"] == "@enc:SENSITIVE_FIELD"
+        assert "$PAM:" not in json.dumps(result)
+        # redacted_fields lists what was masked (Bug 3)
+        assert result["redacted_fields"] == ["token"]
+
+    @patch('safebreach_mcp_config.config_functions._get_integrations_catalog_from_cache_or_api')
+    @patch('safebreach_mcp_config.config_functions._get_siem_config_connectors_from_cache_or_api')
+    def test_not_found_returns_hint(self, mock_conn, mock_cat):
+        mock_conn.return_value = self._connectors()
+        mock_cat.return_value = self._catalog()
+        result = sb_get_installed_integration(console="c", integration_id="does-not-exist")
+        assert "error" in result
+        assert "hint_to_agent" in result
+        assert "token" not in result  # no connector data
+
+    def test_missing_id_raises(self):
+        with pytest.raises(ValueError):
+            sb_get_installed_integration(console="c", integration_id="")

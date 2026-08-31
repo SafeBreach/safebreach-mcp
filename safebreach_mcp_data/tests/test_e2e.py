@@ -1475,9 +1475,23 @@ class TestQueuedTestsInGetTestsE2E:
                 pytest.skip("Our queued tests drained before the read — shared-console timing")
 
             queued_only = _get_tests_or_skip(console, status_filter="queued")
-            # the 'queued' filter returns ONLY queued rows, and includes at least one of ours
+            # Core invariant: the 'queued' filter returns ONLY queued rows.
             assert all(t.get("status") == "queued" for t in queued_only["tests_in_page"])
-            assert any(t["test_id"] in submitted for t in queued_only["tests_in_page"])
+            # Partition check: at least one of ours should appear under the 'queued' filter. BUT on a
+            # shared saturated console a queued test can promote (queued->running) between the two
+            # separate reads. Only FAIL if a test that is STILL queued (confirmed by a fresh no-filter
+            # re-read) is absent from the queued filter — a genuine filter defect. If ours simply
+            # drained between the reads, that's a timing artifact → skip (as the guard above does).
+            queued_ids = {t["test_id"] for t in queued_only["tests_in_page"]}
+            if not any(t["test_id"] in queued_ids for t in ours_queued):
+                recheck = _get_tests_or_skip(console)
+                still_queued = [t["test_id"] for t in recheck["tests_in_page"]
+                                if t["test_id"] in submitted and t.get("status") == "queued"]
+                missing_still_queued = [tid for tid in still_queued if tid not in queued_ids]
+                assert not missing_still_queued, (
+                    f"'queued' filter dropped tests that are still queued: {missing_still_queued}")
+                pytest.skip("Our queued tests promoted between the no-filter and queued-filter reads "
+                            "— shared-console timing, not a filter defect")
 
             completed = _get_tests_or_skip(console, status_filter="completed")
             # queued rows never leak into the terminal 'completed' view

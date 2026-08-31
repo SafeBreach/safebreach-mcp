@@ -709,3 +709,310 @@ class TestMalformedScenarioSteps:
         result = get_reduced_scenario_mapping(scenario, {})
         assert result["is_ready_to_run"] is False
         assert result["step_count"] == 1
+
+
+# --- Integration-discovery transforms (SAF-32798) ---
+
+from safebreach_mcp_config.config_types import get_integration_catalog_entry
+
+
+class TestIntegrationCatalogEntry:
+    """T-1 — catalog entry transform exposes the public allow-list only."""
+
+    def _raw(self):
+        # Modeled on the pentest01 /config/integrations type-def shape.
+        return {
+            "displayName": "Splunk (REST)",
+            "description": "Splunk SIEM over REST",
+            "category": "siem",
+            "vendor": "Splunk Inc.",
+            "product": "Splunk",
+            "isTi": False,
+            "isTiV2": False,
+            "isVm": False,
+            # internal fields that must NOT leak through:
+            "fields": [{"key": "token", "sensitive": True}],
+            "featureFlag": "feature.mcpToolsConfig",
+            "guideLink": "https://internal/guide",
+        }
+
+    def test_maps_public_fields_only(self):
+        entry = get_integration_catalog_entry("custom_splunkrest", self._raw())
+        assert entry == {
+            "type": "custom_splunkrest",
+            "name": "Splunk (REST)",
+            "description": "Splunk SIEM over REST",
+            "category": "siem",
+            "categories": ["siem"],
+            "vendor": "Splunk Inc.",
+            "product": "Splunk",
+        }
+        # no internal keys / raw flags leaked
+        for leaked in ("fields", "featureFlag", "guideLink", "isTiV2", "is_ti", "is_vm"):
+            assert leaked not in entry
+
+    def test_name_falls_back_to_type_when_no_display_name(self):
+        raw = self._raw()
+        del raw["displayName"]
+        entry = get_integration_catalog_entry("custom_splunkrest", raw)
+        assert entry["name"] == "custom_splunkrest"
+
+    def test_categories_derives_ti_from_isTiV2(self):
+        # A 'custom'-labelled connector that is isTiV2 must derive the 'ti' category.
+        raw = self._raw()
+        raw["category"] = "custom"
+        raw["isTiV2"] = True
+        entry = get_integration_catalog_entry("custom_mitreattack", raw)
+        assert entry["category"] == "custom"          # raw origin label preserved
+        assert entry["categories"] == ["custom", "ti"]  # functional membership derived
+
+    def test_categories_derives_vm_from_isVm(self):
+        raw = self._raw()
+        raw["category"] = "custom"
+        raw["isVm"] = True
+        entry = get_integration_catalog_entry("custom_tenablevmmodule", raw)
+        assert "vulnerability_management" in entry["categories"]
+
+
+from safebreach_mcp_config.config_types import get_minimal_installed_integration
+
+
+class TestMinimalInstalledIntegration:
+    """T-2 — installed transform returns the slim shape, no secrets."""
+
+    def test_slim_shape_only(self):
+        raw = {
+            "id": "AQKPdodinKdfTCJT8kp8Y",
+            "type": "custom_splunkrest",
+            "name": "Splunk Prod",
+            "enabled": True,
+            # sensitive / config fields that must NOT survive:
+            "token": "$PAM:INTERNAL_VAULT:abc/token",
+            "password": "$PAM:INTERNAL_VAULT:abc/password",
+            "host": "splunk.internal",
+            "headers": {"Authorization": "Bearer x"},
+        }
+        result = get_minimal_installed_integration(raw)
+        assert result == {"id": "AQKPdodinKdfTCJT8kp8Y", "type": "custom_splunkrest",
+                          "name": "Splunk Prod", "enabled": True}
+        for leaked in ("token", "password", "host", "headers"):
+            assert leaked not in result
+
+    def test_missing_enabled_defaults_false(self):
+        result = get_minimal_installed_integration({"id": "x", "type": "t", "name": "n"})
+        assert result["enabled"] is False
+
+    def test_enriched_with_categories_from_catalog(self):
+        # With a catalog, the connector is enriched with raw category + derived categories,
+        # joined by type. A custom TI connector derives 'ti'.
+        catalog = {"custom_mitreattack": {"category": "custom", "isTiV2": True}}
+        raw = {"id": "m1", "type": "custom_mitreattack", "name": "MITRE", "enabled": True}
+        result = get_minimal_installed_integration(raw, catalog)
+        assert result["category"] == "custom"
+        assert result["categories"] == ["custom", "ti"]
+        # still no secrets/config keys
+        assert set(result.keys()) == {"id", "type", "name", "enabled", "category", "categories"}
+
+    def test_enriched_type_absent_from_catalog(self):
+        # Type not in catalog → no categories guessed (conservative).
+        result = get_minimal_installed_integration(
+            {"id": "z", "type": "unknown", "name": "n", "enabled": True}, {})
+        assert result["category"] is None
+        assert result["categories"] == []
+
+
+from safebreach_mcp_config.config_types import (
+    redact_sensitive_fields,
+    get_installed_integration_detail_view,
+    REDACTED_PLACEHOLDER,
+)
+
+
+def _catalog_with_sensitive():
+    """Catalog keyed by type; fields[].sensitive marks the secret fields per type."""
+    return {
+        "custom_splunkrest": {
+            "displayName": "Splunk REST",
+            "fields": [
+                {"key": "host", "sensitive": False},
+                {"key": "token", "sensitive": True},
+                {"key": "password", "sensitive": True},
+            ],
+        },
+        "custom_wiz": {
+            "displayName": "Wiz",
+            # headers deliberately NOT flagged sensitive — must be force-masked anyway
+            "fields": [{"key": "clientId", "sensitive": False}],
+        },
+    }
+
+
+class TestRedaction:
+    """T-3/T-4/T-5 — sensitive-field redaction for get_installed_integration."""
+
+    def test_masks_schema_sensitive_fields(self):
+        connector = {
+            "id": "a1", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+            "host": "splunk.internal",
+            "token": "$PAM:INTERNAL_VAULT:abc/token",
+            "password": "$PAM:INTERNAL_VAULT:abc/password",
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["token"] == REDACTED_PLACEHOLDER
+        assert result["password"] == REDACTED_PLACEHOLDER
+        assert result["host"] == "splunk.internal"  # non-sensitive untouched
+        # no vault ref survives anywhere
+        assert not any(isinstance(v, str) and v.startswith("$PAM:") for v in result.values())
+        # original not mutated
+        assert connector["token"].startswith("$PAM:")
+        # redacted_fields reports exactly what was masked (Bug 3)
+        assert set(redacted_fields) == {"token", "password"}
+
+    def test_force_masks_headers_and_proxypass(self):
+        connector = {
+            "id": "w1", "type": "custom_wiz", "name": "Wiz", "enabled": True,
+            "clientId": "public-client-id",
+            "headers": {"Authorization": "Bearer super-secret"},
+            "proxyPass": "$PAM:INTERNAL_VAULT:xyz/proxyPass",
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["headers"] == REDACTED_PLACEHOLDER
+        assert result["proxyPass"] == REDACTED_PLACEHOLDER
+        assert result["clientId"] == "public-client-id"
+        # the bearer token must not appear anywhere in the serialized result
+        import json as _json
+        assert "super-secret" not in _json.dumps(result)
+
+    def test_fail_safe_unknown_type(self):
+        connector = {
+            "id": "u1", "type": "totally_unknown_type", "name": "Mystery", "enabled": True,
+            "token": "$PAM:INTERNAL_VAULT:q/token",
+            "apiSecret": "$PAM:INTERNAL_VAULT:q/apiSecret",
+            "headers": {"X-Auth": "leak-me"},
+            "proxyPass": "$PAM:INTERNAL_VAULT:q/proxyPass",
+            "host": "mystery.internal",
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["token"] == REDACTED_PLACEHOLDER
+        assert result["apiSecret"] == REDACTED_PLACEHOLDER
+        assert result["headers"] == REDACTED_PLACEHOLDER
+        assert result["proxyPass"] == REDACTED_PLACEHOLDER
+        import json as _json
+        dumped = _json.dumps(result)
+        assert "$PAM:" not in dumped
+        assert "leak-me" not in dumped
+
+    def test_masks_nested_vault_refs(self):
+        # a secret hidden in a nested dict/list must not leak (defense-in-depth)
+        connector = {
+            "id": "n1", "type": "custom_splunkrest", "name": "Nested", "enabled": True,
+            "deployments": [{"name": "prod", "apiKey": "$PAM:INTERNAL_VAULT:n/apiKey"}],
+            "nested": {"inner": {"secretRef": "$PAM:INTERNAL_VAULT:n/inner"}},
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        import json as _json
+        assert "$PAM:" not in _json.dumps(result)
+        assert result["deployments"][0]["apiKey"] == REDACTED_PLACEHOLDER
+        assert result["nested"]["inner"]["secretRef"] == REDACTED_PLACEHOLDER
+        assert result["deployments"][0]["name"] == "prod"  # non-secret preserved
+
+    def test_masks_plaintext_secret_on_partially_flagged_type(self):
+        # Bug 1: a known type whose schema omits `sensitive: true` on a secret field must
+        # still fall back to the default set. `password` is a _DEFAULT_SENSITIVE_FIELDS name
+        # but is NOT flagged sensitive on custom_wiz's schema — a plaintext value must not leak.
+        connector = {
+            "id": "w2", "type": "custom_wiz", "name": "Wiz", "enabled": True,
+            "clientId": "public-client-id",
+            "password": "clear-text-pw",  # pragma: allowlist secret  # plaintext test fixture, no $PAM:/@enc: prefix
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["password"] == REDACTED_PLACEHOLDER
+        assert result["clientId"] == "public-client-id"
+        import json as _json
+        assert "clear-text-pw" not in _json.dumps(result)
+
+    def test_masks_nested_plaintext_headers(self):
+        # Bug 2: a `headers` block nested under a non-sensitive parent carries a plaintext
+        # bearer token (no $PAM:/@enc: prefix) — it must be masked at any depth.
+        connector = {
+            "id": "s2", "type": "custom_splunkrest", "name": "Splunk", "enabled": True,
+            "settings": {"headers": {"Authorization": "Bearer TOKEN"}},
+        }
+        result, redacted_fields = redact_sensitive_fields(connector, _catalog_with_sensitive())
+        assert result["settings"]["headers"] == REDACTED_PLACEHOLDER
+        import json as _json
+        dumped = _json.dumps(result)
+        assert "Bearer TOKEN" not in dumped
+        assert "TOKEN" not in dumped
+
+    def test_detail_view_envelope_and_redacted_fields(self):
+        connector = {"id": "a1", "type": "custom_splunkrest", "name": "S", "enabled": True,
+                     "token": "$PAM:INTERNAL_VAULT:abc/token"}
+        view = get_installed_integration_detail_view(connector, _catalog_with_sensitive())
+        # detail view now wraps the redacted config + the redacted_fields list
+        assert view["integration"]["token"] == REDACTED_PLACEHOLDER
+        assert view["integration"]["id"] == "a1"
+        assert view["redacted_fields"] == ["token"]
+
+
+from safebreach_mcp_config.config_types import derive_categories, categories_for_type, CATEGORY_TAXONOMY
+
+
+class TestCategoryDerivation:
+    """Category membership derivation (Option 3) — raw label ∪ capability-flag categories."""
+
+    def test_non_custom_label_passthrough(self):
+        assert derive_categories({"category": "siem"}) == ["siem"]
+
+    def test_custom_bucket_refined_by_capability(self):
+        # custom_mitreattack: origin 'custom' but isTiV2 → derives 'ti'
+        assert derive_categories({"category": "custom", "isTiV2": True}) == ["custom", "ti"]
+
+    def test_isVm_maps_to_vulnerability_management(self):
+        assert derive_categories({"category": "custom", "isVm": True}) == ["custom", "vulnerability_management"]
+
+    def test_isPam_maps_to_secret_provider(self):
+        assert "secret_provider" in derive_categories({"category": "custom", "isPam": True})
+
+    def test_isTi_labelled_ti_stays_ti(self):
+        # timockconnector: category 'ti', isTi (not isTiV2) → still 'ti'
+        assert derive_categories({"category": "ti", "isTi": True}) == ["ti"]
+
+    def test_output_ordered_by_taxonomy(self):
+        cats = derive_categories({"category": "ti", "isVm": True})
+        # taxonomy order: ti (index 3) before vulnerability_management (index 8)
+        assert cats.index("ti") < cats.index("vulnerability_management")
+        assert all(c in CATEGORY_TAXONOMY for c in cats)
+
+    def test_empty_when_no_def(self):
+        assert derive_categories(None) == []
+        assert derive_categories({}) == []
+
+    def test_categories_for_type_joins_catalog(self):
+        catalog = {"custom_mitreattack": {"category": "custom", "isTiV2": True}}
+        assert categories_for_type(catalog, "custom_mitreattack") == ["custom", "ti"]
+        assert categories_for_type(catalog, "absent") == []
+
+    def test_custom_siem_variant_inherits_base_category(self):
+        # isSecEvents alone cannot distinguish siem from security_control; the base type does.
+        catalog = {
+            "custom_splunkrest": {"category": "custom", "isSecEvents": True},
+            "splunkrest": {"category": "siem", "isSecEvents": True},
+        }
+        cats = derive_categories(catalog["custom_splunkrest"], catalog, "custom_splunkrest")
+        assert cats == ["custom", "siem", "security_control"]
+
+    def test_custom_edr_variant_stays_security_control(self):
+        # a custom EDR clone must NOT gain 'siem' (its base is security_control)
+        catalog = {
+            "custom_crowdstrike": {"category": "custom", "isSecEvents": True},
+            "crowdstrike": {"category": "security_control", "isSecEvents": True},
+        }
+        cats = derive_categories(catalog["custom_crowdstrike"], catalog, "custom_crowdstrike")
+        assert "security_control" in cats and "siem" not in cats
+
+    def test_custom_variant_without_base_falls_back(self):
+        # no base type present → only raw + capability flags (no guess)
+        catalog = {"custom_akeyless": {"category": "custom", "isPam": True}}
+        cats = derive_categories(catalog["custom_akeyless"], catalog, "custom_akeyless")
+        assert cats == ["custom", "secret_provider"]

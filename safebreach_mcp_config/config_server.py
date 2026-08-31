@@ -20,9 +20,24 @@ from .config_functions import (
     sb_get_simulator_details,
     sb_get_scenarios,
     sb_get_scenario_details,
+    sb_get_integrations,
+    sb_get_installed_integrations,
+    sb_get_installed_integration,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_console(console: str) -> str:
+    """Single-tenant/in-console auto-resolve: when no multi-console registry is configured,
+    fall back to the live console name unless the caller passed a known console."""
+    from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
+    if not safebreach_envs:
+        console_name = get_console_name()
+        if console_name != 'default' and console not in safebreach_envs:
+            return console_name
+    return console
+
 
 class SafeBreachConfigServer(SafeBreachMCPBase):
     """SafeBreach MCP Config Server for simulator operations."""
@@ -116,11 +131,7 @@ order_direction ('asc'/'desc')"""
             order_by: str = "name",
             order_direction: str = "asc"
         ) -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_scenarios(
                 console=console,
                 page_number=page_number,
@@ -144,12 +155,110 @@ This full payload can be used for scenario inspection and future queue API integ
 Parameters: scenario_id (required, UUID string), console (required)"""
         )
         async def get_scenario_details_tool(scenario_id: str, console: str = "default") -> dict:
-            from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
-            if not safebreach_envs:
-                console_name = get_console_name()
-                if console_name != 'default' and console not in safebreach_envs:
-                    console = console_name
+            console = _resolve_console(console)
             return sb_get_scenario_details(scenario_id, console)
+
+        @self.mcp.tool(
+            name="get_integrations",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered, paginated catalog of AVAILABLE integration connector TYPES
+for a given console — the menu of what COULD be installed (e.g. Splunk, QRadar, CrowdStrike, AlienVault),
+NOT what is currently configured. Contains no account data and no secrets. To see installed connectors use
+get_installed_integrations; for a single installed connector's config use get_installed_integration.
+Each entry has `category` (the raw origin label) and `categories` (the derived functional membership that
+`category_filter` matches against — a connector grouped under 'custom' still lists its real function, e.g. 'ti').
+Results are paginated (10 per page) and ordered by name ascending by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+category_filter (must be one of the valid categories, else rejected with the valid list: custom, siem,
+security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
+vendor_filter (partial vendor match),
+order_by ('name'/'type'/'category'/'vendor'), order_direction ('asc'/'desc').
+(ti_only/vm_only were removed — pass category_filter='ti' or 'vulnerability_management' instead; passing
+them is rejected with guidance.)"""
+        )
+        async def get_integrations_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            category_filter: Optional[str] = None,
+            vendor_filter: Optional[str] = None,
+            order_by: str = "name",
+            order_direction: str = "asc",
+            ti_only: Optional[bool] = None,
+            vm_only: Optional[bool] = None,
+        ) -> dict:
+            console = _resolve_console(console)
+            return sb_get_integrations(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                category_filter=category_filter,
+                vendor_filter=vendor_filter,
+                order_by=order_by,
+                order_direction=order_direction,
+                ti_only=ti_only,
+                vm_only=vm_only,
+            )
+
+        @self.mcp.tool(
+            name="get_installed_integrations",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns a filtered, paginated list of integration connectors currently INSTALLED and
+configured for a given console. Each connector is id/type/name/enabled plus `category` (raw label) and `categories`
+(derived functional membership) — no secrets. To browse the catalog of connector TYPES that could be installed use
+get_integrations; for one connector's full (redacted) config use get_installed_integration with its id.
+Use category_filter to answer capability questions, e.g. category_filter='ti' lists installed Threat-Intelligence
+feeds and category_filter='vulnerability_management' lists installed Vulnerability-Management connectors.
+Results are paginated (10 per page), ordered by name ascending by default.
+Parameters: console (required), page_number (0-based, default 0), name_filter (partial name match),
+type_filter (partial connector-type match, e.g. 'splunk'), enabled_filter (True/False - only enabled/disabled),
+category_filter (must be one of the valid categories, else rejected with the valid list: custom, siem,
+security_control, ti, workflow, file_provider, deployment, secret_provider, vulnerability_management),
+order_by ('name'/'type'/'id'/'enabled'/'category'), order_direction ('asc'/'desc').
+(ti_only/vm_only were removed — pass category_filter='ti' or 'vulnerability_management' instead; passing
+them is rejected with guidance.)"""
+        )
+        async def get_installed_integrations_tool(
+            console: str = "default",
+            page_number: int = 0,
+            name_filter: Optional[str] = None,
+            type_filter: Optional[str] = None,
+            enabled_filter: Optional[bool] = None,
+            category_filter: Optional[str] = None,
+            order_by: str = "name",
+            order_direction: str = "asc",
+            ti_only: Optional[bool] = None,
+            vm_only: Optional[bool] = None,
+        ) -> dict:
+            console = _resolve_console(console)
+            return sb_get_installed_integrations(
+                console=console,
+                page_number=page_number,
+                name_filter=name_filter,
+                type_filter=type_filter,
+                enabled_filter=enabled_filter,
+                category_filter=category_filter,
+                order_by=order_by,
+                order_direction=order_direction,
+                ti_only=ti_only,
+                vm_only=vm_only,
+            )
+
+        @self.mcp.tool(
+            name="get_installed_integration",
+            annotations=ToolAnnotations(readOnlyHint=True),
+            description="""Returns the full configuration and status of a single INSTALLED integration connector,
+by its id, with credentials and other sensitive fields REDACTED. On success returns an envelope
+{console, integration_id, integration: {<full redacted config>}, redacted_fields: [<names of masked fields>]}.
+Any field whose value is '@enc:SENSITIVE_FIELD' is a redacted secret (credentials, tokens, proxy passwords, and
+request headers are always redacted); `redacted_fields` lists exactly which fields were masked. Obtain a valid id
+from get_installed_integrations first.
+Parameters: console (required), integration_id (required - the connector id from get_installed_integrations)"""
+        )
+        async def get_installed_integration_tool(integration_id: str, console: str = "default") -> dict:
+            console = _resolve_console(console)
+            return sb_get_installed_integration(console=console, integration_id=integration_id)
+
 
 def parse_external_config(server_type: str) -> bool:
     """Parse external connection configuration for specific server."""

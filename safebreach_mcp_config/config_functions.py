@@ -22,7 +22,41 @@ from .config_types import (
     filter_scenarios_by_criteria,
     apply_scenario_ordering,
     paginate_scenarios,
+    get_integration_catalog_entry,
+    filter_integration_catalog,
+    apply_integration_ordering,
+    paginate_integration_list,
+    get_minimal_installed_integration,
+    filter_installed_integrations,
+    get_installed_integration_detail_view,
+    CATEGORY_TAXONOMY,
 )
+
+
+def _validate_category_filter(category_filter: Optional[str]) -> None:
+    """Reject an unrecognized category_filter up front with the valid values (parity with the
+    order_by/order_direction validation), rather than silently returning an empty result."""
+    if category_filter is not None and \
+            category_filter.lower() not in [c.lower() for c in CATEGORY_TAXONOMY]:
+        raise ValueError(
+            f"Invalid category_filter '{category_filter}'. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
+
+
+def _reject_removed_capability_flags(ti_only, vm_only) -> None:
+    """The ti_only/vm_only flags were replaced by category_filter. Reject them explicitly with
+    guidance, so an old caller gets a clear error instead of a silently-unfiltered result."""
+    if ti_only is not None:
+        raise ValueError(
+            "The 'ti_only' filter was removed. Use category_filter='ti' instead. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
+    if vm_only is not None:
+        raise ValueError(
+            "The 'vm_only' filter was removed. Use category_filter='vulnerability_management' instead. "
+            f"Valid categories are: {', '.join(CATEGORY_TAXONOMY)}"
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +69,13 @@ categories_cache = SafeBreachCache(name="scenario_categories", maxsize=5, ttl=36
 plans_cache = SafeBreachCache(name="plans", maxsize=5, ttl=1800)
 users_cache = SafeBreachCache(name="users", maxsize=5, ttl=3600)
 assets_cache = SafeBreachCache(name="assets", maxsize=5, ttl=3600)
+
+# Integration-discovery caches (SAF-32798)
+# Short 1-minute TTL: integrations change on demand (a user may install one and
+# immediately expect Helm to reach it), so freshness is preferred over cache reuse.
+integrations_catalog_cache = SafeBreachCache(name="integrations_catalog", maxsize=5, ttl=60)
+installed_integrations_cache = SafeBreachCache(name="installed_integrations", maxsize=5, ttl=60)
+siem_config_cache = SafeBreachCache(name="siem_config", maxsize=5, ttl=60)
 
 # Configuration constants
 PAGE_SIZE = 10
@@ -709,3 +750,314 @@ def sb_get_scenario_details(scenario_id: str, console: str = "default") -> Dict[
                                             users_map=users_map)
 
     raise ValueError(f"Scenario with ID '{scenario_id}' not found")
+
+
+# =============================================================================
+# Integration-discovery tools (SAF-32798)
+# =============================================================================
+
+def clear_integrations_catalog_cache():
+    """Clear the integrations catalog cache (for testing)."""
+    integrations_catalog_cache.clear()
+
+
+def _get_integrations_catalog_from_cache_or_api(console: str) -> Dict[str, Any]:
+    """Fetch the connector-type catalog (keyed by type) from cache or the SIEM API.
+
+    Source: GET /api/siem/v1/accounts/{account}/config/integrations, whose response is
+    wrapped in the SIEM envelope {"error": 0, "result": {<type>: <def>, ...}}.
+    Reused by get_integrations, get_installed_integrations (category enrichment) and
+    get_installed_integration (redaction schema + category enrichment).
+    """
+    cache_key = f"integrations_catalog_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = integrations_catalog_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved integrations catalog from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config/integrations"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching integrations catalog from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    catalog = payload.get("result", payload) if isinstance(payload, dict) else payload
+    if not isinstance(catalog, dict):
+        catalog = {}
+
+    if is_caching_enabled("config"):
+        integrations_catalog_cache.set(cache_key, catalog)
+
+    logger.info(f"Retrieved {len(catalog)} connector types from API for console '{console}'")
+    return catalog
+
+
+def sb_get_integrations(
+    console: str = "default",
+    page_number: int = 0,
+    name_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
+    vendor_filter: Optional[str] = None,
+    order_by: str = "name",
+    order_direction: str = "asc",
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Get the filtered, paginated catalog of available connector *types*.
+
+    Returns the menu of connector types that could be installed (no account data, no secrets).
+    `category_filter` matches the derived `categories` membership (see derive_categories).
+    `ti_only`/`vm_only` are removed and rejected — use `category_filter` instead.
+    """
+    _reject_removed_capability_flags(ti_only, vm_only)
+    _validate_category_filter(category_filter)
+    valid_order_by = ['name', 'type', 'category', 'vendor']
+    if order_by not in valid_order_by:
+        raise ValueError(
+            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
+        )
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(
+            f"Invalid order_direction parameter '{order_direction}'. "
+            f"Valid values are: {', '.join(valid_order_direction)}"
+        )
+    if page_number < 0:
+        raise ValueError(f"page_number must be >= 0, got {page_number}")
+
+    try:
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+        entries = [get_integration_catalog_entry(type_key, raw, catalog) for type_key, raw in catalog.items()]
+
+        filtered = filter_integration_catalog(
+            entries,
+            name_filter=name_filter,
+            category_filter=category_filter,
+            vendor_filter=vendor_filter,
+        )
+        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
+        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'integrations')
+
+        applied_filters: Dict[str, Any] = {}
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if category_filter:
+            applied_filters['category_filter'] = category_filter
+        if vendor_filter:
+            applied_filters['vendor_filter'] = vendor_filter
+        # Always record the effective ordering so a response self-documents how it was sorted.
+        applied_filters['order_by'] = order_by
+        applied_filters['order_direction'] = order_direction
+
+        paginated['applied_filters'] = applied_filters
+        return paginated
+
+    except Exception as e:
+        logger.error(f"Error getting integrations for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get integrations: {str(e)}",
+            "console": console,
+        }
+
+
+def clear_installed_integrations_cache():
+    """Clear the installed-integrations cache (for testing)."""
+    installed_integrations_cache.clear()
+
+
+def _get_installed_integrations_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """Fetch the installed connectors from cache or the SIEM API.
+
+    Source: GET /api/siem/v1/accounts/{account}/config/integrations/installed, whose
+    response is wrapped in the SIEM envelope {"error": 0, "result": [<connector>, ...]}.
+    The live API already returns a slim id/type/name/enabled per connector.
+    """
+    cache_key = f"installed_integrations_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = installed_integrations_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved installed integrations from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config/integrations/installed"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching installed integrations from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    installed = payload.get("result", payload) if isinstance(payload, dict) else payload
+    if not isinstance(installed, list):
+        installed = []
+
+    if is_caching_enabled("config"):
+        installed_integrations_cache.set(cache_key, installed)
+
+    logger.info(f"Retrieved {len(installed)} installed integrations from API for console '{console}'")
+    return installed
+
+
+def sb_get_installed_integrations(
+    console: str = "default",
+    page_number: int = 0,
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    enabled_filter: Optional[bool] = None,
+    category_filter: Optional[str] = None,
+    order_by: str = "name",
+    order_direction: str = "asc",
+    ti_only: Optional[bool] = None,
+    vm_only: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Get the filtered, paginated list of INSTALLED integration connectors (slim, no secrets).
+
+    Each connector is enriched with its `category` (raw label) and derived `categories`
+    membership, joined from the catalog by type. `category_filter` matches the derived
+    membership — e.g. `category_filter='ti'` lists installed TI feeds (replacing the former
+    get_ti_integrations tool), `category_filter='vulnerability_management'` lists installed
+    VM connectors. `ti_only`/`vm_only` are removed and rejected — use `category_filter`.
+    """
+    _reject_removed_capability_flags(ti_only, vm_only)
+    _validate_category_filter(category_filter)
+    valid_order_by = ['name', 'type', 'id', 'enabled', 'category']
+    if order_by not in valid_order_by:
+        raise ValueError(
+            f"Invalid order_by parameter '{order_by}'. Valid values are: {', '.join(valid_order_by)}"
+        )
+    valid_order_direction = ['asc', 'desc']
+    if order_direction not in valid_order_direction:
+        raise ValueError(
+            f"Invalid order_direction parameter '{order_direction}'. "
+            f"Valid values are: {', '.join(valid_order_direction)}"
+        )
+    if page_number < 0:
+        raise ValueError(f"page_number must be >= 0, got {page_number}")
+
+    try:
+        raw_installed = _get_installed_integrations_from_cache_or_api(console)
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+        entries = [get_minimal_installed_integration(c, catalog) for c in raw_installed]
+
+        filtered = filter_installed_integrations(
+            entries,
+            name_filter=name_filter,
+            type_filter=type_filter,
+            enabled_filter=enabled_filter,
+            category_filter=category_filter,
+        )
+        ordered = apply_integration_ordering(filtered, order_by=order_by, order_direction=order_direction)
+        paginated = paginate_integration_list(ordered, page_number, PAGE_SIZE, 'installed_integrations')
+
+        applied_filters: Dict[str, Any] = {}
+        if name_filter:
+            applied_filters['name_filter'] = name_filter
+        if type_filter:
+            applied_filters['type_filter'] = type_filter
+        if enabled_filter is not None:
+            applied_filters['enabled_filter'] = enabled_filter
+        if category_filter:
+            applied_filters['category_filter'] = category_filter
+        # Always record the effective ordering so a response self-documents how it was sorted.
+        applied_filters['order_by'] = order_by
+        applied_filters['order_direction'] = order_direction
+
+        paginated['applied_filters'] = applied_filters
+        return paginated
+
+    except Exception as e:
+        logger.error(f"Error getting installed integrations for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get installed integrations: {str(e)}",
+            "console": console,
+        }
+
+
+def clear_siem_config_cache():
+    """Clear the SIEM full-config cache (for testing)."""
+    siem_config_cache.clear()
+
+
+def _get_siem_config_connectors_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
+    """Fetch the FULL connector configs from the SIEM config blob (cache or API).
+
+    Source: GET /api/siem/v1/accounts/{account}/config → envelope {"error":0,"result":{...}}
+    whose `result.connectors[]` holds the full per-connector config (with secrets as
+    vault refs). Used by get_installed_integration since there is no single-connector GET.
+    """
+    cache_key = f"siem_config_connectors_{console}{get_cache_user_suffix()}"
+
+    if is_caching_enabled("config"):
+        cached = siem_config_cache.get(cache_key)
+        if cached is not None:
+            logger.info(f"Retrieved SIEM config connectors from cache for console '{console}'")
+            return cached
+
+    base_url = get_api_base_url(console, 'siem')
+    account_id = get_api_account_id(console)
+    api_url = f"{base_url}/api/siem/v1/accounts/{account_id}/config"
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+
+    logger.info(f"Fetching SIEM config from API for console '{console}'")
+    response = requests.get(api_url, headers=headers, timeout=120)
+    check_rbac_response(response)
+
+    payload = response.json()
+    config = payload.get("result", payload) if isinstance(payload, dict) else payload
+    connectors = config.get("connectors", []) if isinstance(config, dict) else []
+    if not isinstance(connectors, list):
+        connectors = []
+
+    if is_caching_enabled("config"):
+        siem_config_cache.set(cache_key, connectors)
+
+    logger.info(f"Retrieved {len(connectors)} full connector configs from API for console '{console}'")
+    return connectors
+
+
+def sb_get_installed_integration(console: str = "default", integration_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get the full config of a single INSTALLED connector by id, with secrets redacted.
+
+    There is no dedicated single-connector API, so the connector is located in the SIEM
+    config blob (`/config`) and redacted in Python against the catalog's sensitive-field schema.
+    """
+    if integration_id is None or (isinstance(integration_id, str) and not integration_id.strip()):
+        raise ValueError("integration_id parameter is required and cannot be empty")
+
+    integration_id = str(integration_id).strip()
+
+    try:
+        connectors = _get_siem_config_connectors_from_cache_or_api(console)
+        catalog = _get_integrations_catalog_from_cache_or_api(console)
+
+        for connector in connectors:
+            if str(connector.get("id")) == integration_id:
+                detail = get_installed_integration_detail_view(connector, catalog)
+                return {
+                    "console": console,
+                    "integration_id": integration_id,
+                    "integration": detail["integration"],
+                    "redacted_fields": detail["redacted_fields"],
+                }
+
+        return {
+            "error": f"Installed integration with id '{integration_id}' not found",
+            "console": console,
+            "hint_to_agent": "Call get_installed_integrations to list valid connector ids.",
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting installed integration '{integration_id}' for console '{console}': {str(e)}")
+        return {
+            "error": f"Failed to get installed integration: {str(e)}",
+            "console": console,
+        }
