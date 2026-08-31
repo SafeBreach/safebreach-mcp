@@ -20,7 +20,12 @@ from .playbook_types import (
     transform_full_playbook_attack,
     filter_attacks_by_criteria,
     paginate_attacks,
-    _extract_custom_tag_values
+    _extract_custom_tag_values,
+    VALID_TEST_TYPES,
+    TEST_TYPE_VALIDATE,
+    TEST_TYPE_PROPAGATE,
+    TEST_TYPE_ALL,
+    DRAFT_STATUS
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +101,131 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         raise ValueError(f"Failed to fetch playbook attacks: {str(e)}") from e
 
 
+def _normalize_test_type(test_type: Optional[str]) -> str:
+    """
+    Resolve and validate the catalog scope, defaulting to Validate.
+
+    Args:
+        test_type: Caller-supplied scope, or None to accept the default.
+
+    Returns:
+        The lowercased scope value.
+
+    Raises:
+        ValueError: If the value is not one of VALID_TEST_TYPES.
+    """
+    normalized = (test_type or TEST_TYPE_VALIDATE).lower()
+    if normalized not in VALID_TEST_TYPES:
+        raise ValueError(
+            f"Invalid test_type parameter '{test_type}'. "
+            f"Valid values are: {', '.join(VALID_TEST_TYPES)}"
+        )
+    return normalized
+
+
+def _compose_scope_hint(existing_hint: Optional[str], propagate_count: int) -> str:
+    """
+    Build the disclosure telling the agent what the Validate scope excluded.
+
+    Args:
+        existing_hint: Any hint the paginator already set (e.g. the next-page instruction).
+        propagate_count: Propagate attacks that matched the other filters but were scoped out.
+
+    Returns:
+        The disclosure, appended to the existing hint when there is one.
+    """
+    plural = '' if propagate_count == 1 else 's'
+    disclosure = (
+        f"{propagate_count} Propagate (ALM) attack{plural} also matched your filters but "
+        f"were excluded because this answer is scoped to Playbook (Validate) attacks. "
+        f"Pass test_type='all' to include them, or test_type='propagate' for only those."
+    )
+    if existing_hint:
+        separator = ' ' if existing_hint.rstrip().endswith('.') else '. '
+        return f"{existing_hint.rstrip()}{separator}{disclosure}"
+    return disclosure
+
+
+def _compose_draft_hint(existing_hint: Optional[str], draft_count: int) -> str:
+    """
+    Build the disclosure telling the agent that unpublished drafts were hidden.
+
+    Args:
+        existing_hint: Any hint already set.
+        draft_count: Draft moves that matched the other filters but were hidden.
+
+    Returns:
+        The disclosure, appended to the existing hint when there is one.
+    """
+    plural = '' if draft_count == 1 else 's'
+    disclosure = (
+        f"{draft_count} unpublished draft attack{plural} also matched your filters but were hidden, "
+        f"because the Playbook UI shows published content only. Pass include_drafts=True to include them."
+    )
+    if existing_hint:
+        separator = ' ' if existing_hint.rstrip().endswith('.') else '. '
+        return f"{existing_hint.rstrip()}{separator}{disclosure}"
+    return disclosure
+
+
+def _apply_scope(filtered_attacks: List[Dict[str, Any]], test_type: str,
+                 page_number: int, page_size: int,
+                 include_drafts: bool = False) -> Dict[str, Any]:
+    """
+    Scope a criteria-filtered attack list, paginate it, and disclose what the scope hid.
+
+    Counting order matters twice over. The Propagate count is taken across both catalogs — after
+    the other criteria filters, before the scope filter — because it answers "what else matched that
+    this scope hid". The draft count is taken AFTER the scope filter, because it answers "what did
+    this scope itself hide", and a Validate draft is not hidden from a Propagate answer.
+
+    Args:
+        filtered_attacks: Attacks already narrowed by every non-scope criterion.
+        test_type: A validated, lowercased scope value.
+        page_number: Zero-based page to return.
+        page_size: Attacks per page.
+
+    Returns:
+        The paginated result, carrying validate_count / propagate_count when the scope is 'all'
+        and a composed disclosure hint when a Validate scope excluded anything.
+    """
+    if test_type == TEST_TYPE_VALIDATE:
+        in_scope = [attack for attack in filtered_attacks if not attack.get('is_propagate')]
+    elif test_type == TEST_TYPE_PROPAGATE:
+        in_scope = [attack for attack in filtered_attacks if attack.get('is_propagate')]
+    else:
+        in_scope = filtered_attacks
+
+    draft_count = sum(1 for attack in in_scope if attack.get('is_draft'))
+    scoped = in_scope if include_drafts else [
+        attack for attack in in_scope if not attack.get('is_draft')
+    ]
+
+    countable = filtered_attacks if include_drafts else [
+        attack for attack in filtered_attacks if not attack.get('is_draft')
+    ]
+    propagate_count = sum(1 for attack in countable if attack.get('is_propagate'))
+    validate_count = len(countable) - propagate_count
+
+    paginated_result = paginate_attacks(scoped, page_number, page_size)
+
+    if test_type == TEST_TYPE_ALL:
+        paginated_result['validate_count'] = validate_count
+        paginated_result['propagate_count'] = propagate_count
+
+    if test_type == TEST_TYPE_VALIDATE and propagate_count:
+        paginated_result['hint_to_agent'] = _compose_scope_hint(
+            paginated_result.get('hint_to_agent'), propagate_count
+        )
+
+    if not include_drafts and draft_count:
+        paginated_result['hint_to_agent'] = _compose_draft_hint(
+            paginated_result.get('hint_to_agent'), draft_count
+        )
+
+    return paginated_result
+
+
 def sb_get_playbook_attacks(
     console: str = "default",
     page_number: int = 0,
@@ -111,7 +241,9 @@ def sb_get_playbook_attacks(
     mitre_technique_filter: Optional[str] = None,
     mitre_tactic_filter: Optional[str] = None,
     attacker_platform_filter: Optional[str] = None,
-    target_platform_filter: Optional[str] = None
+    target_platform_filter: Optional[str] = None,
+    test_type: Optional[str] = TEST_TYPE_VALIDATE,
+    include_drafts: bool = False
 ) -> Dict[str, Any]:
     """
     Get filtered and paginated playbook attacks.
@@ -132,9 +264,12 @@ def sb_get_playbook_attacks(
         mitre_tactic_filter: Comma-separated tactic names (OR, case-insensitive partial)
         attacker_platform_filter: Comma-separated platform values (OR, case-insensitive partial). None passes through.
         target_platform_filter: Comma-separated platform values (OR, case-insensitive partial). None passes through.
+        test_type: Catalog scope — 'validate' (default) returns Playbook/Validate attacks only,
+            'propagate' returns only Propagate/ALM attacks, 'all' returns both with per-catalog counts.
 
     Returns:
-        Dict containing paginated attacks and metadata
+        Dict containing paginated attacks and metadata. When test_type is 'all', also carries
+        validate_count and propagate_count.
 
     Raises:
         ValueError: If console is not found or parameters are invalid
@@ -146,7 +281,9 @@ def sb_get_playbook_attacks(
     # Validate page_number parameter
     if page_number < 0:
         raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
-    
+
+    test_type_normalized = _normalize_test_type(test_type)
+
     # Validate date ranges - start dates should be before end dates
     if modified_date_start is not None and modified_date_end is not None and modified_date_start > modified_date_end:
         raise ValueError(f"Invalid modified date range: modified_date_start ({modified_date_start}) must be before or equal to modified_date_end ({modified_date_end})")
@@ -185,7 +322,8 @@ def sb_get_playbook_attacks(
         )
 
         # Paginate results
-        paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number,
+                                        PAGE_SIZE, include_drafts)
 
         # Add applied filters info
         applied_filters = {}
@@ -213,6 +351,8 @@ def sb_get_playbook_attacks(
             applied_filters['attacker_platform_filter'] = attacker_platform_filter
         if target_platform_filter:
             applied_filters['target_platform_filter'] = target_platform_filter
+        applied_filters['test_type'] = test_type_normalized
+        applied_filters['include_drafts'] = include_drafts
 
         paginated_result['applied_filters'] = applied_filters
 
@@ -292,7 +432,9 @@ def sb_get_playbook_attack_details(
 def sb_get_playbook_attacks_by_tags(
     console: str = "default",
     tags: Optional[str] = None,
-    page_number: int = 0
+    page_number: int = 0,
+    test_type: Optional[str] = TEST_TYPE_VALIDATE,
+    include_drafts: bool = False
 ) -> Dict[str, Any]:
     """
     Get playbook attacks filtered by one or more custom tags.
@@ -301,9 +443,12 @@ def sb_get_playbook_attacks_by_tags(
         console: SafeBreach console name
         tags: Comma-separated tag values (OR logic, case-insensitive exact match per tag token)
         page_number: Page number (0-based)
+        test_type: Catalog scope — 'validate' (default), 'propagate', or 'all'. Same semantics as
+            sb_get_playbook_attacks.
 
     Returns:
-        Dict containing paginated attacks (each carrying its `tags` list) and metadata
+        Dict containing paginated attacks (each carrying its `tags` list) and metadata. When
+        test_type is 'all', also carries validate_count and propagate_count.
 
     Raises:
         ValueError: If no tags are provided, page_number is negative, or the API call fails
@@ -315,6 +460,8 @@ def sb_get_playbook_attacks_by_tags(
     # Validate page_number parameter
     if page_number < 0:
         raise ValueError(f"Invalid page_number parameter '{page_number}'. Page number must be non-negative (0 or greater)")
+
+    test_type_normalized = _normalize_test_type(test_type)
 
     try:
         # Get all attacks from cache or API
@@ -330,8 +477,13 @@ def sb_get_playbook_attacks_by_tags(
         filtered_attacks = filter_attacks_by_criteria(reduced_attacks, tag_filter=tags)
 
         # Paginate results
-        paginated_result = paginate_attacks(filtered_attacks, page_number, PAGE_SIZE)
-        paginated_result['applied_filters'] = {'tags': tags}
+        paginated_result = _apply_scope(filtered_attacks, test_type_normalized, page_number,
+                                        PAGE_SIZE, include_drafts)
+        paginated_result['applied_filters'] = {
+            'tags': tags,
+            'test_type': test_type_normalized,
+            'include_drafts': include_drafts,
+        }
 
         return paginated_result
 

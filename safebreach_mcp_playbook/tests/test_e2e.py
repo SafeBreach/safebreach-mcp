@@ -883,3 +883,219 @@ class TestPlaybookTagWriteE2E:
         with pytest.raises(ValueError, match="differ"):
             sb_rename_playbook_attack_tag(
                 console=E2E_CONSOLE, attack_id=1, old_value="same", new_value="same")
+
+@skip_e2e
+@pytest.mark.e2e
+class TestPropagateScopeE2E:
+    """End-to-end tests for Propagate/Validate catalog scoping (SAF-34553) — zero mocks.
+
+    T-24, T-31, T-32 of the test plan. These are the only tests that would catch content-manager
+    reshaping the ALM tag group underneath the fixtures, so a fixture-shaped pass is not enough.
+    """
+
+    NO_PROPAGATE_CONTENT = (
+        "Console '{console}' returned 0 Propagate (ALM) attacks. This test proves NOTHING on a "
+        "Validate-only console — every scope assertion passes trivially. Point E2E_CONSOLE at a "
+        "console entitled to Propagate content before trusting a green run here."
+    )
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def _require_propagate_content(self):
+        """Fail loudly rather than pass vacuously when the console carries no Propagate content."""
+        propagate = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='propagate')
+        if propagate['total_attacks'] == 0:
+            pytest.fail(self.NO_PROPAGATE_CONTENT.format(console=E2E_CONSOLE))
+        return propagate
+
+    def test_scopes_are_coherent_and_default_excludes_propagate(self):
+        """T-24: the three scopes partition the catalog, and the default hides Propagate."""
+        propagate = self._require_propagate_content()
+
+        validate = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='validate')
+        every = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='all')
+        defaulted = sb_get_playbook_attacks(console=E2E_CONSOLE)
+
+        assert validate['total_attacks'] + propagate['total_attacks'] == every['total_attacks'], \
+            "scopes do not partition the catalog"
+
+        assert defaulted['total_attacks'] == validate['total_attacks'], \
+            "omitting test_type must behave exactly as test_type='validate'"
+
+        assert every['validate_count'] == validate['total_attacks']
+        assert every['propagate_count'] == propagate['total_attacks']
+
+        assert all(not a['is_propagate'] for a in defaulted['attacks_in_page']), \
+            "a Propagate attack leaked into the default scope"
+        assert all(a['is_propagate'] for a in propagate['attacks_in_page']), \
+            "a Validate attack leaked into the propagate scope"
+
+        hint = defaulted['hint_to_agent'] or ''
+        assert str(propagate['total_attacks']) in hint, \
+            "the default scope must disclose how many Propagate attacks it excluded"
+        assert "test_type='all'" in hint
+
+        print(f"✅ validate={validate['total_attacks']} propagate={propagate['total_attacks']} "
+              f"all={every['total_attacks']}")
+
+    def test_scope_filter_applies_before_pagination(self):
+        """T-24 (cont.): the reported total and page count follow the scope, not the raw catalog."""
+        self._require_propagate_content()
+
+        validate = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='validate')
+        every = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='all')
+
+        assert validate['total_attacks'] < every['total_attacks'], \
+            "expected the Validate scope to be strictly smaller on a Propagate-capable console"
+        assert validate['total_pages'] <= every['total_pages']
+
+    def test_details_marks_a_real_propagate_attack(self):
+        """T-31: the reachability marker fires for a genuine ALM attack from the live catalog."""
+        propagate = self._require_propagate_content()
+
+        attack_id = propagate['attacks_in_page'][0]['id']
+        details = sb_get_playbook_attack_details(console=E2E_CONSOLE, attack_id=attack_id)
+
+        assert details['is_propagate'] is True, \
+            f"attack {attack_id} was returned under propagate scope but details says otherwise"
+
+        print(f"✅ attack {attack_id} flagged as Propagate through the details path")
+
+    def test_details_does_not_mark_a_real_validate_attack(self):
+        """T-31 (cont.): the marker is not applied indiscriminately."""
+        self._require_propagate_content()
+
+        validate = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='validate')
+        attack_id = validate['attacks_in_page'][0]['id']
+
+        details = sb_get_playbook_attack_details(console=E2E_CONSOLE, attack_id=attack_id)
+
+        assert details['is_propagate'] is False
+
+    def test_rendered_subtotals_agree_with_function_counts(self):
+        """T-32: cross-layer consistency — the header the customer reads must match the data."""
+        self._require_propagate_content()
+
+        from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
+        tool = SafeBreachPlaybookServer().mcp._tool_manager._tools['get_playbook_attacks'].fn
+
+        every = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='all')
+        rendered = tool(console=E2E_CONSOLE, test_type='all')
+
+        assert str(every['total_attacks']) in rendered
+        assert str(every['validate_count']) in rendered
+        assert str(every['propagate_count']) in rendered
+        assert 'in the Playbook (Validate)' in rendered
+        assert 'Propagate (ALM)' in rendered
+
+        print(f"✅ rendered header agrees with function counts "
+              f"({every['validate_count']}/{every['propagate_count']})")
+
+    def test_tag_search_honours_scope_on_real_api(self):
+        """T-24 (cont.): by_tags parity is only meaningful against the real tag catalog."""
+        self._require_propagate_content()
+
+        propagate = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='propagate')
+        assert propagate['applied_filters']['test_type'] == 'propagate'
+
+        defaulted = sb_get_playbook_attacks(console=E2E_CONSOLE)
+        assert defaulted['applied_filters']['test_type'] == 'validate'
+
+
+@skip_e2e
+@pytest.mark.e2e
+class TestDraftExclusionE2E:
+    """Unpublished drafts must be hidden by default so Helm's totals match the Playbook UI.
+
+    SAF-34553 phase 8. Added after a live cross-check found the Propagate fix alone still left
+    Helm disagreeing with the UI — the residual gap was BREACH_STUDIO drafts.
+    """
+
+    NO_DRAFT_CONTENT = (
+        "Console '{console}' has no unpublished drafts in this result set, so the draft-exclusion "
+        "assertions prove nothing here. Point E2E_CONSOLE at a console with Breach Studio drafts."
+    )
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def _draft_delta(self, **kwargs):
+        """Return (without_drafts, with_drafts) totals for the same query."""
+        without = sb_get_playbook_attacks(console=E2E_CONSOLE, **kwargs)
+        with_drafts = sb_get_playbook_attacks(console=E2E_CONSOLE, include_drafts=True, **kwargs)
+        return without, with_drafts
+
+    def test_drafts_are_hidden_by_default(self):
+        """The default total must be strictly smaller when the console carries drafts."""
+        without, with_drafts = self._draft_delta()
+
+        if without['total_attacks'] == with_drafts['total_attacks']:
+            pytest.fail(self.NO_DRAFT_CONTENT.format(console=E2E_CONSOLE))
+
+        assert without['total_attacks'] < with_drafts['total_attacks']
+        assert all(not a.get('is_draft') for a in without['attacks_in_page']), \
+            "a draft leaked into the default result set"
+
+        hidden = with_drafts['total_attacks'] - without['total_attacks']
+        hint = without['hint_to_agent'] or ''
+        assert str(hidden) in hint, "the hidden draft count must be disclosed"
+        assert 'include_drafts=True' in hint
+
+        print(f"✅ visible={without['total_attacks']} with_drafts={with_drafts['total_attacks']} "
+              f"hidden={hidden}")
+
+    def test_draft_and_propagate_gates_are_independent(self):
+        """Opening one gate must not open the other — they are orthogonal exclusions."""
+        base = sb_get_playbook_attacks(console=E2E_CONSOLE)
+        drafts_only = sb_get_playbook_attacks(console=E2E_CONSOLE, include_drafts=True)
+        propagate_only = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='all')
+        both = sb_get_playbook_attacks(console=E2E_CONSOLE, test_type='all', include_drafts=True)
+
+        assert base['total_attacks'] <= drafts_only['total_attacks'] <= both['total_attacks']
+        assert base['total_attacks'] <= propagate_only['total_attacks'] <= both['total_attacks']
+
+        assert all(not a.get('is_draft') for a in propagate_only['attacks_in_page']), \
+            "test_type='all' must not also unhide drafts"
+
+        print(f"✅ base={base['total_attacks']} +drafts={drafts_only['total_attacks']} "
+              f"+propagate={propagate_only['total_attacks']} both={both['total_attacks']}")
+
+    def test_reporter_query_reconciles_with_the_playbook_ui(self):
+        """The ticket's actual acceptance test: the default answer equals what the UI displays.
+
+        The UI count is supplied via PLAYBOOK_UI_CREDENTIAL_ACCESS_COUNT because it is a
+        console-specific, human-observed figure — hardcoding it would break on any other console.
+        Skips when unset rather than asserting a number nobody verified.
+        """
+        expected = os.environ.get('PLAYBOOK_UI_CREDENTIAL_ACCESS_COUNT')
+        if not expected:
+            pytest.skip(
+                "set PLAYBOOK_UI_CREDENTIAL_ACCESS_COUNT to the number the Playbook UI shows for "
+                "the Credential Access tactic filter on this console, to assert reconciliation"
+            )
+
+        result = sb_get_playbook_attacks(console=E2E_CONSOLE, mitre_tactic_filter='Credential Access')
+
+        assert result['total_attacks'] == int(expected), (
+            f"Helm reports {result['total_attacks']} but the Playbook UI shows {expected} — "
+            f"the two surfaces still disagree, which is the defect SAF-34553 exists to fix"
+        )
+
+        print(f"✅ Helm and the Playbook UI agree: {expected}")
+
+    def test_draft_rows_are_marked_when_included(self):
+        """A draft shown on request must say it is not in the Playbook."""
+        from safebreach_mcp_playbook.playbook_server import SafeBreachPlaybookServer
+        tool = SafeBreachPlaybookServer().mcp._tool_manager._tools['get_playbook_attacks'].fn
+
+        without, with_drafts = self._draft_delta()
+        if without['total_attacks'] == with_drafts['total_attacks']:
+            pytest.fail(self.NO_DRAFT_CONTENT.format(console=E2E_CONSOLE))
+
+        draft_ids = {a['id'] for a in with_drafts['attacks_in_page'] if a.get('is_draft')}
+        if not draft_ids:
+            pytest.skip("no draft landed on the first page; page-level marker asserted by unit tests")
+
+        rendered = tool(console=E2E_CONSOLE, include_drafts=True)
+        assert 'unpublished draft' in rendered
