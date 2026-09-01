@@ -13,7 +13,10 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import requests
 
-from safebreach_mcp_core.plan_statistics import fetch_plan_statistics
+from safebreach_mcp_core.plan_statistics import (
+    fetch_plan_statistics,
+    PastRunHasNoScenarioError,
+)
 
 
 def _two_step_payload():
@@ -519,6 +522,159 @@ class TestMutuallyExclusiveInputs:
 
         assert "scenario_id" in str(excinfo.value)
         mock_post.assert_not_called()
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_test_id_alongside_another_input_is_rejected(self, mock_post):
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(
+                console="test-console", scenario_id="abc-123", test_id="1764165600525.2"
+            )
+
+        assert "test_id" in str(excinfo.value)
+        mock_post.assert_not_called()
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_all_three_inputs_together_is_rejected(self, mock_post):
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(
+                console="test-console", plan=_plan_body(), scenario_id="abc-123",
+                test_id="1764165600525.2",
+            )
+
+        assert "test_id" in str(excinfo.value)
+        mock_post.assert_not_called()
+
+
+class TestPastRunIsScoredByTestId:
+    """A planRunId is passed through as `testId` for native resolution."""
+
+    PLAN_RUN_ID = "1764165600525.2"
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_body_carries_test_id_and_name(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        body = _posted_body(mock_post)
+        assert body["testId"] == self.PLAN_RUN_ID
+        # ValidatePlan requires `name`, and the request is validated at the edge,
+        # so an id-only body that omits it is rejected before the controller.
+        assert body["name"] == ""
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_neither_id_nor_plan_id_is_present(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        body = _posted_body(mock_post)
+        # planId is in the ValidatePlan schema but the controller destructures
+        # only {id, testId}; sending it falls through to the inline branch.
+        assert "planId" not in body
+        assert "id" not in body
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.get")
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_no_lookup_is_issued_to_resolve_the_run(self, mock_post, mock_get):
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        mock_get.assert_not_called()
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_step_less_guard_does_not_apply(self, mock_post):
+        """The run's scenario is expanded server-side; there are no local steps to check."""
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        result = fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        assert result["returned_step_count"] == 2
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_plan_step_count_is_unknown_and_does_not_fake_truncation(self, mock_post):
+        """Keying plan_step_count off `scenario_id is None` would raise KeyError here."""
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        result = fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        assert result["plan_step_count"] is None
+        assert result["truncated"] is False
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_missing_original_plan_is_reported_as_its_own_error(self, mock_post):
+        response = _mock_response({}, status_code=500)
+        response.text = f"TestSummary {self.PLAN_RUN_ID} doesn't have originalPlan"
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=response
+        )
+        mock_post.return_value = response
+
+        with pytest.raises(PastRunHasNoScenarioError) as excinfo:
+            fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        message = str(excinfo.value)
+        assert self.PLAN_RUN_ID in message
+        assert "scenario_id" in message
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_an_unrelated_failure_is_not_reported_as_a_missing_scenario(self, mock_post):
+        response = _mock_response({}, status_code=500)
+        response.text = "upstream timeout"
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=response
+        )
+        mock_post.return_value = response
+
+        with pytest.raises(ValueError) as excinfo:
+            fetch_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        assert not isinstance(excinfo.value, PastRunHasNoScenarioError)
+        assert "upstream timeout" in str(excinfo.value)
+
+
+class TestResponseEnvelopeIsAcceptedInEitherShape:
+    """SAF-32019 — swagger documents a `data` wrapper; the endpoint may omit it.
+
+    Reading an unwrapped body as absent would report a scored plan as having no
+    steps at all — a silent empty result, which is the precise failure the
+    null-versus-zero rule exists to prevent.
+    """
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_wrapped_response_is_read_from_the_data_envelope(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert result["returned_step_count"] == 2
+        assert result["steps"][0]["simulationCount"] == 120
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_unwrapped_response_is_read_from_the_top_level(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload()["data"])
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert result["returned_step_count"] == 2
+        assert result["steps"][0]["simulationCount"] == 120
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_unwrapped_response_still_relays_the_constraint_catalog(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload()["data"])
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert "incompatible_os" in result["constraint_catalog"]
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_an_explicit_null_data_envelope_yields_no_steps(self, mock_post):
+        mock_post.return_value = _mock_response({"data": None})
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert result["steps"] == []
 
 
 class TestNoMcpSideCaching:

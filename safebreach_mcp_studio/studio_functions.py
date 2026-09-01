@@ -2885,9 +2885,9 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
 
 
 PLAN_INPUT_HINT = (
-    "Provide exactly one of 'plan' (a JSON string carrying an ad-hoc plan body, e.g. "
-    "'{\"steps\": [...]}') or 'scenario_id' (a saved scenario or custom plan, resolved "
-    "by Core)."
+    "Provide exactly one of 'plan' (a JSON string carrying an ad-hoc scenario body, e.g. "
+    "'{\"steps\": [...]}'), 'scenario_id' (a saved scenario or custom plan) or 'test_id' "
+    "(the planRunId of a past run, e.g. '1764165600525.2')."
 )
 
 BOTH_COUNTS_HINT = (
@@ -2913,22 +2913,38 @@ def _blank_to_none(value):
     return value
 
 
-def _parse_plan_argument(plan, scenario_id):
+def _parse_plan_argument(plan, scenario_id, test_id=None):
     """Validate the tool-boundary inputs and parse the plan JSON string.
 
     Exclusivity is checked before the parse, so a caller who supplies both a
-    malformed plan and a scenario id is told about the real problem.
+    malformed plan and a scenario id is told about the real problem. Returns
+    (parsed_plan, scenario_id, test_id) with exactly one of them set.
     """
     plan = _blank_to_none(plan)
     scenario_id = _blank_to_none(scenario_id)
+    test_id = _blank_to_none(test_id)
 
-    if plan is not None and scenario_id is not None:
-        raise ValueError(f"Both 'plan' and 'scenario_id' were supplied. {PLAN_INPUT_HINT}")
-    if plan is None and scenario_id is None:
-        raise ValueError(f"Neither 'plan' nor 'scenario_id' was supplied. {PLAN_INPUT_HINT}")
+    supplied = [name for name, value in
+                (('plan', plan), ('scenario_id', scenario_id), ('test_id', test_id))
+                if value is not None]
+    if len(supplied) > 1:
+        raise ValueError(
+            f"{' and '.join(repr(n) for n in supplied)} were supplied together. "
+            f"{PLAN_INPUT_HINT}"
+        )
+    if not supplied:
+        raise ValueError(
+            f"None of 'plan', 'scenario_id' or 'test_id' was supplied. {PLAN_INPUT_HINT}"
+        )
 
     if scenario_id is not None:
-        return None, scenario_id
+        return None, scenario_id, None
+
+    if test_id is not None:
+        # Passed straight through as testId: a planRunId is neither an integer
+        # plan id nor an OOB UUID, so the scenario-resolution path below would
+        # look it up as a scenario and report it missing.
+        return None, None, test_id
 
     try:
         parsed = json.loads(plan)
@@ -2942,7 +2958,7 @@ def _parse_plan_argument(plan, scenario_id):
         raise ValueError(
             f"'plan' must be a JSON object, got {type(parsed).__name__}. {PLAN_INPUT_HINT}"
         )
-    return parsed, None
+    return parsed, None, None
 
 
 def _validate_conflict_detail(conflict_detail):
@@ -2991,14 +3007,15 @@ def _resolve_scenario_to_plan(console, scenario_id):
     )
 
 
-def _fetch_and_shape(console, plan, scenario_id, include_disabled, get_constraints,
-                     get_all_constraints, limit, use_cache, attack_names,
-                     conflict_detail, both_present):
+def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
+                     get_constraints, get_all_constraints, limit, use_cache,
+                     attack_names, conflict_detail, both_present):
     """One scoring pass: fetch, then shape into the caller-facing report."""
     statistics = fetch_plan_statistics(
         console,
         plan=plan,
         scenario_id=scenario_id,
+        test_id=test_id,
         include_disabled=include_disabled,
         get_constraints=get_constraints,
         get_all_constraints=get_all_constraints,
@@ -3015,6 +3032,7 @@ def _fetch_and_shape(console, plan, scenario_id, include_disabled, get_constrain
 
 def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
                            scenario_id: str | None = None,
+                           test_id: str | None = None,
                            include_disabled: bool = DEFAULT_INCLUDE_DISABLED,
                            both_counts: bool = False,
                            get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
@@ -3027,8 +3045,9 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
 
     Args:
         console: SafeBreach console identifier
-        plan: JSON string of an ad-hoc plan body. Mutually exclusive with scenario_id.
-        scenario_id: A saved scenario UUID or custom plan id. Mutually exclusive with plan.
+        plan: JSON string of an ad-hoc scenario body. Mutually exclusive with the ids.
+        scenario_id: A saved scenario UUID or custom plan id.
+        test_id: The planRunId of a past run; scores the scenario that run executed.
         include_disabled: False = runnable counts, True = expected counts.
         both_counts: Issue two calls and return both figures, labelled.
         get_constraints: Populate conflicts and the catalog that describes them.
@@ -3042,7 +3061,9 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         both_counts — {counts_mode: 'both', runnable: {...}, expected: {...},
         hint_to_agent: ...}.
     """
-    parsed_plan, resolved_scenario_id = _parse_plan_argument(plan, scenario_id)
+    parsed_plan, resolved_scenario_id, resolved_test_id = _parse_plan_argument(
+        plan, scenario_id, test_id
+    )
     _validate_conflict_detail(conflict_detail)
 
     if resolved_scenario_id is not None:
@@ -3062,6 +3083,7 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
             console,
             plan=parsed_plan,
             scenario_id=resolved_scenario_id,
+            test_id=resolved_test_id,
             include_disabled=with_disabled,
             get_constraints=get_constraints,
             get_all_constraints=get_all_constraints,

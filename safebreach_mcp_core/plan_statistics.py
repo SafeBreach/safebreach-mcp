@@ -4,8 +4,9 @@ Plan statistics scoring.
 Wraps the orchestrator ``POST /plan/statistics`` endpoint, which answers
 "given this configuration, what would actually run" for a plan that need not
 have been saved. The endpoint natively resolves a saved plan when the body
-carries ``id``, so a scenario is scored by passthrough rather than by a
-client-side fetch.
+carries ``id``, and the scenario behind a past run when it carries ``testId``,
+so both are scored by passthrough rather than by a client-side fetch. ``planId``
+is in the request schema but is destructured by nothing and silently ignored.
 
 Counts arrive nullable: ``None`` means *not computed* (Core stopped early on a
 limit-reached response), while ``0`` means *in scope, runs nowhere*. Nothing
@@ -29,6 +30,9 @@ Usage::
 
     # Score a saved scenario by id
     result = fetch_plan_statistics(console="pentest01", scenario_id="3b8eade5-...")
+
+    # Score whatever a past run actually executed
+    result = fetch_plan_statistics(console="pentest01", test_id="1764165600525.2")
 """
 
 import logging
@@ -65,6 +69,14 @@ class PlanStatisticsAPIError(ValueError):
     """The statistics endpoint rejected the request; the message carries its body."""
 
 
+class PastRunHasNoScenarioError(ValueError):
+    """A past run's summary no longer carries the scenario it ran, so it cannot be scored.
+
+    Not named for the API's ``originalPlan`` field: a ``Test``-prefixed class is
+    swept up by pytest's collector in any module that imports it.
+    """
+
+
 def _is_computed_count(value) -> bool:
     """Whether a count is a real number rather than 'not computed'.
 
@@ -74,21 +86,30 @@ def _is_computed_count(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _build_request_body(plan, scenario_id) -> dict:
-    """Build the ValidatePlan body for either an ad-hoc plan or a saved scenario.
+def _build_request_body(plan, scenario_id, test_id=None) -> dict:
+    """Build the ValidatePlan body for an ad-hoc plan, a saved scenario or a past run.
 
-    ``planId`` is never written: it exists in the request schema but the
-    controller does not honour it, so a body carrying it looks correct and is
-    scored as an empty ad-hoc plan.
+    ``planId`` is never written: it exists in the request schema, but the
+    controller destructures only ``{id, testId}``, so a body carrying it looks
+    correct, falls through to the inline branch and is scored as an empty plan.
+
+    ``name`` is always present. The schema requires it and the request is
+    validated at the edge, so an id-only body still carries one; it is
+    unconstrained, and "" is what the console's own UI posts.
     """
-    if (plan is None) == (scenario_id is None):
+    supplied = [value is not None for value in (plan, scenario_id, test_id)]
+    if sum(supplied) != 1:
         raise ValueError(
-            "Provide exactly one of 'plan' (an ad-hoc plan body) or 'scenario_id' "
-            "(a saved scenario resolved by Core), not both and not neither."
+            "Provide exactly one of 'plan' (an ad-hoc plan body), 'scenario_id' "
+            "(a saved scenario) or 'test_id' (the planRunId of a past run) — "
+            "not several, and not none."
         )
 
     if scenario_id is not None:
         return {"name": "", "id": scenario_id}
+
+    if test_id is not None:
+        return {"name": "", "testId": test_id}
 
     if not isinstance(plan, dict):
         raise ValueError(
@@ -157,6 +178,7 @@ def fetch_plan_statistics(
     console: str,
     plan: dict | None = None,
     scenario_id: str | int | None = None,
+    test_id: str | None = None,
     *,
     include_disabled: bool = DEFAULT_INCLUDE_DISABLED,
     get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
@@ -170,9 +192,12 @@ def fetch_plan_statistics(
     Args:
         console: SafeBreach console identifier
         plan: An ad-hoc plan body; ``name`` defaults to ``""`` when absent.
-            Mutually exclusive with ``scenario_id``.
-        scenario_id: A saved scenario, passed to Core as ``id`` for native
-            resolution. Mutually exclusive with ``plan``.
+            Mutually exclusive with ``scenario_id`` and ``test_id``.
+        scenario_id: A saved scenario, passed as ``id`` for native resolution.
+            Mutually exclusive with ``plan`` and ``test_id``.
+        test_id: The planRunId of a past run, passed as ``testId``; the endpoint
+            resolves it to the scenario that run actually executed. Mutually
+            exclusive with ``plan`` and ``scenario_id``.
         include_disabled: ``True`` scores every simulator (expected counts);
             ``False`` scores only those that could run now (runnable counts).
         get_constraints: Populate ``simulatorConstraints`` and the response's
@@ -188,18 +213,21 @@ def fetch_plan_statistics(
         when ``truncated`` is set, so it is not a plan-step position),
         ``constraint_catalog`` (the response root's, verbatim; ``None`` when the
         console supplied none, ``{}`` when it supplied an empty one),
-        ``plan_step_count`` (``None`` on the ``scenario_id`` path, where it is
-        not knowable client-side), ``returned_step_count``, ``truncated``, and
-        ``params_used``.
+        ``plan_step_count`` (``None`` on the ``scenario_id`` and ``test_id``
+        paths, where it is not knowable client-side), ``returned_step_count``,
+        ``truncated``, and ``params_used``.
 
     Raises:
         PlanHasNoStepsError: the plan body carried no steps (before any request).
-        ValueError: both or neither of ``plan`` and ``scenario_id`` was given.
+        ValueError: other than exactly one of ``plan``, ``scenario_id`` and
+            ``test_id`` was given.
+        PastRunHasNoScenarioError: the past run's summary no longer carries the
+            scenario it ran, so the endpoint cannot reconstruct it.
         PlanStatisticsAPIError: the endpoint returned a non-2xx; the message
             carries the full response body.
         PermissionError: the caller's role may not score plans (403).
     """
-    body = _build_request_body(plan, scenario_id)
+    body = _build_request_body(plan, scenario_id, test_id)
 
     params = {
         "limit": int(limit),
@@ -221,6 +249,12 @@ def fetch_plan_statistics(
     except requests.exceptions.HTTPError as exc:
         error_body = getattr(response, 'text', '')
         logger.error(f"Statistics API error {response.status_code}: {error_body}")
+        if test_id is not None and 'originalPlan' in error_body:
+            raise PastRunHasNoScenarioError(
+                f"Test '{test_id}' cannot be scored: its summary no longer carries the "
+                f"scenario that ran, which SafeBreach needs to reconstruct the plan. "
+                f"Score the saved scenario with 'scenario_id', or pass an ad-hoc 'plan'."
+            ) from exc
         raise PlanStatisticsAPIError(
             f"Statistics API error ({response.status_code}): {error_body}"
         ) from exc
@@ -233,10 +267,15 @@ def fetch_plan_statistics(
             f"Statistics API returned a non-JSON body ({response.status_code}): "
             f"{getattr(response, 'text', '')[:500]}"
         ) from exc
-    # Covers a non-dict payload and an explicit "data": null alike.
-    data = payload.get('data') if isinstance(payload, dict) else None
-    if not isinstance(data, dict):
-        data = {}
+    # The envelope is inconsistent: swagger documents a `data` wrapper while the
+    # endpoint's own component tests show `steps` at the top level (SAF-32019).
+    # Accept either — reading an unwrapped body as absent would report a scored
+    # plan as having no steps at all, which is exactly the silent-empty result
+    # the null-versus-zero rule exists to prevent.
+    data = payload if isinstance(payload, dict) else {}
+    wrapped = data.get('data')
+    if isinstance(wrapped, dict):
+        data = wrapped
 
     raw_steps = data.get('steps')
     if not isinstance(raw_steps, list):
@@ -250,7 +289,9 @@ def fetch_plan_statistics(
     catalog = data.get('constraintCatalog')
     constraint_catalog = catalog if isinstance(catalog, dict) else None
 
-    plan_step_count = len(body["steps"]) if scenario_id is None else None
+    # Knowable only on the ad-hoc path: an id-resolved plan is expanded
+    # server-side, so how many steps it holds is not visible from here.
+    plan_step_count = len(body["steps"]) if plan is not None else None
     returned_step_count = len(steps)
     truncated = any(step['isLimitReached'] for step in steps) or (
         plan_step_count is not None and returned_step_count < plan_step_count

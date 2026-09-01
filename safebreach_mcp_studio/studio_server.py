@@ -1641,53 +1641,75 @@ manage_test(test_id="1776488350786.15", action="delete", console="demo",
                 readOnlyHint=True,
                 destructiveHint=False,
             ),
-            description="""Reports what a SafeBreach plan would actually do on a console — how many simulations each
-step produces, which attacks and simulators contribute nothing, and why — WITHOUT running
-anything. Read-only and safe to call repeatedly; call it again after every configuration
-change, because nothing here is cached.
+            description="""Reports what a SafeBreach scenario would do on a console — per-step simulation counts,
+which attacks and simulators contribute nothing, and why — WITHOUT running anything.
 
-Scores either an ad-hoc plan body that was never saved, or a saved scenario / custom plan by
-id. Exactly one of `plan` or `scenario_id` — supplying both or neither is an error.
+Use this when you want the numbers, or when you need to explain a result: how many
+simulations a scenario would produce, whether it would run at all, and why specific
+attacks did not run — or would not run — on a given test. Every attack and simulator that
+contributes nothing is reported with the constraint that eliminated it, so this is the
+tool for investigating an unexpectedly small or empty run. Read-only and safe to call
+repeatedly; nothing is cached MCP-side, so re-call after every configuration change.
 
-THREE THINGS THAT ARE NOT WHAT THEY LOOK LIKE:
+Scores exactly one of three inputs: an ad-hoc scenario body that was never saved (`plan`),
+a saved scenario (`scenario_id`), or the scenario a past test actually ran (`test_id`).
+("Scenario" is the current term for what the API and older tooling call a plan; they are
+the same object.)
 
-1. `include_disabled` selects WHICH QUESTION IS ASKED, it does not merely widen a set.
-   include_disabled=false (the default) gives RUNNABLE counts — what would run right now —
-   and reports every offline, disabled or unapproved simulator with the reason it was left
-   out. include_disabled=true gives EXPECTED counts — what would run if every simulator were
-   available — and therefore NEVER reports simulator_is_offline at all. The two numbers cannot
-   be derived from each other in either direction. Set both_counts=true to get both, at the
-   cost of a second call — when both_counts is true, include_disabled is not ignored: both of
-   its values are used, one per call.
+IMPORTANT: a null count means NOT COMPUTED, never zero. When SafeBreach hits its
+evaluation limit it stops early — `truncated` is true, `counts_computed` is false, and
+zero-impact reporting is suppressed entirely. A null is not evidence that anything is
+inapplicable; an integer 0 is.
 
-2. This tool REPORTS zero-impact attacks and simulators. It REMOVES NOTHING and CHANGES
-   NOTHING. `zero_impact_attacks` and `zero_impact_simulators` name entities whose count is a
-   genuine integer 0 — they are still in the plan. Use them to explain what will not
-   contribute, not to prune.
+Parameters:
+- console (required, str): SafeBreach console name.
+- plan (optional, str): JSON string of an ad-hoc scenario body that need never have been
+  saved, e.g. '{"steps": [...]}'.
+- scenario_id (optional, str): UUID of an OOB scenario or integer string ID of a custom
+  scenario, from get_scenarios (Config Server).
+- test_id (optional, str): planRunId of a past test run, e.g. "1764165600525.2", from
+  get_tests (Data Server). Scores the scenario that test actually ran, which is what to
+  use for "why didn't these attacks run in test X". Only available while the test summary
+  still carries its original scenario; older tests report that it is unavailable.
+  Exactly one of plan, scenario_id or test_id — supplying none or more than one is an error.
+- include_disabled (optional, bool, default False): Selects WHICH QUESTION is asked, not
+  merely how wide a set is. False = runnable counts (what would run right now; offline,
+  disabled and unapproved simulators are excluded from the numbers but still reported with
+  their reason). True = expected counts (what would run if every simulator were available,
+  so simulator_is_offline is never reported). Neither is derivable from the other.
+- both_counts (optional, bool, default False): Issue two calls and return both figures,
+  labelled. include_disabled is not ignored — both of its values are used, one per call.
+- get_constraints (optional, bool, default True): Populate conflicts and the catalog that
+  describes them. Required for any "why didn't this run" question.
+- get_all_constraints (optional, bool, default True): Report every reason a pairing was
+  eliminated, not just the first.
+- limit (optional, int, default 500000): Circuit-breaker cap on simulations SafeBreach
+  evaluates before stopping early; a capped step returns a null count with
+  is_limit_reached true. Lower it if a large scenario truncates.
+- use_cache (optional, bool, default True): Whether SafeBreach may answer from its own
+  server-side cache.
+- conflict_detail (optional, str, default "summary"): "summary", "per_attack" (adds attack
+  names), or "full" (adds a simulator_ids sample and lifts the list caps).
 
-3. A limit-reached response means counts were NOT COMPUTED — not that nothing runs.
-   When Core hits its evaluation limit it stops early: `truncated` is true,
-   `returned_step_count` is smaller than `plan_step_count`, `counts_computed` is false, and
-   `simulation_count` and every per-attack count are null. NULL MEANS NOT MEASURED; 0 means
-   measured and runs nowhere. Zero-impact reporting is suppressed entirely on that path, so
-   empty zero-impact lists there mean "not evaluated", not "nothing is inapplicable".
-
-Each conflict carries a computed `severity`: "blocking" when that attack\'s count is an
-integer 0, "reducing" when it still runs on fewer simulators. The SAME code can be blocking
-for one attack and reducing for another in the same step — severity is contextual, the
-description in the catalog is not. Descriptions are Core\'s own, relayed verbatim, and null
-where Core supplied none; never present a bare reason code to a user as an explanation.
+Returns: counts_mode, plan_step_count, returned_step_count, truncated, params_used,
+constraint_catalog ({code: description}, relayed verbatim from the console, null where it
+supplied none), steps (each with simulation_count, counts_computed, attack/simulator count
+maps, zero_impact_attacks, zero_impact_simulators, conflicts) and hint_to_agent.
+zero_impact_* REPORTS entities whose count is a genuine 0 — it removes nothing from the
+scenario. Each conflict's severity is computed from that attack's own count ("blocking" at
+0, "reducing" otherwise), so one code is legitimately blocking and reducing in one step.
 
 Examples:
 get_plan_statistics(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
+get_plan_statistics(console="demo", test_id="1764165600525.2", conflict_detail="per_attack")
 get_plan_statistics(console="demo", scenario_id="3b8eade5-...", both_counts=True)
-get_plan_statistics(console="demo", plan=\'{"steps": [{"attacksFilter": {"playbook": {"values": [8849]}}}]}\')
-get_plan_statistics(console="demo", scenario_id="1771...", conflict_detail="full")"""
+get_plan_statistics(console="demo", plan='{"steps": [{"attacksFilter": {"playbook": {"values": [8849]}}}]}')"""
         )
         def get_plan_statistics(
             console: str = "default",
-            plan: str = None,
-            scenario_id: str = None,
+            plan: str | None = None,
+            scenario_id: str | None = None,
+            test_id: str | None = None,
             include_disabled: bool = False,
             both_counts: bool = False,
             get_constraints: bool = True,
@@ -1696,7 +1718,7 @@ get_plan_statistics(console="demo", scenario_id="1771...", conflict_detail="full
             use_cache: bool = True,
             conflict_detail: str = "summary",
         ) -> dict:
-            """Score a plan and report its impact, without running anything."""
+            """Score a scenario and report its impact, without running anything."""
             try:
                 # Single-tenant console auto-resolve
                 from safebreach_mcp_core.environments_metadata import get_console_name, safebreach_envs
@@ -1709,6 +1731,7 @@ get_plan_statistics(console="demo", scenario_id="1771...", conflict_detail="full
                     console=console,
                     plan=plan,
                     scenario_id=scenario_id,
+                    test_id=test_id,
                     include_disabled=include_disabled,
                     both_counts=both_counts,
                     get_constraints=get_constraints,

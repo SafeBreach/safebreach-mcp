@@ -480,11 +480,18 @@ Rate limiting environment variables:
   raises a clear error before queuing. The response includes the resolved `draft` value.
 25. `get_plan_statistics` ✨ **NEW** 📖 **Read-only** - Reports what a plan **would** do on a console —
   per-step simulation counts, which attacks and simulators contribute nothing, and why — **without running
-  anything**. Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics`. Scores an **ad-hoc plan body that
-  was never saved** (`plan`, a JSON string) or a **saved scenario / custom plan** (`scenario_id`, passed to
-  Core as `id` for native resolution — never `planId`, which the controller ignores); exactly one, and a
-  blank string counts as absent. **Not rate-limited** — it is read-only, so it takes neither gate and adds no
-  row to the table above.
+  anything**. Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics`. Scores exactly one of three
+  inputs, with a blank string counting as absent: an **ad-hoc scenario body that was never saved** (`plan`,
+  a JSON string), a **saved scenario / custom plan** (`scenario_id`, sent as `id`), or **the scenario a past
+  run executed** (`test_id`, a planRunId such as `1764165600525.2`, sent as `testId` — the orchestrator
+  resolves it through the test summary's `originalPlan`, and a run whose summary no longer carries one
+  raises `PastRunHasNoScenarioError`). `planId` is **never** sent: it is in the `ValidatePlan` schema, but
+  `getPlanById` destructures only `{id, testId}`, so a body carrying it falls through to the inline branch
+  and is scored as a step-less plan (400). `name` is always sent — the schema requires it and the request
+  is validated at the edge — as `""`, which is what the console UI posts.
+  A `test_id` is passed **straight through**: a planRunId is neither an integer plan id nor an OOB UUID, so
+  routing it through client-side scenario resolution would report a valid id as a missing scenario.
+  **Not rate-limited** — it is read-only, so it takes neither gate and adds no row to the table above.
   **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
   **runnable** counts — what would run right now, with every offline/disabled/unapproved simulator reported
   with its reason — and `true` gives **expected** counts, which therefore never report `simulator_is_offline`
@@ -496,6 +503,10 @@ Rate limiting environment variables:
   **`null` means not computed, never zero**: on a limit-reached response `truncated` is true,
   `counts_computed` is false, every count is `null`, and **all zero-impact reporting is suppressed by
   construction** — empty lists there mean "not evaluated", not "nothing is inapplicable".
+  **The response envelope is accepted in either shape**: swagger documents a `data` wrapper while the
+  endpoint's own component tests show `steps` at the top level (SAF-32019). Reading an unwrapped body as
+  absent would report a scored plan as having no steps at all — a silent empty result, which is precisely
+  what the null-versus-zero rule exists to prevent.
   Conflicts are returned **normalized**: a top-level `constraint_catalog` of the codes this response
   references, each `description` relayed **verbatim from Core** (`null` where Core supplied none — MCP
   vendors no constraint vocabulary), plus per-conflict rows carrying only `code`, `severity`, `attack_id`,

@@ -9444,16 +9444,33 @@ class TestPlanStatisticsToolRegistration:
         """Omitting the inversion invites the caller to reproduce the defect being fixed."""
         description = self._tools()['get_plan_statistics'].description
         assert 'include_disabled' in description
-        assert 'WHICH QUESTION IS ASKED' in description
+        assert 'WHICH QUESTION is asked' in description
 
     def test_description_states_the_tool_reports_but_removes_nothing(self):
         description = self._tools()['get_plan_statistics'].description
-        assert 'REMOVES NOTHING' in description
+        assert 'REPORTS entities whose count is a genuine 0' in description
+        assert 'removes nothing' in description
 
     def test_description_states_limit_reached_means_not_computed(self):
         description = self._tools()['get_plan_statistics'].description
         assert 'NOT COMPUTED' in description
-        assert 'NULL MEANS NOT MEASURED' in description
+        assert 'an integer 0 is' in description
+
+    def test_description_names_all_three_inputs(self):
+        """The three accepted inputs are the tool's whole entry surface."""
+        description = self._tools()['get_plan_statistics'].description
+        for name in ('`plan`', '`scenario_id`', '`test_id`'):
+            assert name in description
+
+    def test_description_states_the_investigative_use(self):
+        """The strongest reason to reach for this tool is explaining a run, not predicting one."""
+        description = self._tools()['get_plan_statistics'].description
+        assert 'why specific' in description
+        assert 'did not run' in description
+
+    def test_description_never_offers_plan_id(self):
+        """planId is in the request schema but is ignored; naming it invites a silent 400."""
+        assert 'planId' not in self._tools()['get_plan_statistics'].description
 
 
 class TestPlanInputIsExclusiveAndParsed:
@@ -9515,6 +9532,21 @@ class TestPlanInputIsExclusiveAndParsed:
                 sb_get_plan_statistics(console="test-console", scenario_id="   ")
             post.assert_not_called()
 
+    def test_a_blank_test_id_is_rejected_not_sent_to_core(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                sb_get_plan_statistics(console="test-console", test_id="  ")
+            post.assert_not_called()
+
+    def test_test_id_with_another_input_is_rejected(self):
+        for other in ({'scenario_id': 'abc-123'}, {'plan': '{"steps": [{"n": 0}]}'}):
+            with _statistics_transport({}) as post:
+                with pytest.raises(ValueError, match="exactly one"):
+                    sb_get_plan_statistics(
+                        console="test-console", test_id="1764165600525.2", **other
+                    )
+                post.assert_not_called()
+
     def test_every_rejection_names_both_inputs_and_the_exclusivity(self):
         cases = [
             {'plan': '{"steps": [{"n": 0}]}', 'scenario_id': 'abc'},
@@ -9528,6 +9560,7 @@ class TestPlanInputIsExclusiveAndParsed:
             message = str(excinfo.value)
             assert "'plan'" in message
             assert "'scenario_id'" in message
+            assert "'test_id'" in message
             assert "exactly one" in message
 
 
@@ -9619,6 +9652,75 @@ class TestOobScenarioIdIsResolvedClientSide:
             [s['simulation_count'] for s in by_id['steps']]
             == [s['simulation_count'] for s in ad_hoc['steps']]
         )
+
+
+class TestPastRunIsScoredByTestId:
+    """A planRunId is passed straight through as `testId`.
+
+    The endpoint resolves it via getTestSummaryByPlanRunId -> originalPlan, so
+    the scenario a past run actually executed is scored without a client-side
+    fetch. This is the input behind "why didn't these attacks run in test X".
+    """
+
+    PLAN_RUN_ID = "1764165600525.2"
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_the_body_carries_test_id_and_a_name(self):
+        with _statistics_transport({"data": {"steps": []}}) as post:
+            sb_get_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        body = post.call_args.kwargs["json"]
+        assert body["testId"] == self.PLAN_RUN_ID
+        assert body["name"] == ""
+
+    def test_no_scenario_lookup_is_issued_for_a_plan_run_id(self):
+        """A planRunId is neither an integer plan id nor an OOB UUID.
+
+        Routing it through the scenario resolver would look it up among
+        scenarios and report it missing — the id is valid, just not a scenario.
+        """
+        with _statistics_transport({"data": {"steps": []}}), \
+                patch('safebreach_mcp_studio.studio_functions._fetch_all_scenarios') as fetch:
+            sb_get_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        fetch.assert_not_called()
+
+    def test_a_dotted_plan_run_id_is_not_mistaken_for_a_scenario_id(self):
+        with _statistics_transport({"data": {"steps": []}}) as post:
+            sb_get_plan_statistics(console="test-console", test_id=self.PLAN_RUN_ID)
+
+        body = post.call_args.kwargs["json"]
+        assert "id" not in body
+        assert "steps" not in body
+
+    def test_the_report_is_shaped_like_any_other(self, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_plan_statistics(
+                console="test-console", test_id=self.PLAN_RUN_ID
+            )
+
+        assert result['counts_mode'] == 'runnable'
+        assert result['plan_step_count'] is None
+        assert len(result['steps']) > 0
+
+    def test_both_counts_issues_two_calls_for_one_run(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            result = sb_get_plan_statistics(
+                console="test-console", test_id=self.PLAN_RUN_ID, both_counts=True
+            )
+
+        assert post.call_count == 2
+        assert all(call.kwargs["json"]["testId"] == self.PLAN_RUN_ID
+                   for call in post.call_args_list)
+        assert result['counts_mode'] == 'both'
 
 
 class TestCountsModeSelectsOneCallOrTwo:
