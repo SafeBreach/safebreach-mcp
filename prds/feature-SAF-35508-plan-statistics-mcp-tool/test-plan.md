@@ -16,7 +16,7 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Req | Requirement (from SAF-35508 ∪ PRD §7) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1 | Ad-hoc plan body evaluated with no saved scenario; `scenario_id` passed to Core as `{id}`; a plan with no steps surfaces a typed error, not a raw 400 | T-6, T-7, T-8, T-11, T-26, T-28, T-29, T-31 | Covered |
+| R1 | Ad-hoc plan body evaluated with no saved scenario; `scenario_id` passed to the orchestrator as `{id}`; a plan with no steps surfaces a typed error, not a raw 400 | T-6, T-7, T-8, T-11, T-26, T-28, T-29, T-31 | Covered |
 | R2 | Surface per-step `simulationCount`, `moves`, `simulators`/`attackerSimulators`/`targetSimulators`, `isLimitReached`, structured constraints; pass through all five query params with documented defaults | T-6, T-9, T-11, T-28 | Covered |
 | R3 | Runnable counts by default (`includeDisabled=false`); expected available; both-mode issues two labelled calls; documents that expected is not derivable from runnable | T-9, T-27, T-30 | Covered |
 | R4 | Numbers match the console per view and per parameter set (Checkout `includeDisabled=true, getConstraints=true`; run gating `includeDisabled=false`) | T-30, T-35 | Covered |
@@ -69,7 +69,7 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
   - **R10 (Closed)** — SAF-35568 was on Stage 1's critical path; it has delivered. It shipped *without* the
     `fixLever` half (removed as redundant), which is why no lever map is planned here, and its localization
     question was deferred rather than answered — which does not block MCP, since the relay is agnostic to
-    which string Core serves.
+    which string the orchestrator serves.
   - **R11 (Med)** — console-version straddle. A console whose orchestrator predates SAF-35568 returns no
     `constraintCatalog`, so every conflict reports `description: null` — including the 14 that carried vendored
     prose before this ticket. Degrades rather than failing (same contract as an unrecognised code), with a
@@ -163,7 +163,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | Test | Description | Aspect | Passes after | Repo | Environment |
 |------|-------------|--------|--------------|------|-------------|
 | T-6 | An ad-hoc plan body is scored and the response returned unreduced | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
-| T-7 | A scenario_id is passed to Core for native resolution, never via planId | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
+| T-7 | A scenario_id is passed to the orchestrator for native resolution, never via planId | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
 | T-8 | A step-less plan is rejected before any network call is made | — | Phase 2 | safebreach_mcp_core | repo-harness |
 | T-9 | All five query parameters are sent, with the documented defaults and honoured overrides | API-contract | Phase 2 | safebreach_mcp_core | repo-harness |
 | T-10 | A limit-reached response is survived, and null is kept distinct from zero | regression | Phase 2 | safebreach_mcp_core | repo-harness |
@@ -228,7 +228,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Execution: Automatic
 - Risk: The current lookup returns the code itself on a miss. Silently dropping an unknown code would hide a genuine blocker — exactly what the console does, filtering to `CONSTRAINTS[reason]` at `helpers.tsx:820` and discarding the 31 codes its table lacks. Drift is measured, not hypothetical.
 - Risk source: PRD §9 (R3)
-- Verify: Process a response carrying a conflict whose code the response's own `constraintCatalog` does not describe — both forms Core can produce: the code absent from the catalog entirely, and present with an empty entry (`{}`), which is how Core represents a code it does not itself recognise. Inspect the resolved catalog entry and the conflict list.
+- Verify: Process a response carrying a conflict whose code the response's own `constraintCatalog` does not describe — both forms the orchestrator can produce: the code absent from the catalog entirely, and present with an empty entry (`{}`), which is how the orchestrator represents a code it does not itself recognise. Inspect the resolved catalog entry and the conflict list.
 - Expected: `description` is explicitly `null` for both forms — not the code, not invented prose — and the conflict is still present in the output, surfaced rather than dropped.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
@@ -308,7 +308,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: planned: `safebreach_mcp_core/tests/test_plan_statistics.py`
 - Environment needs: repo-harness
 
-### T-7 — A scenario_id is passed to Core for native resolution, never via planId
+### T-7 — A scenario_id is passed to the orchestrator for native resolution, never via planId
 
 - Description: Proves the saved-scenario path is a passthrough rather than a client-side fetch, and avoids the schema field the controller silently ignores.
 - Status: Active
@@ -331,7 +331,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Passes after: Phase 2
 - Level: integration
 - Execution: Automatic
-- Risk: Core answers a step-less plan with an HTTP 400; surfaced raw it reads as a tool failure rather than "add a step", which Helm will hit constantly while building.
+- Risk: the orchestrator answers a step-less plan with an HTTP 400; surfaced raw it reads as a tool failure rather than "add a step", which Helm will hit constantly while building.
 - Risk source: PRD §9 (edge cases)
 - Verify: With the API mocked, call the fetch core with a plan body whose `steps` is missing, then again with `steps` empty. Assert the mocked transport was never invoked.
 - Expected: Both calls raise a typed error whose message names the missing steps; the HTTP mock records zero calls.
@@ -373,12 +373,12 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 ### T-11 — An API failure surfaces the full response body, not just a status code
 
-- Description: Proves a failed scoring call is diagnosable, since the response body is where Core explains what it rejected.
+- Description: Proves a failed scoring call is diagnosable, since the response body is where the orchestrator explains what it rejected.
 - Status: Active
 - Passes after: Phase 2
 - Level: integration
 - Execution: Automatic
-- Risk: A bare status code gives a caller nothing to act on, and Core signals distinguishable conditions (step-less plan, unsupported filter operator) through the body.
+- Risk: A bare status code gives a caller nothing to act on, and the orchestrator signals distinguishable conditions (step-less plan, unsupported filter operator) through the body.
 - Risk source: PRD §9 (R4)
 - Verify: Mock the API returning a non-2xx status with a JSON body carrying an identifiable error string. Call the fetch core and capture the raised error.
 - Expected: The raised error's message contains both the status code and the identifiable string from the body.
@@ -488,7 +488,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Passes after: Phase 4
 - Level: unit
 - Execution: Automatic
-- Risk: Core prunes empty constraint leaves and then any simulator with no constraints at all. Treating the map as dense would fabricate entries for simulators that are simply fine.
+- Risk: the orchestrator prunes empty constraint leaves and then any simulator with no constraints at all. Treating the map as dense would fabricate entries for simulators that are simply fine.
 - Risk source: PRD §9 (edge cases)
 - Verify: Shape a response where three simulators are in scope but only one appears in the constraint map. Run the reporting layer.
 - Expected: Conflicts are reported for the one present simulator only. The two absent simulators produce no conflict entries and are not described as unevaluated or unknown.
@@ -544,7 +544,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 ### T-22 — A limit-reached response suppresses zero-impact reporting entirely
 
-- Description: Proves the plan's central safety property: when Core did not compute the numbers, the tool says so instead of drawing conclusions from them.
+- Description: Proves the plan's central safety property: when the orchestrator did not compute the numbers, the tool says so instead of drawing conclusions from them.
 - Status: Active
 - Passes after: Phase 4
 - Level: unit
@@ -666,7 +666,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 ### T-28 — The tool scores an ad-hoc plan against a real console and returns usable numbers
 
-- Description: Proves the whole path works against the real Core service, which is the only way to know the request shape and response parsing are actually right.
+- Description: Proves the whole path works against the real the orchestrator service, which is the only way to know the request shape and response parsing are actually right.
 - Status: Active
 - Passes after: Phase 5
 - Level: e2e
@@ -835,7 +835,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-08-27 15:40 | Fetch core relocated to `safebreach_mcp_core` per user decision — `plan/statistics` is a general orchestrator API with further clients expected, so it ships as a shared primitive (`safebreach_mcp_core/plan_statistics.py`, public `fetch_plan_statistics`) rather than a studio-private helper, mirroring `core/queue_state.py`. Retargeted the eight tests that exercise the fetch core itself — T-6, T-7, T-8, T-9, T-10, T-11, T-12 and T-16 (the single-call-site scan) — to `safebreach_mcp_core/tests/test_plan_statistics.py`, and updated their Repo column. T-13/T-14/T-15/T-17 stay in the studio suite: they assert the summariser's own contract. Added a Change Coverage row for the new core module. No test was added, removed or re-phased and no assertion changed — placement only. |
-| 2026-08-27 14:57 | Corrected for PRD v5 — MCP vendors **no** constraint vocabulary and relays Core's `constraintCatalog` instead, after [SAF-35568](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) shipped `{ description }` only (its `fixLever` was implemented then removed as redundant) over 97 codes with keys 1:1 with emitted values. **T-2 tombstoned** (Status: Removed, ID retained) — there is no vendored map to key, and the upstream key/value mismatch it policed was fixed at source. **T-5 tombstoned** — nothing is vendored, so nothing can drift; the cross-repo checkout dependency goes with it. T-1 rescoped from "every code has a valid fix lever" to "no constraint vocabulary is vendored anywhere", including a scan for substitute mappings; T-3 rescoped to both forms of an undescribed code (absent entry and empty `{}`); T-23's catalog assertion moved from `fix_lever` to a relayed `description`. **Added T-38** (descriptions relayed byte-for-byte, never re-worded), **T-39** (absent/empty catalog degrades to `description: null` with conflicts intact and a hint, per new R11) and **T-40** (e2e — a real console actually supplies the descriptions the relay depends on, skipping with a stated reason on a pre-SAF-35568 console). Also fixed stale v1 wording in T-28's Expected, which still demanded a "suggested fix" dropped back in v2. R7 restated to the relay contract, R8 to conditional-null; R3/R6/R10 closed, R7/R9 dropped to Low, R11 added. Regenerated views: 36 Active (15 unit / 13 integration / 8 e2e), phases 4/11/16/23/32/33/36. Status stays Draft — material change. In Sync with PRD v5. |
+| 2026-08-27 14:57 | Corrected for PRD v5 — MCP vendors **no** constraint vocabulary and relays the orchestrator's `constraintCatalog` instead, after [SAF-35568](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) shipped `{ description }` only (its `fixLever` was implemented then removed as redundant) over 97 codes with keys 1:1 with emitted values. **T-2 tombstoned** (Status: Removed, ID retained) — there is no vendored map to key, and the upstream key/value mismatch it policed was fixed at source. **T-5 tombstoned** — nothing is vendored, so nothing can drift; the cross-repo checkout dependency goes with it. T-1 rescoped from "every code has a valid fix lever" to "no constraint vocabulary is vendored anywhere", including a scan for substitute mappings; T-3 rescoped to both forms of an undescribed code (absent entry and empty `{}`); T-23's catalog assertion moved from `fix_lever` to a relayed `description`. **Added T-38** (descriptions relayed byte-for-byte, never re-worded), **T-39** (absent/empty catalog degrades to `description: null` with conflicts intact and a hint, per new R11) and **T-40** (e2e — a real console actually supplies the descriptions the relay depends on, skipping with a stated reason on a pre-SAF-35568 console). Also fixed stale v1 wording in T-28's Expected, which still demanded a "suggested fix" dropped back in v2. R7 restated to the relay contract, R8 to conditional-null; R3/R6/R10 closed, R7/R9 dropped to Low, R11 added. Regenerated views: 36 Active (15 unit / 13 integration / 8 e2e), phases 4/11/16/23/32/33/36. Status stays Draft — material change. In Sync with PRD v5. |
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
 | 2026-08-26 16:35 | Fixed the Regression section's test list: dropped tombstoned T-4 and added T-2 and T-10, which carry `Aspect: regression` but were never listed. The list is now the complete regression set. |
 | 2026-08-26 16:20 | Corrected for PRD v4 — the vendored translation table is **deleted**, not extended. **T-4 tombstoned** (Status: Removed, ID retained): its premise was preserving the 14 existing descriptions, which are now deliberately removed (PRD R9). T-1 rescoped to assert `CONSTRAINT_REASON_DESCRIPTIONS` no longer exists and that all 88 codes carry a valid-or-null lever with no meaning-bearing field; T-3 and T-23 assert an explicit `description: null` rather than a fabricated or bare-code explanation. R7 narrowed from descriptions to levers; R3 dropped to Low; R9/R10 added for the accepted regression and the SAF-35568 dependency. Regenerated views: 35 Active (15 unit / 13 integration / 7 e2e), phases 4/11/16/23/31/32/35. In Sync with PRD v4. |

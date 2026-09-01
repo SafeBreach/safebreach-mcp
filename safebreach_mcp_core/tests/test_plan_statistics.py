@@ -54,7 +54,7 @@ def _two_step_payload():
 
 
 def _limit_reached_payload():
-    """Core pushed a sentinel step and returned early: one step, every count null."""
+    """A sentinel step pushed after the orchestrator returned early: every count null."""
     return {
         "data": {
             "steps": [
@@ -216,7 +216,7 @@ class TestAdHocPlanBodyIsScoredUnreduced:
 
 
 class TestScenarioIdIsPassedForNativeResolution:
-    """T-7 — a scenario_id is passed to Core for native resolution, never via planId."""
+    """T-7 — a scenario_id is passed for native resolution, never via planId."""
 
     @patch("safebreach_mcp_core.plan_statistics.requests.post")
     def test_body_carries_id_and_name_for_a_scenario_id(self, mock_post):
@@ -415,7 +415,7 @@ class TestLimitReachedResponseKeepsNullDistinctFromZero:
 
     @patch("safebreach_mcp_core.plan_statistics.requests.post")
     def test_index_is_into_the_returned_list_not_the_plan(self, mock_post):
-        """Core's sentinel step is returned-list position 0, not plan step 0."""
+        """The orchestrator's sentinel step is returned-list position 0, not plan step 0."""
         mock_post.return_value = _mock_response(_limit_reached_payload())
 
         result = fetch_plan_statistics(console="test-console", plan=_plan_body(3))
@@ -694,7 +694,7 @@ class TestNoMcpSideCaching:
         """A TTL cache here would serve numbers for a config the user already edited.
 
         Keyed on the *type*, not the name: a cache is an object that stores
-        results, so a scalar like DEFAULT_USE_CACHE — which names Core's own
+        results, so a scalar like DEFAULT_USE_CACHE — which names the orchestrator's own
         server-side query parameter — is not one.
         """
         import safebreach_mcp_core.plan_statistics as plan_statistics

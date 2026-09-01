@@ -508,14 +508,14 @@ Rate limiting environment variables:
   absent would report a scored plan as having no steps at all — a silent empty result, which is precisely
   what the null-versus-zero rule exists to prevent.
   Conflicts are returned **normalized**: a top-level `constraint_catalog` of the codes this response
-  references, each `description` relayed **verbatim from Core** (`null` where Core supplied none — MCP
+  references, each `description` relayed **verbatim from the orchestrator** (`null` where it supplied none — MCP
   vendors no constraint vocabulary), plus per-conflict rows carrying only `code`, `severity`, `attack_id`,
   `side`, `simulator_count` and the API's `values`. `severity` is **computed from the attack's own count**
   (`blocking` at integer `0`, `reducing` when it still runs), so the same code is legitimately blocking for
   one attack and reducing for another in the same step. `conflict_detail` controls verbosity: `summary`
   (default), `per_attack` (adds attack names), `full` (adds a capped `simulator_ids` sample).
   **No MCP-side cache** — a re-check after a changed decision must never be answered from a stale local copy;
-  `use_cache` controls only Core's own server-side cache.
+  `use_cache` controls only the orchestrator's own server-side cache.
 
 
 ## Filtering and Search Capabilities

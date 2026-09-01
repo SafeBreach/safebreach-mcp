@@ -1,7 +1,7 @@
 # Test Results — Phase 1 (SAF-35508)
 > Plan: ../test-plan.md | Run: 2026-08-27T14:59:04Z | Mode: run
 
-Phase 1 — Relay Core's constraint catalog (delete the vendored translation table).
+Phase 1 — Relay the orchestrator's constraint catalog (delete the vendored translation table).
 
 ## Preflight (Step 0)
 

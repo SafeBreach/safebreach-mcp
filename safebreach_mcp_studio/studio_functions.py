@@ -2246,8 +2246,8 @@ def _raw_constraint_catalog(statistics_data):
 def _resolve_constraint_description(code, constraint_catalog):
     """Resolve one reason code against the response's own catalog.
 
-    Returns Core's string, or None when the catalog has no entry — or an entry
-    with no description, which is how Core represents a code it does not itself
+    Returns the orchestrator's string, or None when the catalog has no entry — or an entry
+    with no description, which is how the orchestrator represents a code it does not itself
     recognise. Never returns the code, and never authors a meaning.
     """
     if not isinstance(constraint_catalog, dict):
@@ -2290,7 +2290,7 @@ def _count_matched_entities(counts):
 
 
 def _nothing_was_computed(counts):
-    """True when Core returned counts but computed none of them.
+    """True when the orchestrator returned counts but computed none of them.
 
     Distinguishes a truncated response from a genuinely empty selection: an
     empty list means no steps at all, which is a different problem.
@@ -2299,7 +2299,7 @@ def _nothing_was_computed(counts):
 
 
 def _truncated_scoring_error(subject, counts):
-    """The message for a scoring run Core stopped early.
+    """The message for a scoring run the orchestrator stopped early.
 
     Never says "no matching simulators": that is a measured verdict, and on this
     path nothing was measured.
@@ -2315,7 +2315,7 @@ def _truncated_scoring_error(subject, counts):
 def _sum_computed_counts(counts):
     """Total only the counts that were actually computed.
 
-    A limit-reached response returns None for every step Core did not reach;
+    A limit-reached response returns None for every step the orchestrator did not reach;
     summing those raises. An uncomputed step contributes nothing to the total,
     which is a partial figure by nature — the truncation is what explains it.
     """
@@ -2577,7 +2577,7 @@ _CONSTRAINT_SIDES = (('attackerConstraints', 'attacker'), ('targetConstraints', 
 def _iter_constraint_leaves(simulator_constraints):
     """Yield (side, simulator_id, attack_id, reason) for every reason present.
 
-    Iterates only what the map contains. Core prunes empty leaves and then any
+    Iterates only what the map contains. The orchestrator prunes empty leaves and then any
     simulator left with no constraints, so a simulator's absence means it had no
     conflicts — never that it went unevaluated. Each leaf is a list and every
     element is yielded: under getAllConstraints a pairing accumulates several
@@ -2825,7 +2825,7 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
     _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
     _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
 
-    # The R1 guard: when Core did not compute the numbers, draw no conclusions
+    # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
     if not step['counts_computed']:
         _cap_list(shaped, 'zero_impact_attacks', [], ZERO_IMPACT_CAP, uncapped)
@@ -2906,7 +2906,7 @@ def _blank_to_none(value):
 
     A calling model routinely fills an unused optional with "" rather than
     omitting it; taken literally that both defeats the exclusivity check and
-    sends an empty id to Core.
+    sends an empty id to the orchestrator.
     """
     if isinstance(value, str) and not value.strip():
         return None
@@ -2970,7 +2970,7 @@ def _validate_conflict_detail(conflict_detail):
 
 
 def _scenario_id_is_native(scenario_id):
-    """Whether Core can resolve this id itself.
+    """Whether the orchestrator can resolve this id itself.
 
     The statistics endpoint's schema types `id` as an integer, so it resolves
     custom plans (integer ids) natively but rejects an OOB scenario's UUID
@@ -2983,9 +2983,9 @@ def _scenario_id_is_native(scenario_id):
 def _resolve_scenario_to_plan(console, scenario_id):
     """Turn an OOB scenario UUID into an ad-hoc plan body.
 
-    Core cannot accept a UUID in `id`, so the only route for an OOB scenario is
+    The orchestrator cannot accept a UUID in `id`, so the only route for an OOB scenario is
     to read its steps here and score them as an ad-hoc plan. Returns None when
-    the id is one Core resolves itself, so that path stays a passthrough.
+    the id is one the orchestrator resolves itself, so that path stays a passthrough.
     """
     if _scenario_id_is_native(scenario_id):
         return None
@@ -3052,8 +3052,8 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         both_counts: Issue two calls and return both figures, labelled.
         get_constraints: Populate conflicts and the catalog that describes them.
         get_all_constraints: Report every reason a pairing was eliminated, not just the first.
-        limit: Simulations Core evaluates before stopping early.
-        use_cache: Whether Core may answer from its own cache.
+        limit: Simulations the orchestrator evaluates before stopping early.
+        use_cache: Whether the orchestrator may answer from its own cache.
         conflict_detail: 'summary', 'per_attack' or 'full'.
 
     Returns:
@@ -3069,7 +3069,7 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
     if resolved_scenario_id is not None:
         # An OOB scenario's UUID has no field on the endpoint that accepts it,
         # so it is resolved to its steps here; an integer plan id is left for
-        # Core to resolve natively.
+        # the orchestrator to resolve natively.
         from_scenario = _resolve_scenario_to_plan(console, resolved_scenario_id)
         if from_scenario is not None:
             parsed_plan, resolved_scenario_id = from_scenario, None

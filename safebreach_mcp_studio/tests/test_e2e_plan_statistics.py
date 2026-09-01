@@ -2,7 +2,7 @@
 End-to-End Tests for get_plan_statistics (SAF-35508)
 
 Scores real plans against a real console and checks the numbers are usable,
-self-consistent, and explained by Core's own constraint catalog.
+self-consistent, and explained by the orchestrator's own constraint catalog.
 
 ZERO MOCKS — all calls hit real SafeBreach APIs.
 

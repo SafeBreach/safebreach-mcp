@@ -1777,7 +1777,7 @@ def _format_predicted_total(total, per_step) -> str:
 def _format_simulation_count(count) -> str:
     """Render a simulation count for display.
 
-    Counts are nullable: null means Core never computed the number, which must
+    Counts are nullable: null means the orchestrator never computed the number, which must
     never be rendered as 0 — nor blow up the whole preview in str.format.
     """
     if isinstance(count, int) and not isinstance(count, bool):

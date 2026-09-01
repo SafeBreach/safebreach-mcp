@@ -344,14 +344,14 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
 
 
 _TRUNCATION_HINT = (
-    "Core hit its evaluation limit and stopped early: {returned} of {plan} steps "
+    "SafeBreach hit its evaluation limit and stopped early: {returned} of {plan} steps "
     "returned, no counts computed for the steps it did not reach. null means "
     "not-computed, NOT zero — nothing here indicates any attack or simulator is "
     "inapplicable."
 )
 
 _TRUNCATION_HINT_UNKNOWN_PLAN = (
-    "Core hit its evaluation limit and stopped early: {returned} step(s) returned, "
+    "SafeBreach hit its evaluation limit and stopped early: {returned} step(s) returned, "
     "and the plan's step count is not knowable client-side on the scenario_id path. "
     "No counts were computed for the steps it did not reach. null means "
     "not-computed, NOT zero — nothing here indicates any attack or simulator is "
@@ -428,8 +428,8 @@ def get_plan_statistics_response_mapping(
     Emits:
         counts_mode          'runnable' or 'expected' — which question was asked
         plan_step_count      steps in the plan; None on the scenario_id path
-        returned_step_count  steps Core actually returned
-        truncated            Core stopped early, so the two counts differ
+        returned_step_count  steps the orchestrator actually returned
+        truncated            the orchestrator stopped early, so the two counts differ
         params_used          the query parameters actually sent
         constraint_catalog   {code: {description}} — one entry per code present
                              in this response, description relayed verbatim or

@@ -7596,7 +7596,7 @@ def sample_constraint_catalog_response():
                     "description": "The selected package is unavailable on this host"
                 },
                 "described_as_empty": {"description": ""},
-                # Core's representation of a code it does not itself recognise.
+                # The orchestrator's representation of a code it does not itself recognise.
                 "present_but_unrecognised": {},
                 # Described by the API but never emitted by MCP — must be narrowed out.
                 "never_emitted_by_mcp": {"description": "Should not reach the caller"},
@@ -7755,7 +7755,7 @@ class TestUnrecognisedConstraintCode:
         ) == {'description': None}
 
     def test_code_present_with_empty_entry_resolves_to_null_description(self):
-        """An empty entry — Core's own 'I do not recognise this' — resolves to None."""
+        """An empty entry — 'I do not recognise this' — resolves to None."""
         from safebreach_mcp_studio.studio_functions import (
             _resolve_constraint_description,
         )
@@ -8129,7 +8129,7 @@ def partial_coverage_statistics_response():
 
 @pytest.fixture
 def limit_reached_statistics_response():
-    """Core stopped early: one sentinel step, every count null."""
+    """The orchestrator stopped early: one sentinel step, every count null."""
     return {
         "data": {
             "steps": [
@@ -8598,7 +8598,7 @@ def _phase4_step(**overrides):
 PHASE4_SPARSE_STATISTICS = _phase4_statistics(
     [_phase4_step(
         moves={'281': 0},
-        # Three simulators in scope, only one carries any constraint. Core prunes
+        # Three simulators in scope, only one carries any constraint. The orchestrator prunes
         # empty leaves and then empty simulators, so absence means "fine".
         simulators={'sim-1': 0, 'sim-2': 4, 'sim-3': 4},
         targetSimulators={'sim-1': 0, 'sim-2': 4, 'sim-3': 4},
@@ -9515,7 +9515,7 @@ class TestPlanInputIsExclusiveAndParsed:
     def test_a_blank_plan_does_not_defeat_the_exclusivity_check(self):
         """A calling model routinely fills an unused optional with an empty string.
 
-        Uses an integer plan id, which Core resolves natively — a UUID would take
+        Uses an integer plan id, which the orchestrator resolves natively — a UUID would take
         the client-side resolution path and is covered separately.
         """
         with _statistics_transport({"data": {"steps": []}}) as post:
@@ -9565,7 +9565,7 @@ class TestPlanInputIsExclusiveAndParsed:
 
 
 class TestOobScenarioIdIsResolvedClientSide:
-    """Core's schema types `id` as an integer, so a UUID cannot be passed through.
+    """The orchestrator's schema types `id` as an integer, so a UUID cannot be passed through.
 
     Verified against a live console: {"id": 1} and {"id": "1"} are accepted,
     {"id": "<uuid>"} returns 400 "/id must be integer", and testId wants a test,
@@ -9594,7 +9594,7 @@ class TestOobScenarioIdIsResolvedClientSide:
             sb_get_plan_statistics(console="test-console", scenario_id=mock_oob_scenario['id'])
 
         body = post.call_args.kwargs["json"]
-        # The UUID must not reach Core in `id` — that is the 400.
+        # The UUID must not reach the orchestrator in `id` — that is the 400.
         assert "id" not in body
         assert body["steps"] == mock_oob_scenario["steps"]
 
@@ -9607,7 +9607,7 @@ class TestOobScenarioIdIsResolvedClientSide:
         assert post.call_args.kwargs["json"]["name"] == mock_oob_scenario["name"]
 
     def test_an_integer_plan_id_is_left_for_core_to_resolve(self):
-        """The passthrough must survive: Core resolves integer ids natively."""
+        """The passthrough must survive: the orchestrator resolves integer ids natively."""
         with _statistics_transport({"data": {"steps": []}}) as post, \
                 patch('safebreach_mcp_studio.studio_functions._fetch_all_scenarios') as fetch:
             sb_get_plan_statistics(console="test-console", scenario_id="1771")

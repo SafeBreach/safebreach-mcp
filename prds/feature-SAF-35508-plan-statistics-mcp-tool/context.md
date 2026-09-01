@@ -19,7 +19,7 @@ Improving
 ### Description (as written)
 Implements functional requirements 6 and 7 of SAF-34615.
 
-Central claim: `POST /orch/v1/accounts/{accountId}/plan/statistics` is the Core
+Central claim: `POST /orch/v1/accounts/{accountId}/plan/statistics` is the orchestrator's
 impact-and-validation engine behind every simulation-count and conflict number the
 console shows. Requirement 6 makes it the single source of truth for Helm too —
 MCP must never estimate these independently.
@@ -341,7 +341,7 @@ pre-execution prediction. AC-4 is therefore a **regression guard**, not new work
 
 ### Scope boundary (parent SAF-34615 and sibling SAF-35484)
 
-- Parent **req 6** (Core API is the single source of truth, no independent estimation) →
+- Parent **req 6** (the orchestrator API is the single source of truth, no independent estimation) →
   SAF-35508 scope items 1-2, AC-2/AC-4. ✔
 - Parent **req 7** (translate conflicts, plain language + suggested fix, hard-failure-only for
   this story) → SAF-35508 scope items 3-4, AC-5/AC-6/AC-7. ✔ The parent's own example reason
@@ -380,7 +380,7 @@ no AC covers it, and per F6 mishandling it causes AC-6/AC-7 to destroy a user's 
 Helm needs to answer one question repeatedly while a user builds a Validate scenario in conversation:
 *"given the configuration as it stands right now, what will actually run, and what will not — and why?"*
 
-Core already answers it. `POST /orch/v1/accounts/{accountId}/plan/statistics` scores any plan body and returns
+The orchestrator already answers it. `POST /orch/v1/accounts/{accountId}/plan/statistics` scores any plan body and returns
 per-step simulation counts, per-attack and per-simulator counts, and per-(simulator, attack) constraint reasons.
 The console has used it for years for its Checkout tab, Studio step stats, run gating, Quick Run and the Test
 Summary PDF.
@@ -527,7 +527,7 @@ These close D1, D2 and D3 from the previous round's open-decision list.
 
 | # | Decision | Chosen | Consequence |
 |---|---|---|---|
-| **D1** | Tool wire name | **`get_plan_statistics`** | Mirrors the Core endpoint (`getPlanStatistics`) and the console wrapper exactly. Most discoverable against the API. Supersedes both the parent's `checkout_scenario` (req 13) and the previous round's `evaluate_plan` recommendation. AC-12's "confirmed wire name" is now satisfied. |
+| **D1** | Tool wire name | **`get_plan_statistics`** | Mirrors the orchestrator's endpoint (`getPlanStatistics`) and the console wrapper exactly. Most discoverable against the API. Supersedes both the parent's `checkout_scenario` (req 13) and the previous round's `evaluate_plan` recommendation. AC-12's "confirmed wire name" is now satisfied. |
 | **D2** | Expected vs runnable | **Runnable default, flag exposed** | `includeDisabled=false` is the default (strictly more informative — it is the only setting that emits `simulator_is_offline`). The flag is a pass-through parameter. A second call is issued **only** when both figures are explicitly requested, and each result is labelled. Matches AC-3 as written. |
 | **D3** | Read-only or mutating | **Read-only: the tool reports, it does not act** → ACs 9/10 **reworded**, not deferred | The tool reports raw + translated statistics plus a zero-impact summary. It shapes no plan body, so it is unambiguously `readOnlyHint=True`. On review the user's framing — *"statistics should return a summary of what's going to run and what not"* — showed the ticket's "auto-removed" wording was the error, not the design: removal is an action on the plan body, which the caller holds. **SAF-35508 ACs 9/10 were reworded to "reported" on 2026-08-26 rather than accepted as gaps — see "Resolution" below.** |
 | **D4** | Vendoring the vocabulary | **Vendor as a static table + coverage test** (carried over; recommendation accepted implicitly, no competing option) | The 88 codes are copied into `safebreach-mcp` with a test that fails when coverage regresses. |

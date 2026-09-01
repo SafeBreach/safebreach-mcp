@@ -73,7 +73,7 @@ None.
 ## Smell observations
 
 1. **The documentation is now ahead of the verification.** CLAUDE.md states as fact that descriptions are
-   "relayed verbatim from Core" — which no executed test has confirmed against a real console. T-40 is
+   "relayed verbatim from the orchestrator" — which no executed test has confirmed against a real console. T-40 is
    what would confirm it, and it has never run.
 2. **`Automation lives in: planned:` is stale for T-34 too** — twelfth item on the plan backlog.
 3. Phase 6's Changes table named only `CLAUDE.md`; the test file was also edited, as in every prior

@@ -8,7 +8,7 @@ carries ``id``, and the scenario behind a past run when it carries ``testId``,
 so both are scored by passthrough rather than by a client-side fetch. ``planId``
 is in the request schema but is destructured by nothing and silently ignored.
 
-Counts arrive nullable: ``None`` means *not computed* (Core stopped early on a
+Counts arrive nullable: ``None`` means *not computed* (the orchestrator stopped early on a
 limit-reached response), while ``0`` means *in scope, runs nowhere*. Nothing
 here defaults one to the other, and no count is compared or summed without
 first establishing it is an integer.
@@ -26,7 +26,7 @@ Usage::
         plan={"name": "", "steps": [{...}, {...}]},
     )
     result["steps"][0]["simulationCount"]   # int, or None when not computed
-    result["truncated"]                     # Core stopped early
+    result["truncated"]                     # The orchestrator stopped early
 
     # Score a saved scenario by id
     result = fetch_plan_statistics(console="pentest01", scenario_id="3b8eade5-...")
@@ -158,13 +158,13 @@ def _normalize_step(raw: dict, index: int) -> dict:
     is_limit_reached = bool(raw.get('isLimitReached'))
 
     step = {
-        # Indexes the RETURNED list, which is shorter than the plan's when Core
+        # Indexes the RETURNED list, which is shorter than the plan's when the orchestrator
         # truncates — never treat it as a plan-step position.
         'response_step_index': index,
         # No default: an absent count is 'not computed', never 0.
         'simulationCount': simulation_count,
         # False when this step's own count is missing, or when this step is the
-        # one Core stopped on — a step computed before that keeps True.
+        # one the orchestrator stopped on — a step computed before that keeps True.
         'counts_computed': _is_computed_count(simulation_count) and not is_limit_reached,
         'isLimitReached': is_limit_reached,
     }
@@ -203,8 +203,8 @@ def fetch_plan_statistics(
         get_constraints: Populate ``simulatorConstraints`` and the response's
             own ``constraintCatalog``.
         get_all_constraints: Report every reason per pairing, not just the first.
-        limit: Upper bound on simulations Core will evaluate before stopping.
-        use_cache: Whether Core may answer from its own cache.
+        limit: Upper bound on simulations the orchestrator will evaluate before stopping.
+        use_cache: Whether the orchestrator may answer from its own cache.
 
     Returns:
         A dict with ``steps`` (each carrying the six response fields unmodified,

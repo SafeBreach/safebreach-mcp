@@ -87,7 +87,7 @@ sites, the full capability surface, 8 acceptance criteria, and three explicit "t
 ### Problem Description
 
 Helm must repeatedly answer, mid-conversation, *"given the configuration as it stands, what will run, what will
-not, and why?"* Core already answers this, and MCP already reaches the endpoint — but only through a private
+not, and why?"* The orchestrator already answers this, and MCP already reaches the endpoint — but only through a private
 pre-flight helper inside two run-oriented tools. The capability is therefore **private, hardcoded, lossy, and
 in three specific ways incorrect**. Those four properties, not a missing integration, are what block the parent
 story.
@@ -170,13 +170,13 @@ Implements functional requirements 6 and 7 of SAF-34615.
 
 ### The API
 
-`POST /orch/v1/accounts/{accountId}/plan/statistics` is the Core impact-and-validation engine behind every
+`POST /orch/v1/accounts/{accountId}/plan/statistics` is the orchestrator's impact-and-validation engine behind every
 simulation-count and conflict number the console shows. Requirement 6 makes it the single source of truth for
 Helm too: MCP must never estimate these independently.
 
 Console wrapper: `getPlanStatistics(plan, limit, includeDisabled, getConstraints, abortable)` -
 `ui-react/src/actions/execution.tsx:615`.
-Core controller: `orchestrator/src/server/controllers/plan_statistics.js`.
+The orchestrator controller: `orchestrator/src/server/controllers/plan_statistics.js`.
 
 ### Current state in the MCP layer
 
@@ -354,7 +354,7 @@ Covers SAF-34615 Definition of Done items 2, 5, and 6.
 
 ```markdown
 1. The tool evaluates an ad-hoc plan body with no saved scenario, and also accepts a `scenario_id`, passed
-   through to Core as `{id}` rather than resolved client-side. A plan with no steps surfaces a typed error
+   through to the orchestrator as `{id}` rather than resolved client-side. A plan with no steps surfaces a typed error
    rather than an unhandled 400.
 2. It surfaces per-step `simulationCount`, per-attack `moves` counts, per-simulator `simulators`,
    `attackerSimulators` and `targetSimulators` counts, `isLimitReached`, and structured constraints; and passes
