@@ -329,7 +329,141 @@ multi-call mutable draft that survives across tool invocations.
 
 ## 6. Investigation Findings
 
-_Pending — Phase 4._
+Five parallel Explore investigations across `orchestrator`, `configuration`, `ui-react` and the MCP
+worktree. Every claim below carries `file:line` evidence; claims marked **(verified directly)** were
+additionally re-checked by hand in this session rather than taken from an agent report.
+
+### 6.1 Entry points — the Core write surface for Validate scenarios
+
+Internally a "Validate scenario" is a **Plan** (`type: 'validate'`) owning a **Step** collection.
+CRUD lives in the **`configuration`** service, *not* `orch`.
+
+| Method | URL | Service | Purpose | Evidence |
+|---|---|---|---|---|
+| POST | `config/v2/accounts/{accountId}/plans` | config | Create scenario | `ui-react/src/actions/execution.tsx:550-569` → `configuration/src/server/controllers/planController.js:262` `createPlanV2` |
+| PUT | `config/v2/accounts/{accountId}/plans/{id}` | config | Update scenario | `execution.tsx:571-588` → `planController.js:278` `updatePlanV2` |
+| DELETE | `config/v2/accounts/{accountId}/plans/{id}` | config | Delete scenario | `execution.tsx:605-613` → `planController.js:269` |
+| GET | `config/v2/accounts/{accountId}/plans` | config | List scenarios (catalog) | `execution.tsx:499-510` |
+| POST/PUT/GET/DELETE | `config/v3/accounts/{accountId}/plans[/{id}]` | config | Type-aware v3-native surface (adds `type`, `propagateDefinition`). **No ui-react caller found.** | `planController.js:297-316` |
+| POST | `orch/v1/accounts/{accountId}/plan/statistics` | orch | Impact/validation — **owned by SAF-35508** | `execution.tsx:615-645` |
+
+**Two services participate in one flow**: impact from `orch`, persistence from `config`.
+
+**(verified directly)** The save body is whitelisted through `_.pick(removeEmptySimulationUsers(data), planFields)`
+(`execution.tsx:563,583`). `planFields` (`execution.tsx:528-548`) is exactly:
+`id, description, integration, planId, accountId, name, capture, debug, steps, draft, createdAt,
+updatedAt, deletedAt, originalScenarioId, edges, actions, tags, deploymentId, emailRecipients`.
+This is the authoritative `save_scenario` request contract.
+
+### 6.2 Data flow — the plan/step body
+
+Schema `Plan` (v2) / `PlanV3` in `configuration/src/server/REST/swagger.json`; TS type generated from
+the same swagger at `ui-react/src/types/execution.ts:34`. Persisted to Postgres tables `plans` /
+`steps` via Sequelize models `configuration/src/server/models/plans.js` and `models/steps.js`
+(filters stored as JSON-serialized `TEXT`). The `data` submodule owns execution *results*, not
+scenario definitions.
+
+```
+Plan   { id, name (≤128), accountId, description, systemFilter, successCriteria, tags[],
+         capture, steps: Step[], deploymentId, actions[], edges: PlanEdge[], draft,
+         originalScenarioId, emailRecipients[], userId, createdAt/updatedAt }
+PlanV3 adds: type: 'propagate'|'validate', propagateDefinition (null for validate)
+
+Step   { id, uuid, planId, index, attacksFilter, targetFilter, attackerFilter, systemFilter,
+         initialEvents, name, description, successCriteria, wait, simulationCleanupDelayMinutes }
+
+AttacksFilter    { playbook, nistControl, systemRequirements, attackPhase, publishedDate,
+                   modifiedDate, attackType, attackTypesCounter, protocol, zipPassword,
+                   tags{}, parameters{}, ports, methodIds, origin }
+SimulatorsFilter { os, osVersion, deployments, simulators, externalIP, internalIp, sbRelease,
+                   connection, role, dataAssets, advancedActions, impersonatedUser }
+
+Every leaf is a Filter = { operator: anyOf|noneOf|is|isNot|includes|…, values[], name }
+```
+
+### 6.3 The decisive findings
+
+| # | Finding | Evidence |
+|---|---|---|
+| F1 | **No incremental step API exists.** No `/plans/{id}/steps` or `/steps/{stepId}` route anywhere in the configuration swagger `paths`. The only writes are whole-plan POST and PUT. | full-swagger grep |
+| F2 | **PUT is a wholesale replace, not a merge.** `#updatePlanCore` deletes *all* existing steps for the plan (`crudControllerAsync.deleteAll('step', {filters:{planId}})`) and recreates the array from the body. No server-side diffing. Server step `id`s are therefore **not stable across saves** — they are new rows each PUT. | `planController.js:181-192`; `models/steps.js:5-16` |
+| F3 | **No server-side scenario draft.** `POST /plans` is a direct DB insert returning 201, immediately visible in `GET /plans` (the catalog). There is no commit/publish step. | `planController.js:105`, `200-231`, `287-290` |
+| F4 | **A Validate plan cannot be created with zero steps** → 400. So "create an empty scenario, then add steps" is impossible server-side; the first write must already carry steps. | `planController.js:72-74` |
+| F5 | **`attacksFilter` is a filter DSL, not an attack-id array.** Explicit attack selection is `attacksFilter.methodIds` / `.playbook` with an `operator`+`values`. Same for simulators via `attackerFilter.simulators` / `targetFilter.simulators`. | swagger `definitions.AttacksFilter`, `definitions.Filter` |
+| F6 | **Attacker vs target is not a `role` value** — it is *which filter object* the selection is assigned to (`attackerFilter` vs `targetFilter`). (`role` exists inside SimulatorsFilter but means the simulator's Critical/Infiltration/Exfiltration role, a different concept.) | swagger `definitions.SimulatorsFilter` |
+| F7 | **Steps are positional, not keyed, server-side** — `index` is unique per `planId`; order in the PUT body defines identity after the delete+recreate. Any reorder/removal must resend the full ordered array. | `models/steps.js` |
+| F8 | **Scenario name uniqueness is a DB constraint**, composite unique `(name, accountId)`. Not pre-validated client-side. `save_scenario` must handle a Sequelize `UniqueConstraintError` path. | `models/plans.js:101-108` |
+| F9 | **`deploymentId` is server-set** from request context and update explicitly rejects changing it (`SBError('Cannot update deployment')`). | `planController.js:153-155` |
+| F10 | **v2 self-guards against Propagate.** `config/v2` forces `type:'validate'` on create, strips v3 fields from responses (`#stripV3Fields`), and 404s any propagate-type plan (`#throwV2PropagateNotFound`). v3 is the forward-looking surface but has **no ui-react caller**; v2 is annotated for eventual removal. | `planController.js:243-246`, `:264`, `:297-316` |
+
+### 6.4 How the console itself builds a scenario (the design precedent)
+
+**Verdict: save-at-end. The console persists nothing until Save.**
+
+- The in-progress scenario lives in **Formik form state**, not Redux (`Studio.tsx:437-491`). Redux
+  holds only read-only reference data (moves, plans list, catalog, impersonatedUsers).
+- "New Scenario" returns a **local plain object** `{name:'New Scenario', steps:[getDefaultStep(...)]}`
+  — no HTTP (`Studio.tsx:365-381`). Clone locally renames a Redux-cached plan — no HTTP
+  (`Studio.tsx:356-361`).
+- The only writes are `createPlan`/`updatePlan`, fired exclusively from `onSubmit` (`Studio.tsx:499-606`).
+- **Steps carry a client-generated `uuidv4()`** (`Studio.tsx:452`, `planUtils.ts:160`), and save mints
+  *fresh* uuids again (`Studio.tsx:532-536`) — the pre-save uuid is throwaway canvas-wiring.
+- **One serializer feeds everything**: `getStepsForApi(steps, omitValues)` (`planUtils.ts:77-107`),
+  used by the auto-refreshing stats panel (`StudioStatsManager.tsx:40`), the Simulators-modal live
+  requirement checks (`SimulatorsModal.tsx:70,198`), and the final save (`Studio.tsx:508,552`) —
+  differing only by omit-list (`OMIT_VALUES_SAVE` / `OMIT_VALUES_RUN`, `utils/constants.ts:9-20`).
+- Save vs Save-as-new is a **purely client-side branch**: `planId && !saveAs` → PUT, else POST with no
+  `id` in the body (`Studio.tsx:518-565`). No distinct endpoint or wire flag.
+
+**(verified directly) Plan-level `draft` is a red herring.** It is set from a URL query param
+(`isDraft === 'true'`, `Studio.tsx:483,525,553`) and means *Studio draft custom attacks*, confirmed by
+its only backend usage alongside `moveStatus.draft`/`published` (`configuration/src/server/moves/moveUpdater.js:111-116`,
+`newControllers/movesController.js:323-328`). It is **not** an unsaved-scenario state. Step-level
+`draft` is stripped at save (`constants.ts:19`).
+
+**Add Simulators flow** (`Studio/modals/SimulatorsModal.tsx`, `SimulatorsModalBody.tsx`,
+`StudioSimulatorsConstraints.tsx`; `TABS = {select:0, checkout:1}`):
+- **Select tab** — grid of all simulators with attacker/target toggles. Filters available
+  (`GridSimulatorsAdvancedFilter.tsx:42-53`): Name, OS, Deployments, External IP, Internal IP,
+  Connection (`isEnabled`: Connected/Disconnected), SB Release version, Role
+  (Critical/Infiltration/Exfiltration), Data Asset, Impersonated user.
+- **Checkout tab** — selected simulators only, with live requirement stats.
+- **Requirements Status** — `StudioSimulatorsConstraints.tsx`, per-simulator constraint failures,
+  driven by `getConstraints:true` on the same `getPlanStatistics` call.
+- All filters resolve into `attackerFilter`/`targetFilter` in the same shape the plan body uses
+  (`getFormattedFilters`/`normalizeSimulatorFilters`, `SimulatorsModal.tsx:141-148`). Name / IPs /
+  Data Asset / Impersonated user / Deployments are UI-side selection aids resolved to simulator ids
+  client-side before folding into the filter.
+
+### 6.5 MCP repo conventions for a new mutating tool
+
+- **Registration** (`*_server.py`, inside `_register_tools`): `@self.mcp.tool(name=..., annotations=ToolAnnotations(readOnlyHint=..., destructiveHint=...), description="""…""")` wrapping a thin function that delegates to `*_functions.py` and formats markdown, with `except ValueError` / `except Exception` arms. `get_plan_statistics` is at `studio_server.py:1640-1725`. `destructiveHint` has **no code-level enforcement** — documentation only.
+- **The rate-limiting "gate table" is documentation, not code.** `rate_limiter.py` holds a generic `RateLimiter` with no tool registry; the table at `CLAUDE.md:295-303` is prose. The real gate is an inline pattern in each business function: `rate_limiter.check_limit(caller_id, "<tool>")` after param validation and before the write; `rate_limiter.record_action(caller_id, "<tool>")` **only after the write succeeds** (never in a dry-run branch, never on exception — `CLAUDE.md:282-288`). Precedent at `studio_functions.py:767/834, 1026/1094, 1299/1407, 1766/1878, 3461/3467, 3716/3740, 4062/4075`.
+- **HTTP**: plain `requests.post/put/delete` with `{"Content-Type":"application/json", **get_auth_headers_for_console(console)}` then `check_rbac_response(response)` (`secret_utils.py:91`, `:76`). Prefer `json=body`; the multipart calls are Studio file-upload specific. `token_context.py`'s `_user_auth_artifacts` ContextVar backs both auth and `get_caller_identity()`.
+- **No pydantic / TypedDict / dataclasses for tool I/O.** `*_types.py` are flat dict-in/dict-out mapping functions; parameter validation is manual `if`/`raise ValueError`. SAF-35508 added `_plan_statistics_hint` (`studio_types.py:393`) and `get_plan_statistics_response_mapping` (`:420`).
+- **Caching**: `is_caching_enabled()` is env-gated and default-off, **but is referenced only in `data_functions.py`**. Studio's `studio_draft_cache = SafeBreachCache(name="studio_drafts", maxsize=5, ttl=1800)` (`studio_functions.py:51`) is **unconditional in-process state** used at `:830, :1090, :1697, :1874`. `get_plan_statistics` caches nothing by design (`plan_statistics.py:16-17`); its `use_cache` param is a pass-through to the *orchestrator's* server-side cache (`plan_statistics.py:244`) — a different thing.
+- **(verified directly) Process model**: `start_all_servers.py` runs all five servers concurrently via asyncio in a **single process**, one port each — no `workers`/gunicorn multiprocessing. In-process draft state is therefore viable *as deployed today*; horizontal scaling or multi-worker deployment would break it. **Recorded as a design assumption + risk.**
+- **Tests**: root `conftest.py` seeds the auth ContextVar from env. Unit tests mock `requests.*`; `tests/test_rate_limiting.py` (`TestManageTestRateLimitingGate`, `:26-58`) is the template for asserting gate call order; e2e tests are `@pytest.mark.e2e`, zero-mock, `SKIP_E2E_TESTS`-gated, against `E2E_CONSOLE` (default `pentest01`) — see `tests/test_e2e_plan_statistics.py`.
+- **Docs obligation per tool**: a `CLAUDE.md` gate-table row (`:295-303`) *and* a numbered tool-catalog entry (`:311+`, SAF-35508's at `:485-514` is the quality bar); a `CHANGELOG.md` `### Added` bullet; a `pyproject.toml:3` version bump (currently `1.11.0`; new tools = minor).
+
+### 6.6 Integration points and open architectural questions
+
+1. **Server ownership is unsettled and is a one-way door.** `get_scenarios`/`get_scenario_details`/`get_console_simulators` live in **config**; `get_plan_statistics`/`run_scenario`/`quick_run`/`manage_test` live in **studio**. `DESIGN.md` and `CLAUDE.md` state **no ownership rule** (grepped). Tool names are permanent once published. Options: co-locate in **studio** (follows the `checkout_scenario`→`get_plan_statistics` precedent and shares plan-shaping helpers), put writes in **config** (splits read/write for one resource), or a new builder server (no precedent, 6th port).
+2. **v2 vs v3 plans surface.** v2 is simpler and self-guards Propagate (F10) but is flagged for removal; v3 is type-aware and forward-looking but has no existing caller.
+3. **Where the draft lives.** `studio_draft_cache`'s shape (`maxsize=5`, `ttl=1800`) is the nearest precedent, but a 30-minute TTL and 5-entry bound would silently drop a user's in-progress build mid-conversation.
+
+### 6.7 Contradictions between FR13 as written and the system as built
+
+These are the substance of the Phase 5 brainstorm. **None is a reason to change the ticket's intent —
+each is a place where the literal contract cannot be implemented as specified.**
+
+| FR13 as written | Reality | Consequence |
+|---|---|---|
+| `create_scenario` → returns `scenario_id` | No server draft (F3); a plan with no steps is rejected (F4); POST publishes immediately to the catalog (F3) | A real `scenario_id` cannot exist before steps are added, and creating one early would leak a half-built scenario into the user's catalog |
+| `add_step` → returns `step_id` | No step endpoint (F1); PUT deletes+recreates all steps (F2); server ids unstable (F2, F7) | `step_id` must be a client-side handle (mirroring Studio's throwaway `uuid`), not a server id |
+| `add_attacks_to_step(step_id, attack_ids[])` | `attacksFilter` is an operator/values filter DSL (F5) | The tool must *merge Filter objects*, not append to a list. Grouping rule 5 names exactly the three selection modes the DSL supports (`criteria`, `playbook_ids`, `attack_tags`) |
+| `add_simulators_to_step(..., role)` | Attacker/target = which filter object (F6); `role` inside the filter means something else | `role` maps to filter selection; the parameter name collides with an existing domain term |
+| `checkout_scenario(scenario_id)` | Superseded by SAF-35508's `get_plan_statistics` with an ad-hoc plan body | Already resolved by the subtask |
 
 ---
 
