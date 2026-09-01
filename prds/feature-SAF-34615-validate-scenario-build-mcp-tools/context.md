@@ -508,6 +508,92 @@ each is a place where the literal contract cannot be implemented as specified.**
 
 ---
 
+### 6.9 FR2 attack-sourcing surface — coverage and gaps
+
+FR2 names five search axes. The existing MCP read surface covers three; two are only partially reachable.
+
+| Axis | Verdict | How | Gap |
+|---|---|---|---|
+| Scenarios catalog | **SUPPORTED** | `get_scenarios(name_filter, category_filter, tag_filter, creator_filter, recommended_filter)` + `get_scenario_details` | `category_filter` is a substring match on resolved names, so the caller must already know rough category names |
+| Attack IDs | **SUPPORTED** | `get_playbook_attack_details(attack_id)`; `get_playbook_attacks(id_min/id_max)` | — |
+| Attack playbook (free text) | **SUPPORTED** | `get_playbook_attacks(name_filter, description_filter)`, case-insensitive partial match | — |
+| **Named threat groups** | **PARTIAL** | `Threat Actor` is a real tag group (`content-manager/src/scenarios/entities/scenario.entity.ts:16`, `TAG_THREAT_ACTOR`). Visible per-attack via `get_playbook_attack_details(include_tags=True)`. Scenario category id=3 "Threat Groups" exists (`content-manager/src/database/one-time-seeds/categories.ts:30-37`) | **No bulk attack-level search by threat actor.** `get_playbook_attacks_by_tags` searches only the custom `'Tags'` group and explicitly excludes classification groups (`playbook_types.py:129-131`) |
+| **CVEs** | **PARTIAL** | `CVE` / `CVE Link` are real tag groups (`content-manager/src/moves/move-transform-backward.ts:89-90`), visible per-attack via `include_tags` | **No bulk search by CVE at all.** Finding "attacks matching CVE-2024-XXXX" means fetching every attack and scanning — not a search |
+
+**"Relatively new attacks" is already covered.** `get_playbook_attacks` exposes `published_date_start/end` and
+`modified_date_start/end` (`playbook_types.py:478-497`); orchestrator field names match
+(`orchestrator/src/server/other/playbook_filter.js:13,28,56-57`). The orchestrator's separate
+`latestKnownAttacks` concept is a *step-scoped* plan-render filter (call site
+`orchestrator/src/server/services/PlanPreparation.js:419`), not a playbook-search filter — different mechanism;
+confirm with product which one FR2 means.
+
+### 6.10 Attack classification metadata — what FR3's grouping can actually see
+
+The grouping rules want a tactic / component / vector axis. Most of the facts that would support that are **not
+exposed by any MCP tool today**, though they exist server-side.
+
+| Field | Meaning | Exposed by MCP? | Source |
+|---|---|---|---|
+| MITRE tactic / technique | ATT&CK mapping | **YES** — `mitre_technique_filter`, `mitre_tactic_filter`, `include_mitre_techniques`. ~42.6% coverage | `playbook_types.py:152-219` |
+| Platform (attacker/target OS) | from `content.nodes.*.constraints.os` | **YES** — `attacker_platform_filter` / `target_platform_filter`, always-on fields. ~32.3% coverage | `playbook_types.py:222+` |
+| Published / modified date | recency | **YES** | see §6.9 |
+| Custom tags | the `'Tags'` group | **YES** — the only group with bulk search | `playbook_types.py:120-149` |
+| **Attack phase** | `Package` enum: `EXFILTRATION=0, LATERAL=1, INFILTRATION=2, HOST_LEVEL=5` | **NO** | `orchestrator/src/server/other/constants.js:1-9`; filter key `attackPhase` at `playbook_filter.js:11,55` |
+| **Attack type** | tag group `'Attack Type'` | **NO** — raw `include_tags` only | `scenario.entity.ts:18`; `playbook_filter.js:56` |
+| **NIST control** | tag group `nist_Control` | **NO** — raw `include_tags` only | `playbook_filter.js:45,58` |
+| **Protocol** | tag group `protocol` | **NO** — raw `include_tags` only | `playbook_filter.js:40,58-59` |
+| **Threat Actor / CVE** | classification tag groups | **PARTIAL** — per-attack only | see §6.9 |
+| `origin` | orchestrator `attacksFilter` vocabulary key; `valuesExtractorByFilter.origin = move => move.origin` | **NO**, and **what populates it is unconfirmed** — no matching field found in content-manager's move entity | `playbook_filter.js:10,54` — needs owner input |
+
+**Consequence:** attack phase, attack type, NIST control and protocol are precisely the axes
+`scenario-step-grouping.md` rules 1-2 lean on, and none is available. `add_attacks_to_step` cannot today be
+handed the facts the grouping rules assume.
+
+### 6.11 The Propagate guard already exists — but at run time, not save time (verified directly)
+
+`orchestrator/src/server/services/PlanPreparation.js:405-409`:
+
+```js
+if (!step.isPropagate) {
+  const filter = { tags: { ALM: { operator: 'noneOf', values: ['1'], name: 'ALM' } } };
+  moves = this.playbookFilter.filterPlaybook(filter, moves);   // strips every ALM=1 move
+}
+```
+
+Propagate attacks are marked by the **`ALM`** tag group (Advanced Lateral Movement), and the orchestrator strips
+every `ALM=1` move when preparing any non-propagate step. `step.isPropagate` is the step-level gate.
+
+**F13 — DoD3 is not satisfied by this on a literal reading.** The strip happens at *plan preparation* (run time).
+A Propagate attack id can still be **persisted** into a Validate plan's `attacksFilter`; it simply never executes.
+DoD3 says "No scenario is **created** with a Propagate attack in it". Combined with F10 (v2 forces
+`type:'validate'` at the *plan* level, but says nothing about the attacks inside), there is currently **no
+save-time attack-level guard**. Decision for brainstorm: rely on the runtime strip, or add a save-time filter.
+
+**F14 — the MCP layer has no ALM filter to lean on.** No `get_playbook_attacks` parameter exposes ALM/Propagate;
+it is visible only as `"ALM:1"` in a raw `include_tags` response for a single attack. A save-time guard would
+need a new filter param, or a fetch-all-and-scan, or reliance on Validate-scoped catalog content.
+
+### 6.12 FR10 — the requirement's premise is unconfirmed
+
+"AI-generated Attack Scenarios" has **zero trace** in `content-manager`, `orchestrator`, `configuration`,
+`ui-react`, or the MCP repo. The static category seed (`categories.ts:13-94`) lists ten categories —
+Security Controls, Known Attacks Series, Threat Groups, Baseline Scenarios, MITRE ATT&CK, Industry, Environment,
+Regulatory Compliance, Geography, Dynamic/Results Driven — and none matches. Categories are served dynamically
+via `scenarioCategoriesService`, so a new one could exist as live DB data with no code change.
+
+**Model mismatch:** categories belong to **scenarios**, not to individual attacks/moves (moves carry tags, not
+categories). So "attacks from the AI-generated Attack Scenarios *category*" does not type-check against the data
+model. It may mean (a) attacks appearing as steps within scenarios in that category, or (b) a new *tag* on moves.
+**Open question for Tal Rotem — do not guess.**
+
+**Good news:** nothing in `get_scenarios`, `get_scenario_details`, `get_playbook_attacks` or any filter function
+special-cases a category or tag name; filtering is generic substring/exact match. FR10's "no special-casing"
+requirement is therefore **already satisfied structurally**.
+
+**Correction to the §4 reconnaissance:** `scenario_categories` is **not** a registered tool — that string came
+from a `SafeBreachCache(name=...)` instantiation. There is no way to enumerate categories today, which matters if
+Helm must discover the exact category name before calling `category_filter`.
+
 ## 7. Brainstorm Outcome
 
 _Pending — Phase 5._
