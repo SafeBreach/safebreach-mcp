@@ -2953,6 +2953,44 @@ def _validate_conflict_detail(conflict_detail):
         )
 
 
+def _scenario_id_is_native(scenario_id):
+    """Whether Core can resolve this id itself.
+
+    The statistics endpoint's schema types `id` as an integer, so it resolves
+    custom plans (integer ids) natively but rejects an OOB scenario's UUID
+    outright — verified against a live console, where a UUID returns
+    400 "/id must be integer".
+    """
+    return str(scenario_id).strip().isdigit()
+
+
+def _resolve_scenario_to_plan(console, scenario_id):
+    """Turn an OOB scenario UUID into an ad-hoc plan body.
+
+    Core cannot accept a UUID in `id`, so the only route for an OOB scenario is
+    to read its steps here and score them as an ad-hoc plan. Returns None when
+    the id is one Core resolves itself, so that path stays a passthrough.
+    """
+    if _scenario_id_is_native(scenario_id):
+        return None
+
+    scenarios = _fetch_all_scenarios(console)
+    for scenario in scenarios:
+        if str(scenario.get('id')) == str(scenario_id):
+            steps = scenario.get('steps')
+            if not steps:
+                raise ValueError(
+                    f"Scenario '{scenario_id}' on console '{console}' has no steps, so "
+                    f"there is nothing to score."
+                )
+            return {"name": scenario.get('name') or "", "steps": steps}
+
+    raise ValueError(
+        f"Scenario '{scenario_id}' was not found on console '{console}'. Pass an OOB "
+        f"scenario UUID, or a custom plan's integer id, as 'scenario_id'."
+    )
+
+
 def _fetch_and_shape(console, plan, scenario_id, include_disabled, get_constraints,
                      get_all_constraints, limit, use_cache, attack_names,
                      conflict_detail, both_present):
@@ -3006,6 +3044,14 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
     """
     parsed_plan, resolved_scenario_id = _parse_plan_argument(plan, scenario_id)
     _validate_conflict_detail(conflict_detail)
+
+    if resolved_scenario_id is not None:
+        # An OOB scenario's UUID has no field on the endpoint that accepts it,
+        # so it is resolved to its steps here; an integer plan id is left for
+        # Core to resolve natively.
+        from_scenario = _resolve_scenario_to_plan(console, resolved_scenario_id)
+        if from_scenario is not None:
+            parsed_plan, resolved_scenario_id = from_scenario, None
 
     # Resolved once and reused across both passes: zero_impact_attacks is
     # meaningful without constraints, and a bare attack id is unusable.
