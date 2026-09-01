@@ -6250,9 +6250,12 @@ class TestGetScenarioStatistics:
 
         call_args = mock_post.call_args
         url = call_args[0][0]
-        assert "/api/orch/v1/accounts/1234567890/plan/statistics" in url
-        assert "limit=500000" in url
-        assert "includeDisabled=true" in url
+        assert url.endswith("/api/orch/v1/accounts/1234567890/plan/statistics")
+
+        # The query is requests' to encode now, so it is asserted where it lives.
+        params = call_args.kwargs['params']
+        assert params["limit"] == 500000
+        assert params["includeDisabled"] == "true"
 
         payload = call_args[1]['json']
         assert payload['name'] == ''
@@ -8094,8 +8097,12 @@ def _statistics_transport(payload, status_code=200, raise_for_status=None):
 
 
 def _statistics_query(post):
-    """Parsed query string of the statistics URL that was actually requested."""
-    return parse_qs(urlparse(post.call_args[0][0]).query)
+    """The query parameters handed to requests for the statistics call.
+
+    Normalized to parse_qs's shape — {key: [str]} — since requests now owns the
+    encoding and the URL itself carries no query.
+    """
+    return {k: [str(v)] for k, v in post.call_args.kwargs["params"].items()}
 
 
 @pytest.fixture
@@ -9261,8 +9268,9 @@ class TestSeverityIsComputedFromTheAttackCount:
 
 
 def _statistics_queries(post):
-    """One parsed query string per statistics call the tool actually issued."""
-    return [parse_qs(urlparse(call[0][0]).query) for call in post.call_args_list]
+    """One parameter set per statistics call the tool actually issued."""
+    return [{k: [str(v)] for k, v in call.kwargs["params"].items()}
+            for call in post.call_args_list]
 
 
 class TestToolCatalogDocumentsThePlanStatisticsTool:

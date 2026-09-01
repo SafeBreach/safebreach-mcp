@@ -2231,18 +2231,6 @@ def _fetch_all_plans(console):
     return plans
 
 
-def _raw_constraint_catalog(statistics_data):
-    """Return the response's top-level constraintCatalog, or None when absent.
-
-    statistics_data is the `data` object of a plan/statistics response — the
-    catalog is a sibling of `steps`, never a per-step field.
-    """
-    if not isinstance(statistics_data, dict):
-        return None
-    catalog = statistics_data.get('constraintCatalog')
-    return catalog if isinstance(catalog, dict) else None
-
-
 def _resolve_constraint_description(code, constraint_catalog):
     """Resolve one reason code against the response's own catalog.
 

@@ -8,7 +8,6 @@ of any MCP-side cache.
 """
 
 from unittest.mock import MagicMock, patch
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -85,9 +84,13 @@ def _mock_response(payload, status_code=200):
 
 
 def _query(mock_post):
-    """Parsed query string of the URL the fetch core actually posted to."""
-    url = mock_post.call_args[0][0]
-    return parse_qs(urlparse(url).query)
+    """The query parameters the fetch core handed to requests.
+
+    Normalized to parse_qs's shape — {key: [str]} — because that is what goes
+    on the wire once requests encodes them.
+    """
+    params = mock_post.call_args.kwargs["params"]
+    return {key: [str(value)] for key, value in params.items()}
 
 
 def _posted_body(mock_post):
@@ -351,6 +354,45 @@ class TestAllFiveQueryParametersArePassedThrough:
             "limit": 500000,
             "useCache": True,
         }
+
+
+class TestQueryIsHandedToRequestsNotEmbeddedInTheUrl:
+    """requests owns the encoding; the URL carries no query of its own."""
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_the_posted_url_has_no_query_string(self, mock_post):
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert "?" not in mock_post.call_args[0][0]
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_booleans_are_sent_in_the_lowercase_spelling(self, mock_post):
+        """requests renders a Python True as "True"; the endpoint reads "true".
+
+        A capital T would silently change which question is asked — the exact
+        runnable-versus-expected confusion this tool exists to prevent.
+        """
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        fetch_plan_statistics(
+            console="test-console", plan=_plan_body(), include_disabled=True
+        )
+
+        sent = mock_post.call_args.kwargs["params"]
+        assert sent["includeDisabled"] == "true"
+        assert sent["getConstraints"] == "true"
+        assert sent["useCache"] == "true"
+
+    @patch("safebreach_mcp_core.plan_statistics.requests.post")
+    def test_params_used_keeps_python_booleans(self, mock_post):
+        """The report derives counts_mode from this, and "false" is truthy."""
+        mock_post.return_value = _mock_response(_two_step_payload())
+
+        result = fetch_plan_statistics(console="test-console", plan=_plan_body())
+
+        assert result["params_used"]["includeDisabled"] is False
 
 
 class TestLimitReachedResponseKeepsNullDistinctFromZero:

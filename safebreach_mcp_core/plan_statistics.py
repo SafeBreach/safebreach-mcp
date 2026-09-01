@@ -36,7 +36,6 @@ Usage::
 """
 
 import logging
-from urllib.parse import urlencode
 
 import requests
 from safebreach_mcp_core.secret_utils import get_auth_headers_for_console, check_rbac_response
@@ -129,22 +128,29 @@ def _build_request_body(plan, scenario_id, test_id=None) -> dict:
     return body
 
 
-def _build_url(console: str, params: dict) -> str:
-    """Build the statistics URL with every parameter escaped.
+def _build_url(console: str) -> str:
+    """The statistics endpoint for a console, without a query string.
 
-    urlencode rather than string joining: these values reach us from an MCP tool
-    call, so an unescaped one could inject its own query parameters and silently
-    rewrite the others.
+    The query is handed to requests as ``params`` rather than embedded here, so
+    encoding is the library's job and a value arriving from an MCP tool call
+    cannot inject parameters of its own.
     """
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
-    query = urlencode({
+    return f"{base_url}/api/orch/v1/accounts/{account_id}/plan/statistics"
+
+
+def _wire_params(params: dict) -> dict:
+    """The query parameters as the endpoint spells them.
+
+    requests renders a Python ``True`` as ``"True"``; the endpoint reads the
+    lowercase JSON spelling, so passing the bool through unchanged would
+    silently change which question is asked.
+    """
+    return {
         key: str(value).lower() if isinstance(value, bool) else value
         for key, value in params.items()
-    })
-    return (
-        f"{base_url}/api/orch/v1/accounts/{account_id}/plan/statistics?{query}"
-    )
+    }
 
 
 def _normalize_step(raw: dict, index: int) -> dict:
@@ -237,11 +243,12 @@ def fetch_plan_statistics(
         "getAllConstraints": get_all_constraints,
         "useCache": use_cache,
     }
-    api_url = _build_url(console, params)
+    api_url = _build_url(console)
     headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
 
     response = requests.post(
-        api_url, headers=headers, json=body, timeout=STATISTICS_TIMEOUT_SECONDS
+        api_url, headers=headers, params=_wire_params(params), json=body,
+        timeout=STATISTICS_TIMEOUT_SECONDS,
     )
     try:
         # Only HTTPError is caught: a 403 raises PermissionError, which carries
