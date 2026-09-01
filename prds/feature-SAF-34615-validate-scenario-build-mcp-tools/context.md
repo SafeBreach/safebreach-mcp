@@ -446,6 +446,47 @@ its only backend usage alongside `moveStatus.draft`/`published` (`configuration/
 - **Tests**: root `conftest.py` seeds the auth ContextVar from env. Unit tests mock `requests.*`; `tests/test_rate_limiting.py` (`TestManageTestRateLimitingGate`, `:26-58`) is the template for asserting gate call order; e2e tests are `@pytest.mark.e2e`, zero-mock, `SKIP_E2E_TESTS`-gated, against `E2E_CONSOLE` (default `pentest01`) — see `tests/test_e2e_plan_statistics.py`.
 - **Docs obligation per tool**: a `CLAUDE.md` gate-table row (`:295-303`) *and* a numbered tool-catalog entry (`:311+`, SAF-35508's at `:485-514` is the quality bar); a `CHANGELOG.md` `### Added` bullet; a `pyproject.toml:3` version bump (currently `1.11.0`; new tools = minor).
 
+### 6.8 Canonical step shape and filter primitive (verified directly this session)
+
+Path correction: the serializer/defaults live in **`ui-react/src/containers/matrices/planUtils.ts`**
+(agent reports cited `containers/Studio/utils/planUtils.ts`; line numbers hold).
+
+**The filter primitive** — `getFilterObj` (`ui-react/src/containers/Studio/utils/helpers.tsx`):
+
+```js
+getFilterObj(name, values) => ({ [name]: { operator: 'is', values, name: name.toLowerCase() } })
+Filter.ATTACKS    = 'playbook'     // -> attacksFilter.playbook
+Filter.SIMULATORS = 'simulators'   // -> attackerFilter.simulators / targetFilter.simulators
+```
+
+So an explicit attack selection is `attacksFilter.playbook = {operator:'is', values:[...], name:'playbook'}`,
+and an explicit simulator selection is `attackerFilter.simulators` / `targetFilter.simulators` of the same
+shape. This is the object `add_attacks_to_step` / `add_simulators_to_step` must build and merge.
+
+**`getDefaultStep(index, addStats, moveIds, simulatorId, impersonatedUserIds)`** (`planUtils.ts:150-180`)
+produces:
+
+```
+{ id: index, uuid: uuidv4(), name: `Step ${index || 1}`,
+  attacksFilter:  getFilterObj('playbook',   moveIds),
+  attackerFilter: getFilterObj('simulators', simulatorId),
+  targetFilter:   getFilterObj('simulators', simulatorId),
+  systemFilter: { ...bypassProxy=[true], ...runAsRoot=[true], ...simulationUsers=[impersonatedUserIds] },
+  meta: {...} }
+```
+
+**`getStepsForApi`** (`planUtils.ts:77-107`) always emits `attacksFilter: {}`, `attackerFilter: {}`,
+`targetFilter: {}` as a base before merging the cleaned filters — empty filters are `{}`, never omitted.
+It also drops `successCriteria` unless both `path` and `operator` are set, and applies the caller's
+omit-list (`OMIT_VALUES_SAVE` / `OMIT_VALUES_RUN`).
+
+#### Two consequences for this story
+
+| # | Finding | Consequence |
+|---|---|---|
+| F11 | **The console's own default step violates grouping rule 1.** `getDefaultStep` names steps `Step ${index \|\| 1}` — exactly the `"Step 1"/"Step 2"` anti-pattern `scenario-step-grouping.md` rule 1 forbids. | `add_step` must **require** a themed `step_name` rather than defaulting like the console. A deliberate, documented divergence from console behaviour — not a console bug to fix here. |
+| F12 | **FR9 parity risk hides in step defaults, not in validations.** `getDefaultStep` seeds `systemFilter` with `bypassProxy=[true]`, `runAsRoot=[true]` and `simulationUsers`. | An MCP-created step omitting these would *run differently* from an identically-described console step — a silent behavioural divergence, not a validation error. FR9 must be read as covering **defaults parity**, not only validation parity. |
+
 ### 6.6 Integration points and open architectural questions
 
 1. **Server ownership is unsettled and is a one-way door.** `get_scenarios`/`get_scenario_details`/`get_console_simulators` live in **config**; `get_plan_statistics`/`run_scenario`/`quick_run`/`manage_test` live in **studio**. `DESIGN.md` and `CLAUDE.md` state **no ownership rule** (grepped). Tool names are permanent once published. Options: co-locate in **studio** (follows the `checkout_scenario`→`get_plan_statistics` precedent and shares plan-shaping helpers), put writes in **config** (splits read/write for one resource), or a new builder server (no precedent, 6th port).
