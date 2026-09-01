@@ -2563,6 +2563,14 @@ CONFLICT_DETAIL_MODES = ('summary', 'per_attack', 'full')
 CONFLICT_SIMULATOR_ID_SAMPLE = 10
 CONFLICT_VALUES_VARIANT_CAP = 5
 
+# A single default step on a real console produced 38,531 conflicts, 9,613
+# attacks and an 11.8 MB response — unusable for the conversational caller this
+# tool exists to serve. Every capped collection states its true total beside it,
+# and conflict_detail='full' lifts the caps.
+CONFLICTS_CAP = 50
+ZERO_IMPACT_CAP = 50
+COUNT_MAP_CAP = 100
+
 _CONSTRAINT_SIDES = (('attackerConstraints', 'attacker'), ('targetConstraints', 'target'))
 
 
@@ -2713,7 +2721,13 @@ def _build_conflicts(simulator_constraints, moves, attack_names=None,
 
         conflicts.append(conflict)
 
-    return sorted(conflicts, key=lambda c: (_attack_sort_key(c['attack_id']), c['code']))
+    # Blocking first: when the list is capped, the conflicts that stop an attack
+    # running must be the ones that survive.
+    return sorted(conflicts, key=lambda c: (
+        0 if c['severity'] == 'blocking' else 1,
+        _attack_sort_key(c['attack_id']),
+        c['code'],
+    ))
 
 
 def _zero_impact_attacks(moves, conflicts, attack_names=None):
@@ -2775,41 +2789,65 @@ def _zero_impact_simulators(simulators, simulator_index, simulator_names=None):
     return entries
 
 
+def _cap_list(shaped, key, entries, cap, uncapped):
+    """Emit a list with its true total, capped unless the caller asked for full."""
+    shaped[key] = entries if uncapped else entries[:cap]
+    shaped[f'{key}_total'] = len(entries)
+
+
+def _cap_count_map(shaped, key, mapping, uncapped):
+    """Emit a count map with its true size.
+
+    A real console returns thousands of attack ids per step. The full map is
+    available under conflict_detail='full'; otherwise a deterministic prefix is
+    emitted and the total states what was left out.
+    """
+    if uncapped or len(mapping) <= COUNT_MAP_CAP:
+        shaped[key] = mapping
+    else:
+        ordered = sorted(mapping.items(), key=lambda kv: _attack_sort_key(kv[0]))
+        shaped[key] = dict(ordered[:COUNT_MAP_CAP])
+    shaped[f'{key}_total'] = len(mapping)
+
+
 def _shape_statistics_step(step, attack_names=None, simulator_names=None,
                            conflict_detail='summary'):
     """One caller-facing step, with all reporting suppressed when nothing was computed."""
+    uncapped = conflict_detail == 'full'
     shaped = {
         'step_index': step['response_step_index'],
         'simulation_count': step['simulationCount'],
         'counts_computed': step['counts_computed'],
         'is_limit_reached': step['isLimitReached'],
-        'attacks': step['moves'],
-        'simulators': step['simulators'],
-        'attacker_simulators': step['attackerSimulators'],
-        'target_simulators': step['targetSimulators'],
     }
+    _cap_count_map(shaped, 'attacks', step['moves'], uncapped)
+    _cap_count_map(shaped, 'simulators', step['simulators'], uncapped)
+    _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
+    _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
 
     # The R1 guard: when Core did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
     if not step['counts_computed']:
-        shaped['zero_impact_attacks'] = []
-        shaped['zero_impact_simulators'] = []
-        shaped['conflicts'] = []
+        _cap_list(shaped, 'zero_impact_attacks', [], ZERO_IMPACT_CAP, uncapped)
+        _cap_list(shaped, 'zero_impact_simulators', [], ZERO_IMPACT_CAP, uncapped)
+        _cap_list(shaped, 'conflicts', [], CONFLICTS_CAP, uncapped)
         return shaped
 
     conflicts = _build_conflicts(
         step['simulatorConstraints'], step['moves'],
         attack_names=attack_names, conflict_detail=conflict_detail,
     )
-    shaped['zero_impact_attacks'] = _zero_impact_attacks(
+    # Derived from the FULL conflict list, then capped — capping first would
+    # strip an attack's blockers before they were collected.
+    _cap_list(shaped, 'zero_impact_attacks', _zero_impact_attacks(
         step['moves'], conflicts, attack_names=attack_names
-    )
-    shaped['zero_impact_simulators'] = _zero_impact_simulators(
+    ), ZERO_IMPACT_CAP, uncapped)
+    _cap_list(shaped, 'zero_impact_simulators', _zero_impact_simulators(
         step['simulators'],
         _index_constraints_by_simulator(step['simulatorConstraints']),
         simulator_names=simulator_names,
-    )
-    shaped['conflicts'] = conflicts
+    ), ZERO_IMPACT_CAP, uncapped)
+    _cap_list(shaped, 'conflicts', conflicts, CONFLICTS_CAP, uncapped)
     return shaped
 
 

@@ -32,6 +32,9 @@ from safebreach_mcp_studio.studio_functions import (
     _build_plan_statistics_report,
     CONFLICT_SIMULATOR_ID_SAMPLE,
     CONFLICT_VALUES_VARIANT_CAP,
+    CONFLICTS_CAP,
+    ZERO_IMPACT_CAP,
+    COUNT_MAP_CAP,
     sb_run_scenario,
     sb_manage_test,
     sb_delete_test,
@@ -8965,6 +8968,96 @@ class TestConflictsAreNormalizedAgainstTheCatalog:
                   if c['code'] == 'incompatible_os']
         assert len(shared) == 3
         assert list(report['constraint_catalog']).count('incompatible_os') == 1
+
+
+class TestLargeResponsesAreCapped:
+    """A default step on a real console returned 38,531 conflicts and 11.8 MB.
+
+    No plan item covers this — found by calling the deployed tool against
+    zircon-piculet. Every capped collection must state its true total, and
+    conflict_detail='full' must lift the caps.
+    """
+
+    @staticmethod
+    def _big_statistics(attacks=400):
+        constraints = {
+            f'sim-{i}': {
+                str(a): [{'reason': 'incompatible_os',
+                          'required': 'WINDOWS', 'actual': 'LINUX'}]
+                for a in range(attacks)
+            }
+            for i in range(3)
+        }
+        return _phase4_statistics([_phase4_step(
+            # Half run, half are blocked, so both severities are present.
+            moves={str(a): (0 if a % 2 else 5) for a in range(attacks)},
+            simulators={f'sim-{i}': (0 if i == 0 else 4) for i in range(3)},
+            simulatorConstraints={'targetConstraints': constraints,
+                                  'attackerConstraints': {}},
+        )], catalog={'incompatible_os': {'description': 'OS is incompatible.'}})
+
+    def test_conflicts_are_capped_with_the_true_total_stated(self):
+        step = _phase4_step_of(_build_plan_statistics_report(self._big_statistics()))
+
+        assert len(step['conflicts']) == CONFLICTS_CAP
+        assert step['conflicts_total'] == 400
+        assert step['conflicts_total'] > len(step['conflicts'])
+
+    def test_the_surviving_conflicts_are_the_blocking_ones(self):
+        """A cap that kept `reducing` rows while dropping blockers would mislead."""
+        step = _phase4_step_of(_build_plan_statistics_report(self._big_statistics()))
+
+        assert {c['severity'] for c in step['conflicts']} == {'blocking'}
+
+    def test_zero_impact_attacks_are_capped_with_the_true_total(self):
+        step = _phase4_step_of(_build_plan_statistics_report(self._big_statistics()))
+
+        assert len(step['zero_impact_attacks']) == ZERO_IMPACT_CAP
+        assert step['zero_impact_attacks_total'] == 200
+
+    def test_count_maps_are_capped_with_the_true_total(self):
+        step = _phase4_step_of(_build_plan_statistics_report(self._big_statistics()))
+
+        assert len(step['attacks']) == COUNT_MAP_CAP
+        assert step['attacks_total'] == 400
+
+    def test_small_maps_are_left_whole(self):
+        """The cap must not perturb an ordinary response."""
+        step = _phase4_step_of(_build_plan_statistics_report(PHASE4_SHARED_CODE_STATISTICS))
+
+        assert step['attacks'] == {'1234': 240, '5678': 180, '9012': 0}
+        assert step['attacks_total'] == 3
+        assert len(step['conflicts']) == step['conflicts_total'] == 4
+
+    def test_full_detail_lifts_every_cap(self):
+        step = _phase4_step_of(_build_plan_statistics_report(
+            self._big_statistics(), conflict_detail='full'
+        ))
+
+        assert len(step['conflicts']) == step['conflicts_total'] == 400
+        assert len(step['attacks']) == step['attacks_total'] == 400
+        assert len(step['zero_impact_attacks']) == step['zero_impact_attacks_total'] == 200
+
+    def test_blockers_survive_the_cap_of_the_list_they_came_from(self):
+        """Capping conflicts before deriving blockers would strip them."""
+        step = _phase4_step_of(_build_plan_statistics_report(self._big_statistics()))
+
+        assert all(entry['blockers'] for entry in step['zero_impact_attacks'])
+
+    def test_a_truncated_step_states_zero_totals(self):
+        step = _phase4_step_of(
+            _build_plan_statistics_report(PHASE4_LIMIT_REACHED_STATISTICS)
+        )
+
+        assert step['conflicts_total'] == 0
+        assert step['zero_impact_attacks_total'] == 0
+        assert step['zero_impact_simulators_total'] == 0
+
+    def test_the_capped_response_is_a_usable_size(self):
+        """The defect this closes: 11.8 MB is unusable to a conversational caller."""
+        report = _build_plan_statistics_report(self._big_statistics(attacks=5000))
+
+        assert len(json.dumps(report)) < 100_000
 
 
 class TestConflictDetailModesAndNameResolution:
