@@ -1,6 +1,6 @@
 # SAF-34615 — MCP support for Validate scenario creation and update (Stage 1)
 
-**Status**: `Phase 3: Create Working Branch and PRD Context`
+**Status**: `Phase 4: Document Findings`
 
 **Branch**: `feature/SAF-34615-validate-scenario-build-mcp-tools`
 **Base**: `origin/feature/SAF-35508-plan-statistics-mcp-tool` (not `main` — see Dependencies)
@@ -593,6 +593,95 @@ requirement is therefore **already satisfied structurally**.
 **Correction to the §4 reconnaissance:** `scenario_categories` is **not** a registered tool — that string came
 from a `SafeBreachCache(name=...)` instantiation. There is no way to enumerate categories today, which matters if
 Helm must discover the exact category name before calling `category_filter`.
+
+### 6.13 FR9 — the console-validation inventory, and what is browser-only
+
+**Headline: the Save button is barely gated at all.** `StudioHeader.tsx:381` —
+`disabled={isAlmScenario || isDraft === 'true'}`. No name, step, attack or simulator validity check gates Save.
+And **no `validate`/`validationSchema` prop is ever passed to Formik** (`Studio.tsx:732-741`) — there is no
+form-level schema for the scenario. Every "validation" is ad-hoc UI logic, and most of it gates **Run/Schedule**,
+not Save.
+
+| Validation | Enforcement | file:line |
+|---|---|---|
+| Scenario name required (non-empty) | **Both** | client `StudioRightPanel.tsx:264` (`disallowEmpty`); server `models/plans.js:17-23` |
+| Scenario name ≤128 chars | **Both** | client `StudioRightPanel.tsx:266`; server `plans.js:18` + swagger `Plan.name` |
+| Scenario name uniqueness per account | **Server only — no client check** | `plans.js:101-108`; `SaveAsPopUp.tsx` is a plain `FormikInput` with no check |
+| **Step name required** | **CLIENT ONLY — backdoor** | client `StudioRightPanel.tsx:264`; server `models/steps.js:32` is unbounded TEXT, no `allowNull:false`, no validator |
+| **Step name ≤128 chars** | **CLIENT ONLY — backdoor** | client `StudioRightPanel.tsx:266`; server none |
+| **Step name unique within scenario** | **CLIENT ONLY — backdoor** | client `StudioRightPanel.tsx:220-230,265` (`forbiddenValues`); server's only step index is `(index, planId)` — ordering, not name (`steps.js:52-58`) |
+| Plan must have ≥1 step | **Server, on CREATE only — asymmetric** | `planController.js:72-74`; `#updatePlanCore` (124+) has **no** equivalent, so an update could blank out steps |
+| "Scenario must have ≥1 step" | **Client only**, and it is a *delete-time* guard, not save-time | `Studio.tsx:651-653` |
+| Plan `type` required, enum-checked | **Both** | `utils/model-validators.js:46-51`; swagger `PlanV3.required` |
+| `propagateDefinition` shape | **Server only** | `utils/propagatePlanValidators.js`, `model-validators.js:26-43` |
+| Deployment-filter guard on create | **Server only** | `planController.js:83-90` |
+| Cannot change `deploymentId` / `accountId` | **Server only** | `planController.js:153-155`; `plans.js:87` |
+| Cross-account read/update/delete blocked | **Server only** | `planController.js:51-62,157-168` |
+| Run gating: all steps green, attacker+target present, valid branching, impersonated-users-vs-runAsRoot conflict | **CLIENT ONLY, and gates Run/Schedule — NOT Save** | `StudioHeader.tsx:190-276` |
+
+**Searched for and confirmed absent** (neither client nor server): max steps per scenario; max attacks per step or
+scenario; max simulators per step; a rule preventing the same simulator being both attacker and target; a rule
+requiring an attacker *and* target to **save** (only to *run*); duplicate-attack-across-steps blocking;
+deprecated/disabled-attack blocking at save time (the picker filters `move.status==='published'` at *fetch* time
+only); any step-name sanitization — a Jest test (`StudioCloneAndCreate.test.tsx:202-228`) confirms
+`<img src=x onerror=...>` is stored verbatim as a step name.
+
+**F15 — FR9's real surface is larger than "mirror the validations".** An MCP tool writing directly to the plan API
+can today create a scenario with empty, duplicate or 512-character step names, broken branching, and steps with no
+attacker or target — none rejected server-side. Mirroring the console therefore means **implementing** these
+checks in the MCP layer, not calling something that already enforces them.
+
+### 6.14 FR1/DoD3 — there are TWO independent Propagate signals (verified directly)
+
+**This supersedes the earlier reading of F10 that v2 gives FR1/DoD3 "almost for free". It does not.**
+
+```js
+// orchestrator/src/server/other/TestSchemaValidator.js:37-39
+static isPropagateTest(test) {
+  return test?.type === 'propagate' || test?.systemTags?.includes('ALM') === true;
+}
+```
+
+Two signals, OR'd, neither cross-validated against the other:
+
+1. **`plans.type`** — enum `'propagate'|'validate'`, default `'validate'` (`models/plans.js:71-78`), with companion
+   `propagateDefinition` JSONB (`plans.js:79-82`). Shape consistency **is** enforced server-side on every
+   create/update by `validatePlanShape` (`model-validators.js:45-59`).
+2. **A legacy plan-level `tags` entry `'ALM'`** — and *this* is what the console's actual Propagate UI produces.
+   Studio derives `isAlmScenario` from `_.get(scenario,'tags').includes(ALM_TAG)` (`Studio.tsx:434`), **not** from
+   `plan.type`, and **Studio never writes `propagateDefinition` at all**. This path has **no server-side guard
+   whatsoever**: `planController.js` never inspects `tags` for `'ALM'`.
+
+**The `tags` → `systemTags` link is verified**, so the legacy path really does reach `isPropagateTest`:
+`PlanPreparation.js:69` — `result.data.systemTags = result.data.tags; // This is needed until SAF-11730 is done`,
+and `RunTestModal.tsx:284` sends `systemTags: plans[planId].tags`.
+
+**F16 — v2 does NOT close the Propagate hole.** v2 forces `type:'validate'` and 404s propagate-*typed* plans, but
+it does not strip `tags`. A `POST config/v2/plans` carrying `type:'validate'` + `tags:['ALM']` is accepted and is
+then treated as a Propagate test at fire time. **The MCP layer needs its own explicit guard rejecting
+`type==='propagate'` AND any `tags`/`systemTags` containing `'ALM'`, on both create and update.**
+
+**F17 — "regardless of license" is currently untrue at save time.** The Propagate license check
+(`'The Propagate package is missing'`, `NOT_ALLOWED` 400) lives in `TestSchemaValidator.validateAPITestSchema`
+(`TestSchemaValidator.js:68-97`) and runs only when a test is **submitted to run** — never at plan create/save, and
+in `orchestrator`, not `configuration`. The console's client-side strip
+(`Studio.tsx:512`: `_.omit({...savedPlan}, hasAlmFlag ? [] : ['tags'])`, keyed on
+`FEATURE_ALM = 'feature.penetrationCommandAndControl'`) is UI convenience, **not** a security boundary — nothing
+server-side re-checks entitlement before persisting `tags`. FR1's "regardless of whether the account holds a
+Propagate license" therefore requires a guard the platform does not have today.
+
+**F18 — attack-level vs plan-level ALM are different things; do not conflate them.**
+- **Attack/move level**: moves carry an `ALM` *tag group*; `PlanPreparation.js:405-409` strips every `ALM=1` move
+  for any step where `!step.isPropagate`. There is **no** propagate/validate *column* on the moves model
+  (`configuration/src/server/models/moves.js`) — the marker is a tag. Content-package licensing is a separate
+  axis: `ContentPackage.PropagatePackages:[8]` vs `ValidatePackages:[1..7]`
+  (`orchestrator/src/server/other/constants.js:118-128`).
+- **Plan level**: `plan.tags` containing `'ALM'` marks the whole *test* as Propagate at fire time (F16).
+
+DoD3 ("no scenario is **created** with a Propagate attack in it") concerns the attack level, and the only guard
+there is the **run-time** strip — nothing prevents persisting an ALM-tagged attack id into a saved Validate plan.
+Studio's own attack picker does not filter by Propagate/Validate content package at all
+(`AttacksModal.tsx`/`AttacksModalBody.tsx` do not receive `isAlmScenario`).
 
 ## 7. Brainstorm Outcome
 
