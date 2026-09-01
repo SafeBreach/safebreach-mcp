@@ -2298,6 +2298,34 @@ def _nothing_was_computed(counts):
     return bool(counts) and not any(is_computed_count(c) for c in counts)
 
 
+def _uncomputed_step_positions(counts):
+    """1-indexed positions of the steps SafeBreach never scored.
+
+    An unscored step is neither a number nor a zero: its contribution is
+    unknown, so it can be neither counted toward a total nor skipped as
+    contributing nothing.
+    """
+    return [i + 1 for i, count in enumerate(counts) if not is_computed_count(count)]
+
+
+def _partial_scoring_error(subject, positions, counts):
+    """The message for a preflight that measured only some of its steps.
+
+    Distinct from _truncated_scoring_error, which covers a response where
+    nothing at all was computed. A partial response is the more dangerous of
+    the two: the measured steps look authoritative, so the unmeasured ones read
+    as zero and get dropped or discounted.
+    """
+    return (
+        f"{subject} cannot be queued: SafeBreach scored only "
+        f"{len(counts) - len(positions)} of the {len(counts)} step(s) it returned, "
+        f"stopping before step(s) {positions}. Whether those steps would run is "
+        f"unknown — this is NOT a report that they produce nothing. Queuing now would "
+        f"either drop them from the run or execute a plan whose size was never measured. "
+        f"Lower `limit`, or score fewer steps at a time, then try again."
+    )
+
+
 def _truncated_scoring_error(subject, counts):
     """The message for a scoring run the orchestrator stopped early.
 
@@ -3396,6 +3424,15 @@ def sb_quick_run(
     if _nothing_was_computed(step_counts):
         raise ValueError(_truncated_scoring_error("Quick Run", step_counts))
 
+    # Before the checks below, which all read an uncomputed count as a measured
+    # zero: the total would understate, and the partial-execution filter would
+    # drop the unscored attack from a real run.
+    uncomputed_steps = _uncomputed_step_positions(step_counts)
+    if uncomputed_steps:
+        raise ValueError(
+            _partial_scoring_error("Quick Run", uncomputed_steps, step_counts)
+        )
+
     if total_predicted == 0:
         raise ValueError(
             f"Quick Run would produce 0 simulations across all "
@@ -3407,6 +3444,8 @@ def sb_quick_run(
     if empty_steps:
         exec_steps = []
         for i, step in enumerate(steps):
+            # Every count is computed by here — the guard above refused the
+            # partial response that used to make this drop an unscored attack.
             if _runs_anywhere(step_counts[i]):
                 exec_steps.append(step)
             else:
@@ -3603,6 +3642,16 @@ def sb_run_scenario(
     if _nothing_was_computed(step_counts):
         raise ValueError(_truncated_scoring_error(
             f"Scenario '{scenario.get('name', scenario_id)}'", step_counts
+        ))
+
+    # Before the checks below: `empty_steps` counts only genuine zeros, so an
+    # unscored step would slip past allow_partial_steps, and the messages would
+    # state a measured verdict over steps that were never measured.
+    uncomputed_steps = _uncomputed_step_positions(step_counts)
+    if uncomputed_steps:
+        raise ValueError(_partial_scoring_error(
+            f"Scenario '{scenario.get('name', scenario_id)}'",
+            uncomputed_steps, step_counts,
         ))
 
     if total_predicted == 0:

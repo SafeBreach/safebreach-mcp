@@ -419,7 +419,8 @@ Rate limiting environment variables:
   then submits to orchestrator queue API. OOB scenarios relay full payload with DAG; custom plans
   use `planId` reference (or full payload when augmented with overrides).
   **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
-  `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0),
+  `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0; it is consent
+  to skip **measured** zeros, never unscored steps, which are refused regardless),
   `step_overrides` (JSON string — replaces entire filter per step. **Filter schema**: each filter
   key must be `{"<type>": {"operator": "is", "values": [...], "name": "<type>"}}`. Valid types:
   os, role, simulators, connection. Supports `"default"` key for applying to all missing steps —
@@ -457,7 +458,10 @@ Rate limiting environment variables:
   without queuing. The agent MUST present the evaluation to the user and get confirmation before
   calling with `evaluate=False`.
   Partial execution: if some attacks produce 0 simulations, they are skipped (user saw the evaluation).
-  Hard-refuses if ALL attacks produce 0. Parameters: `attack_ids` (required, comma-separated
+  Hard-refuses if ALL attacks produce 0, **and hard-refuses any execution whose preflight was only
+  partly measured** — a step SafeBreach never scored returns `null`, which is not a zero, so it can
+  neither be counted nor skipped. Skipping only genuine zeros is the point: an unscored attack used
+  to be dropped from a real run and reported as "skipped (0 simulations)". Lower `limit` and re-score. Parameters: `attack_ids` (required, comma-separated
   integers), `console`, `test_name`, `all_connected` (bool), `simulator_overrides` (JSON string),
   `evaluate` (bool, default True). Uses the same queue API as `run_scenario`.
   **Simulator UUID discovery**: For rerun workflows, get UUIDs from `get_simulation_details`

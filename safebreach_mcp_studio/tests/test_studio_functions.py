@@ -9407,6 +9407,143 @@ class TestTruncatedResponsesRenderHonestly:
         assert 'No matching simulators' not in message
 
 
+# The shape that actually reaches the defect: a positive step to get past the
+# "would produce 0 simulations" refusal, a genuine 0 to make `empty_steps`
+# non-empty and open the partial-execution path, and an unscored step that then
+# reads as another zero once inside it.
+PARTIALLY_SCORED_STEPS = [
+    {"simulationCount": 10},
+    {"simulationCount": 0},
+    {"simulationCount": None},
+]
+
+
+class TestPartiallyScoredRunIsRefusedNotSilentlyTrimmed:
+    """A response measured only in part must not be executed.
+
+    `_nothing_was_computed` guarded the fully-uncomputed case only. With at
+    least one genuine 0 and at least one unscored step, quick_run's partial
+    execution filter read the null as "runs nowhere" and dropped that attack
+    from a real queued run, while run_scenario's messages stated a measured
+    verdict over steps that were never measured.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def _quick_run(self, step_stats, **kwargs):
+        with patch('safebreach_mcp_studio.studio_functions.rate_limiter'), \
+                patch('safebreach_mcp_studio.studio_functions._submit_to_queue',
+                      return_value=MOCK_QUEUE_RESPONSE_QUICK_RUN) as submit, \
+                patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+                      return_value=step_stats), \
+                patch('safebreach_mcp_playbook.playbook_functions.'
+                      '_get_all_attacks_from_cache_or_api',
+                      return_value=MOCK_PLAYBOOK_ATTACKS):
+            kwargs.setdefault('evaluate', False)
+            try:
+                result = sb_quick_run(
+                    attack_ids="8849,217,1071", console="test", **kwargs
+                )
+            except ValueError as e:
+                return None, submit, str(e)
+            return result, submit, None
+
+    def test_quick_run_refuses_a_partially_scored_response(self):
+        _, submit, error = self._quick_run(PARTIALLY_SCORED_STEPS)
+
+        assert error is not None
+        submit.assert_not_called()
+
+    def test_the_error_names_the_unscored_step_and_makes_no_zero_claim(self):
+        """"No matching simulators" is a measured verdict; step 2 was never measured."""
+        _, _, error = self._quick_run(PARTIALLY_SCORED_STEPS)
+
+        assert '[3]' in error
+        assert 'NOT a report that they produce nothing' in error
+        assert 'No matching simulators' not in error
+
+    def test_the_unscored_attack_is_never_dropped_from_a_queued_run(self):
+        """The defect: attack 1071 was silently removed and the run queued anyway.
+
+        Without the guard this queues two of the three attacks and reports the
+        third under "skipped (0 simulations)" — a measured claim about a step
+        that was never scored.
+        """
+        _, submit, error = self._quick_run(PARTIALLY_SCORED_STEPS)
+
+        assert error is not None
+        submit.assert_not_called()
+
+    def test_a_wholly_unscored_response_is_refused_by_the_earlier_guard(self):
+        _, submit, error = self._quick_run([{"simulationCount": None}] * 3)
+
+        assert 'could not be scored' in error
+        submit.assert_not_called()
+
+    def test_evaluate_still_previews_a_partially_scored_response(self):
+        """The guard belongs to execution; a preview's whole job is to show this."""
+        result, submit, error = self._quick_run(PARTIALLY_SCORED_STEPS, evaluate=True)
+
+        assert error is None
+        submit.assert_not_called()
+        assert result['status'] == 'evaluating'
+        assert result['predicted_per_step'] == [10, 0, None]
+
+    def test_a_fully_scored_quick_run_still_queues(self):
+        result, submit, error = self._quick_run(
+            [{"simulationCount": 10}, {"simulationCount": 5}, {"simulationCount": 2}]
+        )
+
+        assert error is None
+        submit.assert_called_once()
+        assert result['status'] == 'queued'
+
+    def _run_scenario(self, mock_oob_scenario, step_stats, **kwargs):
+        with patch('safebreach_mcp_studio.studio_functions._fetch_all_scenarios',
+                   return_value=[mock_oob_scenario]), \
+                patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
+                      return_value=step_stats), \
+                patch('safebreach_mcp_studio.studio_functions._submit_to_queue',
+                      return_value=MOCK_QUEUE_RESPONSE_QUICK_RUN) as submit:
+            try:
+                sb_run_scenario(scenario_id=mock_oob_scenario['id'],
+                                console="test-console", **kwargs)
+            except ValueError as e:
+                return submit, str(e)
+            return submit, None
+
+    def test_run_scenario_refuses_a_partially_scored_response(self, mock_oob_scenario):
+        submit, error = self._run_scenario(mock_oob_scenario, PARTIALLY_SCORED_STEPS)
+
+        assert error is not None
+        assert 'NOT a report that they produce nothing' in error
+        submit.assert_not_called()
+
+    def test_allow_partial_steps_does_not_wave_an_unscored_step_through(
+        self, mock_oob_scenario
+    ):
+        """allow_partial_steps is consent to skip measured zeros, not unknowns."""
+        submit, error = self._run_scenario(
+            mock_oob_scenario, PARTIALLY_SCORED_STEPS, allow_partial_steps=True
+        )
+
+        assert error is not None
+        submit.assert_not_called()
+
+    def test_run_scenario_keeps_the_wholly_unscored_message(self, mock_oob_scenario):
+        """The more specific error must not be shadowed by the new guard."""
+        _, error = self._run_scenario(
+            mock_oob_scenario, [{"simulationCount": None}]
+        )
+
+        assert 'could not be scored' in error
+
+
 class TestPlanStatisticsToolRegistration:
     """T-24 — the tool is registered under the agreed wire name and declared read-only."""
 
