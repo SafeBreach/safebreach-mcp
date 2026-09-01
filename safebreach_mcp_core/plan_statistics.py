@@ -77,11 +77,12 @@ class PastRunHasNoScenarioError(ValueError):
     """
 
 
-def _is_computed_count(value) -> bool:
+def is_computed_count(value) -> bool:
     """Whether a count is a real number rather than 'not computed'.
 
     The single arbiter of the null-safety rule — bools are excluded so a stray
-    ``False`` cannot read as ``0``.
+    ``False`` cannot read as ``0``. Public because every layer needs it: a
+    second implementation elsewhere would make "single arbiter" untrue.
     """
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -165,7 +166,7 @@ def _normalize_step(raw: dict, index: int) -> dict:
         'simulationCount': simulation_count,
         # False when this step's own count is missing, or when this step is the
         # one the orchestrator stopped on — a step computed before that keeps True.
-        'counts_computed': _is_computed_count(simulation_count) and not is_limit_reached,
+        'counts_computed': is_computed_count(simulation_count) and not is_limit_reached,
         'isLimitReached': is_limit_reached,
     }
     for field in _STEP_MAP_FIELDS:

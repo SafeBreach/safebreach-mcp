@@ -20,7 +20,7 @@ from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from safebreach_mcp_core.plan_statistics import (
     fetch_plan_statistics,
-    _is_computed_count,
+    is_computed_count,
     DEFAULT_LIMIT,
     DEFAULT_INCLUDE_DISABLED,
     DEFAULT_GET_CONSTRAINTS,
@@ -2283,7 +2283,7 @@ def _count_matched_entities(counts):
     "nothing was measured". An empty map still returns 0, as before.
     """
     values = list(counts)
-    computed = [v for v in values if _is_computed_count(v)]
+    computed = [v for v in values if is_computed_count(v)]
     if values and not computed:
         return None
     return sum(1 for v in computed if v > 0)
@@ -2295,7 +2295,7 @@ def _nothing_was_computed(counts):
     Distinguishes a truncated response from a genuinely empty selection: an
     empty list means no steps at all, which is a different problem.
     """
-    return bool(counts) and not any(_is_computed_count(c) for c in counts)
+    return bool(counts) and not any(is_computed_count(c) for c in counts)
 
 
 def _truncated_scoring_error(subject, counts):
@@ -2319,16 +2319,17 @@ def _sum_computed_counts(counts):
     summing those raises. An uncomputed step contributes nothing to the total,
     which is a partial figure by nature — the truncation is what explains it.
     """
-    return sum(c for c in counts if _is_computed_count(c))
+    return sum(c for c in counts if is_computed_count(c))
 
 
 def _runs_anywhere(count):
     """Whether a step is known to produce simulations.
 
     False for an uncomputed count: not knowing is not the same as knowing it
-    produces nothing, and `> 0` raises on None.
+    produces nothing, and `> 0` raises on None. Delegates rather than
+    re-deriving, so the null-safety rule has exactly one implementation.
     """
-    return _is_computed_count(count) and count > 0
+    return is_computed_count(count) and count > 0
 
 
 def _by_descending_simulation_count(item):
@@ -2340,7 +2341,7 @@ def _by_descending_simulation_count(item):
     ties in response order.
     """
     _, count = item
-    return (0, -count) if _is_computed_count(count) else (1, 0)
+    return (0, -count) if is_computed_count(count) else (1, 0)
 
 
 def _build_attack_name_map(console):
@@ -2553,7 +2554,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         result.append(step_result)
 
     counts = [s['simulationCount'] for s in result]
-    computed = [c for c in counts if _is_computed_count(c)]
+    computed = [c for c in counts if is_computed_count(c)]
     logger.info(f"Statistics: {counts} "
                 f"({len(computed)}/{len(counts)} computed, total: {sum(computed)})")
     return result
@@ -2679,7 +2680,7 @@ def _conflict_severity(attack_count):
     candidates still runs. The same code is therefore legitimately blocking for
     one attack and reducing for another in the same step.
     """
-    if not _is_computed_count(attack_count):
+    if not is_computed_count(attack_count):
         return 'unknown'
     return 'blocking' if attack_count == 0 else 'reducing'
 
@@ -2749,7 +2750,7 @@ def _zero_impact_attacks(moves, conflicts, attack_names=None):
 
     entries = []
     for attack_id, count in sorted(moves.items(), key=lambda kv: _attack_sort_key(kv[0])):
-        if not (_is_computed_count(count) and count == 0):
+        if not (is_computed_count(count) and count == 0):
             continue
         entry = {'attack_id': attack_id}
         name = (attack_names or {}).get(attack_id)
@@ -2769,7 +2770,7 @@ def _zero_impact_simulators(simulators, simulator_index, simulator_names=None):
     """
     entries = []
     for simulator_id, count in sorted(simulators.items()):
-        if not (_is_computed_count(count) and count == 0):
+        if not (is_computed_count(count) and count == 0):
             continue
         entry = {'simulator_id': simulator_id}
         name = (simulator_names or {}).get(simulator_id)

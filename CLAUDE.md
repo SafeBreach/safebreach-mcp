@@ -514,6 +514,10 @@ Rate limiting environment variables:
   (`blocking` at integer `0`, `reducing` when it still runs), so the same code is legitimately blocking for
   one attack and reducing for another in the same step. `conflict_detail` controls verbosity: `summary`
   (default), `per_attack` (adds attack names), `full` (adds a capped `simulator_ids` sample).
+  **Returns a narrated markdown report**, like every other studio tool — counts mode, steps scored, total
+  simulations, then per step its coverage, attack counts, zero-impact attacks/simulators with their blockers,
+  and conflicts blocking-first, closing with the constraint catalog and hint. Per-simulator counts are
+  summarised as coverage rather than listed per UUID; everything else the shaped report carries is narrated.
   **No MCP-side cache** — a re-check after a changed decision must never be answered from a stale local copy;
   `use_cache` controls only the orchestrator's own server-side cache.
 

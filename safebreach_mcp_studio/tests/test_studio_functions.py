@@ -9473,6 +9473,136 @@ class TestPlanStatisticsToolRegistration:
         assert 'planId' not in self._tools()['get_plan_statistics'].description
 
 
+class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
+    """Studio narrates; it does not hand back structured payloads.
+
+    Every other @mcp.tool in this server returns a formatted string, errors
+    included. A single dict-returning tool makes a caller handle two paradigms
+    inside one server.
+    """
+
+    STEP = {
+        'step_index': 0, 'simulation_count': 1200, 'counts_computed': True,
+        'is_limit_reached': False,
+        'attacks': {'8849': 1200, '226': 0}, 'attacks_total': 2,
+        'simulators': {'sim-a': 600, 'sim-b': 0}, 'simulators_total': 2,
+        'attacker_simulators': {'sim-a': 600}, 'attacker_simulators_total': 1,
+        'target_simulators': {'sim-b': 0}, 'target_simulators_total': 1,
+        'zero_impact_attacks': [{
+            'attack_id': '226', 'attack_name': 'DNS Tunnel',
+            'blockers': [{'code': 'incompatible_os', 'side': ['target'],
+                          'simulator_count': 1, 'values': {'requiredOs': 'WINDOWS'}}],
+        }],
+        'zero_impact_attacks_total': 1,
+        'zero_impact_simulators': [{
+            'simulator_id': 'sim-b',
+            'blockers': [{'code': 'incompatible_os', 'side': ['target'], 'attack_count': 1}],
+        }],
+        'zero_impact_simulators_total': 1,
+        'conflicts': [
+            {'code': 'incompatible_os', 'severity': 'blocking', 'attack_id': '226',
+             'side': ['target'], 'simulator_count': 1, 'values': {'requiredOs': 'WINDOWS'}},
+            {'code': 'port_in_use', 'severity': 'reducing', 'attack_id': '8849',
+             'side': ['attacker'], 'simulator_count': 1},
+        ],
+        'conflicts_total': 2,
+    }
+
+    def _report(self, **overrides):
+        report = {
+            'counts_mode': 'runnable', 'plan_step_count': 1, 'returned_step_count': 1,
+            'truncated': False,
+            'params_used': {'includeDisabled': False, 'limit': 500000},
+            'constraint_catalog': {
+                'incompatible_os': {'description': 'Simulator OS mismatch'},
+                'port_in_use': {'description': None},
+            },
+            'steps': [dict(self.STEP)],
+            'hint_to_agent': 'These are runnable counts.',
+        }
+        report.update(overrides)
+        return report
+
+    def _render(self, **overrides):
+        from safebreach_mcp_studio.studio_server import _format_plan_statistics
+        return _format_plan_statistics(self._report(**overrides))
+
+    def test_every_studio_tool_returns_a_string(self):
+        """The convention this tool previously broke, asserted for the whole server."""
+        import inspect
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        source = inspect.getsource(SafeBreachStudioServer)
+        assert '        ) -> dict:' not in source
+        assert source.count('        ) -> str:') == 13
+
+    def test_the_rendered_report_is_a_string(self):
+        assert isinstance(self._render(), str)
+
+    def test_counts_mode_and_totals_are_stated(self):
+        text = self._render()
+        assert 'runnable' in text
+        assert '1,200' in text
+
+    def test_zero_impact_entities_are_named_with_their_blockers(self):
+        text = self._render()
+        assert 'DNS Tunnel' in text
+        assert 'incompatible_os' in text
+        assert 'sim-b' in text
+
+    def test_conflicts_carry_severity_and_the_api_values(self):
+        text = self._render()
+        assert 'blocking' in text and 'reducing' in text
+        assert 'requiredOs' in text
+
+    def test_the_catalog_states_a_missing_description_rather_than_the_code_twice(self):
+        """A bare code is not an explanation, and the code is already the line's key."""
+        text = self._render()
+        assert 'Simulator OS mismatch' in text
+        assert 'no description supplied by this console' in text
+        assert '`port_in_use` — port_in_use' not in text
+
+    def test_an_uncomputed_step_reports_no_measurements(self):
+        """The R1 guard has to survive narration, or the string re-asserts what the dict refused."""
+        step = dict(self.STEP)
+        step.update({'simulation_count': None, 'counts_computed': False,
+                     'is_limit_reached': True, 'zero_impact_attacks': [],
+                     'zero_impact_simulators': [], 'conflicts': []})
+        text = self._render(steps=[step], truncated=True)
+        assert 'not computed' in text
+        assert 'null is not zero' in text
+        assert 'DNS Tunnel' not in text
+
+    def test_a_null_count_is_never_rendered_as_zero(self):
+        step = dict(self.STEP)
+        step.update({'simulation_count': None, 'counts_computed': False,
+                     'zero_impact_attacks': [], 'zero_impact_simulators': [],
+                     'conflicts': []})
+        text = self._render(steps=[step])
+        assert '— 0 simulations' not in text
+
+    def test_a_capped_collection_states_its_true_total(self):
+        step = dict(self.STEP)
+        step['conflicts_total'] = 312
+        text = self._render(steps=[step])
+        assert '2 of 312' in text
+
+    def test_truncation_is_flagged_in_the_narration(self):
+        assert 'Truncated' in self._render(truncated=True)
+
+    def test_both_counts_renders_each_pass_under_its_own_heading(self):
+        report = {
+            'counts_mode': 'both',
+            'runnable': self._report(),
+            'expected': self._report(counts_mode='expected',
+                                     params_used={'includeDisabled': True, 'limit': 500000}),
+            'hint_to_agent': 'Two separate calls were issued.',
+        }
+        from safebreach_mcp_studio.studio_server import _format_plan_statistics
+        text = _format_plan_statistics(report)
+        assert '## Runnable' in text and '## Expected' in text
+        assert 'Two separate calls were issued.' in text
+
+
 class TestPlanInputIsExclusiveAndParsed:
     """T-26 — ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error."""
 

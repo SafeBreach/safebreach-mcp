@@ -7,6 +7,7 @@ validation of custom Python attack code and managing attack drafts.
 
 import sys
 import os
+import json
 import logging
 from typing import Optional
 
@@ -15,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
+from safebreach_mcp_core.plan_statistics import is_computed_count
 from .studio_functions import (
     sb_validate_studio_code,
     sb_save_studio_attack_draft,
@@ -1691,10 +1693,12 @@ Parameters:
 - conflict_detail (optional, str, default "summary"): "summary", "per_attack" (adds attack
   names), or "full" (adds a simulator_ids sample and lifts the list caps).
 
-Returns: counts_mode, plan_step_count, returned_step_count, truncated, params_used,
-constraint_catalog ({code: description}, relayed verbatim from the console, null where it
-supplied none), steps (each with simulation_count, counts_computed, attack/simulator count
-maps, zero_impact_attacks, zero_impact_simulators, conflicts) and hint_to_agent.
+Returns a markdown report: the counts mode, how many steps were scored, the total
+simulations, then for each step its simulation count, coverage, attack counts, the
+zero-impact attacks and simulators with the constraints that blocked them, and the
+conflicts with blocking ones first — followed by a constraint catalog whose descriptions
+are relayed verbatim from the console, and a closing hint. Per-simulator counts are
+summarised as coverage rather than listed one UUID at a time.
 zero_impact_* REPORTS entities whose count is a genuine 0 — it removes nothing from the
 scenario. Each conflict's severity is computed from that attack's own count ("blocking" at
 0, "reducing" otherwise), so one code is legitimately blocking and reducing in one step.
@@ -1717,7 +1721,7 @@ get_plan_statistics(console="demo", plan='{"steps": [{"attacksFilter": {"playboo
             limit: int = 500000,
             use_cache: bool = True,
             conflict_detail: str = "summary",
-        ) -> dict:
+        ) -> str:
             """Score a scenario and report its impact, without running anything."""
             try:
                 # Single-tenant console auto-resolve
@@ -1727,7 +1731,7 @@ get_plan_statistics(console="demo", plan='{"steps": [{"attacksFilter": {"playboo
                     if console_name != 'default' and console not in safebreach_envs:
                         console = console_name
 
-                return sb_get_plan_statistics(
+                report = sb_get_plan_statistics(
                     console=console,
                     plan=plan,
                     scenario_id=scenario_id,
@@ -1740,24 +1744,26 @@ get_plan_statistics(console="demo", plan='{"steps": [{"attacksFilter": {"playboo
                     use_cache=use_cache,
                     conflict_detail=conflict_detail,
                 )
+                return _format_plan_statistics(report)
             except PermissionError as e:
                 logger.error(f"Plan statistics permission error: {e}")
-                return {"error": str(e)}
+                return f"Plan Statistics Permission Error: {str(e)}"
             except ValueError as e:
                 logger.error(f"Plan statistics error: {e}")
-                return {"error": str(e)}
+                return f"Plan Statistics Error: {str(e)}"
             except Exception as e:
                 logger.error(f"Error in get_plan_statistics: {e}")
-                return {"error": f"Error getting plan statistics: {str(e)}"}
+                return f"Error getting plan statistics: {str(e)}"
 
 
 def _is_computed_positive(count) -> bool:
     """Whether a count is a real number greater than zero.
 
     Not knowing a count is not the same as knowing it is zero, and `> 0` raises
-    on the null a limit-reached response returns.
+    on the null a limit-reached response returns. Delegates to the one
+    implementation of the null-safety rule rather than restating it.
     """
-    return isinstance(count, int) and not isinstance(count, bool) and count > 0
+    return is_computed_count(count) and count > 0
 
 
 def _format_predicted_total(total, per_step) -> str:
@@ -1800,6 +1806,196 @@ def _render_constraint_reason(reason: dict) -> str:
     if description == "":
         return f"{reason['code']} — (described as empty by this console)"
     return description
+
+
+def _format_count(value) -> str:
+    """A count for display; null renders as its meaning, never as a number."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"{value:,}"
+    return "not computed"
+
+
+def _coverage(counts: dict) -> str:
+    """"N of M produce simulations", or the honest alternative when nothing was measured."""
+    total = len(counts)
+    computed = [v for v in counts.values() if is_computed_count(v)]
+    if total and not computed:
+        return f"0 of {total} measured"
+    return f"{sum(1 for v in computed if v > 0)} of {total}"
+
+
+def _shown_of(entries, total: int) -> str:
+    """Mark a capped collection so a partial list is never read as the whole."""
+    return "" if len(entries) >= total else f" *(showing {len(entries)} of {total:,})*"
+
+
+def _format_values(entry: dict) -> str:
+    """The API's own detail for one conflict, in whichever form it arrived."""
+    if 'values' in entry:
+        return f" — `{json.dumps(entry['values'], sort_keys=True, default=str)}`"
+    if 'values_variants' in entry:
+        variants = ", ".join(
+            f"`{json.dumps(v['values'], sort_keys=True, default=str)}`"
+            f" ({v['simulator_count']} sim)"
+            for v in entry['values_variants']
+        )
+        return f" — {variants} *(of {entry.get('values_variant_count', 0)} variants)*"
+    return ""
+
+
+def _format_statistics_step(step: dict) -> list:
+    """One step, with every reporting line suppressed when nothing was computed."""
+    count = step['simulation_count']
+    headline = (f"{_format_count(count)} simulations"
+                if is_computed_count(count) else "simulation count not computed")
+    parts = [f"### Step {step['step_index'] + 1} — {headline}"]
+
+    if not step['counts_computed']:
+        parts.append(
+            "  SafeBreach stopped evaluating before scoring this step. Nothing below is "
+            "measured: null is not zero, and no attack or simulator is reported as "
+            "contributing nothing."
+        )
+        return parts
+
+    parts.append(
+        f"- **Coverage:** {_coverage(step['attacks'])} attacks, "
+        f"{_coverage(step['target_simulators'])} target simulators, "
+        f"{_coverage(step['attacker_simulators'])} attacker simulators "
+        f"produce simulations"
+    )
+
+    attacks = step['attacks']
+    if attacks:
+        rendered = ", ".join(f"#{aid}:{_format_count(c)}" for aid, c in attacks.items())
+        parts.append(
+            f"- **Attack counts:** {rendered}"
+            f"{_shown_of(attacks, step['attacks_total'])}"
+        )
+
+    zero_attacks = step['zero_impact_attacks']
+    if zero_attacks:
+        parts.append(
+            f"- **Zero-impact attacks** ({len(zero_attacks)} of "
+            f"{step['zero_impact_attacks_total']:,}) — still in the plan, contributing nothing:"
+        )
+        for entry in zero_attacks:
+            label = f"#{entry['attack_id']}"
+            if entry.get('attack_name'):
+                label += f" ({entry['attack_name']})"
+            blockers = ", ".join(
+                f"`{b['code']}` ({'/'.join(b['side'])}, {b['simulator_count']} sim)"
+                for b in entry['blockers']
+            ) or "no constraint reported"
+            parts.append(f"  - {label} — blocked by {blockers}")
+
+    zero_sims = step['zero_impact_simulators']
+    if zero_sims:
+        parts.append(
+            f"- **Zero-impact simulators** ({len(zero_sims)} of "
+            f"{step['zero_impact_simulators_total']:,}):"
+        )
+        for entry in zero_sims:
+            label = entry.get('simulator_name') or entry['simulator_id']
+            blockers = ", ".join(
+                f"`{b['code']}` ({'/'.join(b['side'])}, {b['attack_count']} attack(s))"
+                for b in entry['blockers']
+            ) or "no constraint reported"
+            parts.append(f"  - {label} — {blockers}")
+
+    conflicts = step['conflicts']
+    if conflicts:
+        parts.append(
+            f"- **Conflicts** ({len(conflicts)} of {step['conflicts_total']:,}), "
+            f"blocking first:"
+        )
+        for conflict in conflicts:
+            severity = conflict['severity']
+            marker = f"**{severity}**" if severity == 'blocking' else severity
+            label = f"attack #{conflict['attack_id']}"
+            if conflict.get('attack_name'):
+                label += f" ({conflict['attack_name']})"
+            parts.append(
+                f"  - {marker} `{conflict['code']}` — {label}, "
+                f"{'/'.join(conflict['side'])}, {conflict['simulator_count']} simulator(s)"
+                f"{_format_values(conflict)}"
+            )
+            if conflict.get('simulator_ids'):
+                parts.append(f"    - simulators: {', '.join(conflict['simulator_ids'])}")
+
+    return parts
+
+
+def _format_one_report(report: dict) -> list:
+    """One scoring pass, narrated. Per-simulator counts are summarised, not listed.
+
+    Coverage plus the zero-impact list answers what a caller acts on — which
+    simulators carry the plan and which contribute nothing. Listing a count for
+    every UUID in between would dominate the report without informing it.
+    """
+    parts = [
+        f"**Counts mode:** {report['counts_mode']} "
+        f"(`includeDisabled={str(report['params_used'].get('includeDisabled')).lower()}`)",
+    ]
+
+    scored = report['returned_step_count']
+    if report['plan_step_count'] is not None:
+        parts.append(f"**Steps scored:** {scored} of {report['plan_step_count']}")
+    else:
+        parts.append(f"**Steps scored:** {scored} (plan size resolved by SafeBreach)")
+
+    if report['truncated']:
+        parts.append("**⚠ Truncated** — SafeBreach stopped evaluating early.")
+
+    counts = [s['simulation_count'] for s in report['steps']]
+    computed = [c for c in counts if is_computed_count(c)]
+    if counts and not computed:
+        parts.append("**Total simulations:** not computed — no step was scored")
+    elif len(computed) < len(counts):
+        parts.append(
+            f"**Total simulations:** {sum(computed):,} across the "
+            f"{len(computed)} step(s) that were scored"
+        )
+    else:
+        parts.append(f"**Total simulations:** {sum(computed):,}")
+
+    parts.append("")
+    for step in report['steps']:
+        parts.extend(_format_statistics_step(step))
+        parts.append("")
+
+    catalog = report['constraint_catalog']
+    if catalog:
+        parts.append("### Constraint catalog")
+        parts.append("Descriptions are SafeBreach's own, relayed verbatim.")
+        for code, entry in catalog.items():
+            # Rendered here rather than via _render_constraint_reason, which
+            # prefixes the code — the code is already this line's key.
+            description = entry.get('description')
+            if description is None:
+                description = "*(no description supplied by this console)*"
+            elif description == "":
+                description = "*(described as empty by this console)*"
+            parts.append(f"- `{code}` — {description}")
+        parts.append("")
+
+    parts.append(f"**Hint:** {report['hint_to_agent']}")
+    return parts
+
+
+def _format_plan_statistics(report: dict) -> str:
+    """Narrate the plan statistics report the way every other studio tool does."""
+    if report.get('counts_mode') != 'both':
+        return "\n".join(["## Plan Statistics", ""] + _format_one_report(report))
+
+    parts = ["## Plan Statistics — both counts modes", ""]
+    for label, key in (("Runnable", 'runnable'), ("Expected", 'expected')):
+        parts.append(f"## {label}")
+        parts.append("")
+        parts.extend(_format_one_report(report[key]))
+        parts.append("")
+    parts.append(f"**Hint:** {report['hint_to_agent']}")
+    return "\n".join(parts)
 
 
 def _human_bytes(n: int) -> str:
