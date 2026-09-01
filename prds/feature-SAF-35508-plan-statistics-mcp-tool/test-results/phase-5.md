@@ -9,8 +9,8 @@ Phase 5 — Public function + tool registration.
 |-------|--------|
 | Dispatch mode | source-repo **uv-pytest** for T-24…T-27; e2e for T-28…T-31, T-40 |
 | `uv` toolchain | ✓ `uv 0.9.25`; `--python 3.12` pin mandatory |
-| **`Validate console environment`** | ✗ **absent** — no environment provisioned for SAF-35508. Five tests blocked. |
-| `E2E_CONSOLE` | not set; no `.vscode/set_env.sh` sourced |
+| **`Validate console environment`** | ✓ `zircon-piculet.dev.sbops.com` — reused, not built (see `../env-design.md`) |
+| `E2E_CONSOLE` | set to `zircon-piculet.dev.sbops.com`; token from `~/.claude/safebreach.json` |
 | `-m "not e2e"` | ✓ **required, not automatic** — `pyproject.toml` registers the `e2e` marker but sets no `addopts`, so the marker alone deselects nothing |
 | Unwritten tests | ✓ none — all nine authored, including the five that cannot run |
 
@@ -23,11 +23,11 @@ Phase 5 — Public function + tool registration.
 | T-25 | unit | Automatic | none | uv-pytest | executed | 2/2 PASSED — `TestPlanStatisticsTakesNoRateLimitingGates` |
 | T-26 | unit | Automatic | none | uv-pytest | executed | 7/7 PASSED — `TestPlanInputIsExclusiveAndParsed` |
 | T-27 | integration | Automatic | repo-harness¹ | uv-pytest | executed | 9/9 PASSED — `TestCountsModeSelectsOneCallOrTwo` |
-| T-28 | e2e | Automatic | Validate console | — | **BLOCKED** | no console provisioned; test authored and collected |
-| T-29 | e2e | Automatic | Validate console | — | **BLOCKED** | as above (2 cases) |
-| T-30 | e2e | Automatic | Validate console | — | **BLOCKED** | as above (2 cases) |
-| T-31 | e2e | Automatic | Validate console | — | **BLOCKED** | as above |
-| T-40 | e2e | Automatic | Validate console | — | **BLOCKED** | as above (2 cases) |
+| T-28 | e2e | Automatic | Validate console | pytest -m e2e | executed | PASSED — see Addendum |
+| T-29 | e2e | Automatic | Validate console | pytest -m e2e | executed | 2/2 PASSED |
+| T-30 | e2e | Automatic | Validate console | pytest -m e2e | executed | 2/2 PASSED, neither skipped |
+| T-31 | e2e | Automatic | Validate console | pytest -m e2e | executed | PASSED |
+| T-40 | e2e | Automatic | Validate console | pytest -m e2e | executed | 2/2 PASSED, neither skipped |
 
 ¹ wrong again — T-27 mocks the transport. Fifth consecutive phase.
 
@@ -35,10 +35,10 @@ Ledgered = 32. Selected = 32. No test dropped.
 
 ## Cumulative readiness
 
-- Green: T-1, T-3, T-38, T-39, T-6…T-12, T-13…T-17, T-18…T-23, T-36, T-24, T-25, T-26, T-27 (27 of 32)
-- **BLOCKED: T-28, T-29, T-30, T-31, T-40** — environment, not code
-- Unwritten-planned: none · Delegated: none
-- Phase verdict: **INCOMPLETE** — five tests cannot run until a console exists
+- Green: **all 32** — the 27 offline plus T-28, T-29, T-30, T-31, T-40, executed against
+  `zircon-piculet.dev.sbops.com` on 2026-08-27 (see Addendum)
+- BLOCKED: none · Unwritten-planned: none · Delegated: none
+- Phase verdict: **PASS**
 
 ## Evidence
 
@@ -73,29 +73,11 @@ Full repo suite: **1705 passed, 145 deselected, 0 failed**.
 
 ## Hand-off (delegated / BLOCKED)
 
-**T-28, T-29, T-30, T-31, T-40 — BLOCKED on infrastructure, not on code.**
+None — the five e2e tests recorded BLOCKED in the original run have since executed and passed. See the
+Addendum.
 
-All five are authored in `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py` and collect cleanly
-(`--collect-only` → 8 tests). They need a **Validate console environment**, which does not exist for
-SAF-35508. To run them:
-
-```
-# provision, then:
-export E2E_CONSOLE=<console>          # defaults to pentest01
-source .vscode/set_env.sh
-uv run --python 3.12 pytest safebreach_mcp_studio/tests/test_e2e_plan_statistics.py -m "e2e" -v
-```
-
-Nothing is hardcoded — every scenario and plan id is discovered at runtime via `_fetch_all_scenarios` /
-`_fetch_all_plans`, so they adapt to whatever the console holds.
-
-**T-40 matters most of the five.** It is the only test in the entire plan that can falsify the relay
-design: every Phase 1 test asserts MCP's behaviour *given* a catalog. Until it runs against a real
-console, "Core supplies the descriptions we relay" remains an assumption.
-
-Two carry deliberate skip paths (T-30's disabled-simulator precondition, T-40's SAF-35568 precondition).
-Each asserts its unconditional half **before** the skip, so a skipped precondition can never be reported
-as a pass — the specific failure both tests warn about.
+Nothing in them is hardcoded: every scenario and plan id is discovered at runtime via
+`_fetch_all_scenarios` / `_fetch_all_plans`, so they adapt to whatever console they are pointed at.
 
 ## To author (unwritten-planned)
 
@@ -126,18 +108,47 @@ None.
    `simulationCount is None`. **This cannot be fixed without changing T-13**, whose goldens lock the
    step dict to exactly seven keys — a genuine tension between the contract-lock and the improvement.
    Needs an owner decision.
-5. **Uncapped raw maps.** `attacks`, `simulators`, `attacker_simulators` and `target_simulators` are
-   relayed whole, and with `both_counts=True` twice. On a real console a step can carry thousands of
-   attack ids. §4 specifies full maps and T-20/T-21 assert on them, so capping is a PRD decision, not a
-   code fix.
+5. **Uncapped raw maps — since confirmed as a defect and fixed.** Recorded here as "a PRD decision, not
+   a code fix". The first live call settled it: one default step returned 38,531 conflicts, 9,613 attacks
+   and an **11.8 MB** result. Capped in `a4a0800` with true totals stated; a real scenario now scores in
+   41.7 KB. **The judgement to defer it was wrong** — it was a defect, and only live data made that
+   visible.
 6. **`simulator_names` is dead on every production path.** `_fetch_and_shape` never passes it, so
    `zero_impact_simulators` always emits bare UUIDs. Kept as the documented extension point for a future
    `get_console_simulators` lookup; noted so it does not evaporate.
 7. **Phase 6 (T-34) is the CLAUDE.md tool-catalog entry** — correctly still pending; the tool is not yet
    in the catalog list.
 
+## Addendum — 2026-08-27, the e2e suite executed
+
+The five e2e tests recorded BLOCKED above have now **run and passed**, against
+`zircon-piculet.dev.sbops.com` (the console whose mcp-proxy was updated to this feature branch):
+
+```
+uv run --python 3.12 pytest safebreach_mcp_studio/tests/test_e2e_plan_statistics.py -m e2e -v -rs
+→ 8 passed in 99.62s
+```
+
+**Zero skips**, which matters more than the pass count: T-30 and T-40 each carry a deliberate skip path
+for a console that cannot demonstrate their precondition, and neither fired. So this console does have a
+disabled/offline simulator (T-30's conditional half genuinely ran) and does carry SAF-35568 (T-40's relay
+assertions genuinely ran).
+
+Two things this run corrected:
+
+1. **`test_custom_plan_integer_string_id_is_accepted` passed rather than skipping.** An earlier ad-hoc
+   probe reported "no custom plans on this console" — it queried the wrong endpoint. `_fetch_all_plans`
+   finds them. The test was more reliable than the probe.
+2. **The suite could not have passed before today's fix.** Five of its eight cases pass an OOB scenario
+   UUID, which returned `400 /id must be integer` until `900db94`. This run is the first execution of
+   this file, and it is what a green e2e suite is for — the defect was found by probe, but the suite is
+   what proves the fix.
+
 ## Verdict
 
-- **INCOMPLETE** — 27 of 32 cumulative tests green with evidence. Five are BLOCKED on a Validate console
-  environment that has never been provisioned for this ticket. No test was skipped silently, none is
-  unwritten, and no manual substitution stands in for a planned test.
+- **PASS** — all 32 cumulative tests green with evidence. The five previously BLOCKED e2e tests executed
+  against a real console with zero skips. Nothing is unwritten, nothing was skipped silently, and no
+  manual substitution stands in for a planned test.
+
+  Still outside this phase: **T-32, T-33, T-35** (Manual, `Passes after: Final`). T-35 remains the only
+  check that the numbers are *right* rather than internally consistent.
