@@ -486,7 +486,7 @@ For external servers, update your Claude Desktop configuration:
     "safebreach-data-external": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://100.117.2.202:8001/sse",
         "--transport",
         "http-first",
@@ -578,7 +578,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-config": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://127.0.0.1:8000/sse",
         "--transport",
         "http-first"
@@ -587,7 +587,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-data": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://127.0.0.1:8001/sse",
         "--transport",
         "http-first"
@@ -596,7 +596,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-utilities": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://127.0.0.1:8002/sse",
         "--transport",
         "http-first"
@@ -605,7 +605,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-playbook": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://127.0.0.1:8003/sse",
         "--transport",
         "http-first"
@@ -635,7 +635,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "args": [
         "/c",
         "npx",
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://your-server-ip:8000/sse",
         "--transport",
         "http-first",
@@ -649,7 +649,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "args": [
         "/c",
         "npx",
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://your-server-ip:8001/sse",
         "--transport",
         "http-first",
@@ -663,7 +663,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "args": [
         "/c",
         "npx",
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://your-server-ip:8002/sse",
         "--transport",
         "http-first",
@@ -677,7 +677,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "args": [
         "/c",
         "npx",
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://your-server-ip:8003/sse",
         "--transport",
         "http-first",
@@ -704,7 +704,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-data-staging": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://100.117.2.202:8001/sse",
         "--transport",
         "http-first",
@@ -716,7 +716,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-config-staging": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://100.117.2.202:8000/sse",
         "--transport",
         "http-first",
@@ -728,7 +728,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-utils-staging": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://100.117.2.202:8002/sse",
         "--transport",
         "http-first",
@@ -740,7 +740,7 @@ Claude Desktop reads the MCP server configurations from the file:
     "safebreach-playbook-staging": {
       "command": "npx",
       "args": [
-        "mcp-remote",
+        "mcp-remote@0.1.24",
         "http://100.117.2.202:8003/sse",
         "--transport",
         "http-first",
@@ -796,7 +796,7 @@ ssh user@server "cat ~/.config/safebreach-mcp/environment | grep SAFEBREACH_MCP_
 | **Connection Failed** | Verify server is running: `curl http://your-server-ip:8001/sse` |
 | **Authentication Failed** | Check Bearer token: `curl -H "Authorization: Bearer your-token" http://your-server-ip:8001/sse` |
 | **Tool Loading Failed** | Verify JSON syntax, check for extra commas, ensure `npx` is in PATH |
-| **mcp-remote Not Found** | Install globally: `npm install -g @anthropic/mcp-remote` |
+| **mcp-remote@0.1.24 Not Found** | Install globally: `npm install -g @anthropic/mcp-remote@0.1.24` |
 
 After updating the configuration file, restart Claude Desktop for changes to take effect.
 
