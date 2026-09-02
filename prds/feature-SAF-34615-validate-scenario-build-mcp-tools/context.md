@@ -798,17 +798,49 @@ This diverges from the ticket-literal, ID-only recommendation: it deliberately k
 2/3 scope per SAF-35484/SAF-35485) without a breaking parameter change if Stage 1 or a fast-follow needs
 them sooner.
 
-**Design detail (proposed default, not yet re-confirmed with user — flag in PRD review):** `attack_ids`
-and `attacks_filter` are **mutually exclusive per call** — passing both is a validation error, not a merge.
-Simplest semantics; avoids ambiguous "does the filter narrow the id list or extend it" questions. Same rule
-for `simulator_ids` vs `attacker_filter`/`target_filter`.
+### Both open details resolved (verified directly, not guessed)
 
-**Open question carried to §6.1's F5 ambiguity**: the console's own `getFilterObj` builds explicit attack
-selection under `attacksFilter.playbook` (`ATTACKS: 'playbook'`, `planUtils.ts` / `Studio/utils/constants.ts`),
-while the broader `AttacksFilter` schema (§6.2) also lists a distinct `methodIds` field. Which key
-`attack_ids[]` should populate — `playbook` (console parity) or `methodIds` (schema-literal) — needs one
-more grounding check (cross-reference SAF-35508's own `methodIds` handling in `get_plan_statistics`, since
-it already had to resolve this) before the PRD locks the internal mapping.
+**F5's `playbook` vs `methodIds` ambiguity is resolved: `attack_ids[]` maps to `attacksFilter.playbook`.
+`methodIds` is a dead schema field.** Printed the real `attacksFilter` schema from
+`orchestrator/src/server/other/swagger.json` (the earlier "§6.2 AttacksFilter" naming was descriptive, not
+the literal — literal is lowercase `attacksFilter`) — both `playbook` and `methodIds` exist as `$ref: Filter`
+properties. But only one has an implementation: `orchestrator/src/server/other/playbook_filter.js:53` —
+`valuesExtractorByFilter.playbook = (move) => move.id`, dispatched with `operator:'is' → INCLUDES`
+(`filterToOperator.playbook`, line 8). **`methodIds` has no entry in either `valuesExtractorByFilter` or
+`filterToOperator` anywhere in `orchestrator/src`** — an unrouted filter key would fail the
+`valuesExtractorByFilter[filterName] || valuesExtractorByFilter[subFilterName]` lookup at
+`playbook_filter.js:206`. Three independent sources now agree on `playbook`: the console's own
+`getFilterObj(Filter.ATTACKS='playbook', ids)`; this repo's own `quick_run` step-construction
+(`studio_functions.py:3216-3221`, byte-identical shape: `{"playbook": {"operator":"is", "values":[attack_id],
+"name":"playbook"}}`); and the orchestrator's real, working filter dispatch. `methodIds` is not used
+anywhere in the codebase — treat it as vestigial/aspirational schema, not a valid target.
+
+Symmetric check on the simulator side, same confidence: `attackerFilter.simulators`/`targetFilter.simulators`
+→ `orchestrator/src/server/other/simulators_filter.js:6,17` — `valuesExtractorByFilter.simulators =
+(simulator) => simulator.id`, `operator:'is' → INCLUDES` — real and implemented, matching the console's
+`getFilterObj(Filter.SIMULATORS='simulators', ids)`.
+
+**Mutual exclusivity is resolved too — and it isn't an implementation preference, it's the ticket's own
+attached spec.** `scenario-step-grouping.md` rule 5 (§2, lines 153-157) is explicit: *"A step can select
+attacks by `criteria` (attack type + OS), explicit `playbook_ids`, or `attack_tags`... It becomes a problem
+only when nothing is deliberately selecting attacks."* Three modes, and the rule's own framing ("a free
+choice," not "a combination") settles it: **`attack_ids[]` (→ `playbook`) is mutually exclusive, per call,
+with `attack_type_filter`/`attack_phase_filter`/`tags_filter`** (→ rule 5's `criteria`/`attack_tags` modes).
+Passing both is a validation error, not a merge. Within one axis, repeated calls **extend** that axis's
+`values` array (e.g. two `add_attacks_to_step(attack_ids=...)` calls accumulate into one growing
+`attacksFilter.playbook.values`) rather than replacing it — `remove_attacks_from_step` only makes sense
+against the explicit-id axis (`playbook`) for this reason; removing from a criteria-based filter isn't a
+well-defined operation without negation logic Stage 1 doesn't need.
+
+**One scoping nuance surfaced by rule 5, not previously flagged**: rule 5's `criteria` mode is defined as
+**attack type + OS together** — the OS half is a *simulator* filter (`attackerFilter.os`/`targetFilter.os`),
+not an attack filter. FR5 restricts Stage 1 to **manual, explicit simulator selection only** — OS-based
+automatic simulator filtering is deferred to Stage 2 (SAF-35484). **Consequence: Stage 1 can only build the
+attack-side half of true "criteria" mode** (`attack_type_filter`/`attack_phase_filter` on
+`add_attacks_to_step`); the simulator-OS half doesn't exist yet. This is a real, acceptable scope boundary —
+not a design flaw — but the skill (breach-genie PRD) and this PRD's tool descriptions should say so plainly,
+so Helm doesn't present "criteria mode" as fully equivalent to what the attachment describes until Stage 2
+lands.
 
 ### Decision 3 — Server home: Studio
 
