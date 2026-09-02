@@ -929,8 +929,9 @@ approach; the SAF-35508-style subtask split was offered and declined).
 
 **Execution plan**: this repo's PRD proceeds through Phase 6-10 to its own draft PR, scoped strictly to
 FR13's tool set (per FR13's own text — no narrative/interpreted output from any tool). A second,
-cross-linked PRD in `breach-genie` (branch `feature/SAF-34615-<skill-slug>`,
-`prds/feature-SAF-34615-<skill-slug>/`) covers the skill authoring: FR2's search strategy, FR3's grouping
+cross-linked PRD in `breach-genie` — **created**: branch `feature/SAF-34615-validate-scenario-building-skill`
+(pushed to `origin`), PRD at `prds/feature-SAF-34615-validate-scenario-building-skill/context.md` — covers
+the skill authoring: FR2's search strategy, FR3's grouping
 logic (the `scenario-step-grouping.md` attachment lands here, not as tool logic), FR4/FR8's confirmation
 cadence, FR7's conflict-to-plain-language translation. Each PRD's `context.md` cross-references the other's
 path so a reader lands in the right repo for either half of the story.
