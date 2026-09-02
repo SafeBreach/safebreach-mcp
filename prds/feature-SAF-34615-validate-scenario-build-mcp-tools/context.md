@@ -1,6 +1,6 @@
 # SAF-34615 — MCP support for Validate scenario creation and update (Stage 1)
 
-**Status**: `Phase 4: Document Findings`
+**Status**: `Phase 5: Brainstorm`
 
 **Branch**: `feature/SAF-34615-validate-scenario-build-mcp-tools`
 **Base**: `origin/feature/SAF-35508-plan-statistics-mcp-tool` (not `main` — see Dependencies)
@@ -761,4 +761,119 @@ the PRD's scope of work; keep §6.12 as a record of why (in case product raises 
 
 ## 7. Brainstorm Outcome
 
-_Pending — Phase 5._
+Four forks were presented with alternatives and tradeoffs (per the brainstorming skill); user decided each.
+
+### Decision 1 — Draft state: in-process draft cache
+
+`create_scenario` mints a `draft_id` (uuid) and stores the accumulating plan body in a new bounded
+in-process `SafeBreachCache` in `safebreach_mcp_studio` (mirroring `studio_draft_cache`'s pattern —
+`studio_functions.py:51` — but as its own instance, e.g. `scenario_draft_cache`, sized and TTL'd for a
+multi-turn conversational build rather than a single attack-draft edit). Every subsequent tool
+(`add_step`, `add_attacks_to_step`, `add_simulators_to_step`, and their `remove_*` counterparts) takes
+`draft_id` and mutates the cached body; `save_scenario` reads it, assembles the final wire body (see
+Decision 4), POSTs/PUTs it, and evicts the cache entry on success.
+
+**Accepted, documented risk**: this state does not survive an MCP process restart, and would break under
+a future multi-worker/horizontally-scaled deployment (§6.5 confirmed `start_all_servers.py` runs
+single-process today — this is a live assumption, not a permanent guarantee). `save_scenario` failing with
+"draft not found" after a restart is an acceptable, clearly-erroring failure mode for Stage 1, to be
+called out explicitly in the PRD's risks section rather than engineered around.
+
+**Rejected alternatives**: (a) stateless design where Helm carries the full plan body across every tool
+call, matching `get_plan_statistics`'s own ad-hoc-body pattern — rejected in favor of the closer FR13/console
+match, accepting the tokens-per-call and JSON-fidelity cost that comes with a stateful draft_id instead;
+(b) persisting immediately on `create_scenario` (a real `scenario_id` from turn one) — rejected because it
+contradicts the console's own verified behavior (§6.4) and would publish an unfinished scenario into the
+user's real catalog before they agree to save it.
+
+### Decision 2 — Attack/simulator input: ID lists + raw Filter-DSL escape hatch
+
+`add_attacks_to_step` accepts `attack_ids[]` (builds `attacksFilter` internally, `operator:'is'`) **and**
+an optional raw `attacks_filter` parameter accepting the `AttacksFilter` DSL directly (§6.2 schema:
+`playbook`, `methodIds`, `tags`, `attackPhase`, `nistControl`, `protocol`, …). Symmetric design for
+`add_simulators_to_step`: `simulator_ids[]` plus an optional raw `attacker_filter`/`target_filter`.
+
+This diverges from the ticket-literal, ID-only recommendation: it deliberately keeps the door open for
+`scenario-step-grouping.md` rule 5's criteria/playbook_ids/attack_tags selection modes (nominally Stage
+2/3 scope per SAF-35484/SAF-35485) without a breaking parameter change if Stage 1 or a fast-follow needs
+them sooner.
+
+**Design detail (proposed default, not yet re-confirmed with user — flag in PRD review):** `attack_ids`
+and `attacks_filter` are **mutually exclusive per call** — passing both is a validation error, not a merge.
+Simplest semantics; avoids ambiguous "does the filter narrow the id list or extend it" questions. Same rule
+for `simulator_ids` vs `attacker_filter`/`target_filter`.
+
+**Open question carried to §6.1's F5 ambiguity**: the console's own `getFilterObj` builds explicit attack
+selection under `attacksFilter.playbook` (`ATTACKS: 'playbook'`, `planUtils.ts` / `Studio/utils/constants.ts`),
+while the broader `AttacksFilter` schema (§6.2) also lists a distinct `methodIds` field. Which key
+`attack_ids[]` should populate — `playbook` (console parity) or `methodIds` (schema-literal) — needs one
+more grounding check (cross-reference SAF-35508's own `methodIds` handling in `get_plan_statistics`, since
+it already had to resolve this) before the PRD locks the internal mapping.
+
+### Decision 3 — Server home: Studio
+
+New tools live in `safebreach_mcp_studio` (`studio_server.py`/`studio_functions.py`/`studio_types.py`),
+alongside `get_plan_statistics`, `run_scenario`, `quick_run`, `manage_test`. Rationale: SAF-35508 already
+resolved `checkout_scenario`'s FR13 slot into Studio, and the build→check→run arc — plus the plan-shaping
+helpers a `save_scenario` body-assembler will want — stays in one server and one auth/rate-limit context.
+
+**Rejected**: Config (architecturally closer to the backend service that owns Plan/Step CRUD, and where
+`get_scenarios`/`get_scenario_details`/`get_console_simulators` already live, but would split the
+build-check-run loop across two servers and be Config's first-ever mutating tool); a new dedicated server
+(cleanest separation, but real infra overhead — port, launcher entry, Desktop config, test scaffolding —
+for a handful of tools, with no precedent for a split this granular in this repo's history).
+
+### Decision 4 — Plans API: v3
+
+New tools write through **`config/v3/plans`** (`configuration/src/server/controllers/planController.js`'s
+type-aware native methods — `createPlan`/`updatePlan`/`getPlanById`/`getAllPlans`/`deletePlan`, §6.1), not
+the v2 wire-compat surface the console itself calls.
+
+**Consequence — v3 does NOT self-guard `type='validate'` the way v2 does (v2's `createPlanV2` force-sets it;
+`planController.js:264`).** `save_scenario` must set `type:'validate'` and `propagateDefinition:null`
+explicitly on **every** create and update request — `validatePlanShape` (`model-validators.js:45-59`)
+requires the pairing (a `'validate'`-typed plan requires a **null** `propagateDefinition`; a non-null value
+is a shape violation, 400). This is now a required, explicit part of `save_scenario`'s implementation, not
+optional — carried forward from §6.14/F16.
+
+**F16's plan-level `tags:['ALM']` risk is closed by simple omission, not a guard.** Checked the `ValidatePlan`
+schema (`orchestrator/src/server/other/swagger.json`, `components.schemas.ValidatePlan.properties` —
+verified directly: `id, accountId, planId, testId, tags, systemTags, name, planRunId, capture, debug, draft,
+force, priority, successCriteria, steps, flowControl, retrySimulations, retryPolicy, originalScenarioId,
+actions, edges, systemFilter, emailRecipients`, `required:['name']`) — it carries `tags`/`systemTags` but
+**no `type` field at all**, confirming the ad-hoc-checkout body (what `get_plan_statistics` scores mid-build)
+and the final v3 save body are genuinely different shapes; `type`/`propagateDefinition` belong only on the
+latter. **None of FR13's tools (`create_scenario`, `add_step`, `add_attacks_to_step`,
+`add_simulators_to_step`, `save_scenario`) expose a `tags` input parameter at all** — so the simplest and
+most robust closure is to never accept caller-supplied `tags` in Stage 1, rather than build a reject-`'ALM'`
+filter for an input surface that doesn't need to exist. The internal draft body (Decision 1) therefore never
+carries `tags` for the lifetime of any scenario this story can produce.
+
+**Consequence for the draft↔checkout↔save pipeline**: the draft cache's internal representation should track
+close to the `ValidatePlan`/`Step` shape (`name`, `steps[]` with `attacksFilter`/`attackerFilter`/
+`targetFilter`/`systemFilter`) for the whole build phase — this is exactly what gets posted to
+`get_plan_statistics` for every interim checkout, unmodified. Only `save_scenario` wraps/augments that body
+with `type:'validate'` + `propagateDefinition:null` immediately before the `config/v3/plans` POST/PUT — the
+v3-specific fields are added at the last possible step, not carried through the whole build.
+
+**Consequence for testing**: v3 has **zero existing production callers anywhere in the codebase** (§6.1) —
+this story's tools would be its first real use. This raises the bar on `save_scenario`'s test coverage
+(unit + e2e) beyond the repo's usual bar for a new tool; flag for extra scrutiny at the Phase 8 test-plan
+step and the Phase 7 DoD gate.
+
+**Rejected**: v2 — safer (self-guarding, console-parity, easiest FR9-diff target) but flagged
+`// DELETE WHEN v2 IS REMOVED` in its own code; user chose to build against the forward surface rather than
+the surface scheduled for eventual removal.
+
+### Summary of tool set entering Phase 6
+
+| Tool | Server | Input (Decision 2 shape) | Draft-cache role (Decision 1) |
+|---|---|---|---|
+| `create_scenario` | studio | `name` (optional) | mints `draft_id`, seeds `{name, steps: []}` |
+| `add_step` / `remove_step` | studio | `draft_id`, `step_name` (**required**, themed — F11) | mutates draft |
+| `add_attacks_to_step` / `remove_attacks_from_step` | studio | `draft_id`, `step_name`, `attack_ids[]` **xor** `attacks_filter` | mutates draft |
+| `list_simulators` | studio | `draft_id` optional (browse-only, read-only tool), basic filters | reads draft for context only |
+| `add_simulators_to_step` / `remove_simulators_from_step` | studio | `draft_id`, `step_name`, `simulator_ids[]` **xor** `attacker_filter`/`target_filter` | mutates draft |
+| `save_scenario` | studio | `draft_id`, `save_as_new`, `name` (if `save_as_new`) | reads + wraps with `type`/`propagateDefinition`, POST/PUT `config/v3/plans`, evicts draft |
+
+**Status**: `Phase 5: Brainstorm`
