@@ -35,9 +35,9 @@
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-08-27 |
+| **Last Updated** | 2026-09-02 |
 | **Owner** | Boris Berezovsky (AI-assisted planning) |
-| **Current Phase** | All six phases complete; every automatic test green, including the five e2e against a real console. **Remaining: T-32, T-33, T-35 (Manual)** — T-35 is the only check that the numbers match what the console itself displays. |
+| **Current Phase** | Phases 1–6 complete; every automatic test green, including the five e2e against a real console. **Phases 7–9 appended 2026-09-02 (decision D4) — not started**: the single `get_plan_statistics` tool is decomposed into three question-shaped tools and its registration retired (§2 revision, §3 Component E, §8). **Remaining from 1–6: T-32, T-33, T-35 (Manual)** — T-35 is the only check that the numbers match what the console itself displays, and it is now owed against the counts tool rather than the retired one. |
 
 ---
 
@@ -93,7 +93,51 @@ unchanged by default and correcting them becomes a separate, deliberate decision
 
 The chosen shape is the only one that satisfies AC-6 without paying R2's regression cost, and it makes each
 correctness fix independently reviewable. Naming (`get_plan_statistics`), the runnable default, and the
-read-only/deferral posture are user decisions **D1–D3**, recorded in `context.md`.
+read-only/deferral posture are user decisions **D1–D3**, recorded in `context.md`. The decomposition into
+three question-shaped tools and the retirement of the single one are user decision **D4** (2026-09-02).
+
+---
+
+### Revision — three question-shaped tools replace the single reporting tool
+
+**2026-09-02, user decision D4.** The tool as delivered answers one broad question — *"report everything
+about this scenario"* — and leaves the caller to find its own answer inside a report carrying counts,
+zero-impact attacks, zero-impact simulators, every conflict blocking-first, and a constraint catalog. Helm
+does not ask that question. It asks three narrow ones, and it asks them one at a time:
+
+1. **"Why didn't these specific attacks run?"** — a named set of attack ids, and the constraints that blocked them.
+2. **"Is there anything here that will not run at all?"** — the attacks and simulators contributing nothing.
+3. **"How many simulations will this scenario produce?"** — the counts, and nothing else.
+
+Each is answered today only by the caller reading past the other two. The decomposition gives each question
+its own tool, its own narration, and its own defaults, so the answer arrives **filtered and concrete** rather
+than as a report to be mined.
+
+**The plumbing does not move.** All three tools call the shipped `sb_get_plan_statistics`, which keeps its
+contract and keeps being the repo's **single** `plan/statistics` call site — **AC-6 is untouched by this
+revision**, not re-satisfied by it. What is new is a projection layer between that report and the caller:
+three pure functions that select the slice their question needs, and three narrators that render only that
+slice. Nothing in the fetch core, the shaping layer, or the summariser changes.
+
+**`get_plan_statistics` is retired as a registered tool** (D4). Its function survives as the shared plumbing
+all three sit on, so the 31 test references that target `sb_get_plan_statistics` are unaffected; the ~10 that
+target the *tool* are retargeted in Phase 8. Leaving it registered alongside the three was considered and
+rejected — four tools competing to answer the same question is precisely the selection problem the
+decomposition exists to remove, and the broad one would keep winning on the strength of its name.
+
+**Caller-facing vocabulary becomes "scenario"** (D4). The three tools, their parameters, their descriptions
+and the CLAUDE.md catalog say *scenario*; the ad-hoc-body parameter is `scenario`, alongside `scenario_id` for
+a saved one. The orchestrator's endpoint genuinely is `plan/statistics` and the shipped internals
+(`fetch_plan_statistics`, `_build_plan_statistics_report`, `sb_get_plan_statistics`) keep those names — they
+name the API, not the concept, and renaming them would churn 31 green tests for no caller-visible gain. The
+boundary is deliberate: MCP's outward vocabulary is the product's, its internal vocabulary is the API's.
+
+| Alternative | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Keep one tool; let the model filter the report itself** | Zero code change; the report already contains all three answers. | This is the status quo, and it is what prompted the request. The model pays for a full report — counts, both zero-impact lists, every conflict, the catalog — to answer "how many simulations", and a capped report can drop the very rows its question needed (`CONFLICTS_CAP` sorts blocking-first, but `ZERO_IMPACT_CAP` truncates at 50 with no notion of which attack was asked about). | **Rejected** — the filtering has to happen before the cap, which means server-side. |
+| **Three tools as projections over the shipped report** | One fetch path, one shaping layer, one null-vs-zero rule, three narrow narrations. Each projection is a pure function over a dict and unit-testable with no console. Caps apply per question, so the counts tool cannot be truncated by conflicts it never renders. | A projection can only surface what the shaped report already carries; a future question needing raw response fields would have to extend the shaping layer first. | **Chosen** — the three questions are all answerable from the existing shape. |
+| **Three tools, each fetching and shaping independently** | Each tool free to request exactly what it needs from the endpoint. | Triples the zero-impact, severity, cap and null-safety logic, so the R1 rule (`null` is not `0`) would need enforcing in three places instead of one — and **breaks AC-6**, which requires exactly one `plan/statistics` call site. | **Rejected** — violates an acceptance criterion of this same PRD. |
+| **One tool with a `question` parameter, three thin registrations** | Same runtime behaviour as the chosen shape. | Collapses three independent projections into one branching function; a bug in one branch is reachable from all three tools, and the branches cannot be tested in isolation. | **Rejected** — no benefit over three pure functions. |
 
 ---
 
@@ -285,6 +329,76 @@ reporting half of the zero-impact rules.
   expected-vs-runnable distinction when only one figure was requested, and — per R11 — the case where the
   console supplied no `constraintCatalog` at all, so a caller knows the missing descriptions mean "this
   console predates SAF-35568" rather than "these conflicts have no meaning".
+- **Retired as a registered tool by decision D4 (2026-09-02).** Everything above still describes the
+  **function** `sb_get_plan_statistics` and the report it builds — all of which survives unchanged as the
+  plumbing the three tools in Component E sit on, and as the repo's single `plan/statistics` call site. What
+  is withdrawn is only the MCP registration of that report as a tool in its own right, in Phase 8.
+
+---
+
+### Component E — Three question-shaped tools over the shipped report (D4)
+
+**Purpose**: Give each of Helm's three actual questions its own tool, its own narration and its own defaults,
+so the answer arrives filtered and concrete. Replaces Component D's single registration; Component D's
+**function** is the shared plumbing all three sit on.
+
+**Shape**: two layers, both pure, both above `sb_get_plan_statistics`.
+
+- **Projections** — one pure function per question, taking the report dict Component D already builds and
+  returning only the slice that question needs. No I/O, no console, no transport seam; unit-testable against a
+  literal dict, exactly as Phase 4's shaping layer is.
+- **Narrators** — one per projection, rendering that slice as markdown in the house style of every other
+  studio tool. Each renders only its own sections, so the counts tool cannot be crowded out by conflicts it
+  never asked for.
+
+**The three tools**
+
+| Tool | Question it answers | Renders | Deliberately omits |
+|---|---|---|---|
+| `get_scenario_simulation_counts` | "How many simulations will this produce?" | Counts mode, steps scored of plan size, per-step `simulation_count`, the total, truncation, and the attack/simulator coverage lines. | Conflicts, both zero-impact lists, the constraint catalog. |
+| `get_scenario_blocked_entities` | "Is there anything here that will not run at all?" | `zero_impact_attacks` and `zero_impact_simulators` with their blockers, the coverage denominators that make "N of M" legible, only the catalog entries those blockers cite, and an explicit **"nothing is fully blocked"** verdict when both lists are empty and counts were computed. | The `reducing` conflicts — an attack that runs on fewer simulators than offered is not an answer to "will anything not run at all". |
+| `get_scenario_attack_blockers` | "Why didn't attack #N run?" | For each requested id whose count is an integer `0`: its blocking constraints with the relayed descriptions. For each requested id that is **not** blocked: one line of disposition. | Everything about attacks the caller did not name. |
+
+**Key features**
+
+- **Full parameter pass-through on all three** (user decision). Each carries `console`, `scenario`,
+  `scenario_id`, `test_id`, `include_disabled`, `both_counts`, `get_constraints`, `get_all_constraints`,
+  `limit`, `use_cache` and `conflict_detail`. The split is in what each tool *renders*, not in what a caller
+  may *ask for* — a narrowed surface would make a question unaskable rather than merely unasked.
+- **Defaults differ where the question differs.** `get_scenario_simulation_counts` defaults
+  `get_constraints=False`: it renders no conflicts, so evaluating them is pure cost, and the cost is not
+  hypothetical — a single default step measured live returned 38 531 conflicts and an 11.8 MB result. The
+  parameter is still exposed, so a caller who wants the constraint pass can have it; it simply is not paid for
+  by default. The other two default `True`, as the shipped tool does, because their answer *is* the
+  constraints.
+- **`attack_ids` on `get_scenario_attack_blockers`**, comma-separated integers, matching `sb_quick_run`'s
+  existing convention rather than inventing a second one. **Optional**: supplied, the tool answers about
+  exactly those attacks; omitted, it reports every fully-blocked attack in the scenario and emits **no**
+  disposition lines, because nothing was specifically asked.
+- **Dispositions are for named ids only** (user decision). A caller who names attack #9012 and gets silence
+  cannot tell "it ran fine" from "it isn't in this scenario" from "the orchestrator never scored it" — three
+  different answers to "why didn't it run", only one of which is a constraint. So a named-but-not-blocked id
+  reports one of exactly three lines: `ran — N simulations`, `not computed — SafeBreach stopped evaluating
+  early`, or `not present in this scenario`. This is **not** `reducing`-constraint analysis, which stays out
+  of scope: the tool says the attack ran, not why it ran on fewer simulators than offered.
+- **Scope is fully-blocked attacks only** (user decision). `severity: blocking` — an integer `0` count — is
+  the whole of this tool's subject. `reducing` conflicts remain reported by nothing in this ticket; they are
+  SAF-35484's scope, unchanged by the decomposition.
+- **The R1 null rule is inherited, not restated.** Every projection reads the same `counts_computed` flag the
+  shaping layer already set, and none of them re-derives zero-ness. On a truncated response
+  `get_scenario_blocked_entities` reports **"not evaluated"**, never "nothing is inapplicable" — the two are
+  the identical-looking, opposite-meaning pair R1 exists to keep apart, and the decomposition makes the
+  distinction *more* load-bearing, because a tool whose entire subject is emptiness must never mistake an
+  unmeasured plan for a clean one.
+- **Caps apply per question.** Today `ZERO_IMPACT_CAP = 50` truncates with no notion of which attack the
+  caller cared about, so a named attack can fall off the list that was supposed to explain it. Filtering to
+  the requested ids happens **before** the cap in `get_scenario_attack_blockers`, so a named attack is never
+  truncated away by fifty it was not asked about.
+- **`both_counts` is carried by all three** and behaves as it does today — two calls, both figures labelled.
+  Its value is clearest on the counts tool, where runnable-versus-expected *is* the answer.
+- **Registration**: all three `readOnlyHint=True, destructiveHint=False`, and **none** takes a rate-limiting
+  gate — the CLAUDE.md gate table stays a table of write tools and is not extended. `get_plan_statistics` is
+  unregistered in the same phase, so the studio server's tool count is 13 + 3 − 1 = 15.
 
 ---
 
@@ -432,6 +546,87 @@ above: an identical-looking "nothing will run", opposite meaning. Conflating the
 
 ---
 
+### The three tools' narrated output (D4)
+
+All three project the same report shape above; the JSON is never the caller-facing artifact, so what follows
+is the **markdown each tool returns**. The projections are what make these three views disjoint — none of them
+renders a section another one owns.
+
+**`get_scenario_simulation_counts`** — the answer is the number, and the honesty about whether it is one:
+
+```markdown
+## Scenario Simulation Counts
+
+**Counts mode:** runnable (`includeDisabled=false`)
+**Steps scored:** 3 of 3
+**Total simulations:** 1,971
+
+- **Step 0** — 0 simulations. Coverage: 0 of 12 attacks, 0 of 5 target simulators produce simulations.
+- **Step 1** — 1,824 simulations. Coverage: 9 of 12 attacks, 5 of 5 target simulators produce simulations.
+- **Step 2** — 147 simulations. Coverage: 2 of 12 attacks, 3 of 5 target simulators produce simulations.
+
+**Hint:** these are runnable counts — what would run right now. Offline, disabled and unapproved simulators
+are excluded. Call again with include_disabled=true for expected counts; neither is derivable from the other.
+```
+
+Note step 0's `0`: the counts tool reports that a step produces nothing, but does **not** say why — that is
+`get_scenario_blocked_entities`' question, and the hint routes there. With `get_constraints=False` by default
+it has no constraint data to answer with, which is the point rather than a limitation.
+
+**`get_scenario_blocked_entities`** — a yes/no question, so it answers yes or no before it answers anything else:
+
+```markdown
+## Scenario Blocked Entities
+
+**Counts mode:** runnable (`includeDisabled=false`) — **Steps scored:** 3 of 3
+
+**Verdict:** 4 attacks and 1 simulator contribute nothing to this scenario.
+
+### Step 0 — 8 of 12 attacks, 4 of 5 target simulators produce simulations
+- **Attacks contributing nothing** (4 of 4) — still in the scenario:
+  - #9012 (Write EICAR to disk) — blocked by `incompatible_os` (target, 3 sim)
+- **Simulators contributing nothing** (1 of 1):
+  - e5f6... — `simulator_is_offline` (target, 7 attack(s))
+
+### Constraint catalog
+- `incompatible_os` — OS is incompatible.
+- `simulator_is_offline` — The simulator is offline and cannot run this move.
+
+**Hint:** these entities remain in the scenario — this tool reports, it removes nothing.
+```
+
+The clean case is a first-class answer rather than an empty section: `**Verdict:** nothing is fully blocked —
+every attack and simulator in this scenario contributes at least one simulation.` And the truncated case is
+neither of those two: `**Verdict:** not evaluated — SafeBreach stopped before scoring 2 of 3 steps, so nothing
+here indicates any attack or simulator is inapplicable.` Three outcomes, three sentences, no two of which can
+be confused for each other — this is R1 restated where it now matters most.
+
+**`get_scenario_attack_blockers`** — named ids in, dispositions out:
+
+```markdown
+## Scenario Attack Blockers
+
+**Counts mode:** runnable (`includeDisabled=false`) — **Steps scored:** 3 of 3
+**Asked about:** #9012, #1234, #7777, #4321
+
+### Blocked — did not run anywhere
+- **#9012 (Write EICAR to disk)**, step 0 — blocked by:
+  - `incompatible_os` (target, 3 simulators) — OS is incompatible. — `{"actual": "LINUX", "required": "WINDOWS"}`
+
+### Not blocked
+- **#1234** — ran, 240 simulations in step 1.
+- **#7777** — not present in this scenario.
+- **#4321** — not computed; SafeBreach stopped evaluating before its step was scored.
+
+**Hint:** only fully-blocked attacks (a count of exactly 0) are analysed. #1234 ran on fewer simulators than
+were offered; that is a reduction, not a block, and is not reported here.
+```
+
+The **Not blocked** section exists only because ids were named. Called without `attack_ids` the tool lists
+every fully-blocked attack and emits no such section at all — there is no caller expectation to correct.
+
+---
+
 ## 6. Non-Functional Requirements
 
 **Code reuse**
@@ -518,8 +713,45 @@ parameter set actually used, and an error line carrying the full response body o
 - [ ] A simulator with `simulators[id] === 0` is **reported** the same way, read from the **union** `simulators`
       map rather than a single role map. *(AC-10)*
 - [ ] The tool performs no caching of its own, so any change to an earlier decision produces a fresh call. *(AC-11)*
-- [ ] Registered as `get_plan_statistics` with `readOnlyHint=True`, and documented in the CLAUDE.md tool
-      catalog. The rate-limiting gate table is **not** extended — read-only tools are outside that contract. *(AC-12)*
+- [ ] ~~Registered as `get_plan_statistics` with `readOnlyHint=True`~~ — **superseded by D4**: registered as
+      **three** read-only tools (see the decomposition block below), and documented in the CLAUDE.md tool
+      catalog. The rate-limiting gate table is **not** extended — read-only tools are outside that contract.
+      AC-12's substance (read-only registration + catalog entry) is unchanged; only the count and the names
+      move. *(AC-12, D4)*
+
+**Tool decomposition (D4, phases 7–9)**
+- [ ] Three tools are registered, each answering one question and rendering only its own slice:
+      `get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`. All
+      three are `readOnlyHint=True, destructiveHint=False` and take **no** rate-limiting gate. *(D4)*
+- [ ] `get_plan_statistics` is **unregistered** as an MCP tool. `sb_get_plan_statistics` survives unchanged as
+      the shared plumbing all three call, so AC-6 still holds: exactly one `plan/statistics` call site. *(D4, AC-6)*
+- [ ] Each tool projects the shipped report through a **pure** function — no second fetch path, no duplicated
+      zero-impact, severity, cap or null-safety logic. A test asserts the three tools produce their answers
+      from one `sb_get_plan_statistics` call each. *(D4)*
+- [ ] All three carry the full parameter surface (`console`, `scenario`, `scenario_id`, `test_id`,
+      `include_disabled`, `both_counts`, `get_constraints`, `get_all_constraints`, `limit`, `use_cache`,
+      `conflict_detail`); only the defaults differ, and only where the question differs. *(D4)*
+- [ ] `get_scenario_simulation_counts` defaults `get_constraints=False` — it renders no conflicts, so it does
+      not pay for them — and the parameter is still exposed for a caller who wants the pass. *(D4)*
+- [ ] `get_scenario_blocked_entities` answers its yes/no question with an explicit verdict in all **three**
+      states, none of which can be read as another: entities are blocked, nothing is blocked, or nothing was
+      evaluated. The truncated state never reports an empty list as a clean scenario. *(D4, AC-5, §9 R1)*
+- [ ] `get_scenario_attack_blockers` accepts optional comma-separated `attack_ids`. Supplied, every named id
+      that is **not** blocked gets exactly one disposition line — ran with N simulations, not computed, or not
+      present in this scenario — so silence never stands in for an answer. Omitted, it reports every
+      fully-blocked attack and emits no disposition section. *(D4)*
+- [ ] Filtering to the requested ids happens **before** the `ZERO_IMPACT_CAP` truncation, so a named attack is
+      never dropped from the list that exists to explain it. *(D4)*
+- [ ] Only fully-blocked attacks (an integer `0` count) are analysed; `reducing` conflicts stay out of scope
+      and the hint says so, rather than the tool being silently narrow. *(D4)*
+- [ ] Caller-facing vocabulary is **scenario**, not plan: tool names, parameter names, tool descriptions and
+      the CLAUDE.md catalog. The ad-hoc-body parameter is `scenario`. Shipped internals
+      (`fetch_plan_statistics`, `_build_plan_statistics_report`, `sb_get_plan_statistics`) keep their names —
+      they name the API, which genuinely is `plan/statistics`. *(D4)*
+- [ ] CLAUDE.md entry 25 is replaced by three entries, and the rate-limiting gate table is **not** extended. *(D4, AC-12)*
+- [ ] The registration and e2e tests that named the retired tool (T-24…T-27, T-28…T-31, T-40) are retargeted
+      rather than deleted, and the manual tests still owed (T-32, T-33, T-35) are re-aimed at the tool that now
+      answers their question — T-35 at `get_scenario_simulation_counts`. *(D4, §9 R14)*
 
 **Quality gates**
 - [ ] Every test in `test-plan.md` for this feature is green, with evidence in `test-results/`.
@@ -545,6 +777,9 @@ parameter set actually used, and an error line carrying the full response body o
 | Phase 4: Translation + zero-impact reporting layer | ✅ Complete | 2026-08-27 | 58d7a29 | Four owner-approved deviations from §4's response example, which needs correcting — see the change log. `summary`/`per_attack` differ only by name resolution, because T-23 requires `attack_id` on every conflict. |
 | Phase 5: Public function + tool registration | ✅ Complete | 2026-08-27 | 1714dba, 900db94 | All 32 cumulative tests green. The five e2e tests executed against `zircon-piculet` with **zero skips** after the `scenario_id` fix — see `test-results/phase-5.md` Addendum. |
 | Phase 6: Documentation | ✅ Complete | 2026-08-27 | 31afb33 | Catalog entry 25 added; the rate-limiting gate table deliberately unchanged. T-34's gate-table half was green before and after — it guards an omission. |
+| Phase 7: Three question projections + public functions (D4) | ⬜ Not started | — | — | Pure functions over the shipped report. MCP surface unchanged at phase end, so every existing test passes untouched. |
+| Phase 8: Three narrators, three registrations, retire `get_plan_statistics` (D4) | ⬜ Not started | — | — | The only phase that changes the MCP surface: 13 tools → 15. T-24…T-27, T-28…T-31 and T-40 are **retargeted, not deleted**; the 31 `sb_get_plan_statistics` references stay untouched by design. |
+| Phase 9: Documentation (D4) | ⬜ Not started | — | — | CLAUDE.md entry 25 → three entries. Gate table deliberately unchanged, as in Phase 6. |
 
 ### Phase 1 — Delete the translation table; relay the orchestrator's catalog
 
@@ -753,6 +988,116 @@ read-only.
 
 ---
 
+### Phase 7 — Three question projections and their public functions
+
+**Semantic change**: The report stops being the only answer. Three pure projections select the slice each
+question needs, and three public functions expose them. Nothing is registered yet, so the MCP surface is
+unchanged at the end of this phase and every existing test still passes untouched.
+
+**Deliverables**: `_project_simulation_counts`, `_project_blocked_entities`, `_project_attack_blockers` in
+`studio_functions.py`, plus `sb_get_scenario_simulation_counts`, `sb_get_scenario_blocked_entities` and
+`sb_get_scenario_attack_blockers` that call `sb_get_plan_statistics` and project its result.
+
+**Implementation details**
+- Each projection is a **pure function of the report dict** — no console, no I/O, no transport seam. This is
+  the same property Phase 4's shaping layer has, and the reason both are testable against a literal dict.
+- `_project_simulation_counts` keeps `counts_mode`, `plan_step_count`, `returned_step_count`, `truncated`,
+  `params_used`, and per step its `step_index`, `simulation_count`, `counts_computed`, `is_limit_reached` and
+  the three coverage denominators. It drops `conflicts`, both zero-impact lists and `constraint_catalog`.
+- `_project_blocked_entities` keeps both zero-impact lists with their blockers plus the coverage lines, and
+  narrows `constraint_catalog` to **only the codes those blockers cite** — a catalog listing codes no reported
+  blocker references would be padding on a tool whose whole job is a short answer. It drops the conflicts
+  list, which carries the `reducing` rows that are not this question's subject.
+- `_project_blocked_entities` also computes the **verdict** in three mutually exclusive states, from
+  `counts_computed` and the two list lengths: blocked, clean, or not-evaluated. The not-evaluated state is
+  decided by `counts_computed` alone and **never** by list emptiness, because the lists are empty by
+  construction in exactly that case (§3 Component D, §9 R1).
+- `_project_attack_blockers` takes the parsed id list. For each id it resolves one of four dispositions in
+  this order: **blocked** (an integer `0` in `attacks`), **ran** (an integer > 0), **not computed** (`None`),
+  **absent** (the id is in no step's `attacks` map). Blocked ids carry their blockers from
+  `zero_impact_attacks`; the other three carry one line each.
+- **Filtering precedes capping.** The projection reads the report's `zero_impact_attacks` list, which is
+  already capped at `ZERO_IMPACT_CAP = 50`. A named id absent from the capped list but present in `attacks`
+  with an integer `0` must still be reported as blocked — so the projection resolves the disposition from the
+  **`attacks` count map** (capped separately at `COUNT_MAP_CAP = 100`) and treats the zero-impact list only as
+  the source of *blocker detail*. Where the count map itself was capped past a named id, the tool says so
+  rather than reporting the id as absent — an absent id and a truncated-away id are different answers.
+- `attack_ids` parsing reuses the comma-separated-integer convention `sb_quick_run` already implements;
+  invalid input raises `ValueError` with the offending token, as that function does.
+- The three public functions pass every parameter through to `sb_get_plan_statistics` unchanged, except that
+  `sb_get_scenario_simulation_counts` defaults `get_constraints=False`.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Three projections + three public `sb_*` functions |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Projection unit tests against literal report dicts |
+
+**Git commit**: `feat(studio): project the scenario statistics report into three question-shaped answers`
+
+---
+
+### Phase 8 — Three narrators, three registrations, and the retirement
+
+**Semantic change**: The MCP surface changes. Three tools appear, one disappears, and the studio server's tool
+count goes from 13 to 15.
+
+**Deliverables**: three narrators in `studio_server.py`; three `@self.mcp.tool` registrations; the
+`get_plan_statistics` registration removed; the tests that named it retargeted.
+
+**Implementation details**
+- Each narrator renders **only its own sections**, per §4. They share the existing null-safe helpers
+  (`_format_count`, `_format_simulation_count`, `_coverage`, `_shown_of`, `_render_constraint_reason`) rather
+  than restating the null rule three more times.
+- Tool descriptions must make the three **mutually exclusive to a reading model**. Each opens by naming the
+  one question it answers and pointing at its siblings for the other two — the failure mode being guarded
+  against is a model reaching for the blocked-entities tool to get a count (§9 R13).
+- **Delete the `get_plan_statistics` registration**, its description block, and `_format_plan_statistics` /
+  `_format_one_report` / `_format_statistics_step` **only if** no narrator reuses them; where a narrator does,
+  the helper stays and the tool-level entry point goes. `sb_get_plan_statistics` and everything below it is
+  **not** touched.
+- **Retarget, do not delete, the tests that named the tool.** T-24…T-27 (registration) assert the three new
+  names, the retired one's absence, and that none of the three references the rate limiter. T-28…T-31 and T-40
+  (e2e) re-aim at whichever of the three answers their assertion: T-28's shape at all three, T-29's by-id
+  agreement and T-30's `includeDisabled` inversion at `get_scenario_simulation_counts`, T-31's typed error at
+  all three (it is raised in the shared plumbing), T-40's verbatim relay at `get_scenario_blocked_entities`,
+  which is now the tool that renders the catalog.
+- The 31 references to `sb_get_plan_statistics` in `test_studio_functions.py` and `test_rate_limiting.py`
+  **are not touched** — the function is unchanged, and that is the property this phase must preserve.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_studio/studio_server.py` | Three narrators + three registrations; `get_plan_statistics` unregistered |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | Registration tests retargeted to the three names |
+| `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py` | e2e cases re-aimed at the tool that answers each |
+
+**Git commit**: `feat(studio): three scenario-statistics tools replace the single reporting tool`
+
+---
+
+### Phase 9 — Documentation
+
+**Semantic change**: The tool catalog stops describing a tool that no longer exists.
+
+**Implementation details**: replace CLAUDE.md's Studio Server entry 25 with three entries — one per tool —
+each stating the question it answers, its parameter surface, its default `get_constraints`, and the
+null-means-not-computed rule. Say explicitly that `get_plan_statistics` is retired and that the three replace
+it, so a reader of the catalog does not go looking. The rate-limiting gate table stays untouched: all three
+are read-only and take neither gate, which is a property to preserve rather than create.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `CLAUDE.md` | Entry 25 replaced by three entries; gate table deliberately unchanged |
+
+**Git commit**: `docs: replace the plan-statistics catalog entry with the three scenario tools`
+
+---
+
 ## 9. Risks and Assumptions
 
 ### Technical risks
@@ -771,6 +1116,10 @@ read-only.
 | **R9** | **Meanings are not MCP's to supply, so their availability is someone else's deployment.** Deleting the table removes the 14 descriptions two shipped tools display today. If the API supplied nothing, a caller would be left rendering from the code — and the code names mislead (`incompatible_package` is a *role* mismatch; `*_is_ignored` is variant de-duplication), so the explanation would be wrong exactly where it matters most. | **Low** (was Medium-High) | Resolved by SAF-35568 shipping: every code a response references now arrives with an authoritative `description`, at full coverage rather than the 14-of-97 MCP vendored — a net gain of 83 codes that previously leaked raw. The 14 change wording (to the orchestrator's) rather than losing it. What remains is the version-dependent case, split out as R11. |
 | **R10** | **SAF-35568 was on Stage 1's critical path** — MCP had no meanings of its own to fall back on. | **Closed** | Delivered. `constraintCatalog` ships `{ description }` per referenced code, gated on `getConstraints=true`. Two details of *how* it landed matter here and are handled: it shipped **without** the `fixLever` half (removed as redundant), which is why this PRD carries no lever map; and the localization question it flagged was **deferred, not answered**, which does not block MCP — the relay is agnostic to which string the orchestrator serves (§10). |
 | **R11** | **Console-version straddle.** MCP talks to consoles on their own upgrade cadence. One whose orchestrator predates SAF-35568 returns no `constraintCatalog`, so every conflict reports `description: null` — including the 14 that carried vendored prose before this ticket. This is the residue of R3/R9, and it is a real (if bounded) regression on those consoles. | **Medium** | Designed for rather than discovered: the absent-catalog path is the *same* `description: null` contract as an unrecognised code, so it degrades instead of raising, and the conflict is always still surfaced. `hint_to_agent` states when no catalog was supplied, so a caller says *"a compatibility conflict was reported"* rather than guessing from the code name. Self-resolving as consoles take the orchestrator change, and cheap to verify — one field's presence. |
+| **R12** | **Retiring a shipped tool is a breaking change for whoever already calls it.** `get_plan_statistics` is registered, documented as CLAUDE.md entry 25, and has been exercised live against `zircon-piculet`. Any Helm prompt, saved Claude Desktop conversation or client config naming it breaks silently — an MCP client gets "unknown tool", not a redirect. | **Medium** | The retirement is a deliberate user decision (D4), not a side effect, and is confined to Phase 8 so it is bisectable on its own. The three replacements ship in the same phase, so there is no window with no answer to the question. CLAUDE.md states in Phase 9 that the tool is retired **and** which three replace it, so the catalog redirects rather than merely omitting. The tool is weeks old and internal-only — its only documented consumer is Helm, whose prompts are updated with it. |
+| **R13** | **Three tools competing for one question is a new failure mode the single tool did not have.** A model asked "how many simulations?" can plausibly reach for `get_scenario_blocked_entities`, get a verdict and no total, and either answer wrongly or burn a second call. Decomposition trades a mining problem for a selection problem. | **Medium** | Each description opens by naming the one question it answers and points at its siblings for the other two, so the routing information is in the tool the model is reading rather than only in the catalog. The narrations reinforce it: the counts tool's step-0 line routes explicitly to the blocked-entities tool for *why*, and the blockers tool's hint says what it does **not** cover. Selection is checked by T-24…T-27's description assertions rather than left to prose review. |
+| **R14** | **The tests still owed are aimed at a tool that will not exist.** T-32, T-33 and T-35 are Manual and have never run; T-35 is the only check in the whole plan that the numbers match what the console itself displays, and it is written against `get_plan_statistics`. Retiring the tool before running them could quietly convert "never verified" into "no longer verifiable". | **Medium** | Phase 8 retargets rather than deletes, and §7's decomposition block makes the re-aiming a checked item: T-35 lands on `get_scenario_simulation_counts`, which is the tool that now reports the numbers it compares. AC-4 stays **unchecked** either way — the decomposition does not discharge it, and this PRD must not let a refactor look like verification. |
+
 
 ### Assumptions under question
 
@@ -897,6 +1246,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-09-02 | **Decomposed into three question-shaped tools; `get_plan_statistics` retired (v7, decision D4).** The shipped tool answers one broad question — *report everything about this scenario* — and Helm asks three narrow ones, so the caller had to mine a report carrying counts, both zero-impact lists, every conflict and the catalog to find any one answer. Phases **7–9** appended: three projections + public functions (P7), three narrators + registrations + the retirement (P8), documentation (P9). **The plumbing does not move** — all three call the shipped `sb_get_plan_statistics`, so **AC-6 is untouched rather than re-satisfied**, and the 31 tests targeting that function are deliberately not edited; only the ~10 targeting the *tool* are retargeted. **Four user decisions recorded as D4**: retire the single registration rather than keep it as a fourth overlapping tool; full parameter pass-through on all three (the split is in what each *renders*, not what a caller may *ask for*); `get_scenario_attack_blockers` covers **fully-blocked attacks only** (`reducing` stays SAF-35484's scope) and emits a disposition line **only for ids the caller named**, since silence cannot distinguish *ran fine* from *not in this scenario* from *never scored*; and caller-facing vocabulary becomes **scenario** — tool names, parameters (`scenario` for the ad-hoc body), descriptions and CLAUDE.md — while the shipped internals keep `plan` because that is the API's own name for the endpoint. **One default differs**: `get_scenario_simulation_counts` sends `get_constraints=False`, since it renders no conflicts and the cost is not hypothetical (38 531 conflicts / 11.8 MB measured live on a single default step). **Two correctness points the decomposition sharpens rather than inherits**: the blocked-entities verdict must distinguish *nothing is blocked* from *nothing was evaluated* — identical-looking, opposite meaning, R1 on a tool whose entire subject is emptiness — and filtering to named ids must precede `ZERO_IMPACT_CAP`, or a named attack falls off the list that exists to explain it. New risks **R12** (retiring a shipped tool is breaking for existing callers), **R13** (three tools introduce a selection problem the single tool did not have), **R14** (T-32/T-33/T-35 are owed against a tool that will not exist — retargeted, and **AC-4 stays unchecked**: a refactor must not look like verification). Revised §1.5, §2, §3 D/E, §4, §7, §8, §9. `test-plan.md` reconciliation follows via `authoring-test-plan`. |
 | 2026-08-27 | **Phase 5 complete — the e2e suite ran for the first time and passed 8/8 with zero skips.** Executed against `zircon-piculet.dev.sbops.com` in 99.6s: T-28, T-29 (2 cases), T-30 (2), T-31, T-40 (2). **Zero skips is the load-bearing fact** — T-30 and T-40 each carry a deliberate skip path for a console that cannot demonstrate their precondition, and neither fired, so the disabled-simulator half of T-30 and the relay assertions of T-40 genuinely ran rather than being waved through. The suite **could not have passed before `900db94`**: five of its eight cases pass an OOB scenario UUID, which returned 400 until the client-side resolution landed. Two corrections this run forced: an earlier probe reported "no custom plans on this console" and was wrong — it queried the wrong endpoint, and `test_custom_plan_integer_string_id_is_accepted` passed rather than skipping; and phase-5.md's smell #5 recorded the uncapped maps as "a PRD decision, not a code fix", which was **a wrong judgement** — live data showed an 11.8 MB response and it was a defect (fixed in `a4a0800`). Phase 5 -> ✅. **AC-4 stays unchecked**: T-35, the only test comparing the tool's numbers against the console's own Checkout tab, is Manual and has not run — everything verified so far establishes self-consistency, not correctness. |
 | 2026-08-27 | **`scenario_id` fixed for OOB scenarios (`900db94`); §3 Component B corrected.** The tool's own first documented example — `get_plan_statistics(console=..., scenario_id="3b8eade5-…")` — returned `400 /id must be integer`, so the primary documented route to a saved scenario did not work. Root cause: `ValidatePlan` types `id` as an integer. Probed live: `{"id": 1}` accepted, `{"id": "1"}` accepted (Ajv coerces), `{"testId": "<uuid>"}` rejected ("doesn't have originalPlan" — it wants a *test*), `{"id": "<uuid>"}` rejected. An OOB scenario has **no field that accepts it**. **Fix**: `_resolve_scenario_to_plan` reads the scenario's steps via the existing `_fetch_all_scenarios` and scores them as an ad-hoc body; an integer plan id is still left for the orchestrator. **Placement matters** — the resolution is in *studio*, not the fetch core, so the core's passthrough is unchanged and **T-7 ("no scenario-fetch call was made") still holds**, since it tests the core. An earlier note in this log said the fix would contradict T-7; that was wrong. Unknown ids and step-less scenarios are rejected before any scoring call. **Verified live on zircon-piculet**: the UUID that returned 400 now scores 3 steps, and **T-29's agreement claim holds — by-id `[0,0,6]` == ad-hoc `[0,0,6]`** — at 41.7 KB with the new caps active (54 conflicts, 50 shown, total stated). **Test-plan follow-up**: T-29's Expected still says "the integer-as-string id is accepted as readily as a scenario UUID", which is now true only because MCP resolves the UUID itself — worth rewording via `authoring-test-plan`, and no `T-<n>` yet covers the resolution path (6 tests written without one). |
 | 2026-08-27 | **T-30 verified live on zircon-piculet — the includeDisabled inversion is now observed, not inferred.** Scoring one ad-hoc step twice against the orchestrator with the parameter flipped: `includeDisabled=false` (runnable) returned **1,971 simulations across 5 in-scope simulators with 173,034 `simulator_is_offline` reasons**; `includeDisabled=true` (expected) returned **578,148 simulations across 14 simulators with exactly 0 `simulator_is_offline`**. Both of T-30's claims hold: runnable <= expected (a 293x gap), and the offline reason is reported **only** in the runnable answer — indeed it is the sole code present in one and absent from the other. This settles §9 R4, whose stated risk was that the parameter's behaviour "was read from source rather than observed" and that a wrong reading would make the default ask for the wrong number. It did not. The inversion that §8 Phase 5, the tool description and CLAUDE.md all assert is now backed by observation. **Four of the five e2e concerns are settled against reality** (T-28 shape, T-31 typed error, T-40 relayed descriptions, T-30 inversion); T-29 remains broken on the OOB-scenario UUID path. |

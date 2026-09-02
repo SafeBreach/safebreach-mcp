@@ -1,12 +1,12 @@
 # Test Plan — MCP support for Core plan statistics API (`get_plan_statistics`) (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-plan-statistics-mcp-tool  |  Status: Draft  |  Updated: 2026-08-27 14:57
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-plan-statistics-mcp-tool  |  Status: Draft  |  Updated: 2026-09-02 00:00
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD v5) |
+| Status | Draft (In Sync with PRD v7) |
 | Offering / surface | Helm AI Agent (JIRA `Offering`) over the **Validate** product surface — scenarios/plans, simulators, plan statistics — via the safebreach-mcp Studio server |
 
 ## Requirements Traceability
@@ -27,18 +27,24 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R9 | Zero-impact attack (`moves[id] === 0`) **reported** as inapplicable with an explanation; reporting does not block save; `null` never reported as zero-impact | T-20, T-22, T-36 | Covered |
 | R10 | Zero-impact simulator (`simulators[id] === 0`) reported the same way, read from the **union** map not a role map | T-21, T-22 | Covered |
 | R11 | No MCP-side caching, so any change to an earlier decision produces a fresh call | T-12 | Covered |
-| R12 | Registered as `get_plan_statistics` with `readOnlyHint=True`; documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
+| R12 | **Re-scoped for PRD v7** — three read-only tools registered (`get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`), `get_plan_statistics` unregistered; all three documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
 | R13 | `sb_quick_run` and `sb_run_scenario` verified behaviourally unchanged | T-13, T-14, T-15, T-17, T-33 | Covered |
+| R14 | Three tools, one question each, projecting the shipped report; `sb_get_plan_statistics` unchanged as the repo's single `plan/statistics` call site; no second fetch path and no duplicated zero-impact, severity, cap or null-safety logic | T-41, T-46, T-47, T-48 | Covered |
+| R15 | Full parameter pass-through on all three tools; only defaults differ, and only where the question differs — `get_scenario_simulation_counts` defaults `get_constraints=False` | T-26, T-27, T-46 | Covered |
+| R16 | Blocked-entities verdict distinguishes blocked / clean / **not-evaluated**; attack dispositions emitted only for ids the caller named; filtering precedes the zero-impact cap; fully-blocked (integer-`0`) scope only, with reducing conflicts stated as out of scope | T-42, T-43, T-44, T-45, T-48 | Covered |
+| R17 | Caller-facing vocabulary is `scenario` — tool names, parameters, descriptions and the CLAUDE.md catalog; shipped internals keep `plan`, which is the API's own name for the endpoint | T-24, T-26, T-34 | Covered |
 
 ## Change Coverage
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
 | `safebreach_mcp_core/plan_statistics.py` | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-16 | — |
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39, T-41, T-42, T-43, T-44, T-45, T-46 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
-| `safebreach_mcp_studio/studio_server.py` | T-24, T-25 | — |
+| `safebreach_mcp_studio/studio_server.py` | T-24, T-25, T-47 | — |
 | `CLAUDE.md` | T-34 | — |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-24, T-25, T-26, T-41, T-42, T-43, T-44, T-45, T-46, T-47 | Test file — its own coverage is the cases it carries; listed in PRD §8 Phases 7 and 8 because both phases add to it. |
+| `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py` | T-48 | Test file — its own coverage is the e2e cases it carries (T-28…T-31, T-40, T-48). |
 
 ## Risk Landscape
 
@@ -48,6 +54,15 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
     positional alignment, would report the user's whole selection as inapplicable.
   - **R2 (High)** — regressing the two existing callers. `_get_scenario_statistics` has 58 test references
     (~20 `@patch` decorators with hardcoded return dicts) plus `sb_quick_run` and `sb_run_scenario`.
+  - **R12 (Medium, PRD v7)** — retiring a shipped tool is a breaking change for whoever already calls it.
+    `get_plan_statistics` is registered, documented as CLAUDE.md entry 25, and has been exercised live. An MCP
+    client naming it gets "unknown tool", not a redirect.
+  - **R13 (Medium, PRD v7)** — three tools introduce a *selection* problem the single tool did not have. A
+    model asked for a count can plausibly reach the blocked-entities tool, get a verdict and no number, and
+    either answer wrongly or burn a second call. Guarded by T-47 rather than by prose review.
+  - **R14 (Medium, PRD v7)** — the three Manual tests still owed (T-32, T-33, T-35) were written against a
+    tool that will not exist. They are re-scoped rather than dropped, and **AC-4 stays unchecked**: a refactor
+    must not be allowed to look like verification.
   - **R3 (Closed)** — vendored-meaning drift, designed out entirely: nothing is vendored — no table and no
     lever map — so there is no local vocabulary that can go stale. `ui-react`'s measured rot (3 dead entries,
     31 codes missing after years) is the evidence for relaying rather than a risk this plan still carries.
@@ -98,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 15 | 13 | 0 | 5 | 33 |
+| Automatic | 21 | 14 | 0 | 6 | 41 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **15** | **13** | **0** | **8** | **36** |
+| **Total** | **21** | **14** | **0** | **9** | **44** |
 
 ## Environment Requirements (aggregated)
 
@@ -135,6 +150,10 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - **Regression tests in this plan**: T-10, T-13, T-14, T-15, T-16, T-17 (Automatic) and **T-33**
   (the mandatory Manual regression). This is the complete set carrying `Aspect: regression` — T-2 and T-5 were
   tombstoned in the v5 update, so they no longer appear here.
+- **PRD v7 note**: phases 7–9 retire a registered tool but change no shipped behaviour beneath it —
+  `sb_get_plan_statistics`, the fetch core and both run tools are untouched. That property is exactly what
+  T-13, T-14, T-16, T-17 and T-33 already assert, so the regression set is unchanged by the decomposition;
+  T-46 additionally proves no new fetch path was introduced.
 
 ## Tests
 
@@ -150,10 +169,16 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-21 | Zero-impact simulators come from the union map, so one-sided nodes are not falsely reported | — | Phase 4 | safebreach_mcp_studio |
 | T-22 | A limit-reached response suppresses zero-impact reporting entirely | — | Phase 4 | safebreach_mcp_studio |
 | T-23 | Conflicts are normalized against a catalog, with nothing static repeated per conflict | API-contract | Phase 4 | safebreach_mcp_studio |
-| T-24 | The tool is registered under the agreed wire name and declared read-only | API-contract | Phase 5 | safebreach_mcp_studio |
-| T-25 | A read-only tool takes no rate-limiting gates | — | Phase 5 | safebreach_mcp_studio |
-| T-26 | Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error | — | Phase 5 | safebreach_mcp_studio |
-| T-34 | The tool catalog documents the new tool and the gate table is left alone | — | Phase 6 | safebreach_mcp_studio |
+| T-24 | The three tools are registered under their agreed wire names, declared read-only, and the retired one is gone | API-contract | Phase 8 | safebreach_mcp_studio |
+| T-25 | None of the three read-only tools takes a rate-limiting gate | — | Phase 8 | safebreach_mcp_studio |
+| T-26 | Ambiguous input (more or fewer than one of scenario/scenario_id/test_id) is rejected with a clear error, on all three tools | — | Phase 7 | safebreach_mcp_studio |
+| T-34 | The tool catalog documents all three tools, records the retirement, and the gate table is left alone | — | Phase 9 | safebreach_mcp_studio |
+| T-41 | Each projection renders only the slice its question needs | API-contract | Phase 7 | safebreach_mcp_studio |
+| T-42 | The blocked-entities verdict is decided by whether counts were computed, never by list emptiness | — | Phase 7 | safebreach_mcp_studio |
+| T-43 | A named attack id resolves to exactly one of four dispositions | API-contract | Phase 7 | safebreach_mcp_studio |
+| T-44 | Filtering to named ids precedes truncation, so a named attack past the cap is still explained | — | Phase 7 | safebreach_mcp_studio |
+| T-45 | The blocked-entities catalog carries only the codes its own reported blockers cite | API-contract | Phase 7 | safebreach_mcp_studio |
+| T-47 | Each tool's narration carries only its own sections and routes to its siblings | API-contract | Phase 8 | safebreach_mcp_studio |
 | T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach_mcp_studio |
 | T-38 | A relayed description reaches the caller byte-for-byte, never re-worded | API-contract | Phase 1 | safebreach_mcp_studio |
 | T-39 | A response with no catalog degrades to null descriptions, never an error | API-contract | Phase 1 | safebreach_mcp_studio |
@@ -174,20 +199,22 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-15 | The helper no longer crashes on a limit-reached response | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
 | T-16 | The statistics endpoint is reached from exactly one place in the repo | regression | Phase 3 | safebreach_mcp_core | repo-harness |
 | T-17 | Both existing callers' evaluate previews are unchanged by the refactor | regression | Phase 3 | safebreach_mcp_studio | repo-harness |
-| T-27 | Counts mode selects one call or two, and labels what it returns | API-contract | Phase 5 | safebreach_mcp_studio | repo-harness |
+| T-27 | Counts mode selects one call or two, and labels what it returns | API-contract | Phase 7 | safebreach_mcp_studio | repo-harness |
+| T-46 | Each public function makes exactly one statistics call and passes every parameter through | API-contract | Phase 7 | safebreach_mcp_studio | repo-harness |
 
 **E2E**
 
 | Test | Description | Exec | Aspect | Passes after | Repo | Environment |
 |------|-------------|------|--------|--------------|------|-------------|
-| T-28 | The tool scores an ad-hoc plan against a real console and returns usable numbers | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
-| T-29 | Scoring by scenario_id agrees with scoring the same scenario's body ad hoc | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
-| T-30 | Runnable never exceeds expected, and the offline reason explains the gap | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
-| T-31 | A step-less plan against a real console yields the typed error, not a raw 400 | Automatic | — | Phase 5 | safebreach_mcp_studio | Validate console environment |
-| T-40 | A real console supplies the descriptions the relay depends on | Automatic | API-contract | Phase 5 | safebreach_mcp_studio | Validate console environment |
-| T-32 | An agent can answer "what will run and what won't, and why" through the real product | Manual | progression | Final | — | Validate console environment |
+| T-28 | The three tools score an ad-hoc scenario against a real console and return usable numbers | Automatic | API-contract | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-29 | Scoring by scenario_id agrees with scoring the same scenario's body ad hoc | Automatic | API-contract | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-30 | Runnable never exceeds expected, and the offline reason explains the gap | Automatic | API-contract | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-31 | A step-less scenario against a real console yields the typed error on all three tools, not a raw 400 | Automatic | — | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-40 | A real console supplies the descriptions the relay depends on | Automatic | API-contract | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-48 | The three tools agree with each other against a real console on a scenario built to block | Automatic | API-contract | Phase 8 | safebreach_mcp_studio | Validate console environment |
+| T-32 | An agent answers all three questions through the real product, one tool per question | Manual | progression | Final | — | Validate console environment |
 | T-33 | The two shipped run tools still preview correctly against a real console | Manual | regression | Final | — | Validate console environment |
-| T-35 | The tool's Checkout-parameter numbers match what the console itself displays | Manual | API-contract | Final | — | Validate console environment |
+| T-35 | The counts tool's Checkout-parameter numbers match what the console itself displays | Manual | API-contract | Final | — | Validate console environment |
 
 ### T-1 — No constraint vocabulary is vendored anywhere in the repo
 
@@ -602,80 +629,80 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Level: unit
 - Execution: Automatic
 
-### T-24 — The tool is registered under the agreed wire name and declared read-only
+### T-24 — The three tools are registered under their agreed wire names, declared read-only, and the retired one is gone
 
-- Description: Proves the tool is discoverable under the name every sibling subtask and the agent prompt depend on, and that it advertises itself as safe to call repeatedly.
+- Description: Proves the three tools are discoverable under the names every sibling subtask and the agent prompt depend on, that each advertises itself as safe to call repeatedly, and that the tool they replace no longer answers.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: A wrong name breaks every dependent contract; a missing read-only hint invites a calling model to treat re-checks as risky and avoid them.
 - Risk source: PRD §9 (assumptions)
 - Verify: Introspect the studio server's registered tools.
-- Expected: A tool named exactly `get_plan_statistics` exists, with the read-only hint true and the destructive hint false. The previously registered tools are all still present.
+- Expected: Tools named exactly `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and `get_scenario_attack_blockers` exist, each with the read-only hint true and the destructive hint false. No tool named `get_plan_statistics` remains. Every other previously registered tool is still present, and the server's total tool count reflects three added and one removed. Each tool's parameter set names the ad-hoc scenario body `scenario`, not `plan`.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
-### T-25 — A read-only tool takes no rate-limiting gates
+### T-25 — None of the three read-only tools takes a rate-limiting gate
 
-- Description: Proves the project's rate-limiting contract is respected — gates belong to mutating tools, and gating a read-only impact check would throttle exactly the re-checks the feature exists to enable.
+- Description: Proves the project's rate-limiting contract is respected across all three — gates belong to mutating tools, and gating a read-only impact check would throttle exactly the re-checks the feature exists to enable. Three tools mean three chances to get this wrong.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: unit
 - Execution: Automatic
 - Risk: Copying an existing studio tool as a template would bring its rate-limiting gates along, silently capping how often a configuration can be re-scored.
 - Risk source: PRD §9 (R5)
-- Verify: With rate limiting enabled and the API mocked, invoke the new tool more times than the configured per-tool limit while observing the limiter.
-- Expected: Every invocation succeeds. Neither the pre-check nor the record-action entry point is called for this tool.
+- Verify: With rate limiting enabled and the API mocked, invoke each of the three tools more times than the configured per-tool limit, and more times in total than the configured per-caller limit, while observing the limiter.
+- Expected: Every invocation of every tool succeeds. Neither the pre-check nor the record-action entry point is called for any of the three, individually or in aggregate.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_rate_limiting.py`
 - Environment needs: none
 
-### T-26 — Ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error
+### T-26 — Ambiguous input (more or fewer than one of scenario/scenario_id/test_id) is rejected with a clear error, on all three tools
 
-- Description: Proves the two input modes are genuinely exclusive, so a caller never gets a silently-ignored argument and a number that answers a different question.
+- Description: Proves the three input modes are genuinely exclusive on every tool, so a caller never gets a silently-ignored argument and a number that answers a different question.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 7
 - Level: unit
 - Execution: Automatic
 - Risk: Silently preferring one input over the other would score a different configuration than the caller asked about, and the result would look entirely plausible.
 - Risk source: PRD §9 (assumptions)
-- Verify: Invoke the public function with both a plan body and a scenario id, then with neither. Also invoke with a plan argument that is not valid JSON.
-- Expected: All three raise errors whose messages state which inputs are expected and that exactly one must be supplied. No API call is attempted.
+- Verify: For each of the three public functions in turn, invoke it with both a scenario body and a scenario id, then with neither, then with a scenario argument that is not valid JSON, then with a blank string in place of an unused optional.
+- Expected: Every case raises an error whose message states which inputs are expected and that exactly one must be supplied. A blank string counts as absent rather than as a supplied value, so it neither satisfies the exclusivity check nor reaches the API. No API call is attempted in any case, on any of the three.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
 ### T-27 — Counts mode selects one call or two, and labels what it returns
 
-- Description: Proves the expected-versus-runnable contract, including that the cheaper single-call default is what a caller gets unless they ask for both.
+- Description: Proves the expected-versus-runnable contract on the tool that reports the numbers, including that the cheaper single-call default is what a caller gets unless they ask for both.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 7
 - Level: integration
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: The two figures cannot come from one call and cannot be derived from each other. An unlabelled or wrongly-defaulted result is indistinguishable from a correct one at a glance.
 - Risk source: PRD §9 (R4, R5)
-- Verify: With the API mocked and call-counting enabled, invoke the tool three ways: default, expected-only, and both. Inspect the request count, each request's `includeDisabled` value, and the returned labels.
+- Verify: With the API mocked and call-counting enabled, invoke `get_scenario_simulation_counts` three ways: default, expected-only, and both. Inspect the request count, each request's `includeDisabled` value, and the returned labels.
 - Expected: Default issues one call with `includeDisabled=false` and labels the result runnable. Expected-only issues one call with `includeDisabled=true` and labels it expected. Both issues exactly two calls, one of each, and returns both results labelled, together with the note that expected cannot be derived from runnable.
 - Evidence required: pytest run output naming the test, with the per-mode call counts visible.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
 
-### T-28 — The tool scores an ad-hoc plan against a real console and returns usable numbers
+### T-28 — The three tools score an ad-hoc scenario against a real console and return usable numbers
 
-- Description: Proves the whole path works against the real the orchestrator service, which is the only way to know the request shape and response parsing are actually right.
+- Description: Proves the whole path works against the real the orchestrator service, which is the only way to know the request shape and response parsing are actually right — now across all three tools, since each renders a different part of that parse.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: e2e
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: Every mocked test encodes an assumption about the real endpoint. The maps are untyped at the source, so only a live call confirms the shape.
 - Risk source: PRD §9 (assumptions)
-- Verify: Against the configured e2e console, build a plan body from a step of an existing scenario read through the product's own scenario API, then call the tool with default parameters.
-- Expected: A per-step result is returned. `simulationCount` is an integer, `moves` and the three simulator maps are populated with integer values, and where conflicts exist each references a catalog entry. No field contains a bare reason code as its explanation.
+- Verify: Against the configured e2e console, build a scenario body from a step of an existing scenario read through the product's own scenario API, then call each of the three tools with default parameters.
+- Expected: The counts tool returns a per-step simulation count that is an integer and a total consistent with it. The blocked-entities tool returns a verdict in one of its three states plus, where applicable, entries carrying blockers that reference a catalog entry. The blockers tool, asked about an id present in the scenario, returns exactly one disposition for it. No tool's output contains a bare reason code as its explanation.
 - Evidence required: pytest e2e run output naming the test, plus the console name and the returned counts.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
@@ -684,13 +711,13 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 - Description: Proves the two input modes are two routes to one answer, which is what makes the saved-scenario passthrough trustworthy.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: e2e
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: The by-id path is resolved server-side from a code path this repo does not control. If it diverged from the ad-hoc path, callers would silently get different numbers for the same scenario.
 - Risk source: PRD §9 (assumptions)
-- Verify: Against the e2e console, pick an existing scenario or custom plan through the product's own listing APIs. Call the tool once with its id, and once with its steps as an ad-hoc body, using identical parameters.
+- Verify: Against the e2e console, pick an existing scenario or custom plan through the product's own listing APIs. Call `get_scenario_simulation_counts` once with its id, and once with its steps as an ad-hoc `scenario` body, using identical parameters.
 - Expected: Both calls return the same number of steps and the same per-step `simulationCount`. If the target is a custom plan, the integer-as-string id is accepted as readily as a scenario UUID.
 - Evidence required: pytest e2e run output naming the test, with both count sequences shown.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
@@ -698,63 +725,63 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 
 ### T-30 — Runnable never exceeds expected, and the offline reason explains the gap
 
-- Description: Proves the feature's most user-visible correction against the live service — that a disconnected simulator is no longer counted as if it would run, and that the tool can say why.
+- Description: Proves the feature's most user-visible correction against the live service — that a disconnected simulator is no longer counted as if it would run, and that the tools can say why.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: e2e
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: The parameter's behaviour is the inverse of its intuitive reading, and it was read from source rather than observed. If that reading is wrong, the default asks for the wrong number.
 - Risk source: PRD §9 (R4)
-- Verify: Against the e2e console, score the same scenario twice — runnable then expected — and compare. Then inspect the runnable response's conflicts for the offline reason. When the console has no disabled or unapproved simulator, skip the delta and offline-reason assertions with an explicit reason naming that precondition, and still assert the ordering relation.
+- Verify: Against the e2e console, score the same scenario twice through `get_scenario_simulation_counts` — runnable then expected — and compare. Then inspect `get_scenario_blocked_entities`' runnable output for the offline reason. When the console has no disabled or unapproved simulator, skip the delta and offline-reason assertions with an explicit reason naming that precondition, and still assert the ordering relation.
 - Expected: Runnable `simulationCount` is less than or equal to expected for every step. When a disabled simulator exists, the runnable response reports the offline reason for it and the expected response does not, and the delta is strictly positive for at least one step. A skipped assertion is reported as a skip with its reason, never as a pass.
 - Evidence required: pytest e2e run output naming the test, with both count sequences, the disabled-simulator precondition status, and any skip reason.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
-### T-31 — A step-less plan against a real console yields the typed error, not a raw 400
+### T-31 — A step-less scenario against a real console yields the typed error on all three tools, not a raw 400
 
-- Description: Confirms against the live service that the most common mid-construction state reads as guidance rather than as a tool failure.
+- Description: Confirms against the live service that the most common mid-construction state reads as guidance rather than as a tool failure — from whichever of the three tools the caller happened to reach for.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: e2e
 - Execution: Automatic
 - Risk: The pre-flight rejection is asserted against a mock in T-8. Only a live call confirms the real endpoint still behaves as the pre-flight assumes, and that no other path reaches it.
 - Risk source: PRD §9 (edge cases)
-- Verify: Against the e2e console, call the tool with a plan body carrying no steps.
-- Expected: A typed error naming the missing steps, matching T-8's message. No unhandled HTTP error and no raw upstream error code surface to the caller.
+- Verify: Against the e2e console, call each of the three tools with a `scenario` body carrying no steps.
+- Expected: Each returns a typed error naming the missing steps, matching T-8's message — the rejection lives in the shared plumbing, so all three messages are identical. No unhandled HTTP error and no raw upstream error code surface to the caller from any of them.
 - Evidence required: pytest e2e run output naming the test, with the error message shown.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
 ### T-40 — A real console supplies the descriptions the relay depends on
 
-- Description: Proves the relay works against the live API rather than against a mock of it — the one assumption every unit test in Phase 1 encodes and none can falsify.
+- Description: Proves the relay works against the live API rather than against a mock of it — the one assumption every unit test in Phase 1 encodes and none can falsify. Re-aimed at the blocked-entities tool, which is now the only one that renders a catalog.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 8
 - Level: e2e
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: Every Phase 1 test asserts MCP's behaviour given a catalog. Whether a catalog actually arrives — under this tool's own parameter set, at the response root rather than per step, keyed the way MCP looks codes up — is an assumption about another team's deployed service. If it is wrong, the whole design silently reports `description: null` for everything while every unit test stays green.
 - Risk source: PRD §9 (R9, R11)
-- Verify: Against the configured e2e console, call the tool with default parameters on a plan whose steps are known to produce conflicts, and read the returned `constraint_catalog`. First establish whether that console carries SAF-35568 — a catalog present with at least one non-null description. If it does not, skip with an explicit reason naming the console and the absent field, and assert the R11 degradation instead (conflicts surfaced, descriptions null, hint present).
-- Expected: On a SAF-35568 console: every code referenced by a conflict has a catalog entry, each `description` a non-empty string, and no entry is the code name echoed back. The catalog contains only codes this response references — not the full vocabulary. On an older console: the test skips with a stated reason, and the degradation assertion passes. A skip is never reported as a pass.
+- Verify: Against the configured e2e console, call `get_scenario_blocked_entities` with default parameters on a scenario whose steps are known to produce conflicts, and read the returned constraint catalog. First establish whether that console carries SAF-35568 — a catalog present with at least one non-null description. If it does not, skip with an explicit reason naming the console and the absent field, and assert the R11 degradation instead (conflicts surfaced, descriptions null, hint present).
+- Expected: On a SAF-35568 console: every code referenced by a reported blocker has a catalog entry, each `description` a non-empty string, and no entry is the code name echoed back. The catalog contains only codes this tool's own reported blockers cite — not the full vocabulary, and not codes reachable only through the conflicts this tool drops (T-45 asserts that narrowing against a fixture; this asserts it against live data). On an older console: the test skips with a stated reason, and the degradation assertion passes. A skip is never reported as a pass.
 - Evidence required: pytest e2e run output naming the test, the console name, and the returned catalog with its descriptions — or the explicit skip reason and the degradation assertion's output.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
 
-### T-32 — An agent can answer "what will run and what won't, and why" through the real product
+### T-32 — An agent answers all three questions through the real product, one tool per question
 
-- Description: The progression walkthrough — proves the tool delivers its actual purpose as a conversational capability, which no assertion on a payload can establish.
+- Description: The progression walkthrough — proves the decomposition delivers its actual purpose as a conversational capability, which no assertion on a payload can establish: that each question is answered by one call to one tool, and that the agent picks the right one unprompted.
 - Status: Active
 - Passes after: Final
 - Level: e2e
 - Execution: Manual
 - Aspect: progression
-- Risk: Every criterion can pass while the tool remains unusable in conversation — for instance if the response is too large to reason over, or its wording does not let an agent explain a conflict to a user.
-- Risk source: PRD §9 (R3, assumptions)
-- Verify: Through an MCP client connected to the e2e console, take an existing scenario, call `get_plan_statistics`, and have the agent state in plain language how many simulations will run, which attacks or simulators will not contribute, and why. Then change one step's filter and call again to confirm the answer changes accordingly. Preconditions come from existing console scenarios read through the product's own APIs — no seeding.
-- Expected: The agent produces a correct, plain-language answer with per-conflict explanations and suggested fixes. No raw reason code appears in anything shown to the user. The second call reflects the changed filter, demonstrating freshness. If the tool cannot be reached or the response cannot be interpreted, the test reports BLOCKED.
+- Risk: Every criterion can pass while the tools remain unusable in conversation — if a response is too large to reason over, if its wording does not let an agent explain a conflict to a user, or if the agent cannot tell which of three similar tools answers the question it was asked. The last of those is a failure the single tool could not have had.
+- Risk source: PRD §9 (R3, R13, assumptions)
+- Verify: Through an MCP client connected to the e2e console, take an existing scenario and ask the agent, in three separate turns and without naming any tool: how many simulations this would produce; whether anything here will not run at all; and why one specific attack did not run. Record which tool it reaches for each time. Then change one step's filter and repeat the count question to confirm the answer changes. Preconditions come from existing console scenarios read through the product's own APIs — no seeding.
+- Expected: Each question is answered from one call to the tool that owns it — counts, blocked-entities, blockers respectively — with no wrong-tool detour and no second call to recover a missing figure. Each answer is correct and in plain language. No raw reason code appears in anything shown to the user. The repeated count question reflects the changed filter, demonstrating freshness. If a tool cannot be reached or a response cannot be interpreted, the test reports BLOCKED.
 - Evidence required: transcript of the agent session, the tool invocations and responses, and observed-versus-expected for each claim.
 - Manual because: the assertion is a judgment about whether the response is interpretable and explainable in conversation — not a deterministic value.
 - Environment needs: Validate console environment
@@ -775,24 +802,24 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Manual because: it asserts unchanged end-to-end behaviour of two shipped tools against live console state, where the baseline is a prior observed run rather than a value that can be computed deterministically.
 - Environment needs: Validate console environment
 
-### T-34 — The tool catalog documents the new tool and the gate table is left alone
+### T-34 — The tool catalog documents all three tools, records the retirement, and the gate table is left alone
 
-- Description: Proves the documentation requirement is met in the precise way the project's own conventions demand, including the deliberate omission.
+- Description: Proves the documentation requirement is met in the precise way the project's own conventions demand, including the deliberate omission — and that a reader looking for the retired tool is redirected rather than left to wonder.
 - Status: Active
-- Passes after: Phase 6
+- Passes after: Phase 9
 - Level: unit
 - Execution: Automatic
 - Risk: The project treats its tool catalog as the tool contract. An undocumented tool is invisible to future contributors, and wrongly adding it to the rate-limiting table would contradict the stated gate rule.
 - Risk source: PRD §9 (assumptions)
-- Verify: Read the project instruction file. Assert the Studio Server tool catalog contains an entry for the new tool, and that the rate-limiting gate table's row set is unchanged.
-- Expected: The catalog entry is present and names the runnable default and the read-only posture. The gate table contains no row for the new tool.
+- Verify: Read the project instruction file. Assert the Studio Server tool catalog contains an entry for each of the three tools, that it records `get_plan_statistics` as retired and names its three replacements, and that the rate-limiting gate table's row set is unchanged.
+- Expected: Three catalog entries are present, each naming the question its tool answers, the runnable default and the read-only posture, and the counts entry naming its `get_constraints=False` default. The catalog states the retirement and the replacements, so the redirect is in the document rather than only in the change log. Every entry uses `scenario` rather than `plan` for the caller-facing vocabulary. The gate table contains no row for any of the three.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
-### T-35 — The tool's Checkout-parameter numbers match what the console itself displays
+### T-35 — The counts tool's Checkout-parameter numbers match what the console itself displays
 
-- Description: The independent cross-layer check — proves the tool agrees with what a user actually sees in the product, which is the requirement's own wording and cannot be shown by comparing the tool to itself.
+- Description: The independent cross-layer check — proves the tool agrees with what a user actually sees in the product, which is the requirement's own wording and cannot be shown by comparing the tool to itself. Re-aimed at `get_scenario_simulation_counts`, which is now the tool that reports the numbers being compared; **AC-4 remains unchecked until this runs** — the decomposition does not discharge it.
 - Status: Active
 - Passes after: Final
 - Level: e2e
@@ -800,11 +827,138 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Aspect: API-contract
 - Risk: Every other parity test compares the tool against the same API it calls. Only reading the rendered console view falsifies the claim that the numbers match the product, and the two views legitimately differ by parameter set.
 - Risk source: PRD §9 (R4)
-- Verify: For one scenario on the e2e console, open the Add Simulators Checkout view and record the displayed simulation count. Call the tool for the same scenario with the Checkout parameter set (expected counts, constraints requested) and compare. Repeat the comparison against the run-gating view using the runnable parameter set.
+- Verify: For one scenario on the e2e console, open the Add Simulators Checkout view and record the displayed simulation count. Call `get_scenario_simulation_counts` for the same scenario with the Checkout parameter set (expected counts, constraints requested) and compare. Repeat the comparison against the run-gating view using the runnable parameter set.
 - Expected: The tool's count equals the Checkout view's displayed count for the Checkout parameter set, and equals the run-gating view's for the runnable parameter set. Where a view greys out Run because a step yields nothing, the tool reports that step's count as zero.
 - Evidence required: screenshots of both console views, the tool responses for both parameter sets, and an observed-versus-expected comparison per view.
 - Manual because: the comparison target is a rendered console view and this repo has no browser automation of any kind (Python only); the automation repo's Playwright suites are the org's only browser infra, and standing up a cross-repo suite for a single parity check is disproportionate to the risk.
 - Environment needs: Validate console environment
+
+### T-41 — Each projection renders only the slice its question needs
+
+- Description: Proves the decomposition is real rather than cosmetic — each tool's answer is genuinely narrowed, so a caller asking one question does not pay for the other two.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Three tools that each return the whole report would satisfy every naming and registration assertion while delivering none of the benefit the split exists for, and nothing else in the plan would catch it.
+- Risk source: PRD §9 (R13)
+- Verify: Apply each of the three projections to one report carrying per-step counts, both zero-impact lists, a conflicts list and a constraint catalog. Inspect what each returns.
+- Expected: The counts projection carries the mode, the step counts, the coverage denominators and the truncation facts, and carries no conflicts, no zero-impact list and no catalog. The blocked-entities projection carries both zero-impact lists and a catalog, and carries no conflicts list. The attack-blockers projection carries entries only for attacks it was asked about. None of the three mutates the report it was given.
+- Evidence required: pytest run output naming the test, with each projection's returned key set shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-42 — The blocked-entities verdict is decided by whether counts were computed, never by list emptiness
+
+- Description: Proves the feature's most dangerous confusion is impossible on the one tool whose entire subject is emptiness — a scenario nobody scored must never read as a scenario with nothing wrong.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Risk: A limit-reached report and a clean report both carry two empty zero-impact lists. A verdict derived from those lists would report "nothing is blocked" over a plan the orchestrator never evaluated, which is the exact inversion PRD §9 R1 exists to prevent, now on a tool whose whole output is that sentence.
+- Risk source: PRD §9 (R1)
+- Verify: Project three reports — one carrying a zero-impact attack, one where every count is a positive integer and both lists are empty, one limit-reached where counts were not computed and both lists are empty by construction. Then take the second report and flip only its counts-computed flag.
+- Expected: Three textually distinct verdicts. The first names what contributes nothing. The second states every attack and simulator contributes at least one simulation. The third states that scoring stopped early and that nothing in the result indicates anything is inapplicable. Flipping only the counts-computed flag changes the second verdict into the third, proving the verdict is derived from that flag and not from the empty lists.
+- Evidence required: pytest run output naming the test, with all three verdict strings shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-43 — A named attack id resolves to exactly one of four dispositions
+
+- Description: Proves the tool never answers "why didn't this run" with silence, which a caller cannot distinguish from any of the three non-constraint reasons an attack produced nothing.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Reporting only blocked attacks makes an id that ran, an id nobody scored, and an id that is not in the scenario all appear identically — as absence. Two of those three are not constraint problems at all, so the caller would go looking for a conflict that does not exist.
+- Risk source: PRD §9 (R13)
+- Verify: Project a report whose attack counts hold an integer zero, a positive integer and a null, then ask about those three ids plus one appearing in no step. Then project the same report asking about nothing at all.
+- Expected: The zero id is reported blocked and carries its blockers. The positive id is reported as having run, with its count. The null id is reported as not computed. The absent id is reported as not present in this scenario. Each id receives exactly one disposition and the four are textually distinct. Asked about nothing, the projection reports every fully-blocked attack and emits no disposition entries at all.
+- Evidence required: pytest run output naming the test, with the four dispositions shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-44 — Filtering to named ids precedes truncation, so a named attack past the cap is still explained
+
+- Description: Proves the tool cannot fail at exactly the moment it is needed — on a large scenario, where the attack the caller asked about is the one most likely to fall off a capped list.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Risk: The zero-impact list is capped without regard to which attack the caller cared about. Reading dispositions from that capped list would report a genuinely blocked attack as not present in the scenario — a confident wrong answer, and the opposite of the truth.
+- Risk source: PRD §9 (R13)
+- Verify: Project a report whose zero-impact list was capped, holding more blocked attacks than the cap admits, and ask specifically about one whose integer-zero count is present in the counts map but whose zero-impact entry falls beyond the cap. Then repeat with an id the counts map itself was capped past.
+- Expected: The first named attack is reported blocked, not absent. The second is reported as having been truncated away rather than as not present in the scenario — the two answers stay distinct and neither collapses into the other.
+- Evidence required: pytest run output naming the test, with the cap size and both dispositions shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-45 — The blocked-entities catalog carries only the codes its own reported blockers cite
+
+- Description: Proves the narrowed tool narrows its catalog too, so the answer to a short question does not carry a vocabulary list explaining conflicts it deliberately did not report.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Relaying the whole report's catalog would describe codes reachable only through the reducing conflicts this projection drops, inviting a caller to present a meaning for something the tool never showed them.
+- Risk source: PRD §9 (R13)
+- Verify: Project a report whose catalog describes more codes than the reported blockers reference, including one cited only by a reducing conflict the projection drops.
+- Expected: Every code in the returned catalog is cited by at least one reported blocker, and every code a reported blocker cites has an entry. The code reachable only through a dropped conflict does not appear. Each description is byte-for-byte what the report carried, and a code the report described as null is still emitted with an explicit null.
+- Evidence required: pytest run output naming the test, with both code sets shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-46 — Each public function makes exactly one statistics call and passes every parameter through
+
+- Description: Proves the three tools are three views of one scoring, not three scorings — which is what makes their answers comparable and what keeps the single-call-site guarantee true.
+- Status: Active
+- Passes after: Phase 7
+- Level: integration
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: A projection that re-fetched to fill a gap would triple the cost of a three-question conversation, break the one-call-site requirement this PRD already satisfies, and could return three answers computed from three different console states.
+- Risk source: PRD §9 (R2, R5)
+- Verify: With the statistics call mocked and counted, invoke each of the three public functions with every parameter explicitly set to a non-default value, then invoke each again with defaults.
+- Expected: Each invocation produces exactly one statistics call. Every explicitly-set parameter reaches it unchanged. On defaults, the counts function requests no constraints while the other two do, and all three request runnable counts. No function issues a second fetch under any input.
+- Evidence required: pytest run output naming the test, with the per-function call counts and the sent parameter sets shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: repo-harness
+
+### T-47 — Each tool's narration carries only its own sections and routes to its siblings
+
+- Description: Proves the split solved a problem rather than trading it for a worse one — three tools are only an improvement if a reading model can tell which to call.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Decomposition replaces a mining problem with a selection problem. A model asked for a count that reaches the blocked-entities tool gets a verdict and no number, then either answers wrongly or burns a second call — and nothing in a payload assertion would reveal it.
+- Risk source: PRD §9 (R13)
+- Verify: Render each tool's output from one report and read its section headings and its hint text. Read each tool's registered description.
+- Expected: The counts output carries no conflict, zero-impact or catalog section. The blocked-entities output carries no per-step simulation-count listing beyond its coverage denominators, and no conflicts section. The attack-blockers output names only the attacks asked about. Each output's hint names the sibling that answers the question it does not — the counts output points at blocked-entities for why a step produces nothing, and the attack-blockers output states that attacks which ran on fewer simulators than offered are outside its scope. Each registered description opens by naming the single question its tool answers.
+- Evidence required: pytest run output naming the test, with each rendered output and each description's opening shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-48 — The three tools agree with each other against a real console on a scenario built to block
+
+- Description: Proves the decomposition preserves one truth — three tools reading one scoring must not disagree — on input engineered to make a block certain rather than found by luck.
+- Status: Active
+- Passes after: Phase 8
+- Level: e2e
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Each tool is asserted against mocks in isolation. Nothing yet proves that against a live console the counts tool's totals, the blocked-entities tool's denominators and the blockers tool's dispositions describe the same scoring — three plausible answers that quietly contradict each other is the failure mode a split invites and a single tool could not have.
+- Risk source: PRD §9 (R13, assumptions)
+- Verify: Against the e2e console, read the simulator fleet and the playbook through the product's own APIs and construct an ad-hoc scenario body pairing an OS-constrained attack with target simulators of a different OS, so at least one attack is blocked by construction rather than by chance. Score that body through all three tools with identical parameters. Then ask the blockers tool specifically about the attack expected to be blocked and about one expected to run. If the fleet carries a single OS throughout, fall back to a role mismatch (an attack requiring an infiltration-capable attacker against a filter that admits none); only if neither mismatch is constructible does the test skip, stating the fleet composition.
+- Expected: The counts tool's per-step totals are consistent with the blocked-entities tool's coverage denominators for the same steps. The blocked-entities tool reports at least one attack contributing nothing and names it. The blockers tool reports that same attack as blocked, with at least one constraint carrying a non-null description, and reports the other attack as having run with its count. No tool presents a bare reason code as an explanation. A skip is reported as a skip with the fleet composition, never as a pass.
+- Evidence required: pytest e2e run output naming the test, the console name, the constructed scenario body, all three tool responses, and the cross-tool comparison — or the explicit skip reason with the fleet composition.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
+- Environment needs: Validate console environment
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -816,16 +970,19 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 2 | T-6, T-7, T-8, T-9, T-10, T-11, T-12 | 11 |
 | Phase 3 | T-13, T-14, T-15, T-16, T-17 | 16 |
 | Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 23 |
-| Phase 5 | T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31, T-40 | 32 |
-| Phase 6 | T-34 | 33 |
-| Final | T-32, T-33, T-35 | all (36) |
+| Phase 5 | — (T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 and T-40 re-scoped by PRD v7 and re-phased to 7/8) | 23 |
+| Phase 6 | — (T-34 re-scoped by PRD v7 and re-phased to 9) | 23 |
+| Phase 7 | T-26, T-27, T-41, T-42, T-43, T-44, T-45, T-46 | 31 |
+| Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48 | 40 |
+| Phase 9 | T-34 | 41 |
+| Final | T-32, T-33, T-35 | all (44) |
 
 ## Sign-off
 
 - [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope
 - [ ] Change Coverage complete — every changed file tested or justified
 - [ ] Regression complete — >=1 Manual regression test (T-33) + post-ship CI named (with the no-test-CI gap recorded)
-- [ ] Progression evidence — >=1 Manual progression test walking the new feature (T-32)
+- [ ] Progression evidence — >=1 Manual progression test walking the new feature (T-32, re-scoped to the three-question walkthrough)
 - [ ] validating-test-plan: RESULT: clean
 - [ ] All tests green (cumulative through Final) — evidence: test-results/<phase-or-date>.md
 - [ ] Accepted gaps listed and approved: none
@@ -834,6 +991,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-02 | Updated for **PRD v7** — the single `get_plan_statistics` tool is decomposed into three question-shaped tools (`get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`) and its registration retired, appended as PRD phases 7-9. **Eight tests added**: T-41 (each projection renders only its own slice), T-42 (the blocked-entities verdict is decided by the counts-computed flag, never by list emptiness — R1 on the one tool whose whole subject is emptiness), T-43 (a named id resolves to exactly one of four dispositions, and asking about nothing emits none), T-44 (filtering precedes the zero-impact cap, so a named attack past #50 is still explained rather than reported absent), T-45 (the narrowed tool narrows its catalog too), T-46 (each public function makes exactly one statistics call with every parameter passed through — the single-call-site guarantee, now across three tools), T-47 (each narration carries only its own sections and routes to its siblings — the guard on the *selection* problem a split introduces), T-48 (e2e: the three tools agree against a real console on a scenario **built to block**, per the authoring gate — an OS mismatch constructed from the live fleet, with a role mismatch as fallback, so the assertion is not left to luck). **Twelve tests re-scoped, none tombstoned**: T-24/T-25/T-26 to the three tools and the `scenario` vocabulary, T-27/T-29/T-30/T-35 to the counts tool, T-28/T-31 across all three, T-40 to the blocked-entities tool (now the only one rendering a catalog), T-32 to the three-question walkthrough — which is why **no new Manual progression test was added**, and T-34 to three catalog entries plus the retirement redirect. **Nine tests re-phased out of completed phases 5 and 6** into 7-9, because their assertions changed rather than their subject: the plan now shows those phases adding nothing new, which is honest rather than a regression. **T-33 is untouched** — the shipped run tools and `sb_get_plan_statistics` are genuinely unchanged, which is exactly what it asserts, so the regression set needs nothing added. R12 re-scoped; R14-R17 added for the projection contract, the pass-through surface, the disposition/verdict rules and the scenario vocabulary. PRD §9's new R12/R13/R14 folded into the Risk Landscape. Regenerated views: 44 Active (21 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/31/40/41/44. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-08-27 15:40 | Fetch core relocated to `safebreach_mcp_core` per user decision — `plan/statistics` is a general orchestrator API with further clients expected, so it ships as a shared primitive (`safebreach_mcp_core/plan_statistics.py`, public `fetch_plan_statistics`) rather than a studio-private helper, mirroring `core/queue_state.py`. Retargeted the eight tests that exercise the fetch core itself — T-6, T-7, T-8, T-9, T-10, T-11, T-12 and T-16 (the single-call-site scan) — to `safebreach_mcp_core/tests/test_plan_statistics.py`, and updated their Repo column. T-13/T-14/T-15/T-17 stay in the studio suite: they assert the summariser's own contract. Added a Change Coverage row for the new core module. No test was added, removed or re-phased and no assertion changed — placement only. |
 | 2026-08-27 14:57 | Corrected for PRD v5 — MCP vendors **no** constraint vocabulary and relays the orchestrator's `constraintCatalog` instead, after [SAF-35568](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) shipped `{ description }` only (its `fixLever` was implemented then removed as redundant) over 97 codes with keys 1:1 with emitted values. **T-2 tombstoned** (Status: Removed, ID retained) — there is no vendored map to key, and the upstream key/value mismatch it policed was fixed at source. **T-5 tombstoned** — nothing is vendored, so nothing can drift; the cross-repo checkout dependency goes with it. T-1 rescoped from "every code has a valid fix lever" to "no constraint vocabulary is vendored anywhere", including a scan for substitute mappings; T-3 rescoped to both forms of an undescribed code (absent entry and empty `{}`); T-23's catalog assertion moved from `fix_lever` to a relayed `description`. **Added T-38** (descriptions relayed byte-for-byte, never re-worded), **T-39** (absent/empty catalog degrades to `description: null` with conflicts intact and a hint, per new R11) and **T-40** (e2e — a real console actually supplies the descriptions the relay depends on, skipping with a stated reason on a pre-SAF-35568 console). Also fixed stale v1 wording in T-28's Expected, which still demanded a "suggested fix" dropped back in v2. R7 restated to the relay contract, R8 to conditional-null; R3/R6/R10 closed, R7/R9 dropped to Low, R11 added. Regenerated views: 36 Active (15 unit / 13 integration / 8 e2e), phases 4/11/16/23/32/33/36. Status stays Draft — material change. In Sync with PRD v5. |
 | 2026-08-26 12:04 | Test plan created from PRD v1 |
