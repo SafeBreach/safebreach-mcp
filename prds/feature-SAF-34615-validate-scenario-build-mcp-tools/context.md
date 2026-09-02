@@ -683,6 +683,82 @@ there is the **run-time** strip — nothing prevents persisting an ALM-tagged at
 Studio's own attack picker does not filter by Propagate/Validate content package at all
 (`AttacksModal.tsx`/`AttacksModalBody.tsx` do not receive `isAlmScenario`).
 
+### 6.15 DoD3 resolved — get_plan_statistics already strips ALM attacks for a Validate plan (verified directly)
+
+User direction: DoD3 is satisfied by (a) schema-conformance validation before `create_scenario`/`save_scenario`,
+and (b) running the statistics checkout to verify the user's requested attacks can actually run — not by a
+bespoke ALM/Propagate guard. Investigated whether the mechanism actually backs that, since `get_plan_statistics`
+was believed to score the plan independently of the ALM strip found in §6.11.
+
+**It does not score independently — it reuses the exact same pipeline.**
+`orchestrator/src/server/controllers/plan_statistics.js` takes `planPreparation` as an injected dependency and
+calls, per step: `getPlanMoves` → **`this.planPreparation.filterMoves(planMoves, step, useCache)`**
+(`plan_statistics.js:85-86`). `filterMoves` is the exact method (`PlanPreparation.js:390`) containing the ALM strip
+verified in §6.11 (`PlanPreparation.js:405-409`): `if (!step.isPropagate) { moves = filterPlaybook({tags:{ALM:
+{operator:'noneOf', values:['1']}}}, moves) }`.
+
+**`step.isPropagate` is never assigned anywhere in the orchestrator's Plan/Step code path** (grepped
+`services/PlanPreparation.js` and `other/*.js` for an assignment — none found; it is only *read* at line 405).
+It is a `Phase`-schema concept (Propagate's separate `propagateDefinition.phases[]` shape,
+`TestSchemaValidator.js`'s `validatePropagatePhase`), not a `Plan.Step` field. Since our new tools only ever
+construct ordinary `Plan.steps[]` (never `propagateDefinition`), `step.isPropagate` is always falsy for every plan
+this story can produce — so the ALM strip in `filterMoves` **always** runs.
+
+**F19 — consequence for DoD3.** Any ALM-tagged attack a user asks Helm to add to a Validate plan is invisible to
+`filterMoves`, so it scores `moves[attack_id] === 0` in `get_plan_statistics` — indistinguishable from any other
+attack that cannot run on the current selection. SAF-35508's existing zero-impact reporting already flags it as a
+hard failure; **this story's own DoD6 obligation (remove + explain) is the same code path that closes DoD3** — no
+separate Propagate-detection guard is needed. The design requirement this creates: `create_scenario`/
+`save_scenario` must **require** a fresh, zero-blocking-conflict checkout immediately before persisting (not just
+offer one), so an ALM attack is always caught and stripped, not merely detectable if Helm happens to ask.
+
+**Still true and unresolved by this** (from §6.14, not superseded): a **whole-plan** `type==='propagate'` or a
+plan-level `tags:['ALM']` marker is a different, plan-level concern (F16/F17) — orthogonal to attack-level
+filtering. v2's forced `type:'validate'` (F10 original) already prevents the `type` half. The plan-level `tags`
+field is one of the 19 `planFields` (§6.1) our `save_scenario` body legitimately carries (e.g. for scenario
+tagging) — **the tool must never let a caller set `'ALM'` into that field**, since nothing server-side blocks it
+(F16). This is a narrow, cheap guard (reject/strip `'ALM'` from any caller-supplied `tags` on save) — not the
+broad "detect Propagate attacks" problem, which §F19 already resolves structurally.
+
+### 6.16 Attack search filtering — investigated whether ALM/tag-group filtering is feasible (verified directly)
+
+Checked whether the attack-listing surface (existing MCP tool, underlying content-manager API, or the console's
+own picker) can filter by ALM/Propagate, as a possible defense-in-depth alongside §6.15.
+
+- **The underlying API is fetch-all, not filterable.** `content-manager`'s `GET /moves` (`moves.controller.ts:28-49`,
+  `findAll`) takes **no query filter parameters at all** — it returns every move (ETag/304-cached). All of
+  `get_playbook_attacks`'s existing filters (name, description, dates, MITRE, platform) are applied **client-side
+  in Python** after one full fetch. Actually the playbook server's own live fetch is a *different* endpoint —
+  `GET {base_url}/api/kb/vLatest/moves?details=true` (`playbook_functions.py:72`) — same shape: fetch-everything,
+  filter-in-Python (`sb_get_playbook_attacks` → `_get_all_attacks_from_cache_or_api` → `filter_attacks_by_criteria`,
+  `playbook_functions.py:157-183`).
+- **Raw tag data (including ALM) is already present in every fetched attack** — `attack_data.get('tags')` in the
+  nested `[{id,name,values:[...]}]` shape `_transform_tags` already knows how to parse (`playbook_types.py:66-99`).
+  It is simply not carried through: `transform_reduced_playbook_attack` (`playbook_types.py:319-359`, used by
+  `sb_get_playbook_attacks`) only extracts tags when `include_tags=True` is passed, and `sb_get_playbook_attacks`
+  never passes it (`playbook_functions.py:165`, `include_mitre_techniques=needs_mitre` only).
+- **F20 — adding an ALM-exclusion (or general tag-group) filter to `get_playbook_attacks` is a pure Python
+  change, no new upstream API call needed** — same shape as the existing MITRE/platform filters, applied against
+  data already in memory from the one cached fetch.
+- **The console does not do this today.** Confirmed earlier (§6.14): `AttacksModal.tsx`/`AttacksModalBody.tsx`
+  never receive `isAlmScenario` and apply no Propagate/Validate content-package filtering in the picker — the
+  console relies exclusively on the run-time strip, the same mechanism §6.15 shows `get_plan_statistics` already
+  reuses.
+
+**Decision (per user direction + this finding):** rely on §6.15's checkout-based removal as the DoD3 mechanism —
+it is load-bearing, verified, and requires no new filter. An ALM-exclusion filter on the attack-search tool is a
+**cheap, optional UX improvement** (skip proposing an attack Helm already knows will be stripped, rather than
+surfacing it and then explaining its removal one step later) — not required for DoD3 correctness. Defer the
+decision on whether to build it to the brainstorm/PRD-scoping step.
+
+### 6.17 FR10 — resolved by user direction: out of scope
+
+**User direction: ignore FR10. Any published attack is valid to use, with no special-casing by category.**
+This matches §6.12's finding that the "AI-generated Attack Scenarios" category has zero trace in any repo, and
+that no current MCP/console code special-cases any category or tag. No new work is needed for FR10 — the
+existing generic, non-special-casing search behavior already satisfies the user's stated intent. Remove FR10 from
+the PRD's scope of work; keep §6.12 as a record of why (in case product raises it again later).
+
 ## 7. Brainstorm Outcome
 
 _Pending — Phase 5._
