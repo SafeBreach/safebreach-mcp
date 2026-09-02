@@ -910,6 +910,35 @@ all? If yes, where does it live (a different repo, a different deployment mechan
 format? This determines whether Phase 6's PRD covers tools only, or tools + a skill deliverable with its own
 implementation phase.
 
+### Decision 6 — cross-repo split: same ticket, second branch/PRD in breach-genie, no new JIRA subtask
+
+**User direction.** The Helm-side skill (Decision 5) is authored in `breach-genie`
+(Bitbucket `safebreach/breach-genie`, `develop` branch, cloned at `~/projects/core/breach-genie`) —
+confirmed to have a mature, unrelated skill system at `content/skills/<name>/SKILL.md` (YAML frontmatter:
+`name`/`description`/`version`/`tags`, deliberately **tool-name-agnostic** body — "pick the matching tools
+from whatever is available in your current toolset, by their descriptions"). 17 existing skills
+(`safebreach-managing-tests`, `ctem-validation-readiness`, `safebreach-test-states`, …); **none** for
+scenario-building or Studio/Validate-plan construction — genuinely new content. No existing PRD or reference
+to SAF-34615/SAF-35508 anywhere in `breach-genie`'s own `prds/`.
+
+Because SafeBreach's PRD/branch convention is per-repo and the whole toolchain (branch-creator,
+tdd-implementing-prd, creating-pr) operates one repo/worktree at a time, this ticket now spans **two
+independent branches, PRD folders, and draft PRs** — one here (this file), one in `breach-genie` — tracked
+under the **same** SAF-34615, with **no new JIRA subtask** (rejected in favor of the simpler two-branch
+approach; the SAF-35508-style subtask split was offered and declined).
+
+**Execution plan**: this repo's PRD proceeds through Phase 6-10 to its own draft PR, scoped strictly to
+FR13's tool set (per FR13's own text — no narrative/interpreted output from any tool). A second,
+cross-linked PRD in `breach-genie` (branch `feature/SAF-34615-<skill-slug>`,
+`prds/feature-SAF-34615-<skill-slug>/`) covers the skill authoring: FR2's search strategy, FR3's grouping
+logic (the `scenario-step-grouping.md` attachment lands here, not as tool logic), FR4/FR8's confirmation
+cadence, FR7's conflict-to-plain-language translation. Each PRD's `context.md` cross-references the other's
+path so a reader lands in the right repo for either half of the story.
+
+**Sequencing note**: the skill's SKILL.md will reference tool *behavior* (parameters, response shapes) that
+this repo's PRD is still designing — the skill PRD should track this repo's tool contract as it firms up
+through Phase 6, not fork a stale copy of today's brainstorm summary.
+
 ### Summary of tool set entering Phase 6
 
 | Tool | Server | Input (Decision 2 shape) | Draft-cache role (Decision 1) |
