@@ -865,6 +865,51 @@ step and the Phase 7 DoD gate.
 `// DELETE WHEN v2 IS REMOVED` in its own code; user chose to build against the forward surface rather than
 the surface scheduled for eventual removal.
 
+### Decision 2, refined — attacks_filter gains first-class type/phase/tags support
+
+**User direction: the `attacks_filter` escape hatch must explicitly support filtering by attack type,
+attack phase, and tags** — not stay a raw opaque JSON passthrough. Grounded against §6.2/§6.10's schema
+findings:
+
+| Parameter | Maps to | Values |
+|---|---|---|
+| `attack_type_filter` | `attacksFilter.attackType` (dedicated schema field) | tag-group `'Attack Type'` values (§6.10) |
+| `attack_phase_filter` | `attacksFilter.attackPhase` (dedicated schema field) | orchestrator `Package` enum — `infiltration\|lateral\|exfiltration\|host_level` (string in, mapped to `INFILTRATION=2\|LATERAL=1\|EXFILTRATION=0\|HOST_LEVEL=5` — `orchestrator/src/server/other/constants.js:1-9`) |
+| `tags_filter` | `attacksFilter.tags[group]` (generic, group-keyed dict) | any tag group by name → values, e.g. `{"Threat Actor": ["APT29"], "CVE": ["CVE-2024-1234"]}` — covers Threat Actor/CVE/custom `Tags` and any future group without a new parameter |
+
+**Recommendation (not yet re-confirmed): use the dedicated `attackType`/`attackPhase` fields for the two
+named, common axes, and keep `tags_filter` as the generic escape hatch for everything else** — clearer,
+self-documenting parameters beat routing every axis through one opaque dict.
+
+**Open question surfaced, not decided — carry to PRD**: should `get_playbook_attacks` (the read/search
+tool, FR2) gain matching `attack_type_filter`/`attack_phase_filter`/`tags_filter` parameters too? Right now
+Helm would have no way to discover which attacks match a given type/phase/tag *before* committing that
+filter live into a saved step's `attacksFilter` — it would be selecting blind. This also happens to be the
+natural fix for §6.9's CVE/threat-actor bulk-search gap (F-none-assigned — no bulk search exists today),
+since `tags_filter`'s group-keyed shape is exactly what that gap needs. Flagging for explicit user decision
+rather than assuming scope creep into FR2.
+
+### Decision 5 — Skills: open scope question, not decided
+
+**User asked whether Helm-side skills should be authored in addition to the MCP tools.** Investigated
+whether this repo or workspace has any trace of where Helm's own orchestration/skill layer lives — the
+layer that would encode `scenario-step-grouping.md`'s grouping rules, FR2's search strategy, FR7's
+conflict-translation cadence, and FR8's one-or-two-at-a-time confirmation flow. **Found nothing**: no
+Helm/agent-orchestration repo among the user's local checkouts, and zero "skill" references anywhere in
+`ui-react/src/containers/AIChat/` (Helm's own console-side chat UI).
+
+FR13 is explicit that the MCP tools must stay "dumb" — "No tool accepts a free-text goal or returns an
+interpreted/narrative field; Helm is responsible for all sequencing and interpretation on top of these
+tools." That interpretation layer has to live *somewhere*, and the attached `scenario-step-grouping.md` is
+itself literally formatted as a Claude Skill document (`# Skill: scenario-step-grouping`) — strong evidence
+that a companion skill is expected to exist, but authored and shipped from a system this repo/PRD has no
+visibility into.
+
+**Not decided — needs a direct answer, not an inference**: is authoring that skill in scope for SAF-34615 at
+all? If yes, where does it live (a different repo, a different deployment mechanism for Helm) and in what
+format? This determines whether Phase 6's PRD covers tools only, or tools + a skill deliverable with its own
+implementation phase.
+
 ### Summary of tool set entering Phase 6
 
 | Tool | Server | Input (Decision 2 shape) | Draft-cache role (Decision 1) |
