@@ -251,6 +251,69 @@ Key decisions taken there that constrain SAF-34615:
   extended, since that contract applies only to `readOnlyHint=False` tools. → **SAF-34615's tools
   are all mutating, so the rate-limiting gate table almost certainly does apply to them.**
 
+### SAF-35508 — D4 update (2026-09-02): `get_plan_statistics` decomposed into three tools
+
+**Not yet pushed at the time of writing — confirmed uncommitted in the SAF-35508 worktree
+(`.claude/worktrees/feature+SAF-35508-plan-statistics-mcp-tool`, `git status` shows `prd.md`/`test-plan.md`
+modified, unstaged) — but user-confirmed as the plan to design against ("the change is not pushed yet but
+this is the plan"). Verified directly against the real diff, not taken on the reporting session's word alone:
+the tool names, `sb_get_plan_statistics` plumbing survival, D4 dating, and R12/R13 risk numbers all check out
+in `prds/feature-SAF-35508-plan-statistics-mcp-tool/prd.md`'s actual uncommitted content.**
+
+**The single `get_plan_statistics` tool registration is retired.** Owner decision D4: one broad
+"report everything" tool is the wrong shape for Helm, which asks three narrow questions one at a time. Phases
+7-9 appended to SAF-35508's PRD, **not started** (no code written yet) as of this update. Replaced by:
+
+| Tool | Question | Renders | Drops |
+|---|---|---|---|
+| `get_scenario_simulation_counts` | "How many simulations will this produce?" | Counts mode, steps scored, per-step count, total, truncation, coverage | Conflicts, zero-impact lists, constraint catalog |
+| `get_scenario_blocked_entities` | "Is there anything here that will not run at all?" | `zero_impact_attacks`/`zero_impact_simulators` + blockers, coverage denominators, only the catalog entries those blockers cite, explicit verdict in **three mutually exclusive states**: entities blocked / nothing blocked / nothing evaluated | `reducing` conflicts (SAF-35484 scope) |
+| `get_scenario_attack_blockers` | "Why didn't attack #N run?" | Per requested `attack_ids` (optional, comma-separated): blocking constraints for blocked ids; one disposition line for named-but-not-blocked ids (ran with N sims / not computed / not present) | Everything about attacks not named |
+
+**What does NOT change**: all three call the shipped, untouched `sb_get_plan_statistics` — the repo's single
+`plan/statistics` call site (AC-6 intact). Every finding above this subsection (`includeDisabled` inversion,
+`null` ≠ `0`, severity-from-counts, hard-failure predicates, the reporting-not-acting split, the deleted
+constraint-description table) **still holds** — it describes the shared plumbing, not the retired wrapper.
+
+**What DOES change, and where it lands in this PRD**:
+
+- **Vocabulary: "scenario", not "plan", in every caller-facing surface** — tool names, parameters (the
+  ad-hoc body parameter is now `scenario`, not `plan`), descriptions, the CLAUDE.md catalog. Internals keep
+  `plan` (the API's own name). **Every place in this document that names `get_plan_statistics` or describes
+  passing a `plan` parameter to it is now describing a retired surface — read those as historical, not
+  current, until superseded inline.**
+- **DoD3's resolution (F19) still holds, but now points at `get_scenario_blocked_entities` /
+  `get_scenario_attack_blockers`**, not `get_plan_statistics`. The underlying mechanism (ALM strip inside
+  `filterMoves`, reused by `sb_get_plan_statistics`) is unchanged — only which of the three tools Helm/our
+  tools call to observe it.
+- **FR12's "re-check after any change" now potentially means calling more than one tool.** A full re-check
+  that both confirms nothing is blocked *and* reports the new total might need `get_scenario_blocked_entities`
+  **and** `get_scenario_simulation_counts` — no single call answers both questions anymore. This is a design
+  point for `save_scenario`'s pre-save gate (Decision 1: "must require a fresh, zero-blocking-conflict
+  checkout immediately before persisting" — reads on `get_scenario_blocked_entities`'s three-state verdict
+  specifically) and needs to be explicit in Phase 6's PRD.
+- **New risk R13 (their numbering), directly relevant to the breach-genie skill (Decision 5/6)**: three tools
+  introduce a tool-*selection* problem the single tool didn't have — a model asked for a count could reach for
+  `get_scenario_blocked_entities` and get a verdict with no number. Guarded by a test on SAF-35508's side, but
+  the skill's own FR7/FR8 orchestration guidance should make the three tools' distinct purposes explicit
+  rather than relying on descriptions alone. **Fold this into the breach-genie PRD's scope (§4 there) as a
+  named risk to design against, not an afterthought.**
+- **R12 (their numbering)**: retiring a registered tool is a breaking change for any existing caller naming
+  it — irrelevant to SAF-34615 directly (nothing here has shipped yet), but confirms the three-tool shape
+  should be treated as final-enough to design against now rather than a transient state.
+- **Studio tool count**: 13 → 15 on SAF-35508's side once phases 7-9 land; SAF-34615's own additions are on
+  top of that new baseline, not the 13-tool one this document's earlier tool-inventory section (§4) reflects.
+- **Still open, not discharged by this change**: AC-4 (numbers match the console) remains unchecked — T-35,
+  the only test comparing against the console's own display, has never run and is now re-aimed at
+  `get_scenario_simulation_counts`. **Do not treat the decomposition itself as verification that the numbers
+  are still correct** — that's an orthogonal, still-outstanding risk on SAF-35508's side.
+
+**Dependency-timing risk for this PRD, stated plainly**: SAF-34615's Phase 6 (`prd.md`) will be designed
+against three tools that are **not implemented yet** (SAF-35508 phases 7-9, "not started"). This is the same
+category of risk already accepted for `get_plan_statistics` itself (Decision on branching off SAF-35508)
+extended one step further — acceptable per user direction, but worth restating at the Phase 7 DoD gate if
+SAF-35508's own timeline slips further before this story reaches implementation.
+
 ### SAF-35568 — constraint meanings *(dependency of SAF-35508, transitively of this story)*
 
 Supplies authoritative descriptions for the 88 emitted constraint codes. SAF-35508 emits
