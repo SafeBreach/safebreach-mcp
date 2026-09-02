@@ -777,9 +777,9 @@ parameter set actually used, and an error line carrying the full response body o
 | Phase 4: Translation + zero-impact reporting layer | ✅ Complete | 2026-08-27 | 58d7a29 | Four owner-approved deviations from §4's response example, which needs correcting — see the change log. `summary`/`per_attack` differ only by name resolution, because T-23 requires `attack_id` on every conflict. |
 | Phase 5: Public function + tool registration | ✅ Complete | 2026-08-27 | 1714dba, 900db94 | All 32 cumulative tests green. The five e2e tests executed against `zircon-piculet` with **zero skips** after the `scenario_id` fix — see `test-results/phase-5.md` Addendum. |
 | Phase 6: Documentation | ✅ Complete | 2026-08-27 | 31afb33 | Catalog entry 25 added; the rate-limiting gate table deliberately unchanged. T-34's gate-table half was green before and after — it guards an omission. |
-| Phase 7: Three question projections + public functions (D4) | ⬜ Not started | — | — | Pure functions over the shipped report. MCP surface unchanged at phase end, so every existing test passes untouched. |
-| Phase 8: Three narrators, three registrations, retire `get_plan_statistics` (D4) | ⬜ Not started | — | — | The only phase that changes the MCP surface: 13 tools → 15. T-24…T-27, T-28…T-31 and T-40 are **retargeted, not deleted**; the 31 `sb_get_plan_statistics` references stay untouched by design. |
-| Phase 9: Documentation (D4) | ⬜ Not started | — | — | CLAUDE.md entry 25 → three entries. Gate table deliberately unchanged, as in Phase 6. |
+| Phase 7: Three question projections + public functions (D4) | ⏳ Pending | — | — | Pure functions over the shipped report. MCP surface unchanged at phase end, so every existing test passes untouched. |
+| Phase 8: Three narrators, three registrations, retire `get_plan_statistics` (D4) | ⏳ Pending | — | — | The only phase that changes the MCP surface: 13 tools → 15. T-24…T-27, T-28…T-31 and T-40 are **retargeted, not deleted**; the 31 `sb_get_plan_statistics` references stay untouched by design. |
+| Phase 9: Documentation (D4) | ⏳ Pending | — | — | CLAUDE.md entry 25 → three entries. Gate table deliberately unchanged, as in Phase 6. |
 
 ### Phase 1 — Delete the translation table; relay the orchestrator's catalog
 

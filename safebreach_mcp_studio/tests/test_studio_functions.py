@@ -30,6 +30,12 @@ from safebreach_mcp_studio.studio_functions import (
     _get_scenario_statistics,
     sb_get_plan_statistics,
     _build_plan_statistics_report,
+    _project_simulation_counts,
+    _project_blocked_entities,
+    _project_attack_blockers,
+    sb_get_scenario_simulation_counts,
+    sb_get_scenario_blocked_entities,
+    sb_get_scenario_attack_blockers,
     CONFLICT_SIMULATOR_ID_SAMPLE,
     CONFLICT_VALUES_VARIANT_CAP,
     CONFLICTS_CAP,
@@ -12755,3 +12761,615 @@ class TestQuickRunMCPWrapper:
         result = wrapper(attack_ids="8849", console="test")
         assert "Error" in result or "error" in result
         assert "unexpected failure" in result
+
+
+# ---------------------------------------------------------------------------
+# three question projections — SAF-35508 Phase 7
+# ---------------------------------------------------------------------------
+
+# The projections are pure functions of the REPORT dict (what
+# _build_plan_statistics_report returns), so their fixtures are built by piping
+# the Phase 4 fetch-core builders through that function: a real report shape
+# rather than a hand-copied one that can drift away from the shipped shaper.
+
+
+def _phase7_report(steps, catalog=None, **statistics_kwargs):
+    """A caller-facing report, built through the shipped shaper."""
+    return _build_plan_statistics_report(
+        _phase4_statistics(steps, catalog=catalog, **statistics_kwargs),
+        conflict_detail='summary',
+    )
+
+
+def _os_conflict(simulator, attack_id, actual='LINUX'):
+    return {simulator: {attack_id: [{'reason': 'incompatible_os',
+                                     'required': 'WINDOWS', 'actual': actual}]}}
+
+
+PHASE7_MIXED_STEP = _phase4_step(
+    simulationCount=240,
+    moves={'1234': 240, '9012': 0},
+    simulators={'sim-a': 2, 'sim-b': 0},
+    targetSimulators={'sim-a': 2, 'sim-b': 0},
+    attackerSimulators={'sim-a': 2},
+    simulatorConstraints={
+        'targetConstraints': {
+            # 9012 is eliminated everywhere -> blocking; 1234 loses one
+            # simulator but still runs -> reducing, and must not be reported
+            # by the blocked-entities tool.
+            'sim-b': {'9012': [{'reason': 'incompatible_os',
+                                'required': 'WINDOWS', 'actual': 'LINUX'}],
+                      '1234': [{'reason': 'port_in_use'}]},
+            'sim-a': {'9012': [{'reason': 'incompatible_os',
+                                'required': 'WINDOWS', 'actual': 'MAC'}]},
+        },
+        'attackerConstraints': {},
+    },
+)
+
+PHASE7_CATALOG = {
+    'incompatible_os': {'description': 'OS is incompatible.'},
+    'port_in_use': {'description': 'The port is already in use.'},
+    'simulator_is_offline': {'description': 'The simulator is offline.'},
+}
+
+
+class TestEachProjectionRendersOnlyItsSlice:
+    """T-41 — each projection renders only the slice its question needs."""
+
+    def _report(self):
+        return _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
+
+    def test_counts_projection_top_level_keys_exclude_the_catalog(self):
+        projected = _project_simulation_counts(self._report())
+        assert set(projected) == {
+            'counts_mode', 'plan_step_count', 'returned_step_count', 'truncated',
+            'params_used', 'steps', 'hint_to_agent',
+        }
+
+    def test_counts_projection_step_carries_no_conflicts_or_zero_impact(self):
+        step = _project_simulation_counts(self._report())['steps'][0]
+        assert set(step) == {
+            'step_index', 'simulation_count', 'counts_computed', 'is_limit_reached',
+            'attacks', 'attacks_total',
+            'target_simulators', 'target_simulators_total',
+            'attacker_simulators', 'attacker_simulators_total',
+        }
+
+    def test_blocked_entities_carries_both_lists_a_catalog_and_a_verdict(self):
+        projected = _project_blocked_entities(self._report())
+        step = projected['steps'][0]
+        assert 'verdict' in projected and 'constraint_catalog' in projected
+        assert step['zero_impact_attacks'][0]['blockers']
+        assert 'zero_impact_simulators' in step
+
+    def test_blocked_entities_mentions_no_conflict_anywhere(self):
+        # A reducing conflict must not reach this tool at any depth — the whole
+        # question is "what runs nowhere", and `port_in_use` here is a reduction.
+        projected = _project_blocked_entities(self._report())
+        assert 'conflicts' not in json.dumps(projected)
+        assert 'port_in_use' not in json.dumps(projected)
+
+    def test_attack_blockers_reports_only_the_ids_it_was_asked_about(self):
+        projected = _project_attack_blockers(self._report(), [9012])
+        assert [d['attack_id'] for d in projected['dispositions']] == ['9012']
+
+    def test_no_projection_mutates_the_report_it_was_given(self):
+        import copy
+        report = self._report()
+        before = copy.deepcopy(report)
+        _project_simulation_counts(report)
+        _project_blocked_entities(report)
+        _project_attack_blockers(report, [9012])
+        assert report == before
+
+
+class TestBlockedEntitiesVerdictComesFromCountsComputed:
+    """T-42 — the verdict is decided by counts_computed, never by list emptiness."""
+
+    @staticmethod
+    def _blocked():
+        return _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
+
+    @staticmethod
+    def _clean():
+        return _phase7_report([_phase4_step(
+            simulationCount=240, moves={'1234': 240},
+            simulators={'sim-a': 2}, targetSimulators={'sim-a': 2},
+        )])
+
+    @staticmethod
+    def _truncated():
+        return _phase7_report(
+            [_phase4_step(simulationCount=None, counts_computed=False,
+                          isLimitReached=True, moves={'1234': None})],
+            plan_step_count=3, returned_step_count=1, truncated=True,
+        )
+
+    def test_a_blocked_scenario_says_so(self):
+        verdict = _project_blocked_entities(self._blocked())['verdict']
+        assert verdict['state'] == 'blocked'
+
+    def test_a_clean_scenario_says_everything_contributes(self):
+        verdict = _project_blocked_entities(self._clean())['verdict']
+        assert verdict['state'] == 'clean'
+
+    def test_an_unscored_scenario_says_it_was_not_evaluated(self):
+        verdict = _project_blocked_entities(self._truncated())['verdict']
+        assert verdict['state'] == 'not_evaluated'
+
+    def test_the_three_summaries_are_pairwise_distinct(self):
+        summaries = {
+            _project_blocked_entities(r)['verdict']['summary']
+            for r in (self._blocked(), self._clean(), self._truncated())
+        }
+        assert len(summaries) == 3
+
+    def test_flipping_only_counts_computed_turns_clean_into_not_evaluated(self):
+        # The load-bearing case: both lists are empty in BOTH reports, so a
+        # verdict derived from their length cannot tell these apart.
+        report = self._clean()
+        assert _project_blocked_entities(report)['verdict']['state'] == 'clean'
+        report['steps'][0]['counts_computed'] = False
+        projected = _project_blocked_entities(report)
+        assert projected['verdict']['state'] == 'not_evaluated'
+        assert projected['steps'][0]['zero_impact_attacks'] == []
+
+
+class TestNamedAttackResolvesToOneDisposition:
+    """T-43 — a named attack id resolves to exactly one of four dispositions."""
+
+    @staticmethod
+    def _report():
+        return _phase7_report([_phase4_step(
+            simulationCount=40,
+            moves={'226': 0, '281': 40, '9012': None},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4},
+            simulatorConstraints={
+                'targetConstraints': _os_conflict('sim-a', '226'),
+                'attackerConstraints': {},
+            },
+        )], catalog=PHASE7_CATALOG)
+
+    def _disposition(self, attack_id):
+        projected = _project_attack_blockers(self._report(), [attack_id])
+        return projected['dispositions'][0]
+
+    def test_a_zero_count_is_blocked_and_carries_its_blockers(self):
+        entry = self._disposition(226)
+        assert entry['disposition'] == 'blocked'
+        assert entry['blockers']
+
+    def test_a_positive_count_reports_that_it_ran(self):
+        entry = self._disposition(281)
+        assert entry['disposition'] == 'ran'
+        assert entry['simulation_count'] == 40
+
+    def test_a_null_count_reports_not_computed(self):
+        assert self._disposition(9012)['disposition'] == 'not_computed'
+
+    def test_an_id_in_no_step_reports_absent(self):
+        assert self._disposition(7777)['disposition'] == 'absent'
+
+    def test_each_id_appears_once_in_the_order_asked(self):
+        projected = _project_attack_blockers(self._report(), [281, 226, 7777])
+        assert [d['attack_id'] for d in projected['dispositions']] == ['281', '226', '7777']
+
+    def test_the_four_dispositions_are_pairwise_distinct(self):
+        codes = {self._disposition(i)['disposition'] for i in (226, 281, 9012, 7777)}
+        assert len(codes) == 4
+
+    def test_asking_about_nothing_emits_no_dispositions_but_lists_the_blocked(self):
+        projected = _project_attack_blockers(self._report(), [])
+        assert projected['dispositions'] == []
+        assert [a['attack_id'] for a in projected['blocked_attacks']] == ['226']
+
+
+class TestFilteringPrecedesCapping:
+    """T-44 — a named attack past the cap is still explained, never reported absent."""
+
+    @staticmethod
+    def _report():
+        # Every one of 400 attacks is blocked, so zero_impact_attacks caps at
+        # ZERO_IMPACT_CAP and the counts map caps at COUNT_MAP_CAP.
+        moves = {str(i): 0 for i in range(400)}
+        constraints = {f'sim-{i}': {str(i): [{'reason': 'incompatible_os'}]}
+                       for i in range(400)}
+        return _phase7_report([_phase4_step(
+            simulationCount=0, moves=moves,
+            simulators={'sim-0': 0}, targetSimulators={'sim-0': 0},
+            simulatorConstraints={'targetConstraints': constraints,
+                                  'attackerConstraints': {}},
+        )], catalog=PHASE7_CATALOG)
+
+    def test_the_fixture_is_genuinely_capped(self):
+        # Without this the rest of the class could pass vacuously.
+        step = self._report()['steps'][0]
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total']
+        assert len(step['zero_impact_attacks']) == ZERO_IMPACT_CAP
+
+    def test_an_id_past_the_zero_impact_cap_is_still_blocked(self):
+        entry = _project_attack_blockers(self._report(), [75])['dispositions'][0]
+        assert entry['disposition'] == 'blocked'
+
+    def test_an_id_past_the_count_map_cap_is_not_reported_absent(self):
+        entry = _project_attack_blockers(self._report(), [250])['dispositions'][0]
+        assert entry['disposition'] == 'count_map_truncated'
+
+    def test_truncated_and_absent_stay_distinct_answers(self):
+        codes = {
+            _project_attack_blockers(self._report(), [i])['dispositions'][0]['disposition']
+            for i in (75, 250)
+        }
+        assert codes == {'blocked', 'count_map_truncated'}
+
+
+class TestBlockedEntitiesCatalogIsNarrowed:
+    """T-45 — the catalog carries only the codes its own reported blockers cite."""
+
+    AWKWARD = "  Rôle is incompatible.  "
+
+    @staticmethod
+    def _report(catalog):
+        return _phase7_report([PHASE7_MIXED_STEP], catalog=catalog)
+
+    def test_a_code_cited_only_by_a_dropped_conflict_is_absent(self):
+        catalog = _project_blocked_entities(self._report(PHASE7_CATALOG))['constraint_catalog']
+        # port_in_use is cited only by the reducing conflict on attack 1234.
+        assert 'port_in_use' not in catalog
+
+    def test_every_catalog_code_is_cited_by_a_reported_blocker(self):
+        projected = _project_blocked_entities(self._report(PHASE7_CATALOG))
+        cited = {b['code'] for step in projected['steps']
+                 for entry in (step['zero_impact_attacks'] + step['zero_impact_simulators'])
+                 for b in entry['blockers']}
+        assert set(projected['constraint_catalog']) == cited
+
+    def test_descriptions_are_relayed_byte_for_byte(self):
+        catalog = {'incompatible_os': {'description': self.AWKWARD}}
+        projected = _project_blocked_entities(self._report(catalog))
+        assert projected['constraint_catalog']['incompatible_os']['description'] == self.AWKWARD
+
+    def test_an_undescribed_code_is_emitted_with_an_explicit_null(self):
+        projected = _project_blocked_entities(self._report({'incompatible_os': {}}))
+        assert projected['constraint_catalog']['incompatible_os'] == {'description': None}
+
+
+class TestMultiStepDispositionPrecedence:
+    """T-49 — blocked in one step, running in another, is reported as having run."""
+
+    @staticmethod
+    def _report(reverse=False):
+        blocked = _phase4_step(
+            response_step_index=0, simulationCount=0, moves={'1234': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '1234'),
+                                  'attackerConstraints': {}},
+        )
+        ran = _phase4_step(
+            response_step_index=1, simulationCount=240, moves={'1234': 240},
+            simulators={'sim-b': 2}, targetSimulators={'sim-b': 2},
+        )
+        steps = [ran, blocked] if reverse else [blocked, ran]
+        return _phase7_report(steps, catalog=PHASE7_CATALOG, plan_step_count=2)
+
+    def test_an_attack_that_ran_somewhere_is_not_reported_blocked(self):
+        entry = _project_attack_blockers(self._report(), [1234])['dispositions'][0]
+        assert entry['disposition'] == 'ran'
+
+    def test_the_answer_does_not_depend_on_step_order(self):
+        forward = _project_attack_blockers(self._report(), [1234])['dispositions'][0]
+        reverse = _project_attack_blockers(self._report(reverse=True), [1234])['dispositions'][0]
+        assert forward['disposition'] == reverse['disposition'] == 'ran'
+
+    def test_it_appears_in_no_blocked_listing(self):
+        projected = _project_attack_blockers(self._report(), [])
+        assert [a['attack_id'] for a in projected['blocked_attacks']] == []
+
+
+class TestBlockerDetailTruncatedIsNotNoConstraintReported:
+    """T-51 — a blocked attack whose blocker detail was capped away says so."""
+
+    @staticmethod
+    def _capped_report():
+        moves = {str(i): 0 for i in range(400)}
+        constraints = {f'sim-{i}': {str(i): [{'reason': 'incompatible_os'}]}
+                       for i in range(400)}
+        return _phase7_report([_phase4_step(
+            simulationCount=0, moves=moves,
+            simulators={'sim-0': 0}, targetSimulators={'sim-0': 0},
+            simulatorConstraints={'targetConstraints': constraints,
+                                  'attackerConstraints': {}},
+        )], catalog=PHASE7_CATALOG)
+
+    @staticmethod
+    def _blockerless_report():
+        # Blocked with no constraint reported at all — a real, different answer.
+        return _phase7_report([_phase4_step(
+            simulationCount=0, moves={'226': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+        )])
+
+    def test_a_capped_away_blocker_list_is_marked_truncated(self):
+        entry = _project_attack_blockers(self._capped_report(), [75])['dispositions'][0]
+        assert entry['blockers'] == []
+        assert entry['detail_truncated'] is True
+
+    def test_a_genuinely_blockerless_attack_is_not_marked_truncated(self):
+        entry = _project_attack_blockers(self._blockerless_report(), [226])['dispositions'][0]
+        assert entry['blockers'] == []
+        assert entry['detail_truncated'] is False
+
+    def test_the_two_cases_are_distinguishable(self):
+        capped = _project_attack_blockers(self._capped_report(), [75])['dispositions'][0]
+        plain = _project_attack_blockers(self._blockerless_report(), [226])['dispositions'][0]
+        assert capped['detail_truncated'] != plain['detail_truncated']
+
+
+class TestAttackBlockersCatalogIsNarrowed:
+    """T-52 — the blockers catalog carries only the codes its rendered blockers cite."""
+
+    @staticmethod
+    def _report():
+        return _phase7_report([_phase4_step(
+            simulationCount=0,
+            moves={'226': 0, '281': 0},
+            simulators={'sim-a': 0, 'sim-b': 0},
+            targetSimulators={'sim-a': 0, 'sim-b': 0},
+            simulatorConstraints={
+                'targetConstraints': {
+                    'sim-a': {'226': [{'reason': 'incompatible_os'}]},
+                    'sim-b': {'281': [{'reason': 'simulator_is_offline'}]},
+                },
+                'attackerConstraints': {},
+            },
+        )], catalog=PHASE7_CATALOG)
+
+    def test_only_the_asked_about_attacks_codes_appear(self):
+        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        assert set(catalog) == {'incompatible_os'}
+
+    def test_a_code_belonging_to_an_unasked_attack_is_absent(self):
+        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        assert 'simulator_is_offline' not in catalog
+
+    def test_descriptions_are_relayed_verbatim(self):
+        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        assert catalog['incompatible_os']['description'] == 'OS is incompatible.'
+
+
+class TestScenarioInputIsExclusiveOnAllThreeTools:
+    """T-26 — ambiguous input is rejected with a clear error, on all three tools."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    TOOLS = (sb_get_scenario_simulation_counts,
+             sb_get_scenario_blocked_entities,
+             sb_get_scenario_attack_blockers)
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_both_a_body_and_an_id_is_rejected(self, tool):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                tool(console="test-console", scenario=self.SCENARIO, scenario_id="1771")
+            post.assert_not_called()
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_neither_is_rejected(self, tool):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                tool(console="test-console")
+            post.assert_not_called()
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_a_blank_string_counts_as_absent_not_as_supplied(self, tool):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                tool(console="test-console", scenario="   ")
+            post.assert_not_called()
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_malformed_json_is_rejected_before_any_call(self, tool):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError):
+                tool(console="test-console", scenario="{not json")
+            post.assert_not_called()
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_a_non_object_body_is_rejected(self, tool):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="JSON object"):
+                tool(console="test-console", scenario="[]")
+            post.assert_not_called()
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_the_message_uses_the_caller_facing_vocabulary(self, tool):
+        with _statistics_transport({}):
+            with pytest.raises(ValueError) as excinfo:
+                tool(console="test-console")
+        message = str(excinfo.value)
+        assert "'scenario'" in message and "'scenario_id'" in message
+        assert "'test_id'" in message
+        # R17: the product's word, even in errors — 'plan' is the API's name.
+        assert "'plan'" not in message
+
+
+class TestInvalidAttackIdIsRejectedBeforeAnyCall:
+    """T-50 — an invalid attack id is rejected before any statistics call is made."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    def test_a_non_integer_token_is_named_and_costs_no_call(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="invalid attack ID 'abc'"):
+                sb_get_scenario_attack_blockers(
+                    console="test-console", scenario=self.SCENARIO, attack_ids="9012,abc")
+            post.assert_not_called()
+
+    def test_an_entirely_non_numeric_value_is_rejected(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="all IDs must be integers"):
+                sb_get_scenario_attack_blockers(
+                    console="test-console", scenario=self.SCENARIO, attack_ids="nope")
+            post.assert_not_called()
+
+    def test_empty_segments_are_skipped_not_rejected(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_scenario_attack_blockers(
+                console="test-console", scenario=self.SCENARIO, attack_ids="9012,,217")
+        assert post.call_count == 1
+
+
+class TestScenarioCountsModeSelectsOneCallOrTwo:
+    """T-27 — counts mode selects one call or two, and labels what it returns."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    def test_default_issues_one_runnable_call(self, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO)
+        queries = _statistics_queries(post)
+        assert len(queries) == 1 and queries[0]['includeDisabled'] == ['false']
+        assert result['counts_mode'] == 'runnable'
+
+    def test_include_disabled_issues_one_expected_call(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO, include_disabled=True)
+        queries = _statistics_queries(post)
+        assert len(queries) == 1 and queries[0]['includeDisabled'] == ['true']
+        assert result['counts_mode'] == 'expected'
+
+    def test_both_counts_issues_exactly_two_calls_one_of_each(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO, both_counts=True)
+        queries = _statistics_queries(post)
+        assert len(queries) == 2
+        assert {q['includeDisabled'][0] for q in queries} == {'false', 'true'}
+
+    def test_both_counts_labels_and_shapes_the_result(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO, both_counts=True)
+        assert set(result) == {'counts_mode', 'runnable', 'expected', 'hint_to_agent'}
+        assert result['counts_mode'] == 'both'
+        assert result['runnable']['counts_mode'] == 'runnable'
+        assert result['expected']['counts_mode'] == 'expected'
+        assert 'cannot be derived' in result['hint_to_agent']
+
+    def test_both_counts_projects_each_side_rather_than_passing_the_report_through(
+        self, mock_statistics_response_all_good
+    ):
+        # Proves the both-branch runs the projection: a raw report would still
+        # carry the catalog the counts tool drops.
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO, both_counts=True)
+        assert 'constraint_catalog' not in result['runnable']
+        assert 'constraint_catalog' not in result['expected']
+
+
+class TestEachToolMakesExactlyOneStatisticsCall:
+    """T-46 — one fetch per scoring pass; the projection adds none."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    TOOLS = (sb_get_scenario_simulation_counts,
+             sb_get_scenario_blocked_entities,
+             sb_get_scenario_attack_blockers)
+    SCENARIO = '{"steps": [{"n": 0}]}'
+    OVERRIDES = dict(include_disabled=True, get_all_constraints=False,
+                     limit=7, use_cache=False)
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_a_single_pass_call_issues_exactly_one_request(
+        self, tool, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.SCENARIO,
+                 both_counts=False, **self.OVERRIDES)
+        assert post.call_count == 1
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_every_override_reaches_the_call_unchanged(
+        self, tool, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.SCENARIO,
+                 both_counts=False, **self.OVERRIDES)
+        query = _statistics_queries(post)[0]
+        assert query['includeDisabled'] == ['true']
+        assert query['getAllConstraints'] == ['false']
+        assert query['limit'] == ['7']
+        assert query['useCache'] == ['false']
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_both_counts_issues_exactly_two_never_three(
+        self, tool, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.SCENARIO, both_counts=True)
+        assert post.call_count == 2
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_each_tool_delegates_once_passing_conflict_detail_through(self, tool):
+        report = _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
+        with patch('safebreach_mcp_studio.studio_functions.sb_get_plan_statistics',
+                   return_value=report) as delegate:
+            tool(console="test-console", scenario=self.SCENARIO,
+                 conflict_detail='per_attack')
+        assert delegate.call_count == 1
+        assert delegate.call_args.kwargs['conflict_detail'] == 'per_attack'
+        assert delegate.call_args.kwargs['plan'] == self.SCENARIO
+
+    def test_the_counts_tool_asks_for_no_constraints_by_default(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO)
+        assert _statistics_queries(post)[0]['getConstraints'] == ['false']
+
+    @pytest.mark.parametrize("tool", (sb_get_scenario_blocked_entities,
+                                      sb_get_scenario_attack_blockers))
+    def test_the_other_two_ask_for_constraints_by_default(
+        self, tool, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.SCENARIO)
+        assert _statistics_queries(post)[0]['getConstraints'] == ['true']

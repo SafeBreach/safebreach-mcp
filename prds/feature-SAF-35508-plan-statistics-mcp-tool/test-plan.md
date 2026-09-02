@@ -30,8 +30,8 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R12 | **Re-scoped for PRD v7** — three read-only tools registered (`get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`), `get_plan_statistics` unregistered; all three documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
 | R13 | `sb_quick_run` and `sb_run_scenario` verified behaviourally unchanged | T-13, T-14, T-15, T-17, T-33 | Covered |
 | R14 | Three tools, one question each, projecting the shipped report; `sb_get_plan_statistics` unchanged as the repo's single `plan/statistics` call site; no second fetch path and no duplicated zero-impact, severity, cap or null-safety logic | T-41, T-46, T-47, T-48 | Covered |
-| R15 | Full parameter pass-through on all three tools; only defaults differ, and only where the question differs — `get_scenario_simulation_counts` defaults `get_constraints=False` | T-26, T-27, T-46 | Covered |
-| R16 | Blocked-entities verdict distinguishes blocked / clean / **not-evaluated**; attack dispositions emitted only for ids the caller named; filtering precedes the zero-impact cap; fully-blocked (integer-`0`) scope only, with reducing conflicts stated as out of scope | T-42, T-43, T-44, T-45, T-48 | Covered |
+| R15 | Full parameter pass-through on all three tools; only defaults differ, and only where the question differs — `get_scenario_simulation_counts` defaults `get_constraints=False` | T-26, T-27, T-46, T-50 | Covered |
+| R16 | Blocked-entities verdict distinguishes blocked / clean / **not-evaluated**; attack dispositions emitted only for ids the caller named; filtering precedes the zero-impact cap; fully-blocked (integer-`0`) scope only, with reducing conflicts stated as out of scope | T-42, T-43, T-44, T-45, T-48, T-49, T-51, T-52 | Covered |
 | R17 | Caller-facing vocabulary is `scenario` — tool names, parameters, descriptions and the CLAUDE.md catalog; shipped internals keep `plan`, which is the API's own name for the endpoint | T-24, T-26, T-34 | Covered |
 
 ## Change Coverage
@@ -39,11 +39,11 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
 | `safebreach_mcp_core/plan_statistics.py` | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-16 | — |
-| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39, T-41, T-42, T-43, T-44, T-45, T-46 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39, T-41, T-42, T-43, T-44, T-45, T-46, T-49, T-50, T-51, T-52 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
 | `safebreach_mcp_studio/studio_server.py` | T-24, T-25, T-47 | — |
 | `CLAUDE.md` | T-34 | — |
-| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-24, T-25, T-26, T-41, T-42, T-43, T-44, T-45, T-46, T-47 | Test file — its own coverage is the cases it carries; listed in PRD §8 Phases 7 and 8 because both phases add to it. |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-24, T-25, T-26, T-41, T-42, T-43, T-44, T-45, T-46, T-47, T-49, T-50, T-51, T-52 | Test file — its own coverage is the cases it carries; listed in PRD §8 Phases 7 and 8 because both phases add to it. |
 | `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py` | T-48 | Test file — its own coverage is the e2e cases it carries (T-28…T-31, T-40, T-48). |
 
 ## Risk Landscape
@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 21 | 14 | 0 | 6 | 41 |
+| Automatic | 25 | 14 | 0 | 6 | 45 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **21** | **14** | **0** | **9** | **44** |
+| **Total** | **25** | **14** | **0** | **9** | **48** |
 
 ## Environment Requirements (aggregated)
 
@@ -173,15 +173,19 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-25 | None of the three read-only tools takes a rate-limiting gate | — | Phase 8 | safebreach_mcp_studio |
 | T-26 | Ambiguous input (more or fewer than one of scenario/scenario_id/test_id) is rejected with a clear error, on all three tools | — | Phase 7 | safebreach_mcp_studio |
 | T-34 | The tool catalog documents all three tools, records the retirement, and the gate table is left alone | — | Phase 9 | safebreach_mcp_studio |
+| T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach_mcp_studio |
+| T-38 | A relayed description reaches the caller byte-for-byte, never re-worded | API-contract | Phase 1 | safebreach_mcp_studio |
+| T-39 | A response with no catalog degrades to null descriptions, never an error | API-contract | Phase 1 | safebreach_mcp_studio |
 | T-41 | Each projection renders only the slice its question needs | API-contract | Phase 7 | safebreach_mcp_studio |
 | T-42 | The blocked-entities verdict is decided by whether counts were computed, never by list emptiness | — | Phase 7 | safebreach_mcp_studio |
 | T-43 | A named attack id resolves to exactly one of four dispositions | API-contract | Phase 7 | safebreach_mcp_studio |
 | T-44 | Filtering to named ids precedes truncation, so a named attack past the cap is still explained | — | Phase 7 | safebreach_mcp_studio |
 | T-45 | The blocked-entities catalog carries only the codes its own reported blockers cite | API-contract | Phase 7 | safebreach_mcp_studio |
 | T-47 | Each tool's narration carries only its own sections and routes to its siblings | API-contract | Phase 8 | safebreach_mcp_studio |
-| T-36 | The same code resolves blocking or reducing depending on the attack's count | — | Phase 4 | safebreach_mcp_studio |
-| T-38 | A relayed description reaches the caller byte-for-byte, never re-worded | API-contract | Phase 1 | safebreach_mcp_studio |
-| T-39 | A response with no catalog degrades to null descriptions, never an error | API-contract | Phase 1 | safebreach_mcp_studio |
+| T-49 | An attack blocked in one step but running in another is reported as having run, not as blocked | API-contract | Phase 7 | safebreach_mcp_studio |
+| T-50 | An invalid attack id is rejected before any statistics call is made | — | Phase 7 | safebreach_mcp_studio |
+| T-51 | A blocked attack whose blocker detail was capped away says so, rather than reading as "no constraint reported" | — | Phase 7 | safebreach_mcp_studio |
+| T-52 | The attack-blockers catalog carries only the codes its own rendered blockers cite | API-contract | Phase 7 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -670,7 +674,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: Silently preferring one input over the other would score a different configuration than the caller asked about, and the result would look entirely plausible.
 - Risk source: PRD §9 (assumptions)
 - Verify: For each of the three public functions in turn, invoke it with both a scenario body and a scenario id, then with neither, then with a scenario argument that is not valid JSON, then with a blank string in place of an unused optional.
-- Expected: Every case raises an error whose message states which inputs are expected and that exactly one must be supplied. A blank string counts as absent rather than as a supplied value, so it neither satisfies the exclusivity check nor reaches the API. No API call is attempted in any case, on any of the three.
+- Expected: Every case raises an error whose message states which inputs are expected and that exactly one must be supplied. Each message names `scenario`, `scenario_id` and `test_id`, and never names `plan` as a parameter — the caller-facing vocabulary is the product's, even in errors. A blank string counts as absent rather than as a supplied value, so it neither satisfies the exclusivity check nor reaches the API. No API call is attempted in any case, on any of the three.
 - Evidence required: pytest run output naming the test.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -921,8 +925,8 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Aspect: API-contract
 - Risk: A projection that re-fetched to fill a gap would triple the cost of a three-question conversation, break the one-call-site requirement this PRD already satisfies, and could return three answers computed from three different console states.
 - Risk source: PRD §9 (R2, R5)
-- Verify: With the statistics call mocked and counted, invoke each of the three public functions with every parameter explicitly set to a non-default value, then invoke each again with defaults.
-- Expected: Each invocation produces exactly one statistics call. Every explicitly-set parameter reaches it unchanged. On defaults, the counts function requests no constraints while the other two do, and all three request runnable counts. No function issues a second fetch under any input.
+- Verify: With the statistics call mocked and counted, invoke each of the three public functions with every pass-through parameter explicitly set to a non-default value and `both_counts=False`; then again with `both_counts=True`; then again with defaults only.
+- Expected: The invariant is one fetch per scoring pass, with the projection adding none. A single-pass call produces exactly one statistics call, and `both_counts=True` produces exactly two — never three — because that parameter's defined behaviour is two scoring passes (T-27). Every explicitly-set parameter reaches the call unchanged, including `conflict_detail`, which shapes the report without reaching the wire. On defaults, the counts function requests no constraints while the other two do, and all three request runnable counts. No function issues an extra fetch to fill a gap in its projection under any input.
 - Evidence required: pytest run output naming the test, with the per-function call counts and the sent parameter sets shown.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: repo-harness
@@ -960,6 +964,69 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Environment needs: Validate console environment
 
 
+### T-49 — An attack blocked in one step but running in another is reported as having run, not as blocked
+
+- Description: Proves the tool cannot say "did not run anywhere" about an attack that ran somewhere — the heading would be false, and the caller would hunt for a constraint that is not stopping anything.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: The disposition order resolves blocked before ran. Read literally, an attack carrying an integer `0` in one step and 240 in another is reported blocked, under a heading stating it did not run anywhere — a confident false statement about an attack that did run. Which step the scenario happens to list first must not change the answer.
+- Risk source: PRD §9 (R13, R16)
+- Verify: Project a report whose attack counts hold the same id as an integer `0` in one step and a positive integer in another, and ask about that id. Then reverse the order of the steps and ask again.
+- Expected: In both orderings the id is reported as having run, carrying its count and the step it ran in. It appears in no blocked listing. Where the tool notes the step in which it produced nothing, that is additional detail and never the disposition itself. The two orderings produce the same disposition.
+- Evidence required: pytest run output naming the test, with both orderings' dispositions shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-50 — An invalid attack id is rejected before any statistics call is made
+
+- Description: Proves a typo in an id list costs no round trip and names the offending token, rather than spending a call to then reject the input.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Risk: Parsing after delegating would spend a call against a 120-second timeout only to reject the argument. A message that does not name the bad token leaves the caller guessing which of ten ids was wrong.
+- Risk source: PRD §9 (R5, R16)
+- Verify: With the statistics call mocked and counted, invoke the attack-blockers function with `attack_ids` carrying a non-integer token alongside a valid one, then with an entirely non-numeric value, then with empty segments between valid ids.
+- Expected: The first two raise an error naming the offending token, with the same message the quick-run tool already uses for the same mistake. No statistics call is made in either case. Empty segments are skipped rather than rejected, matching quick-run's behaviour, and that call proceeds normally.
+- Evidence required: pytest run output naming the test, with the error messages and the call count shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-51 — A blocked attack whose blocker detail was capped away says so, rather than reading as "no constraint reported"
+
+- Description: Proves the tool never presents missing detail as a finding — "we could not show you why" and "the console reported no reason" are different answers, and the shipped narrator renders the second as a real statement.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Risk: The zero-impact list is capped at 50 while the counts map holds up to 100, so a blocked id past the cap has no blocker entry. An empty blocker list already renders as "no constraint reported", which asserts the console found no reason — when in fact the reason was truncated locally. This is the same null-versus-zero confusion the feature exists to prevent, one level down.
+- Risk source: PRD §9 (R1, R13)
+- Verify: Project a report whose zero-impact list was capped, ask about a blocked id whose entry falls beyond the cap, and about a blocked id whose entry is present but carries no blockers. Inspect both entries.
+- Expected: The truncated entry is explicitly marked as having had its blocker detail truncated. The genuinely blocker-less entry is not. Both are reachable from one report and their rendered forms differ, so neither can be mistaken for the other.
+- Evidence required: pytest run output naming the test, with both entries shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-52 — The attack-blockers catalog carries only the codes its own rendered blockers cite
+
+- Description: Applies T-45's narrowing rule to the other tool that relays descriptions, so a caller asking about one attack is not handed the vocabulary of attacks they did not ask about.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: T-45 narrows only the blocked-entities catalog. The attack-blockers tool also renders relayed descriptions, so an unnarrowed catalog there would describe codes belonging to attacks outside the caller's question — padding on the tool whose whole purpose is a targeted answer.
+- Risk source: PRD §9 (R13)
+- Verify: Project a report describing more codes than the rendered blockers cite, asking about one blocked id whose blocker cites a single code while another blocked attack, not asked about, cites a different one.
+- Expected: The catalog holds exactly the codes cited by the blockers actually rendered for the named ids. The code cited only by the attack not asked about does not appear. Descriptions are byte-for-byte the report's, and a code the report described as null is emitted with an explicit null rather than omitted.
+- Evidence required: pytest run output naming the test, with both code sets shown.
+- Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -972,10 +1039,10 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 4 | T-18, T-19, T-20, T-21, T-22, T-23, T-36 | 23 |
 | Phase 5 | — (T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 and T-40 re-scoped by PRD v7 and re-phased to 7/8) | 23 |
 | Phase 6 | — (T-34 re-scoped by PRD v7 and re-phased to 9) | 23 |
-| Phase 7 | T-26, T-27, T-41, T-42, T-43, T-44, T-45, T-46 | 31 |
-| Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48 | 40 |
-| Phase 9 | T-34 | 41 |
-| Final | T-32, T-33, T-35 | all (44) |
+| Phase 7 | T-26, T-27, T-41, T-42, T-43, T-44, T-45, T-46, T-49, T-50, T-51, T-52 | 35 |
+| Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48 | 44 |
+| Phase 9 | T-34 | 45 |
+| Final | T-32, T-33, T-35 | all (48) |
 
 ## Sign-off
 
@@ -991,6 +1058,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-02 (b) | **Phase-7 planning gate: 4 tests added, 2 corrected.** The Phase-7 plan subagent surfaced two conflicts and four uncovered behaviours; the owner accepted all six resolutions. **Corrections.** T-46 contradicted itself — it required every parameter at a non-default value AND exactly one statistics call, but `both_counts=True` is a non-default value whose defined behaviour is two calls (T-27 asserts precisely that). Reworded to the invariant actually intended: one fetch per scoring pass, the projection adding none — one call at `both_counts=False`, exactly two (never three) at `True`. T-26 gained the R17 clause its Expected omitted: each rejection message names `scenario`/`scenario_id`/`test_id` and never `plan`, since the exclusivity rule is reused from shipped plumbing whose default wording says `plan` (resolved by an additive, behaviour-preserving `body_param` argument rather than a second copy of the rule). **Added T-49** — an attack that is `0` in one step and positive in another must report as *ran*: the PRD's literal precedence (blocked before ran) would have labelled it blocked under a heading reading "did not run anywhere", a confident false statement, and the answer must not depend on step order. **T-50** — an invalid `attack_ids` token raises before any call, naming the offending token, so a typo costs no round trip against a 120s timeout. **T-51** — a blocked attack whose blocker detail fell past `ZERO_IMPACT_CAP` must say so: an empty blocker list already renders as "no constraint reported", which asserts the console found no reason when the reason was truncated locally — the null-versus-zero confusion one level down. **T-52** — T-45's catalog narrowing applies to the blockers tool too, which also relays descriptions. Regenerated views: 48 Active (25 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/35/44/45/48. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-09-02 | Updated for **PRD v7** — the single `get_plan_statistics` tool is decomposed into three question-shaped tools (`get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`) and its registration retired, appended as PRD phases 7-9. **Eight tests added**: T-41 (each projection renders only its own slice), T-42 (the blocked-entities verdict is decided by the counts-computed flag, never by list emptiness — R1 on the one tool whose whole subject is emptiness), T-43 (a named id resolves to exactly one of four dispositions, and asking about nothing emits none), T-44 (filtering precedes the zero-impact cap, so a named attack past #50 is still explained rather than reported absent), T-45 (the narrowed tool narrows its catalog too), T-46 (each public function makes exactly one statistics call with every parameter passed through — the single-call-site guarantee, now across three tools), T-47 (each narration carries only its own sections and routes to its siblings — the guard on the *selection* problem a split introduces), T-48 (e2e: the three tools agree against a real console on a scenario **built to block**, per the authoring gate — an OS mismatch constructed from the live fleet, with a role mismatch as fallback, so the assertion is not left to luck). **Twelve tests re-scoped, none tombstoned**: T-24/T-25/T-26 to the three tools and the `scenario` vocabulary, T-27/T-29/T-30/T-35 to the counts tool, T-28/T-31 across all three, T-40 to the blocked-entities tool (now the only one rendering a catalog), T-32 to the three-question walkthrough — which is why **no new Manual progression test was added**, and T-34 to three catalog entries plus the retirement redirect. **Nine tests re-phased out of completed phases 5 and 6** into 7-9, because their assertions changed rather than their subject: the plan now shows those phases adding nothing new, which is honest rather than a regression. **T-33 is untouched** — the shipped run tools and `sb_get_plan_statistics` are genuinely unchanged, which is exactly what it asserts, so the regression set needs nothing added. R12 re-scoped; R14-R17 added for the projection contract, the pass-through surface, the disposition/verdict rules and the scenario vocabulary. PRD §9's new R12/R13/R14 folded into the Risk Landscape. Regenerated views: 44 Active (21 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/31/40/41/44. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-08-27 15:40 | Fetch core relocated to `safebreach_mcp_core` per user decision — `plan/statistics` is a general orchestrator API with further clients expected, so it ships as a shared primitive (`safebreach_mcp_core/plan_statistics.py`, public `fetch_plan_statistics`) rather than a studio-private helper, mirroring `core/queue_state.py`. Retargeted the eight tests that exercise the fetch core itself — T-6, T-7, T-8, T-9, T-10, T-11, T-12 and T-16 (the single-call-site scan) — to `safebreach_mcp_core/tests/test_plan_statistics.py`, and updated their Repo column. T-13/T-14/T-15/T-17 stay in the studio suite: they assert the summariser's own contract. Added a Change Coverage row for the new core module. No test was added, removed or re-phased and no assertion changed — placement only. |
 | 2026-08-27 14:57 | Corrected for PRD v5 — MCP vendors **no** constraint vocabulary and relays the orchestrator's `constraintCatalog` instead, after [SAF-35568](https://bitbucket.org/safebreach/orchestrator/pull-requests/2299) shipped `{ description }` only (its `fixLever` was implemented then removed as redundant) over 97 codes with keys 1:1 with emitted values. **T-2 tombstoned** (Status: Removed, ID retained) — there is no vendored map to key, and the upstream key/value mismatch it policed was fixed at source. **T-5 tombstoned** — nothing is vendored, so nothing can drift; the cross-repo checkout dependency goes with it. T-1 rescoped from "every code has a valid fix lever" to "no constraint vocabulary is vendored anywhere", including a scan for substitute mappings; T-3 rescoped to both forms of an undescribed code (absent entry and empty `{}`); T-23's catalog assertion moved from `fix_lever` to a relayed `description`. **Added T-38** (descriptions relayed byte-for-byte, never re-worded), **T-39** (absent/empty catalog degrades to `description: null` with conflicts intact and a hint, per new R11) and **T-40** (e2e — a real console actually supplies the descriptions the relay depends on, skipping with a stated reason on a pre-SAF-35568 console). Also fixed stale v1 wording in T-28's Expected, which still demanded a "suggested fix" dropped back in v2. R7 restated to the relay contract, R8 to conditional-null; R3/R6/R10 closed, R7/R9 dropped to Low, R11 added. Regenerated views: 36 Active (15 unit / 13 integration / 8 e2e), phases 4/11/16/23/32/33/36. Status stays Draft — material change. In Sync with PRD v5. |
