@@ -482,48 +482,62 @@ Rate limiting environment variables:
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
-25. `get_plan_statistics` ✨ **NEW** 📖 **Read-only** - Reports what a plan **would** do on a console —
-  per-step simulation counts, which attacks and simulators contribute nothing, and why — **without running
-  anything**. Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics`. Scores exactly one of three
-  inputs, with a blank string counting as absent: an **ad-hoc scenario body that was never saved** (`plan`,
-  a JSON string), a **saved scenario / custom plan** (`scenario_id`, sent as `id`), or **the scenario a past
-  run executed** (`test_id`, a planRunId such as `1764165600525.2`, sent as `testId` — the orchestrator
-  resolves it through the test summary's `originalPlan`, and a run whose summary no longer carries one
-  raises `PastRunHasNoScenarioError`). `planId` is **never** sent: it is in the `ValidatePlan` schema, but
-  `getPlanById` destructures only `{id, testId}`, so a body carrying it falls through to the inline branch
-  and is scored as a step-less plan (400). `name` is always sent — the schema requires it and the request
-  is validated at the edge — as `""`, which is what the console UI posts.
-  A `test_id` is passed **straight through**: a planRunId is neither an integer plan id nor an OOB UUID, so
-  routing it through client-side scenario resolution would report a valid id as a missing scenario.
-  **Not rate-limited** — it is read-only, so it takes neither gate and adds no row to the table above.
+25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **how many
+  simulations would this scenario produce?** Reports per-step counts and coverage **without running anything**.
+  Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics` via the shared fetch core, then projects that
+  report down to the counts. For *why* a step produces nothing use `get_scenario_blocked_entities`; for why one
+  attack did not run use `get_scenario_attack_blockers` — the three are disjoint by construction, and each
+  tool's own hint routes to its siblings.
+  Scores exactly one of three inputs, a blank string counting as absent: an **ad-hoc scenario body that was
+  never saved** (`scenario`, a JSON string), a **saved scenario / custom plan** (`scenario_id`), or **the
+  scenario a past run executed** (`test_id`, a planRunId such as `1764165600525.2`).
   **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
-  **runnable** counts — what would run right now, with every offline/disabled/unapproved simulator reported
-  with its reason — and `true` gives **expected** counts, which therefore never report `simulator_is_offline`
-  at all. Neither is derivable from the other; `both_counts=True` issues two calls and returns both intact
-  reports, labelled, each carrying its own derived `counts_mode`.
-  **Reports, removes nothing**: `zero_impact_attacks` and `zero_impact_simulators` name entities whose count
-  is a genuine integer `0`; they stay in the plan. Zero-impact simulators come from the **union** `simulators`
-  map, never the role maps, since a one-sided node is absent from the other rather than zero in it.
-  **`null` means not computed, never zero**: on a limit-reached response `truncated` is true,
-  `counts_computed` is false, every count is `null`, and **all zero-impact reporting is suppressed by
-  construction** — empty lists there mean "not evaluated", not "nothing is inapplicable".
-  **The response envelope is accepted in either shape**: swagger documents a `data` wrapper while the
-  endpoint's own component tests show `steps` at the top level (SAF-32019). Reading an unwrapped body as
-  absent would report a scored plan as having no steps at all — a silent empty result, which is precisely
-  what the null-versus-zero rule exists to prevent.
-  Conflicts are returned **normalized**: a top-level `constraint_catalog` of the codes this response
-  references, each `description` relayed **verbatim from the orchestrator** (`null` where it supplied none — MCP
-  vendors no constraint vocabulary), plus per-conflict rows carrying only `code`, `severity`, `attack_id`,
-  `side`, `simulator_count` and the API's `values`. `severity` is **computed from the attack's own count**
-  (`blocking` at integer `0`, `reducing` when it still runs), so the same code is legitimately blocking for
-  one attack and reducing for another in the same step. `conflict_detail` controls verbosity: `summary`
-  (default), `per_attack` (adds attack names), `full` (adds a capped `simulator_ids` sample).
-  **Returns a narrated markdown report**, like every other studio tool — counts mode, steps scored, total
-  simulations, then per step its coverage, attack counts, zero-impact attacks/simulators with their blockers,
-  and conflicts blocking-first, closing with the constraint catalog and hint. Per-simulator counts are
-  summarised as coverage rather than listed per UUID; everything else the shaped report carries is narrated.
-  **No MCP-side cache** — a re-check after a changed decision must never be answered from a stale local copy;
-  `use_cache` controls only the orchestrator's own server-side cache.
+  **runnable** counts — what would run right now — and `true` gives **expected** counts, as if every simulator
+  were available. Neither is derivable from the other; `both_counts=True` issues two calls and labels both.
+  **`get_constraints` defaults to `False` here alone** — this tool renders no conflicts, and evaluating them is
+  not free: a single default step measured 38,531 conflicts and an 11.8 MB response on a real console. Its
+  siblings default `True`. `get_all_constraints` cannot change this tool's answer; `conflict_detail="full"`
+  can — it lifts the coverage-map caps, so a figure otherwise reported as "at least N of M" becomes exact.
+  **`null` means not computed, never zero.** A step the orchestrator never scored says so rather than
+  reporting 0, and the total says how many steps it covers. **Coverage denominators are the step's true totals**,
+  never the capped map's length, so a capped figure reads "at least N of M" rather than presenting a truncation
+  artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
+  `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
+  **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
+26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **will anything in this
+  scenario not run at all?** Reports every attack and simulator whose count is a genuine integer `0`, with the
+  constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.
+  Attacks that ran on fewer simulators than were offered are **reductions, not blocks**, and are deliberately
+  not listed (that is SAF-35484's scope). Same three inputs and same `include_disabled` semantics as entry 25;
+  `get_constraints` defaults `True`, and with `False` the answer says so rather than reporting "no reason found".
+  **Opens with a verdict in one of five states, none of which can be read as another**: entities are blocked;
+  nothing is blocked; nothing is blocked *among the steps that could be measured* (`clean_where_measured` — a
+  truncated map may be hiding a count); only some steps were scored (`partially_evaluated` — findings cover
+  those steps only); or nothing was evaluated at all. The verdict is decided by `counts_computed` and **never**
+  by list emptiness, because a limit-reached report empties both lists by construction — an unscored scenario
+  and a clean one look identical otherwise. Counts distinct entities, so one attack blocked in three steps is
+  one attack. Renders a **constraint catalog narrowed to the codes its own reported blockers cite**, each
+  `description` relayed verbatim from the console (`null` where it supplied none — MCP vendors no constraint
+  vocabulary). **Not rate-limited**; no MCP-side cache.
+27. `get_scenario_attack_blockers` ✨ **NEW** 📖 **Read-only** - Answers one question: **why did specific attacks
+  not run?** Takes optional comma-separated `attack_ids`; omit it to report every fully-blocked attack instead.
+  **Only fully-blocked attacks (an integer `0`) are analysed** — a reduction is not a block and is not explained
+  here. Same three inputs, same `include_disabled` semantics, `get_constraints` defaults `True`.
+  **Every named id gets exactly one answer, so silence never stands in for one**: `ran` (with its count),
+  `blocked`, `blocked_where_measured` (a truncated attack list may be hiding a count in another step, so it is
+  not a claim it ran nowhere), `not_computed`, `count_map_truncated` (whether it ran is unknown — *not* the same
+  as absent), or `absent`. **"Ran" outranks "blocked"**: an attack scored `0` in one step and 240 in another
+  *ran*, and the answer must not depend on which step the scenario lists first. Blocked entries are filtered to
+  the named ids **before** the zero-impact cap applies, so a named attack is never dropped from the list that
+  exists to explain it. An empty blocker list distinguishes its three causes — truncated locally, never
+  requested, or genuinely none — because "the console found no reason" is a finding and the other two are not.
+  Hedged entries render under their own heading rather than under "did not run anywhere". **Not rate-limited**;
+  no MCP-side cache.
+
+  > **`get_plan_statistics` is retired** (SAF-35508 Phase 8). It answered all three questions at once and left
+  > the caller to read past two of them. `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and
+  > `get_scenario_attack_blockers` replace it. The private `sb_get_plan_statistics` function survives as the
+  > shared plumbing all three call, so `plan/statistics` still has exactly one call site in this repo.
 
 
 ## Filtering and Search Capabilities

@@ -276,6 +276,12 @@ def mock_run_response():
     }
 
 
+SCENARIO_TOOL_NAMES = (
+    'get_scenario_simulation_counts',
+    'get_scenario_blocked_entities',
+    'get_scenario_attack_blockers',
+)
+
 class TestValidateStudioCode:
     """Test the sb_validate_studio_code function."""
 
@@ -9282,8 +9288,8 @@ def _statistics_queries(post):
             for call in post.call_args_list]
 
 
-class TestToolCatalogDocumentsThePlanStatisticsTool:
-    """T-34 — the tool catalog documents the new tool and the gate table is left alone."""
+class TestToolCatalogDocumentsTheScenarioTools:
+    """T-34 — the catalog documents all three tools, records the retirement, and leaves the gate table alone."""
 
     @staticmethod
     def _claude_md():
@@ -9307,30 +9313,63 @@ class TestToolCatalogDocumentsThePlanStatisticsTool:
             tools.append(line.split("|")[1].strip().strip('`'))
         return tools
 
-    def test_the_studio_catalog_documents_the_tool(self):
-        text = self._claude_md()
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_the_studio_catalog_documents_each_tool(self, name):
+        assert f"`{name}`" in self._claude_md()
 
-        assert "`get_plan_statistics`" in text
-
-    def test_the_entry_names_the_runnable_default(self):
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_entry_names_the_runnable_default(self, name):
         """The includeDisabled inversion is the thing a reader most needs."""
-        text = self._claude_md()
-        entry = text.split("`get_plan_statistics`", 1)[1][:2500]
+        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
 
         assert "runnable" in entry
         assert "include_disabled" in entry or "includeDisabled" in entry
 
-    def test_the_entry_names_the_read_only_posture(self):
-        text = self._claude_md()
-        entry = text.split("`get_plan_statistics`", 1)[1][:2500]
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_entry_names_the_read_only_posture(self, name):
+        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
 
         assert "read-only" in entry.lower()
 
-    def test_the_gate_table_has_no_row_for_the_new_tool(self):
-        """A read-only tool takes no gates; a row here would contradict the rule."""
-        tools = self._gate_table_tools(self._claude_md())
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_entry_names_the_one_question_its_tool_answers(self, name):
+        """Three sibling entries are only useful if a reader can tell them apart."""
+        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
 
-        assert "get_plan_statistics" not in tools
+        assert "?" in entry
+
+    def test_the_catalog_records_the_retirement_and_its_replacements(self):
+        """A reader looking for the retired tool must be redirected, not left guessing."""
+        text = self._claude_md()
+
+        assert "retired" in text.lower()
+        retirement = text.lower().split("retired", 1)[1][:600]
+        for name in SCENARIO_TOOL_NAMES:
+            assert name in retirement
+
+    def test_the_catalog_no_longer_lists_the_retired_tool_as_an_entry(self):
+        """It may be named in the retirement note — that is the redirect — but
+        it must not stand as a numbered entry among the available tools."""
+        import re
+
+        text = self._claude_md()
+        entries = re.findall(r'^\d+\. `([a-z_]+)`', text, re.M)
+
+        assert 'get_plan_statistics' not in entries
+        for name in SCENARIO_TOOL_NAMES:
+            assert name in entries
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_the_gate_table_has_no_row_for_any_new_tool(self, name):
+        """A read-only tool takes no gates; a row here would contradict the rule."""
+        assert name not in self._gate_table_tools(self._claude_md())
+
+    def test_the_counts_entry_names_its_divergent_constraints_default(self):
+        """Its default differs from its siblings', which is the sort of thing a catalog exists to say."""
+        entry = self._claude_md().split(
+            "`get_scenario_simulation_counts`", 1)[1][:2500]
+
+        assert "get_constraints" in entry
 
     def test_the_gate_table_row_set_is_unchanged(self):
         tools = self._gate_table_tools(self._claude_md())
@@ -13614,12 +13653,6 @@ class TestEachToolMakesExactlyOneStatisticsCall:
 # ---------------------------------------------------------------------------
 # three scenario-statistics tools — SAF-35508 Phase 8
 # ---------------------------------------------------------------------------
-
-SCENARIO_TOOL_NAMES = (
-    'get_scenario_simulation_counts',
-    'get_scenario_blocked_entities',
-    'get_scenario_attack_blockers',
-)
 
 PASS_THROUGH_PARAMS = (
     'console', 'scenario', 'scenario_id', 'test_id', 'include_disabled',
