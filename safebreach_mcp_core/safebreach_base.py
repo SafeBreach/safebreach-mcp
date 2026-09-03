@@ -135,6 +135,8 @@ class SafeBreachMCPBase:
         self.base_url = os.environ.get('SAFEBREACH_MCP_BASE_URL', '/').rstrip('/')
         if self.base_url == '':
             self.base_url = '/'
+        # Single streamable-http endpoint: the base URL itself, or /mcp at root.
+        self.endpoint_path = self.base_url if self.base_url != '/' else '/mcp'
         
         self.mcp = FastMCP(server_name)
         self._cache = SafeBreachCache(name=f"{server_name}_base", maxsize=10, ttl=3600)
@@ -232,13 +234,10 @@ class SafeBreachMCPBase:
         # Determine bind address based on configuration
         bind_host = self._determine_bind_host(host, allow_external)
 
-        # Set the endpoint path to base_url (or /mcp when root) so the single
-        # endpoint respects SAFEBREACH_MCP_BASE_URL cleanly.
-        endpoint_path = self.base_url if self.base_url != '/' else '/mcp'
-        self.mcp.settings.streamable_http_path = endpoint_path
+        self.mcp.settings.streamable_http_path = self.endpoint_path
         app = self.mcp.streamable_http_app()
         logger.info("🔗 MCP server running with streamable-http transport")
-        logger.info(f"📡 Streamable HTTP endpoint available at: {endpoint_path}")
+        logger.info(f"📡 Streamable HTTP endpoint available at: {self.endpoint_path}")
 
         # Wrap with authentication for external connections
         if allow_external:
@@ -253,8 +252,8 @@ class SafeBreachMCPBase:
         app = self._install_disable_filtering(app)
 
         # Wrap with concurrency limiter (applies to all servers)
-        app = self._create_concurrency_limited_app(app, endpoint_path=endpoint_path)
-        logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
+        app = self._create_concurrency_limited_app(app)
+        logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per caller bucket")
 
         # Start background tasks
         cleanup_task = asyncio.create_task(_cleanup_stale_semaphores())
@@ -301,7 +300,8 @@ class SafeBreachMCPBase:
             
             # Handle OAuth discovery and registration endpoints for mcp-remote compatibility
             # These endpoints must be publicly accessible for OAuth flow to work
-            oauth_discovery_paths = ["/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/mcp"]
+            oauth_discovery_paths = ["/.well-known/oauth-protected-resource",
+                                     f"/.well-known/oauth-authorization-server{self.endpoint_path}"]
             if path in oauth_discovery_paths:
                 logger.info(f"🔍 OAuth discovery request: {path} from {client_host}")
                 
@@ -319,7 +319,7 @@ class SafeBreachMCPBase:
                     "authorization_endpoint": f"http://{server_name}:{server_port}{base_path}/auth",
                     "token_endpoint": f"http://{server_name}:{server_port}{base_path}/token",
                     "registration_endpoint": f"http://{server_name}:{server_port}{base_path}/register",
-                    "resource": f"http://{server_name}:{server_port}{self.base_url if self.base_url != '/' else '/mcp'}",
+                    "resource": f"http://{server_name}:{server_port}{self.endpoint_path}",
                     "response_types_supported": ["code"],
                     "grant_types_supported": ["authorization_code"],
                     "scopes_supported": ["mcp"],
@@ -577,7 +577,7 @@ class SafeBreachMCPBase:
             return None
         return f"{self.server_name}::{base_key}"
 
-    def _create_concurrency_limited_app(self, original_app, endpoint_path: str = "/mcp"):
+    def _create_concurrency_limited_app(self, original_app):
         """Create an ASGI wrapper that limits concurrent requests per caller.
 
         Streamable-http uses a single endpoint; the session is identified by the
@@ -590,8 +590,7 @@ class SafeBreachMCPBase:
             if scope["type"] != "http":
                 return await original_app(scope, receive, send)
 
-            path = scope.get("path", "/")
-            if path != endpoint_path:
+            if scope.get("path", "/") != self.endpoint_path:
                 # All other paths — pass through without limiting
                 return await original_app(scope, receive, send)
 

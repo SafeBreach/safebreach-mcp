@@ -1,5 +1,5 @@
 """
-Per-request user auth context for RBAC token propagation (SAF-29974).
+User auth extraction from the live MCP request for RBAC token propagation (SAF-29974).
 
 All readers take the user's auth artifacts from the live MCP request
 (_get_auth_from_mcp_request_ctx) — the single source of truth, so a value
@@ -94,12 +94,8 @@ def _get_session_id_from_mcp_ctx() -> Optional[str]:
     if request is None:
         return None
 
-    hdrs = getattr(request, 'headers', None)
-    if hdrs:
-        sid = hdrs.get('mcp-session-id')
-        if sid:
-            return sid
-    return None
+    hdrs = getattr(request, 'headers', None) or {}
+    return hdrs.get('mcp-session-id') or None
 
 
 # Cookies to keep when scrubbing — auth token + fingerprint needed for JWT validation.
@@ -129,13 +125,6 @@ def _keep_only_cookie(raw_cookie: str, cookie_name: str) -> str:
             if name.strip().lower() in allowed:
                 kept.append(f'{name.strip()}={value.strip()}')
     return '; '.join(kept)
-
-
-def mask_artifacts(bundle: Optional[Dict[str, str]]) -> Dict[str, str]:
-    """For logging only — returns keys with masked values."""
-    if not bundle:
-        return {}
-    return {k: '***' + v[-4:] if len(v) > 4 else '****' for k, v in bundle.items()}
 
 
 def get_cache_user_suffix() -> str:

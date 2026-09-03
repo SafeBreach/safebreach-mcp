@@ -72,8 +72,8 @@ class TestConcurrencyLimiterE2E:
                 await asyncio.sleep(0.2)  # hold the slot long enough for overlap
                 return f"echo: {message}"
 
-            server.mcp.settings.streamable_http_path = "/mcp"
-            app = server._create_concurrency_limited_app(server.mcp.streamable_http_app(), endpoint_path="/mcp")
+            server.mcp.settings.streamable_http_path = server.endpoint_path
+            app = server._create_concurrency_limited_app(server.mcp.streamable_http_app())
 
             config = uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning")
             uvi_server = uvicorn.Server(config)
@@ -82,7 +82,7 @@ class TestConcurrencyLimiterE2E:
             try:
                 await _wait_for_server(port)
                 _session_semaphores.clear()
-                url = f"http://127.0.0.1:{port}/mcp"
+                url = f"http://127.0.0.1:{port}{server.endpoint_path}"
 
                 async with httpx.AsyncClient(timeout=10.0, headers=_MCP_HEADERS) as client:
                     init_resp = await client.post(url, json={

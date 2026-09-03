@@ -26,26 +26,16 @@ def cleanup_session_state():
     _session_semaphores.clear()
 
 
-def make_scope(path="/mcp", scope_type="http", session_id=None, method="POST"):
-    """Create a minimal streamable-http ASGI scope for testing."""
+def make_scope(path="/mcp", scope_type="http", session_id=None, method="POST", token=None):
+    """Create a minimal streamable-http ASGI scope (optional mcp-session-id and x-token JWT headers)."""
     headers = [(b"mcp-session-id", session_id.encode())] if session_id else []
+    if token:
+        headers.append((b"x-token", token.encode()))
     return {
         "type": scope_type,
         "path": path,
         "method": method,
         "headers": headers,
-        "client": ("127.0.0.1", 12345),
-        "query_string": b"",
-    }
-
-
-def _sh_scope(session_id, token, path="/mcp"):
-    """A streamable-http POST scope carrying an mcp-session-id and an x-token JWT."""
-    return {
-        "type": "http",
-        "path": path,
-        "method": "POST",
-        "headers": [(b"mcp-session-id", session_id.encode()), (b"x-token", token.encode())],
         "client": ("127.0.0.1", 12345),
         "query_string": b"",
     }
@@ -241,9 +231,7 @@ class TestPerJwtConcurrency:
         async def run():
             base = SafeBreachMCPBase("test-perjwt")
             original = AsyncMock()
-            app = base._create_concurrency_limited_app(
-                original, endpoint_path="/mcp"
-            )
+            app = base._create_concurrency_limited_app(original)
             session_id = "shared-session"
             # Saturate JWT A's bucket (limit 1, no release)
             key_a = base._bucket_key({"x-token": "tokenA"}, session_id)
@@ -253,12 +241,12 @@ class TestPerJwtConcurrency:
 
             # Request as JWT A on the shared session → 429 (its bucket is full)
             send_a = AsyncMock()
-            await app(_sh_scope(session_id, "tokenA"), AsyncMock(), send_a)
+            await app(make_scope(session_id=session_id, token="tokenA"), AsyncMock(), send_a)
             assert send_a.call_args_list[0][0][0]["status"] == 429
 
             # Request as JWT B on the SAME session → passes (independent bucket)
             send_b = AsyncMock()
-            await app(_sh_scope(session_id, "tokenB"), AsyncMock(), send_b)
+            await app(make_scope(session_id=session_id, token="tokenB"), AsyncMock(), send_b)
             original.assert_awaited_once()
             assert send_b.await_count == 0
 
@@ -269,9 +257,7 @@ class TestPerJwtConcurrency:
         async def run():
             base = SafeBreachMCPBase("test-perjwt2")
             original = AsyncMock()
-            app = base._create_concurrency_limited_app(
-                original, endpoint_path="/mcp"
-            )
+            app = base._create_concurrency_limited_app(original)
             # Saturate the JWT's bucket, computed with one session id
             key = base._bucket_key({"x-token": "tok"}, "session-1")
             sem = asyncio.Semaphore(1)
@@ -280,7 +266,7 @@ class TestPerJwtConcurrency:
 
             # Same token but a DIFFERENT session id → same bucket → 429
             send = AsyncMock()
-            await app(_sh_scope("session-2", "tok"), AsyncMock(), send)
+            await app(make_scope(session_id="session-2", token="tok"), AsyncMock(), send)
             assert send.call_args_list[0][0][0]["status"] == 429
             original.assert_not_awaited()
 
@@ -306,22 +292,20 @@ class TestPerServerConcurrencyBucket:
             playbook = SafeBreachMCPBase("playbook")
             orig_p = AsyncMock()
             app_s = studio._create_concurrency_limited_app(
-                AsyncMock(), endpoint_path="/mcp"
+                AsyncMock()
             )
-            app_p = playbook._create_concurrency_limited_app(
-                orig_p, endpoint_path="/mcp"
-            )
+            app_p = playbook._create_concurrency_limited_app(orig_p)
             token = "service-token"
             sem = asyncio.Semaphore(1)
             await sem.acquire()
             _session_semaphores[studio._bucket_key({"x-token": token}, "sess-studio")] = (sem, time.time())
 
             send_s = AsyncMock()
-            await app_s(_sh_scope("sess-studio", token), AsyncMock(), send_s)
+            await app_s(make_scope(session_id="sess-studio", token=token), AsyncMock(), send_s)
             assert send_s.call_args_list[0][0][0]["status"] == 429
 
             send_p = AsyncMock()
-            await app_p(_sh_scope("sess-pb", token), AsyncMock(), send_p)
+            await app_p(make_scope(session_id="sess-pb", token=token), AsyncMock(), send_p)
             orig_p.assert_awaited_once()
             assert send_p.await_count == 0
 
@@ -333,15 +317,13 @@ class TestPerServerConcurrencyBucket:
         async def run():
             base = SafeBreachMCPBase("studio")
             original = AsyncMock()
-            app = base._create_concurrency_limited_app(
-                original, endpoint_path="/mcp"
-            )
+            app = base._create_concurrency_limited_app(original)
             token = "tok"
             sem = asyncio.Semaphore(1)
             await sem.acquire()
             _session_semaphores[base._bucket_key({"x-token": token}, "s1")] = (sem, time.time())
 
-            get_scope = {**_sh_scope("s1", token), "method": "GET"}
+            get_scope = make_scope(session_id="s1", token=token, method="GET")
             send = AsyncMock()
             await app(get_scope, AsyncMock(), send)
             original.assert_awaited_once()
@@ -361,15 +343,13 @@ class TestPerServerConcurrencyBucket:
                     await gate.wait()
 
             apps = {
-                n: SafeBreachMCPBase(n)._create_concurrency_limited_app(
-                    original, endpoint_path="/mcp"
-                )
+                n: SafeBreachMCPBase(n)._create_concurrency_limited_app(original)
                 for n in names
             }
             token = "service-token"
             gets = [
                 asyncio.create_task(
-                    apps[n]({**_sh_scope(f"sess-{n}", token), "method": "GET"}, AsyncMock(), AsyncMock())
+                    apps[n](make_scope(session_id=f"sess-{n}", token=token, method="GET"), AsyncMock(), AsyncMock())
                 )
                 for n in names
             ]
@@ -379,7 +359,7 @@ class TestPerServerConcurrencyBucket:
             sends = {}
             for n in names:
                 sends[n] = AsyncMock()
-                await apps[n](_sh_scope(f"sess-{n}", token), AsyncMock(), sends[n])
+                await apps[n](make_scope(session_id=f"sess-{n}", token=token), AsyncMock(), sends[n])
 
             for n in names:
                 statuses = [c[0][0].get("status") for c in sends[n].call_args_list if c[0]]

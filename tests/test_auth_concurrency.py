@@ -190,14 +190,11 @@ class TestGetCacheUserSuffix:
         suffix = get_cache_user_suffix()
         assert suffix == ''
 
-    def test_suffix_is_stable_hash_of_request_token(self):
+    def test_suffix_is_stable_hash_of_request_token(self, mcp_request_auth):
         """The suffix is a stable hash of the request's token."""
         import hashlib
-        req = _mock_request(headers={'x-apitoken': 'from-request'})
-        ctx = _mock_request_ctx(req)
         expected = '_' + hashlib.sha256('from-request'.encode()).hexdigest()[:8]
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = ctx
+        with mcp_request_auth({'x-apitoken': 'from-request'}):
             suffix = get_cache_user_suffix()
         assert suffix == expected
 
@@ -237,19 +234,15 @@ class TestGetAuthHeadersForConsole:
                 assert result == {'x-apitoken': 'standalone-api-key'}
                 mock_secret.assert_called_once_with('staging')
 
-    def test_request_ctx_is_the_source(self):
+    def test_request_ctx_is_the_source(self, mcp_request_auth):
         """The live request's headers are the auth source."""
-        req = _mock_request(headers={'x-token': 'ctx-jwt', 'cookie': 'X-Token=ctx'})
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = _mock_request_ctx(req)
+        with mcp_request_auth({'x-token': 'ctx-jwt', 'cookie': 'X-Token=ctx'}):
             result = get_auth_headers_for_console('default')
         assert result['x-token'] == 'ctx-jwt'
 
-    def test_returns_copy_not_original(self):
+    def test_returns_copy_not_original(self, mcp_request_auth):
         """Returns a fresh dict per call so callers can mutate it safely."""
-        req = _mock_request(headers={'x-token': 'jwt1'})
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = _mock_request_ctx(req)
+        with mcp_request_auth({'x-token': 'jwt1'}):
             result = get_auth_headers_for_console('default')
             result['x-token'] = 'mutated'
             again = get_auth_headers_for_console('default')
