@@ -448,7 +448,8 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   then submits to orchestrator queue API. OOB scenarios relay full payload with DAG; custom plans
   use `planId` reference (or full payload when augmented with overrides).
   **Parameters**: `scenario_id` (UUID for OOB, integer string for custom), `console`,
-  `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0),
+  `test_name`, `allow_partial_steps` (default False — refuses if any step produces 0; it is consent
+  to skip **measured** zeros, never unscored steps, which are refused regardless),
   `step_overrides` (JSON string — replaces entire filter per step. **Filter schema**: each filter
   key must be `{"<type>": {"operator": "is", "values": [...], "name": "<type>"}}`. Valid types:
   os, role, simulators, connection. Supports `"default"` key for applying to all missing steps —
@@ -460,8 +461,10 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   `step_overrides` + `evaluate=True` → preview with resolved attacks per step, per-step
   simulation breakdown (matched target/attacker simulators, matched attacks), and constraint
   failure details for unmatched attacks. (3) Call with `step_overrides` → queue the test.
-  **Constraint diagnostics**: 14 constraint reason codes mapped to human-readable descriptions.
-  Each tagged as fixable via step_overrides or requiring console-level configuration.
+  **Constraint diagnostics**: reason-code descriptions are relayed verbatim from the response's own
+  `constraintCatalog` — MCP vendors no constraint vocabulary and asserts no fixability. `description`
+  is nullable: an unrecognised code, or a console whose orchestrator predates the catalog, yields
+  `null` and the conflict is still surfaced, alongside a catalog-absent hint.
   Partial-coverage steps show aggregated constraint summary; zero-sim steps show per-attack detail.
   **Simulator capabilities**: `get_console_simulators` includes roles (isInfiltration, isExfiltration,
   isAWSAttacker, etc.), assets (resolved names), simulationUsers (impersonated users),
@@ -484,7 +487,10 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   without queuing. The agent MUST present the evaluation to the user and get confirmation before
   calling with `evaluate=False`.
   Partial execution: if some attacks produce 0 simulations, they are skipped (user saw the evaluation).
-  Hard-refuses if ALL attacks produce 0. Parameters: `attack_ids` (required, comma-separated
+  Hard-refuses if ALL attacks produce 0, **and hard-refuses any execution whose preflight was only
+  partly measured** — a step SafeBreach never scored returns `null`, which is not a zero, so it can
+  neither be counted nor skipped. Skipping only genuine zeros is the point: an unscored attack used
+  to be dropped from a real run and reported as "skipped (0 simulations)". Lower `limit` and re-score. Parameters: `attack_ids` (required, comma-separated
   integers), `console`, `test_name`, `all_connected` (bool), `simulator_overrides` (JSON string),
   `evaluate` (bool, default True). Uses the same queue API as `run_scenario`.
   **Simulator UUID discovery**: For rerun workflows, get UUIDs from `get_simulation_details`
@@ -505,6 +511,66 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
+25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **how many
+  simulations would this scenario produce?** Reports per-step counts and coverage **without running anything**.
+  Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics` via the shared fetch core, then projects that
+  report down to the counts. For *why* a step produces nothing use `get_scenario_blocked_entities`; for why one
+  attack did not run use `get_scenario_attack_blockers` — the three are disjoint by construction, and each
+  tool's own hint routes to its siblings.
+  Scores exactly one of three inputs, a blank string counting as absent: an **ad-hoc scenario body that was
+  never saved** (`scenario`, a JSON string), a **saved scenario / custom plan** (`scenario_id`), or **the
+  scenario a past run executed** (`test_id`, a planRunId such as `1764165600525.2`).
+  **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
+  **runnable** counts — what would run right now — and `true` gives **expected** counts, as if every simulator
+  were available. Neither is derivable from the other; `both_counts=True` issues two calls and labels both.
+  **`get_constraints` defaults to `False` here alone** — this tool renders no conflicts, and evaluating them is
+  not free: a single default step measured 38,531 conflicts and an 11.8 MB response on a real console. Its
+  siblings default `True`. `get_all_constraints` cannot change this tool's answer; `conflict_detail="full"`
+  can — it lifts the coverage-map caps, so a figure otherwise reported as "at least N of M" becomes exact.
+  **`null` means not computed, never zero.** A step the orchestrator never scored says so rather than
+  reporting 0, and the total says how many steps it covers. **Coverage denominators are the step's true totals**,
+  never the capped map's length, so a capped figure reads "at least N of M" rather than presenting a truncation
+  artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
+  `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
+  **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
+26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **will anything in this
+  scenario not run at all?** Reports every attack and simulator whose count is a genuine integer `0`, with the
+  constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.
+  Attacks that ran on fewer simulators than were offered are **reductions, not blocks**, and are deliberately
+  not listed (that is SAF-35484's scope). Same three inputs and same `include_disabled` semantics as entry 25;
+  `get_constraints` defaults `True`, and with `False` the answer says so rather than reporting "no reason found".
+  **Opens with a verdict in one of five states, none of which can be read as another**: entities are blocked;
+  nothing is blocked; nothing is blocked *among the steps that could be measured* (`clean_where_measured` — a
+  truncated map may be hiding a count); only some steps were scored (`partially_evaluated` — findings cover
+  those steps only); or nothing was evaluated at all. The verdict is decided by `counts_computed` and **never**
+  by list emptiness, because a limit-reached report empties both lists by construction — an unscored scenario
+  and a clean one look identical otherwise. Counts distinct entities, so one attack blocked in three steps is
+  one attack. Renders a **constraint catalog narrowed to the codes its own reported blockers cite**, each
+  `description` relayed verbatim from the console (`null` where it supplied none — MCP vendors no constraint
+  vocabulary). **Not rate-limited**; no MCP-side cache.
+27. `get_scenario_attack_blockers` ✨ **NEW** 📖 **Read-only** - Answers one question: **why did specific attacks
+  not run?** **`attack_ids` is required** (comma-separated, and required in the tool's JSON schema, not merely
+  rejected at runtime): this tool explains the attacks the caller *names*. Listing whatever happens to be blocked
+  is entry 26's question, and answering it here too let one scoring be narrated two ways — so the unnamed mode was
+  removed, and its rejection names `get_scenario_blocked_entities` rather than leaving the caller to guess.
+  **Only fully-blocked attacks (an integer `0`) are analysed** — a reduction is not a block and is not explained
+  here. Same three inputs, same `include_disabled` semantics, `get_constraints` defaults `True`.
+  **Every named id gets exactly one answer, so silence never stands in for one**: `ran` (with its count),
+  `blocked`, `blocked_where_measured` (a truncated attack list may be hiding a count in another step, so it is
+  not a claim it ran nowhere), `not_computed`, `count_map_truncated` (whether it ran is unknown — *not* the same
+  as absent), or `absent`. **"Ran" outranks "blocked"**: an attack scored `0` in one step and 240 in another
+  *ran*, and the answer must not depend on which step the scenario lists first. Blocked entries are filtered to
+  the named ids **before** the zero-impact cap applies, so a named attack is never dropped from the list that
+  exists to explain it. An empty blocker list distinguishes its three causes — truncated locally, never
+  requested, or genuinely none — because "the console found no reason" is a finding and the other two are not.
+  Hedged entries render under their own heading rather than under "did not run anywhere". A report where **no
+  step was scored** says so once as a fact about the report, because a page of per-id `not_computed` otherwise
+  reads as bad luck with the ids chosen. **Not rate-limited**; no MCP-side cache.
+
+  > **`get_plan_statistics` is retired** (SAF-35508 Phase 8). It answered all three questions at once and left
+  > the caller to read past two of them. `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and
+  > `get_scenario_attack_blockers` replace it. The private `sb_get_plan_statistics` function survives as the
+  > shared plumbing all three call, so `plan/statistics` still has exactly one call site in this repo.
 
 
 ## Filtering and Search Capabilities

@@ -18,10 +18,20 @@ from safebreach_mcp_core.secret_utils import get_secret_for_console, get_auth_he
 from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
+from safebreach_mcp_core.plan_statistics import (
+    fetch_plan_statistics,
+    is_computed_count,
+    DEFAULT_LIMIT,
+    DEFAULT_INCLUDE_DISABLED,
+    DEFAULT_GET_CONSTRAINTS,
+    DEFAULT_GET_ALL_CONSTRAINTS,
+    DEFAULT_USE_CACHE,
+)
 from .studio_types import (
     get_validation_response_mapping,
     get_draft_response_mapping,
     get_all_attacks_response_mapping,
+    get_plan_statistics_response_mapping,
     paginate_studio_attacks,
     PAGE_SIZE
 )
@@ -2221,65 +2231,133 @@ def _fetch_all_plans(console):
     return plans
 
 
-# Each constraint has: description (human-readable) and fixable_via_overrides (bool)
-CONSTRAINT_REASON_DESCRIPTIONS = {
-    "incompatible_os": {
-        "description": "Simulator OS doesn't match attack requirement",
-        "fixable": True,
-    },
-    "incompatible_package": {
-        "description": "Simulator role mismatch (e.g., requires infiltration/exfiltration)",
-        "fixable": True,
-    },
-    "simulator_on_both_sides": {
-        "description": "Network attack needs separate attacker and target simulators",
-        "fixable": True,
-    },
-    "simulator_variant_is_not_root_user": {
-        "description": "Attack requires root/admin execution privilege",
-        "fixable": True,
-    },
-    "simulator_variant_is_root_user": {
-        "description": "Attack requires non-root execution",
-        "fixable": True,
-    },
-    "missing_required_advanced_actions": {
-        "description": "Specific advanced action type not enabled on simulator",
-        "fixable": False,
-    },
-    "simulator_failed_schema_validation": {
-        "description": "Simulator missing required software/capability",
-        "fixable": False,
-    },
-    "simulator_is_not_aws_attacker": {
-        "description": "Requires AWS attacker role — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "simulator_is_not_aws_simulator": {
-        "description": "Requires AWS simulator — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "simulator_is_not_mail_virtual_simulator": {
-        "description": "Requires mailbox simulator — check get_console_simulators for candidates",
-        "fixable": True,
-    },
-    "move_does_not_support_root_simulation_user": {
-        "description": "Attack incompatible with root simulation user",
-        "fixable": False,
-    },
-    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
-        "description": "Proxy configuration mismatch",
-        "fixable": False,
-    },
-    "port_in_use": {
-        "description": "Required port occupied on simulator",
-        "fixable": False,
-    },
-    "simulator_didnt_pass_pre_execution_prerequisite_tests": {
-        "description": "Pre-execution checks failed on simulator",
-        "fixable": False,
-    },
-}
+def _resolve_constraint_description(code, constraint_catalog):
+    """Resolve one reason code against the response's own catalog.
+
+    Returns the orchestrator's string, or None when the catalog has no entry — or an entry
+    with no description, which is how the orchestrator represents a code it does not itself
+    recognise. Never returns the code, and never authors a meaning.
+    """
+    if not isinstance(constraint_catalog, dict):
+        return {'description': None}
+    entry = constraint_catalog.get(code)
+    if not isinstance(entry, dict):
+        return {'description': None}
+    # .get() without an `or` fallback: a described-as-empty '' must stay
+    # distinguishable from a description that was never supplied.
+    description = entry.get('description')
+    return {'description': description if isinstance(description, str) else None}
+
+
+def _build_constraint_catalog(constraint_catalog, codes):
+    """Narrow the response's catalog to the codes MCP actually emits.
+
+    One entry per code, key present even when the description is None, each
+    description relayed verbatim. Codes the response describes but MCP does not
+    emit are excluded.
+    """
+    return {
+        code: _resolve_constraint_description(code, constraint_catalog)
+        for code in sorted(codes)
+    }
+
+
+
+def _count_matched_entities(counts):
+    """Count entries whose value is a computed, positive integer.
+
+    Returns None — not 0 — when a map has entries but none were computed. A
+    limit-reached step must not report "nothing matched" when the truth is
+    "nothing was measured". An empty map still returns 0, as before.
+    """
+    values = list(counts)
+    computed = [v for v in values if is_computed_count(v)]
+    if values and not computed:
+        return None
+    return sum(1 for v in computed if v > 0)
+
+
+def _nothing_was_computed(counts):
+    """True when the orchestrator returned counts but computed none of them.
+
+    Distinguishes a truncated response from a genuinely empty selection: an
+    empty list means no steps at all, which is a different problem.
+    """
+    return bool(counts) and not any(is_computed_count(c) for c in counts)
+
+
+def _uncomputed_step_positions(counts):
+    """1-indexed positions of the steps SafeBreach never scored.
+
+    An unscored step is neither a number nor a zero: its contribution is
+    unknown, so it can be neither counted toward a total nor skipped as
+    contributing nothing.
+    """
+    return [i + 1 for i, count in enumerate(counts) if not is_computed_count(count)]
+
+
+def _partial_scoring_error(subject, positions, counts):
+    """The message for a preflight that measured only some of its steps.
+
+    Distinct from _truncated_scoring_error, which covers a response where
+    nothing at all was computed. A partial response is the more dangerous of
+    the two: the measured steps look authoritative, so the unmeasured ones read
+    as zero and get dropped or discounted.
+    """
+    return (
+        f"{subject} cannot be queued: SafeBreach scored only "
+        f"{len(counts) - len(positions)} of the {len(counts)} step(s) it returned, "
+        f"stopping before step(s) {positions}. Whether those steps would run is "
+        f"unknown — this is NOT a report that they produce nothing. Queuing now would "
+        f"either drop them from the run or execute a plan whose size was never measured. "
+        f"Lower `limit`, or score fewer steps at a time, then try again."
+    )
+
+
+def _truncated_scoring_error(subject, counts):
+    """The message for a scoring run the orchestrator stopped early.
+
+    Never says "no matching simulators": that is a measured verdict, and on this
+    path nothing was measured.
+    """
+    return (
+        f"{subject} could not be scored: SafeBreach stopped evaluating before computing "
+        f"any simulation counts for the {len(counts)} step(s) it returned, so how much "
+        f"would run is unknown — this is NOT a report that nothing runs. Lower `limit`, "
+        f"or score fewer steps at a time, then try again."
+    )
+
+
+def _sum_computed_counts(counts):
+    """Total only the counts that were actually computed.
+
+    A limit-reached response returns None for every step the orchestrator did not reach;
+    summing those raises. An uncomputed step contributes nothing to the total,
+    which is a partial figure by nature — the truncation is what explains it.
+    """
+    return sum(c for c in counts if is_computed_count(c))
+
+
+def _runs_anywhere(count):
+    """Whether a step is known to produce simulations.
+
+    False for an uncomputed count: not knowing is not the same as knowing it
+    produces nothing, and `> 0` raises on None. Delegates rather than
+    re-deriving, so the null-safety rule has exactly one implementation.
+    """
+    return is_computed_count(count) and count > 0
+
+
+def _by_descending_simulation_count(item):
+    """Sort key for resolved_attacks: computed counts first, descending.
+
+    The previous `key=lambda x: -x[1]` raised the instant a count was null,
+    which is exactly what a limit-reached response sends. Uncomputed counts park
+    at the tail; the ordering is otherwise identical, and sort stability keeps
+    ties in response order.
+    """
+    _, count = item
+    return (0, -count) if is_computed_count(count) else (1, 0)
 
 
 def _build_attack_name_map(console):
@@ -2296,8 +2374,12 @@ def _build_attack_name_map(console):
         return {}
 
 
-def _summarize_constraints(simulator_constraints, attack_names=None):
+def _summarize_constraints(simulator_constraints, attack_names=None,
+                           constraint_catalog=None):
     """Summarize constraint failures into a per-attack breakdown.
+
+    Descriptions are relayed from the response's own constraint catalog; a code
+    the catalog does not describe is still reported, with description None.
 
     Returns a list of dicts: [{move_id, reasons: [{code, description, detail}]}]
     """
@@ -2330,8 +2412,8 @@ def _summarize_constraints(simulator_constraints, attack_names=None):
 
                         move_reasons[move_id][code] = {
                             'code': code,
-                            'description': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('description', code),
-                            'fixable': CONSTRAINT_REASON_DESCRIPTIONS.get(code, {}).get('fixable', True),
+                            'description': _resolve_constraint_description(
+                                code, constraint_catalog)['description'],
                             'detail': '; '.join(detail_parts) if detail_parts else None,
                         }
 
@@ -2347,14 +2429,18 @@ def _summarize_constraints(simulator_constraints, attack_names=None):
     return result
 
 
-def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
+def _summarize_constraints_aggregated(simulator_constraints, attack_names=None,
+                                      constraint_catalog=None):
     """Aggregate constraint failures by reason code across all attacks.
 
     Used for partial-coverage steps where per-attack detail is too verbose.
     Returns a list of dicts: [{code, description, count, details: [{detail, attack_count}]}]
     """
     # First get per-attack breakdown
-    per_attack = _summarize_constraints(simulator_constraints, attack_names=attack_names)
+    per_attack = _summarize_constraints(
+        simulator_constraints, attack_names=attack_names,
+        constraint_catalog=constraint_catalog,
+    )
 
     # Aggregate by (code, detail) across attacks
     reason_groups = {}
@@ -2367,7 +2453,6 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
                 reason_groups[key] = {
                     'code': code,
                     'description': reason['description'],
-                    'fixable': reason.get('fixable', True),
                     'detail': detail,
                     'attack_count': 0,
                     'move_ids': [],
@@ -2382,7 +2467,6 @@ def _summarize_constraints_aggregated(simulator_constraints, attack_names=None):
             code_groups[code] = {
                 'code': code,
                 'description': info['description'],
-                'fixable': info.get('fixable', True),
                 'total_attacks': 0,
                 'sub_reasons': [],
             }
@@ -2414,47 +2498,37 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         List of per-step stat dicts with simulationCount, matched counts,
         resolved_attacks, and optionally constraint details.
     """
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
-
-    constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
-    api_url = (
-        f"{base_url}/api/orch/v1/accounts/{account_id}"
-        f"/plan/statistics?limit=500000&includeDisabled=true{constraint_params}"
-    )
-    payload = {"name": "", "steps": steps}
-
     logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
                 f"{' (with constraints)' if include_constraints else ''}")
-    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
-    try:
-        check_rbac_response(response)
-    except requests.exceptions.HTTPError:
-        body = getattr(response, 'text', '')
-        logger.error(f"Statistics API error {response.status_code}: {body}")
-        raise ValueError(
-            f"Statistics API error ({response.status_code}): {body}"
-        )
-
-    data = response.json().get('data', {})
-    step_stats = data.get('steps', [])
+    statistics = fetch_plan_statistics(
+        console,
+        plan={"name": "", "steps": steps},
+        # includeDisabled=true asks for EXPECTED counts. The fetch core defaults
+        # it to false (runnable); inheriting that default would silently change
+        # the numbers both shipped previews have always reported.
+        include_disabled=True,
+        get_constraints=include_constraints,
+        get_all_constraints=include_constraints,
+        limit=500000,
+    )
+    step_stats = statistics['steps']
+    raw_catalog = statistics['constraint_catalog']
 
     # Build attack name map for evaluate (resolved attacks + constraint rendering)
     attack_names = _build_attack_name_map(console) if include_constraints else {}
 
     result = []
     for s in step_stats:
-        sim_count = s.get('simulationCount', 0)
-        target_sims = s.get('targetSimulators', {})
-        attacker_sims = s.get('attackerSimulators', {})
-        moves = s.get('moves', {})
+        sim_count = s['simulationCount']
+        target_sims = s['targetSimulators']
+        attacker_sims = s['attackerSimulators']
+        moves = s['moves']
 
         step_result = {
             'simulationCount': sim_count,
-            'matchedTargetSimulators': sum(1 for v in target_sims.values() if v > 0),
-            'matchedAttackerSimulators': sum(1 for v in attacker_sims.values() if v > 0),
-            'matchedAttacks': sum(1 for v in moves.values() if v > 0),
+            'matchedTargetSimulators': _count_matched_entities(target_sims.values()),
+            'matchedAttackerSimulators': _count_matched_entities(attacker_sims.values()),
+            'matchedAttacks': _count_matched_entities(moves.values()),
             'totalTargetSimulators': len(target_sims),
             'totalAttackerSimulators': len(attacker_sims),
             'totalAttacks': len(moves),
@@ -2468,24 +2542,27 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
                     'name': attack_names.get(mid, ''),
                     'simulationCount': count,
                 }
-                for mid, count in sorted(moves.items(), key=lambda x: -x[1])
+                for mid, count in sorted(moves.items(),
+                                         key=_by_descending_simulation_count)
             ]
 
         # Add constraint diagnostics when there are unmatched attacks
         if include_constraints:
             unmatched = sum(1 for v in moves.values() if v == 0)
-            constraints = s.get('simulatorConstraints', {})
+            constraints = s['simulatorConstraints']
             if constraints and unmatched > 0:
                 if sim_count == 0 or verbose_failures:
                     # Per-attack detail: zero-sim steps OR verbose mode
                     step_result['constraint_summary'] = _summarize_constraints(
-                        constraints, attack_names=attack_names
+                        constraints, attack_names=attack_names,
+                        constraint_catalog=raw_catalog,
                     )
                 else:
                     # Partial coverage default: aggregated summary
                     step_result['constraint_summary_aggregated'] = (
                         _summarize_constraints_aggregated(
-                            constraints, attack_names=attack_names
+                            constraints, attack_names=attack_names,
+                            constraint_catalog=raw_catalog,
                         )
                     )
                 step_result['unmatched_attack_count'] = unmatched
@@ -2493,8 +2570,1188 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         result.append(step_result)
 
     counts = [s['simulationCount'] for s in result]
-    logger.info(f"Statistics: {counts} (total: {sum(counts)})")
+    computed = [c for c in counts if is_computed_count(c)]
+    logger.info(f"Statistics: {counts} "
+                f"({len(computed)}/{len(counts)} computed, total: {sum(computed)})")
     return result
+
+
+CONFLICT_DETAIL_MODES = ('summary', 'per_attack', 'full')
+CONFLICT_SIMULATOR_ID_SAMPLE = 10
+CONFLICT_VALUES_VARIANT_CAP = 5
+
+# A single default step on a real console produced 38,531 conflicts, 9,613
+# attacks and an 11.8 MB response — unusable for the conversational caller this
+# tool exists to serve. Every capped collection states its true total beside it,
+# and conflict_detail='full' lifts the caps.
+CONFLICTS_CAP = 50
+ZERO_IMPACT_CAP = 50
+COUNT_MAP_CAP = 100
+
+_CONSTRAINT_SIDES = (('attackerConstraints', 'attacker'), ('targetConstraints', 'target'))
+
+
+def _iter_constraint_leaves(simulator_constraints):
+    """Yield (side, simulator_id, attack_id, reason) for every reason present.
+
+    Iterates only what the map contains. The orchestrator prunes empty leaves and then any
+    simulator left with no constraints, so a simulator's absence means it had no
+    conflicts — never that it went unevaluated. Each leaf is a list and every
+    element is yielded: under getAllConstraints a pairing accumulates several
+    reasons, and reading only the first discards most of the explanation.
+    """
+    if not isinstance(simulator_constraints, dict):
+        return
+    for key, side in _CONSTRAINT_SIDES:
+        side_map = simulator_constraints.get(key)
+        if not isinstance(side_map, dict):
+            continue
+        for simulator_id, attacks in side_map.items():
+            if not isinstance(attacks, dict):
+                continue
+            for attack_id, leaf in attacks.items():
+                if isinstance(leaf, dict):
+                    leaf = [leaf]
+                if not isinstance(leaf, list):
+                    continue
+                for reason in leaf:
+                    if not isinstance(reason, dict):
+                        continue
+                    code = reason.get('reason')
+                    # A reason with no code is skipped rather than given a
+                    # synthetic one, which would inject a code the API never
+                    # emitted into the catalog.
+                    if isinstance(code, str) and code:
+                        yield side, simulator_id, attack_id, reason
+
+
+def _constraint_leaf_values(reason):
+    """The API's own detail for one reason.
+
+    Prefers a `values` object; where the reason carries its detail as flat
+    sibling keys instead — which is what every shipped payload does — those are
+    returned instead. `{}` when it carried no detail at all.
+    """
+    values = reason.get('values')
+    if isinstance(values, dict):
+        return values
+    return {k: v for k, v in reason.items() if k not in ('reason', 'values')}
+
+
+def _group_constraint_conflicts(simulator_constraints):
+    """Group constraint leaves by (attack_id, code) — never one row per simulator.
+
+    Exploding per simulator makes the response unusable on a real console, where
+    one code routinely eliminates the same attack across dozens of nodes.
+    """
+    groups = {}
+    for side, simulator_id, attack_id, reason in _iter_constraint_leaves(simulator_constraints):
+        key = (attack_id, reason['reason'])
+        group = groups.setdefault(key, {
+            'sides': set(), 'simulator_ids': {}, 'values_variants': {},
+        })
+        group['sides'].add(side)
+        # dict-as-ordered-set: one code routinely eliminates an attack across
+        # dozens of nodes, so list membership would be quadratic here.
+        group['simulator_ids'][simulator_id] = None
+
+        values = _constraint_leaf_values(reason)
+        if values:
+            # Keyed on the serialized detail: _constraint_leaf_values falls
+            # back to every sibling key, so a future per-simulator field would
+            # make each variant unique and a linear scan quadratic.
+            variant_key = json.dumps(values, sort_keys=True, default=str)
+            variant = group['values_variants'].setdefault(
+                variant_key, {'values': values, 'simulator_ids': {}}
+            )
+            variant['simulator_ids'][simulator_id] = None
+    return groups
+
+
+def _index_constraints_by_simulator(simulator_constraints):
+    """Return {simulator_id: {code: {'sides': set, 'attack_ids': [...]}}}."""
+    index = {}
+    for side, simulator_id, attack_id, reason in _iter_constraint_leaves(simulator_constraints):
+        entry = index.setdefault(simulator_id, {}).setdefault(
+            reason['reason'], {'sides': set(), 'attack_ids': set()}
+        )
+        entry['sides'].add(side)
+        # Only its size is ever read, so a set is both correct and linear.
+        entry['attack_ids'].add(attack_id)
+    return index
+
+
+def _attack_sort_key(attack_id):
+    """Order numeric attack ids naturally; fall back to the string form."""
+    try:
+        return (0, int(attack_id), '')
+    except (TypeError, ValueError):
+        return (1, 0, str(attack_id))
+
+
+def _conflict_severity(attack_count):
+    """Severity from the attack's own count alone — no vocabulary is consulted.
+
+    A reason eliminates one node variant for one attack; an attack with surviving
+    candidates still runs. The same code is therefore legitimately blocking for
+    one attack and reducing for another in the same step.
+    """
+    if not is_computed_count(attack_count):
+        return 'unknown'
+    return 'blocking' if attack_count == 0 else 'reducing'
+
+
+def _build_conflicts(simulator_constraints, moves, attack_names=None,
+                     conflict_detail='summary'):
+    """Normalized conflict rows: catalog references, not repeated static blobs."""
+    conflicts = []
+    for (attack_id, code), group in _group_constraint_conflicts(simulator_constraints).items():
+        conflict = {
+            'code': code,
+            'severity': _conflict_severity(moves.get(attack_id)),
+            'attack_id': attack_id,
+            'side': sorted(group['sides']),
+            'simulator_count': len(group['simulator_ids']),
+        }
+
+        variants = list(group['values_variants'].values())
+        if len(variants) == 1:
+            conflict['values'] = variants[0]['values']
+        elif variants:
+            # Simulators disagreed on the detail; report each rather than
+            # silently keeping whichever was seen first. The true total is
+            # always stated, so a capped list is never mistaken for the whole.
+            conflict['values_variants'] = [
+                {'values': v['values'], 'simulator_count': len(v['simulator_ids'])}
+                for v in variants[:CONFLICT_VALUES_VARIANT_CAP]
+            ]
+            conflict['values_variant_count'] = len(variants)
+
+        if conflict_detail in ('per_attack', 'full'):
+            name = (attack_names or {}).get(attack_id)
+            if name:
+                conflict['attack_name'] = name
+        if conflict_detail == 'full':
+            conflict['simulator_ids'] = list(
+                group['simulator_ids']
+            )[:CONFLICT_SIMULATOR_ID_SAMPLE]
+
+        conflicts.append(conflict)
+
+    # Blocking first: when the list is capped, the conflicts that stop an attack
+    # running must be the ones that survive.
+    return sorted(conflicts, key=lambda c: (
+        0 if c['severity'] == 'blocking' else 1,
+        _attack_sort_key(c['attack_id']),
+        c['code'],
+    ))
+
+
+def _zero_impact_attacks(moves, conflicts, attack_names=None):
+    """Attacks whose count is an integer 0, each carrying its blocking conflicts.
+
+    A null count is never included: not computed is not the same as runs nowhere.
+    """
+    blockers_by_attack = {}
+    for conflict in conflicts:
+        if conflict['severity'] == 'blocking':
+            blocker = {k: conflict[k] for k in ('code', 'side', 'simulator_count')}
+            # Carry whichever detail form the conflict has: dropping variants
+            # would leave the primary "why did this run nowhere" surface with no
+            # explanation at all whenever simulators disagreed.
+            for detail in ('values', 'values_variants', 'values_variant_count'):
+                if detail in conflict:
+                    blocker[detail] = conflict[detail]
+            blockers_by_attack.setdefault(conflict['attack_id'], []).append(blocker)
+
+    entries = []
+    for attack_id, count in sorted(moves.items(), key=lambda kv: _attack_sort_key(kv[0])):
+        if not (is_computed_count(count) and count == 0):
+            continue
+        entry = {'attack_id': attack_id}
+        name = (attack_names or {}).get(attack_id)
+        if name:
+            entry['attack_name'] = name
+        entry['blockers'] = blockers_by_attack.get(attack_id, [])
+        entries.append(entry)
+    return entries
+
+
+def _zero_impact_simulators(simulators, simulator_index, simulator_names=None):
+    """Simulators whose UNION-map count is an integer 0.
+
+    Read only the union map: a node present on one side is absent from the other
+    role map, never zero in it, so a role map would both miss real zero-impact
+    simulators and invent ones that are simply single-role.
+    """
+    entries = []
+    for simulator_id, count in sorted(simulators.items()):
+        if not (is_computed_count(count) and count == 0):
+            continue
+        entry = {'simulator_id': simulator_id}
+        name = (simulator_names or {}).get(simulator_id)
+        if name:
+            entry['simulator_name'] = name
+        entry['blockers'] = [
+            {
+                'code': code,
+                'side': sorted(info['sides']),
+                # For a per-simulator blocker the informative number is how many
+                # attacks this node was eliminated from.
+                'attack_count': len(info['attack_ids']),
+            }
+            for code, info in sorted(simulator_index.get(simulator_id, {}).items())
+        ]
+        entries.append(entry)
+    return entries
+
+
+def _cap_list(shaped, key, entries, cap, uncapped):
+    """Emit a list with its true total, capped unless the caller asked for full."""
+    shaped[key] = entries if uncapped else entries[:cap]
+    shaped[f'{key}_total'] = len(entries)
+
+
+def _cap_count_map(shaped, key, mapping, uncapped):
+    """Emit a count map with its true size.
+
+    A real console returns thousands of attack ids per step. The full map is
+    available under conflict_detail='full'; otherwise a deterministic prefix is
+    emitted and the total states what was left out.
+    """
+    if uncapped or len(mapping) <= COUNT_MAP_CAP:
+        shaped[key] = mapping
+    else:
+        ordered = sorted(mapping.items(), key=lambda kv: _attack_sort_key(kv[0]))
+        shaped[key] = dict(ordered[:COUNT_MAP_CAP])
+    shaped[f'{key}_total'] = len(mapping)
+
+
+def _shape_statistics_step(step, attack_names=None, simulator_names=None,
+                           conflict_detail='summary'):
+    """One caller-facing step, with all reporting suppressed when nothing was computed."""
+    uncapped = conflict_detail == 'full'
+    shaped = {
+        'step_index': step['response_step_index'],
+        'simulation_count': step['simulationCount'],
+        'counts_computed': step['counts_computed'],
+        'is_limit_reached': step['isLimitReached'],
+    }
+    _cap_count_map(shaped, 'attacks', step['moves'], uncapped)
+    _cap_count_map(shaped, 'simulators', step['simulators'], uncapped)
+    _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
+    _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
+
+    # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
+    # from them. Emptiness here is by construction, not by filtering.
+    if not step['counts_computed']:
+        _cap_list(shaped, 'zero_impact_attacks', [], ZERO_IMPACT_CAP, uncapped)
+        _cap_list(shaped, 'zero_impact_simulators', [], ZERO_IMPACT_CAP, uncapped)
+        _cap_list(shaped, 'conflicts', [], CONFLICTS_CAP, uncapped)
+        return shaped
+
+    conflicts = _build_conflicts(
+        step['simulatorConstraints'], step['moves'],
+        attack_names=attack_names, conflict_detail=conflict_detail,
+    )
+    # Derived from the FULL conflict list, then capped — capping first would
+    # strip an attack's blockers before they were collected.
+    _cap_list(shaped, 'zero_impact_attacks', _zero_impact_attacks(
+        step['moves'], conflicts, attack_names=attack_names
+    ), ZERO_IMPACT_CAP, uncapped)
+    _cap_list(shaped, 'zero_impact_simulators', _zero_impact_simulators(
+        step['simulators'],
+        _index_constraints_by_simulator(step['simulatorConstraints']),
+        simulator_names=simulator_names,
+    ), ZERO_IMPACT_CAP, uncapped)
+    _cap_list(shaped, 'conflicts', conflicts, CONFLICTS_CAP, uncapped)
+    return shaped
+
+
+def _build_plan_statistics_report(statistics, conflict_detail='summary',
+                                  attack_names=None, simulator_names=None,
+                                  both_present=False):
+    """Turn a fetch_plan_statistics result into the caller-facing report.
+
+    Static facts live once in `constraint_catalog`; each conflict references it
+    by code and carries only what varies.
+    """
+    # Validated here rather than in _build_conflicts, which runs per step and
+    # only when counts were computed — a fully truncated response would
+    # otherwise accept an invalid mode and return a normal-looking report.
+    _validate_conflict_detail(conflict_detail)
+
+    steps = [
+        _shape_statistics_step(
+            step, attack_names=attack_names, simulator_names=simulator_names,
+            conflict_detail=conflict_detail,
+        )
+        for step in statistics['steps']
+    ]
+
+    # Every code the response actually shows, from all three places it can be
+    # shown. The conflicts list is capped; the zero-impact blockers are built
+    # from the raw constraint index and are not, so a blocker code whose
+    # conflict sorted past the cap would otherwise resolve to description null
+    # — reporting "this console supplied no description" for a code it did
+    # describe, which is the one thing the relay must never say.
+    emitted_codes = {
+        conflict['code'] for step in steps for conflict in step['conflicts']
+    } | {
+        blocker['code'] for step in steps
+        for entry in (step['zero_impact_attacks'] + step['zero_impact_simulators'])
+        for blocker in entry['blockers']
+    }
+    constraint_catalog = _build_constraint_catalog(
+        statistics['constraint_catalog'], emitted_codes
+    )
+
+    return get_plan_statistics_response_mapping(
+        statistics, steps, constraint_catalog, both_present=both_present
+    )
+
+
+def _input_hint(body_param='plan'):
+    """The exclusivity hint, worded for whichever body parameter the caller used.
+
+    The rule is one rule; only its vocabulary differs. The shipped tools call the
+    ad-hoc body 'plan'; the scenario tools call it 'scenario', which is the
+    product's own word. Duplicating the rule to reword it would give the two
+    surfaces room to disagree about what "exactly one" means.
+    """
+    return (
+        f"Provide exactly one of '{body_param}' (a JSON string carrying an ad-hoc "
+        f"scenario body, e.g. '{{\"steps\": [...]}}'), 'scenario_id' (a saved scenario "
+        f"or custom plan) or 'test_id' (the planRunId of a past run, e.g. "
+        f"'1764165600525.2')."
+    )
+
+
+
+BOTH_COUNTS_HINT = (
+    "Two separate calls were issued. 'runnable' (includeDisabled=false) is what would "
+    "actually run right now; 'expected' (includeDisabled=true) is what would run if every "
+    "simulator were available. Expected cannot be derived from runnable, nor the reverse — "
+    "includeDisabled=false filters disabled, unapproved and offline simulators out of the "
+    "counts entirely, so the expected number is simply not present in a runnable response. "
+    "Compare them per step; the difference is explained by the simulator_is_offline "
+    "conflicts that appear in 'runnable' and never in 'expected'."
+)
+
+
+def _blank_to_none(value):
+    """Treat a blank string as absent.
+
+    A calling model routinely fills an unused optional with "" rather than
+    omitting it; taken literally that both defeats the exclusivity check and
+    sends an empty id to the orchestrator.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _parse_plan_argument(plan, scenario_id, test_id=None, body_param='plan'):
+    """Validate the tool-boundary inputs and parse the plan JSON string.
+
+    Exclusivity is checked before the parse, so a caller who supplies both a
+    malformed plan and a scenario id is told about the real problem. Returns
+    (parsed_plan, scenario_id, test_id) with exactly one of them set.
+
+    ``body_param`` names the ad-hoc body in the messages only — the rule it
+    enforces is identical either way.
+    """
+    plan = _blank_to_none(plan)
+    scenario_id = _blank_to_none(scenario_id)
+    test_id = _blank_to_none(test_id)
+
+    hint = _input_hint(body_param)
+    supplied = [name for name, value in
+                ((body_param, plan), ('scenario_id', scenario_id), ('test_id', test_id))
+                if value is not None]
+    if len(supplied) > 1:
+        raise ValueError(
+            f"{' and '.join(repr(n) for n in supplied)} were supplied together. "
+            f"{hint}"
+        )
+    if not supplied:
+        raise ValueError(
+            f"None of {body_param!r}, 'scenario_id' or 'test_id' was supplied. {hint}"
+        )
+
+    if scenario_id is not None:
+        return None, scenario_id, None
+
+    if test_id is not None:
+        # Passed straight through as testId: a planRunId is neither an integer
+        # plan id nor an OOB UUID, so the scenario-resolution path below would
+        # look it up as a scenario and report it missing.
+        return None, None, test_id
+
+    try:
+        parsed = json.loads(plan)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Invalid {body_param} JSON: {e}. {body_param!r} must be a JSON object string "
+            f"carrying the scenario body, e.g. '{{\"steps\": [{{...}}]}}'. {hint}"
+        ) from e
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"{body_param!r} must be a JSON object, got {type(parsed).__name__}. {hint}"
+        )
+    return parsed, None, None
+
+
+def _validate_conflict_detail(conflict_detail):
+    """Reject an unknown verbosity mode before any I/O."""
+    if conflict_detail not in CONFLICT_DETAIL_MODES:
+        raise ValueError(
+            f"conflict_detail must be one of {CONFLICT_DETAIL_MODES}, got {conflict_detail!r}"
+        )
+
+
+def _scenario_id_is_native(scenario_id):
+    """Whether the orchestrator can resolve this id itself.
+
+    The statistics endpoint's schema types `id` as an integer, so it resolves
+    custom plans (integer ids) natively but rejects an OOB scenario's UUID
+    outright — verified against a live console, where a UUID returns
+    400 "/id must be integer".
+    """
+    return str(scenario_id).strip().isdigit()
+
+
+def _resolve_scenario_to_plan(console, scenario_id):
+    """Turn an OOB scenario UUID into an ad-hoc plan body.
+
+    The orchestrator cannot accept a UUID in `id`, so the only route for an OOB scenario is
+    to read its steps here and score them as an ad-hoc plan. Returns None when
+    the id is one the orchestrator resolves itself, so that path stays a passthrough.
+    """
+    if _scenario_id_is_native(scenario_id):
+        return None
+
+    scenarios = _fetch_all_scenarios(console)
+    for scenario in scenarios:
+        if str(scenario.get('id')) == str(scenario_id):
+            steps = scenario.get('steps')
+            if not steps:
+                raise ValueError(
+                    f"Scenario '{scenario_id}' on console '{console}' has no steps, so "
+                    f"there is nothing to score."
+                )
+            return {"name": scenario.get('name') or "", "steps": steps}
+
+    raise ValueError(
+        f"Scenario '{scenario_id}' was not found on console '{console}'. Pass an OOB "
+        f"scenario UUID, or a custom plan's integer id, as 'scenario_id'."
+    )
+
+
+def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
+                     get_constraints, get_all_constraints, limit, use_cache,
+                     attack_names, conflict_detail, both_present):
+    """One scoring pass: fetch, then shape into the caller-facing report."""
+    statistics = fetch_plan_statistics(
+        console,
+        plan=plan,
+        scenario_id=scenario_id,
+        test_id=test_id,
+        include_disabled=include_disabled,
+        get_constraints=get_constraints,
+        get_all_constraints=get_all_constraints,
+        limit=limit,
+        use_cache=use_cache,
+    )
+    return _build_plan_statistics_report(
+        statistics,
+        conflict_detail=conflict_detail,
+        attack_names=attack_names,
+        both_present=both_present,
+    )
+
+
+def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
+                           scenario_id: str | None = None,
+                           test_id: str | None = None,
+                           include_disabled: bool = DEFAULT_INCLUDE_DISABLED,
+                           both_counts: bool = False,
+                           get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
+                           get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+                           limit: int = DEFAULT_LIMIT,
+                           use_cache: bool = DEFAULT_USE_CACHE,
+                           conflict_detail: str = "summary"):
+    """
+    Report what a plan would do on a console, without running anything.
+
+    Args:
+        console: SafeBreach console identifier
+        plan: JSON string of an ad-hoc scenario body. Mutually exclusive with the ids.
+        scenario_id: A saved scenario UUID or custom plan id.
+        test_id: The planRunId of a past run; scores the scenario that run executed.
+        include_disabled: False = runnable counts, True = expected counts.
+        both_counts: Issue two calls and return both figures, labelled.
+        get_constraints: Populate conflicts and the catalog that describes them.
+        get_all_constraints: Report every reason a pairing was eliminated, not just the first.
+        limit: Simulations the orchestrator evaluates before stopping early.
+        use_cache: Whether the orchestrator may answer from its own cache.
+        conflict_detail: 'summary', 'per_attack' or 'full'.
+
+    Returns:
+        The report (see get_plan_statistics_response_mapping), or — with
+        both_counts — {counts_mode: 'both', runnable: {...}, expected: {...},
+        hint_to_agent: ...}.
+    """
+    parsed_plan, resolved_scenario_id, resolved_test_id = _parse_plan_argument(
+        plan, scenario_id, test_id
+    )
+    _validate_conflict_detail(conflict_detail)
+
+    if resolved_scenario_id is not None:
+        # An OOB scenario's UUID has no field on the endpoint that accepts it,
+        # so it is resolved to its steps here; an integer plan id is left for
+        # the orchestrator to resolve natively.
+        from_scenario = _resolve_scenario_to_plan(console, resolved_scenario_id)
+        if from_scenario is not None:
+            parsed_plan, resolved_scenario_id = from_scenario, None
+
+    # Resolved once and reused across both passes: zero_impact_attacks is
+    # meaningful without constraints, and a bare attack id is unusable.
+    attack_names = _build_attack_name_map(console)
+
+    def score(with_disabled, both_present):
+        return _fetch_and_shape(
+            console,
+            plan=parsed_plan,
+            scenario_id=resolved_scenario_id,
+            test_id=resolved_test_id,
+            include_disabled=with_disabled,
+            get_constraints=get_constraints,
+            get_all_constraints=get_all_constraints,
+            limit=limit,
+            use_cache=use_cache,
+            attack_names=attack_names,
+            conflict_detail=conflict_detail,
+            both_present=both_present,
+        )
+
+    if not both_counts:
+        logger.info(
+            f"Plan statistics for console '{console}': one call, "
+            f"{'expected' if include_disabled else 'runnable'} counts"
+        )
+        return score(include_disabled, False)
+
+    logger.info(f"Plan statistics for console '{console}': two calls, both counts modes")
+    return {
+        'counts_mode': 'both',
+        'runnable': score(False, True),
+        'expected': score(True, True),
+        'hint_to_agent': BOTH_COUNTS_HINT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# three question projections — SAF-35508 Phase 7
+# ---------------------------------------------------------------------------
+
+# Helm asks three narrow questions, one at a time; the report answers all three
+# at once and leaves the caller to read past two of them. Each projection below
+# selects one question's slice. They are pure functions of the report dict — no
+# console, no I/O — so the whole layer is testable against a literal dict, and
+# every rule they need (null-vs-zero, capping, catalog narrowing) is reused from
+# the shaping layer rather than restated here.
+
+COUNTS_ROUTING_HINT = (
+    "These are counts only. For WHY a step produces nothing, call "
+    "get_scenario_blocked_entities; for why one specific attack did not run, "
+    "call get_scenario_attack_blockers."
+)
+
+BLOCKED_ENTITIES_HINT = (
+    "These entities remain in the scenario — this reports, it removes nothing. "
+    "Attacks that ran on fewer simulators than were offered are reductions, not "
+    "blocks, and are not listed here."
+)
+
+ATTACK_BLOCKERS_HINT = (
+    "Only fully-blocked attacks (a count of exactly 0) are analysed. An attack "
+    "that ran on fewer simulators than were offered is a reduction, not a block, "
+    "and is not reported here."
+)
+
+VERDICT_NOT_EVALUATED = (
+    "not evaluated — SafeBreach stopped before scoring, so nothing here indicates "
+    "any attack or simulator is inapplicable. This is not the same as a clean scenario."
+)
+
+VERDICT_CLEAN = (
+    "nothing is fully blocked — every attack and simulator in this scenario "
+    "contributes at least one simulation."
+)
+
+CONSTRAINTS_NOT_REQUESTED = (
+    "constraints were not requested (get_constraints=false), so no reason was "
+    "asked for. This is not the console reporting that it found none."
+)
+
+_HEADER_FIELDS = ('counts_mode', 'plan_step_count', 'returned_step_count',
+                  'truncated', 'params_used')
+
+_COVERAGE_FIELDS = ('attacks', 'target_simulators', 'attacker_simulators')
+
+
+def _parse_attack_ids(attack_ids_str, dedupe=False):
+    """Parse a comma-separated attack id list into integers.
+
+    The one implementation of quick_run's convention, message included: two
+    spellings of "which token was wrong" would be two contracts. ``dedupe`` is
+    off by default because collapsing repeats is right for a question and wrong
+    for an execution — quick_run's caller who names an attack twice is asking
+    to run it twice.
+    """
+    if not attack_ids_str or (isinstance(attack_ids_str, str)
+                              and not attack_ids_str.strip()):
+        return []
+
+    parsed_ids = []
+    for part in attack_ids_str.split(","):
+        part = part.strip()
+        if not part:
+            continue  # Skip empty segments (e.g., "8849,,217")
+        try:
+            value = int(part)
+        except ValueError:
+            raise ValueError(
+                f"invalid attack ID '{part}' — all IDs must be integers"
+            ) from None
+        if dedupe and value in parsed_ids:
+            # Asking twice about one attack is one question. Running it twice
+            # is two runs, which is why this is the caller's choice and not a
+            # property of the comma convention.
+            continue
+        parsed_ids.append(value)
+    return parsed_ids
+
+
+def _projection_header(report):
+    """The facts every question needs before it can read a number.
+
+    Guarantee: these projections never mutate the report they are given, and
+    ``params_used`` is copied so three callers do not share one nested dict.
+    The copies are otherwise shallow — a carried entry is shared with the
+    source report, which suits the read-only narration downstream and avoids
+    deep-copying a capped-but-large list on every call.
+    """
+    header = {field: report[field] for field in _HEADER_FIELDS}
+    header['params_used'] = dict(report['params_used'])
+    return header
+
+
+def _carry_coverage(step, shaped):
+    """Copy the three count maps and their true totals.
+
+    Kept whole rather than pre-reduced: the narrator summarises them with the
+    same `_coverage` helper the shipped report uses, and `<map>_total` is what
+    makes a capped map honest.
+    """
+    for field in _COVERAGE_FIELDS:
+        shaped[field] = dict(step[field])
+        shaped[f'{field}_total'] = step[f'{field}_total']
+
+
+def _project_both_aware(report, project):
+    """Apply a projection to one report, or to both sides of a both-counts result.
+
+    Must run before anything indexes ``report['steps']`` — the both-counts shape
+    has no steps of its own, only two reports that each do.
+    """
+    if report.get('counts_mode') == 'both':
+        return {
+            'counts_mode': 'both',
+            'runnable': project(report['runnable']),
+            'expected': project(report['expected']),
+            'hint_to_agent': report['hint_to_agent'],
+        }
+    return project(report)
+
+
+def _project_simulation_counts(report):
+    """"How many simulations will this produce?" — the numbers, and nothing else.
+
+    Drops conflicts, both zero-impact lists and the catalog. A step producing 0
+    is reported, but not explained: that is the blocked-entities question, and
+    the hint routes there rather than this tool answering it badly.
+    """
+    def project(one):
+        shaped = _projection_header(one)
+        steps = []
+        for step in one['steps']:
+            step_view = {
+                'step_index': step['step_index'],
+                'simulation_count': step['simulation_count'],
+                'counts_computed': step['counts_computed'],
+                'is_limit_reached': step['is_limit_reached'],
+            }
+            _carry_coverage(step, step_view)
+            steps.append(step_view)
+        shaped['steps'] = steps
+        shaped['hint_to_agent'] = f"{one['hint_to_agent']} {COUNTS_ROUTING_HINT}"
+        return shaped
+
+    return _project_both_aware(report, project)
+
+
+def _cited_codes(entries):
+    """Every constraint code the blockers of these entries actually reference.
+
+    Tolerates a blocker-less entry: a disposition that neither ran nor blocked
+    carries no blockers at all, and cites nothing.
+    """
+    return {blocker['code'] for entry in entries
+            for blocker in entry.get('blockers', ())}
+
+
+def _ran_somewhere(steps, count_field):
+    """Ids that produced a computed, positive count in any scored step.
+
+    Blockedness is a property of the whole scenario, not of one step. Counting
+    a per-step zero without checking the other steps calls an attack that ran
+    "contributing nothing" — the same false statement `_resolve_disposition`
+    refuses, and it must be refused identically wherever it is asked.
+    """
+    return {
+        str(entity_id)
+        for step in steps if step['counts_computed']
+        for entity_id, count in step[count_field].items()
+        if is_computed_count(count) and count > 0
+    }
+
+
+def _unconfirmable_ids(steps, count_field, zero_impact_field, id_key, candidates):
+    """Candidates a capped map leaves genuinely unaccounted for in some step.
+
+    A count map truncated at its cap does not say an id is missing from the
+    step — only that the map stopped before reaching it. Absence there is
+    *unknown*, not zero: the null-versus-zero rule applied one level up, to the
+    map rather than the counts inside it. Without it, an attack that ran in a
+    step too large to send whole is reported as running nowhere.
+
+    A step's zero-impact list still counts as an account of the id, so an entry
+    dropped from the capped map but named there is confirmed, not unknown.
+    """
+    unconfirmable = set()
+    for step in steps:
+        if not step['counts_computed']:
+            continue
+        if len(step[count_field]) >= step[f'{count_field}_total']:
+            continue  # whole map: absence here is real
+        accounted = set(step[count_field]) | {
+            str(entry[id_key]) for entry in step[zero_impact_field]
+        }
+        unconfirmable |= candidates - accounted
+    return unconfirmable
+
+
+def _blocked_across_steps(steps, count_field, zero_impact_field, id_key):
+    """Distinct ids that contribute nothing anywhere, and those we cannot tell.
+
+    The single rule behind the verdict's counts, the blocked listing and each
+    per-id disposition. Two aggregations of "what is blocked" drift apart the
+    moment one of them changes; returning both halves from one place is what
+    stops the three answers contradicting each other over one scoring.
+    """
+    ran = _ran_somewhere(steps, count_field)
+    blocked = {
+        str(entity_id)
+        for step in steps if step['counts_computed']
+        for entity_id, count in step[count_field].items()
+        if is_computed_count(count) and count == 0
+    }
+    # The zero-impact list survives a cap the counts map does not, so it can
+    # name a blocked entity the counts map dropped.
+    blocked |= {
+        str(entry[id_key])
+        for step in steps if step['counts_computed']
+        for entry in step[zero_impact_field]
+    }
+    blocked -= ran
+    unconfirmable = _unconfirmable_ids(
+        steps, count_field, zero_impact_field, id_key, blocked)
+    return blocked - unconfirmable, unconfirmable
+
+
+def _blocked_entities_verdict(steps):
+    """Blocked, clean, partially evaluated, or never evaluated.
+
+    Decided from ``counts_computed``, never from list length: a limit-reached
+    report empties both zero-impact lists *by construction*, so a verdict read
+    off their length would call a scenario nobody scored a scenario with nothing
+    wrong.
+
+    "Clean" is the claim that needs the most care, because it is a statement
+    about every step. A report where some steps scored and others did not can
+    support it for the scored ones only — asserting it over the whole scenario
+    would be the same silent over-claim `_partial_scoring_error` refuses on the
+    execution side, and the more dangerous of the two directions.
+    """
+    scored = [step for step in steps if step['counts_computed']]
+    if not scored:
+        return {'state': 'not_evaluated', 'summary': VERDICT_NOT_EVALUATED}
+
+    # Distinct entities that contribute nothing ANYWHERE — the same rule the
+    # blockers tool resolves dispositions with, so the two cannot disagree over
+    # one scoring. An attack scored 0 in one step and 240 in another ran.
+    blocked_attacks, unsure_attacks = _blocked_across_steps(
+        scored, 'attacks', 'zero_impact_attacks', 'attack_id')
+    blocked_simulators, unsure_simulators = _blocked_across_steps(
+        scored, 'simulators', 'zero_impact_simulators', 'simulator_id')
+    attacks, simulators = len(blocked_attacks), len(blocked_simulators)
+    any_blocked = bool(attacks or simulators)
+    # Two flags, not one: a capped simulator list says nothing about whether the
+    # attack count is exact, and hedging a number that is exact reads as doubt
+    # the data does not support. Each covers both ways a cap makes the count a
+    # lower bound — entries the list omits, and entries we could not confirm
+    # ran elsewhere.
+    attacks_capped = bool(unsure_attacks) or any(
+        len(step['zero_impact_attacks']) < step['zero_impact_attacks_total']
+        or len(step['attacks']) < step['attacks_total'] for step in scored)
+    simulators_capped = bool(unsure_simulators) or any(
+        len(step['zero_impact_simulators']) < step['zero_impact_simulators_total']
+        or len(step['simulators']) < step['simulators_total'] for step in scored)
+    found = (
+        f"{'at least ' if attacks_capped else ''}{attacks} attack(s) and "
+        f"{'at least ' if simulators_capped else ''}{simulators} simulator(s) "
+        f"contribute nothing"
+    ) if any_blocked else "nothing is fully blocked"
+
+    if len(scored) < len(steps):
+        return {
+            'state': 'partially_evaluated',
+            'summary': (
+                f"{len(scored)} of {len(steps)} step(s) were scored. Among those, "
+                f"{found}. The remaining {len(steps) - len(scored)} step(s) were "
+                f"never scored, so nothing here says whether they are clean."
+            ),
+        }
+
+    unsure = len(unsure_attacks) + len(unsure_simulators)
+    if not any_blocked:
+        if unsure:
+            # "Clean" is a claim about everything. An entity a truncated map
+            # may be hiding is not something this report can vouch for, so the
+            # answer is what was confirmed, not a blanket all-clear.
+            return {
+                'state': 'clean_where_measured',
+                'summary': (
+                    f"nothing was confirmed blocked, but {unsure} entit(ies) could "
+                    f"not be confirmed either way — a truncated map may be hiding a "
+                    f"count for them. Ask about them by id for a definite answer."
+                ),
+            }
+        return {'state': 'clean', 'summary': VERDICT_CLEAN}
+    return {'state': 'blocked', 'summary': f"{found} in this scenario."}
+
+
+def _project_blocked_entities(report):
+    """"Will anything not run at all?" — a yes/no question, answered as one.
+
+    Carries both zero-impact lists with their blockers and the coverage
+    denominators that make "N of M" legible. Drops the conflicts list: it holds
+    the reducing rows, and an attack that runs on fewer simulators than offered
+    is not an answer to "what runs nowhere". Omits per-step simulation counts
+    for the same reason — that is the counts tool's question.
+    """
+    def project(one):
+        shaped = _projection_header(one)
+        steps, cited = [], set()
+        for step in one['steps']:
+            step_view = {
+                'step_index': step['step_index'],
+                'counts_computed': step['counts_computed'],
+                'is_limit_reached': step['is_limit_reached'],
+                'zero_impact_attacks': list(step['zero_impact_attacks']),
+                'zero_impact_attacks_total': step['zero_impact_attacks_total'],
+                'zero_impact_simulators': list(step['zero_impact_simulators']),
+                'zero_impact_simulators_total': step['zero_impact_simulators_total'],
+                # The union map, and only here: it is the denominator
+                # zero_impact_simulators is drawn from, so "N of M simulators
+                # contribute nothing" has no M without it. The counts tool has
+                # no zero-impact list and so no use for it.
+                'simulators': dict(step['simulators']),
+                'simulators_total': step['simulators_total'],
+            }
+            _carry_coverage(step, step_view)
+            cited |= _cited_codes(step_view['zero_impact_attacks'])
+            cited |= _cited_codes(step_view['zero_impact_simulators'])
+            steps.append(step_view)
+
+        shaped['steps'] = steps
+        shaped['verdict'] = _blocked_entities_verdict(steps)
+        shaped['constraint_catalog'] = _build_constraint_catalog(
+            one['constraint_catalog'], cited
+        )
+        hint = f"{one['hint_to_agent']} {BLOCKED_ENTITIES_HINT}"
+        # Without this the empty blocker lists below read as "the console found
+        # no reason", when in fact no reason was ever asked for.
+        if not one['params_used'].get('getConstraints'):
+            shaped['constraints_not_requested'] = CONSTRAINTS_NOT_REQUESTED
+            hint = f"{hint} {CONSTRAINTS_NOT_REQUESTED}"
+        shaped['hint_to_agent'] = hint
+        return shaped
+
+    return _project_both_aware(report, project)
+
+
+def _index_attack_occurrences(steps):
+    """Where each attack id appears, what it counted, and whether detail survives.
+
+    Returns (occurrences, blockers_by_id, count_map_capped). Both maps are
+    capped, and neither cap implies the other: an id can be blocked with no
+    entry to explain it, or carry a full explanation while sorting out of the
+    counts map entirely. Reading only one of them makes this tool contradict
+    the blocked-entities tool over the very same report.
+    """
+    occurrences, blockers_by_id, capped = {}, {}, False
+    for step in steps:
+        scored = step['counts_computed']
+        # Ahead of the `scored` short-circuit below: whether the map is whole is
+        # what makes "absent" meaningful, and it is a fact about the map, not
+        # about the counts in it. A limit-reached step is the likeliest place to
+        # find a >100-entry map, so skipping this check there is exactly
+        # backwards.
+        if len(step['attacks']) < step['attacks_total']:
+            capped = True
+        for attack_id, count in step['attacks'].items():
+            # A step nobody scored has no counts to read. Its map can still
+            # carry integers the API sent, and taking one at face value would
+            # report an attack blocked on a number that was never computed.
+            occurrences.setdefault(attack_id, []).append(
+                (step['step_index'], count if scored else None)
+            )
+        if not scored:
+            continue
+        for entry in step['zero_impact_attacks']:
+            key = str(entry['attack_id'])
+            blockers_by_id.setdefault(key, (step['step_index'], entry))
+            # A zero-impact entry is itself proof of an integer 0, and it
+            # survives a cap the counts map did not. Without this, an attack
+            # whose id sorts past COUNT_MAP_CAP reports "can't tell" while its
+            # full blocker list sits right here.
+            if key not in step['attacks']:
+                occurrences.setdefault(key, []).append((step['step_index'], 0))
+    return occurrences, blockers_by_id, capped
+
+
+def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_capped,
+                         constraints_requested=True, unconfirmable=False):
+    """One named id, one answer — and never silence.
+
+    "Ran" outranks "blocked" deliberately. An attack scored 0 in one step and
+    240 in another DID run, and filing it under a heading that reads "did not
+    run anywhere" would be a confident false statement whose truth would
+    otherwise depend on which step the scenario happens to list first.
+    """
+    key = str(attack_id)
+    entry = {'attack_id': key}
+    seen = occurrences.get(key, [])
+
+    for step_index, count in seen:
+        if is_computed_count(count) and count > 0:
+            entry.update(disposition='ran', simulation_count=count,
+                         step_index=step_index)
+            return entry
+
+    for step_index, count in seen:
+        if is_computed_count(count) and count == 0:
+            found = blockers_by_id.get(key)
+            blockers = list(found[1]['blockers']) if found else []
+            entry.update(
+                # "Blocked" claims it ran nowhere. When a capped map could be
+                # hiding a positive count for this id in another step, that
+                # claim is not available — only the weaker one it earned.
+                disposition=('blocked_where_measured' if unconfirmable
+                             else 'blocked'),
+                step_index=found[0] if found else step_index,
+                blockers=blockers,
+                # An empty blocker list renders as "no constraint reported",
+                # which asserts the console found no reason. Say which it is:
+                # truncated locally, never asked for, or genuinely none. The
+                # entry can exist with no blockers when constraints were off,
+                # so key this off the blockers, not off the entry.
+                detail_truncated=found is None and constraints_requested,
+            )
+            if not blockers and not constraints_requested:
+                entry['constraints_not_requested'] = CONSTRAINTS_NOT_REQUESTED
+            if found and found[1].get('attack_name'):
+                entry['attack_name'] = found[1]['attack_name']
+            return entry
+
+    if seen:
+        entry['disposition'] = 'not_computed'
+        return entry
+
+    # Absent from the map is only meaningful if the map is whole.
+    entry['disposition'] = 'count_map_truncated' if count_map_capped else 'absent'
+    return entry
+
+
+def _project_attack_blockers(report, attack_ids):
+    """"Why didn't attack #N run?" — one disposition per attack asked about.
+
+    Every named id gets exactly one answer. Listing whatever happens to be
+    blocked, unasked, is `get_scenario_blocked_entities`' question; answering it
+    here too gave one report two owners and two ways to phrase one finding.
+    """
+    def project(one):
+        shaped = _projection_header(one)
+        steps = one['steps']
+        occurrences, blockers_by_id, capped = _index_attack_occurrences(steps)
+        # A blocker list is empty for three different reasons, and only one of
+        # them means the console found nothing.
+        requested = bool(one['params_used'].get('getConstraints'))
+        # Shared with the verdict so the two cannot reach different answers
+        # about which attacks a capped map leaves unconfirmed.
+        scored_steps = [step for step in steps if step['counts_computed']]
+        _, unsure = _blocked_across_steps(
+            scored_steps, 'attacks', 'zero_impact_attacks', 'attack_id')
+
+        def resolve(attack_id):
+            return _resolve_disposition(
+                attack_id, occurrences, blockers_by_id, capped,
+                constraints_requested=requested,
+                unconfirmable=str(attack_id) in unsure,
+            )
+
+        dispositions = [resolve(attack_id) for attack_id in attack_ids]
+        cited = _cited_codes(dispositions)
+
+        # Whether anything was scored at all. Without it a caller cannot tell an
+        # empty answer that searched the scenario from one that never read it,
+        # and "no blocked attack was found" is a claim only the first can make.
+        shaped['any_step_scored'] = bool(scored_steps)
+        shaped['asked_about'] = [str(attack_id) for attack_id in attack_ids]
+        shaped['dispositions'] = dispositions
+        shaped['constraint_catalog'] = _build_constraint_catalog(
+            one['constraint_catalog'], cited
+        )
+        hint = f"{one['hint_to_agent']} {ATTACK_BLOCKERS_HINT}"
+        if not requested:
+            shaped['constraints_not_requested'] = CONSTRAINTS_NOT_REQUESTED
+            hint = f"{hint} {CONSTRAINTS_NOT_REQUESTED}"
+        shaped['hint_to_agent'] = hint
+        return shaped
+
+    return _project_both_aware(report, project)
+
+
+def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
+                    both_counts, get_constraints, get_all_constraints, limit,
+                    use_cache, conflict_detail):
+    """Validate in the caller's vocabulary, then score exactly once.
+
+    The parse result is discarded — ``sb_get_plan_statistics`` does its own, and
+    routing through it keeps this repo's single `plan/statistics` call site
+    single. What this call buys is the error wording: 'scenario', not 'plan'.
+    """
+    _parse_plan_argument(scenario, scenario_id, test_id, body_param='scenario')
+    return sb_get_plan_statistics(
+        console=console,
+        plan=scenario,
+        scenario_id=scenario_id,
+        test_id=test_id,
+        include_disabled=include_disabled,
+        both_counts=both_counts,
+        get_constraints=get_constraints,
+        get_all_constraints=get_all_constraints,
+        limit=limit,
+        use_cache=use_cache,
+        conflict_detail=conflict_detail,
+    )
+
+
+def sb_get_scenario_simulation_counts(
+    console: str = "default", scenario: str | None = None,
+    scenario_id: str | None = None, test_id: str | None = None,
+    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
+    get_constraints: bool = False,
+    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
+    conflict_detail: str = "summary",
+):
+    """How many simulations a scenario would produce, without running anything.
+
+    ``get_constraints`` defaults to False here alone: this answer renders no
+    conflicts, and evaluating them is not free — a single default step measured
+    38,531 conflicts and 11.8 MB on a real console.
+    """
+    logger.info(f"Scenario simulation counts for console '{console}'")
+    return _project_simulation_counts(_score_scenario(
+        console, scenario, scenario_id, test_id, include_disabled, both_counts,
+        get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+    ))
+
+
+def sb_get_scenario_blocked_entities(
+    console: str = "default", scenario: str | None = None,
+    scenario_id: str | None = None, test_id: str | None = None,
+    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
+    get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
+    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
+    conflict_detail: str = "summary",
+):
+    """Whether any attack or simulator in a scenario would contribute nothing."""
+    logger.info(f"Scenario blocked entities for console '{console}'")
+    return _project_blocked_entities(_score_scenario(
+        console, scenario, scenario_id, test_id, include_disabled, both_counts,
+        get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+    ))
+
+
+def sb_get_scenario_attack_blockers(
+    console: str = "default", scenario: str | None = None,
+    scenario_id: str | None = None, test_id: str | None = None,
+    attack_ids: str | None = None,
+    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
+    get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
+    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
+    conflict_detail: str = "summary",
+):
+    """Why specific attacks did not run — the constraints that blocked them.
+
+    ``attack_ids`` is required, and parsed before anything is scored, so a typo
+    costs no request. "Is anything blocked?" is a different question with its
+    own tool; answering it from here as well would let one report be narrated
+    two ways.
+    """
+    if not attack_ids or not attack_ids.strip():
+        raise ValueError(
+            "attack_ids is required: name the attack id(s) to ask about, e.g. "
+            "attack_ids='9012,1234'. To ask whether anything in this scenario "
+            "is blocked without naming ids, call get_scenario_blocked_entities."
+        )
+    parsed_ids = _parse_attack_ids(attack_ids, dedupe=True)
+    # Separators alone name nothing. Reinterpreting them as "list everything
+    # blocked" would answer a question the caller did not ask, after charging
+    # them for the scoring call; quick_run rejects the same input rather than
+    # guessing at it.
+    if not parsed_ids:
+        raise ValueError(
+            f"attack_ids was supplied as {attack_ids!r} but names no attack id. "
+            f"Name the attack id(s) to ask about, or call "
+            f"get_scenario_blocked_entities to ask what is blocked."
+        )
+    logger.info(
+        f"Scenario attack blockers for console '{console}': "
+        f"{len(parsed_ids)} id(s) named"
+    )
+    return _project_attack_blockers(_score_scenario(
+        console, scenario, scenario_id, test_id, include_disabled, both_counts,
+        get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+    ), parsed_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -2521,19 +3778,7 @@ def _validate_and_resolve_attack_ids(attack_ids_str, console):
                               and not attack_ids_str.strip()):
         raise ValueError("attack_ids is required and cannot be empty")
 
-    # Parse comma-separated IDs
-    raw_parts = attack_ids_str.split(",")
-    parsed_ids = []
-    for part in raw_parts:
-        part = part.strip()
-        if not part:
-            continue  # Skip empty segments (e.g., "8849,,217")
-        try:
-            parsed_ids.append(int(part))
-        except ValueError:
-            raise ValueError(
-                f"invalid attack ID '{part}' — all IDs must be integers"
-            )
+    parsed_ids = _parse_attack_ids(attack_ids_str)
 
     if not parsed_ids:
         raise ValueError("attack_ids is required and cannot be empty")
@@ -2738,7 +3983,7 @@ def sb_quick_run(
         steps, console, include_constraints=evaluate
     )
     step_counts = [s.get('simulationCount', 0) for s in step_stats]
-    total_predicted = sum(step_counts)
+    total_predicted = _sum_computed_counts(step_counts)
     empty_steps = [i + 1 for i, c in enumerate(step_counts) if c == 0]
 
     # Evaluate: return prediction without queuing
@@ -2779,6 +4024,18 @@ def sb_quick_run(
         }
 
     # Execution validation
+    if _nothing_was_computed(step_counts):
+        raise ValueError(_truncated_scoring_error("Quick Run", step_counts))
+
+    # Before the checks below, which all read an uncomputed count as a measured
+    # zero: the total would understate, and the partial-execution filter would
+    # drop the unscored attack from a real run.
+    uncomputed_steps = _uncomputed_step_positions(step_counts)
+    if uncomputed_steps:
+        raise ValueError(
+            _partial_scoring_error("Quick Run", uncomputed_steps, step_counts)
+        )
+
     if total_predicted == 0:
         raise ValueError(
             f"Quick Run would produce 0 simulations across all "
@@ -2790,7 +4047,9 @@ def sb_quick_run(
     if empty_steps:
         exec_steps = []
         for i, step in enumerate(steps):
-            if step_counts[i] > 0:
+            # Every count is computed by here — the guard above refused the
+            # partial response that used to make this drop an unscored attack.
+            if _runs_anywhere(step_counts[i]):
                 exec_steps.append(step)
             else:
                 attack_id = step["attacksFilter"]["playbook"]["values"][0]
@@ -2959,7 +4218,7 @@ def sb_run_scenario(
                                           include_constraints=evaluate,
                                           verbose_failures=verbose_failures)
     step_counts = [s['simulationCount'] for s in step_stats]
-    total_predicted = sum(step_counts)
+    total_predicted = _sum_computed_counts(step_counts)
     empty_steps = [
         i + 1 for i, count in enumerate(step_counts) if count == 0
     ]
@@ -2983,6 +4242,21 @@ def sb_run_scenario(
         }
 
     # Validate simulation counts (only for actual runs, not evaluate)
+    if _nothing_was_computed(step_counts):
+        raise ValueError(_truncated_scoring_error(
+            f"Scenario '{scenario.get('name', scenario_id)}'", step_counts
+        ))
+
+    # Before the checks below: `empty_steps` counts only genuine zeros, so an
+    # unscored step would slip past allow_partial_steps, and the messages would
+    # state a measured verdict over steps that were never measured.
+    uncomputed_steps = _uncomputed_step_positions(step_counts)
+    if uncomputed_steps:
+        raise ValueError(_partial_scoring_error(
+            f"Scenario '{scenario.get('name', scenario_id)}'",
+            uncomputed_steps, step_counts,
+        ))
+
     if total_predicted == 0:
         step_names = [s.get('name', f'Step {i+1}') for i, s in enumerate(scenario['steps'])]
         raise ValueError(
