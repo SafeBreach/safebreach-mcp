@@ -1008,20 +1008,40 @@ unchanged at the end of this phase and every existing test still passes untouche
   narrows `constraint_catalog` to **only the codes those blockers cite** — a catalog listing codes no reported
   blocker references would be padding on a tool whose whole job is a short answer. It drops the conflicts
   list, which carries the `reducing` rows that are not this question's subject.
-- `_project_blocked_entities` also computes the **verdict** in three mutually exclusive states, from
-  `counts_computed` and the two list lengths: blocked, clean, or not-evaluated. The not-evaluated state is
-  decided by `counts_computed` alone and **never** by list emptiness, because the lists are empty by
-  construction in exactly that case (§3 Component D, §9 R1).
-- `_project_attack_blockers` takes the parsed id list. For each id it resolves one of four dispositions in
-  this order: **blocked** (an integer `0` in `attacks`), **ran** (an integer > 0), **not computed** (`None`),
-  **absent** (the id is in no step's `attacks` map). Blocked ids carry their blockers from
-  `zero_impact_attacks`; the other three carry one line each.
-- **Filtering precedes capping.** The projection reads the report's `zero_impact_attacks` list, which is
-  already capped at `ZERO_IMPACT_CAP = 50`. A named id absent from the capped list but present in `attacks`
-  with an integer `0` must still be reported as blocked — so the projection resolves the disposition from the
-  **`attacks` count map** (capped separately at `COUNT_MAP_CAP = 100`) and treats the zero-impact list only as
-  the source of *blocker detail*. Where the count map itself was capped past a named id, the tool says so
-  rather than reporting the id as absent — an absent id and a truncated-away id are different answers.
+- `_project_blocked_entities` also computes the **verdict** in mutually exclusive states, decided
+  from `counts_computed` and **never** from list emptiness (the lists are empty by construction on an
+  unscored step): blocked, clean, **clean-where-measured**, **partially-evaluated**, or not-evaluated.
+  *Revised during Phase 7 — this
+  clause specified three states, and a code review reproduced the gap: a report with one step scored clean
+  and one never scored fell through to `clean` and asserted that every attack and simulator in the scenario
+  contributes at least one simulation — a blanket claim over unmeasured steps, and the same silent
+  over-claim the execution side refuses. The fourth state reports findings over the scored steps only.
+  Pinned by T-53.*
+- `_project_attack_blockers` takes the parsed id list. For each id it resolves one disposition in this
+  order: **ran** (an integer > 0 anywhere), **blocked** or **blocked-where-measured** (an integer `0`),
+  **not computed** (`None`), **count-map-truncated**, **absent**. *Revised during Phase 7 — this clause
+  ordered blocked before ran, which would file an attack scored `0` in one step and 240 in another under a
+  heading reading "did not run anywhere", making the answer depend on which step the scenario lists first.
+  Pinned by T-49.* Blocked ids carry their blockers from `zero_impact_attacks`; the others carry one line each.
+- **A capped map answers "unknown", never "no".** The counts map is truncated at `COUNT_MAP_CAP` by ascending
+  id, so an id's absence from it means the map stopped before reaching that id — not that the step lacks it.
+  Every scenario-wide judgement therefore distinguishes *confirmed* from *unconfirmable*: an id a truncated
+  map might be hiding a positive count for resolves to **`blocked_where_measured`** rather than `blocked`, and
+  a report with no confirmed blockage but some unconfirmable entity yields the verdict
+  **`clean_where_measured`** rather than the flat clean claim, stating how many entities it could not vouch
+  for. An entity named in a step's own zero-impact list is accounted for in that step and stays plainly
+  blocked. *Added during Phase 7 — a review reproduced an attack that ran 240 times being reported as
+  contributing nothing, because "ran anywhere" was read from the capped map. This is the null-versus-zero
+  rule applied to the map as well as to the counts inside it. Pinned by T-54.*
+- **Filtering precedes capping, and neither cap implies the other.** `zero_impact_attacks` is capped at
+  `ZERO_IMPACT_CAP = 50` and the `attacks` count map at `COUNT_MAP_CAP = 100`, and an id can fall outside
+  either one independently: blocked with no entry to explain it, or fully explained while sorting out of the
+  counts map entirely. The disposition is therefore resolved from the **union** of both, with the zero-impact
+  entry itself taken as proof of an integer `0`. *Revised during Phase 7 — reading only the counts map made
+  this tool report "can't tell" about an attack whose full blocker list was in hand, and return an empty
+  blocked list on a scenario where the blocked-entities tool, from the same scoring, correctly said
+  "blocked".* Whether the counts map is whole is a fact about the map, not about the counts in it, so it is
+  established even on a step nobody scored — an absent id and a truncated-away id are different answers.
 - `attack_ids` parsing reuses the comma-separated-integer convention `sb_quick_run` already implements;
   invalid input raises `ValueError` with the offending token, as that function does.
 - The three public functions pass every parameter through to `sb_get_plan_statistics` unchanged, except that

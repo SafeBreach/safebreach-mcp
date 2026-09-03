@@ -30,6 +30,9 @@ from safebreach_mcp_studio.studio_functions import (
     _get_scenario_statistics,
     sb_get_plan_statistics,
     _build_plan_statistics_report,
+    VERDICT_CLEAN,
+    CONSTRAINTS_NOT_REQUESTED,
+    _parse_attack_ids,
     _project_simulation_counts,
     _project_blocked_entities,
     _project_attack_blockers,
@@ -12794,14 +12797,18 @@ PHASE7_MIXED_STEP = _phase4_step(
     attackerSimulators={'sim-a': 2},
     simulatorConstraints={
         'targetConstraints': {
-            # 9012 is eliminated everywhere -> blocking; 1234 loses one
-            # simulator but still runs -> reducing, and must not be reported
-            # by the blocked-entities tool.
+            # 9012 is eliminated everywhere -> blocking. 1234 loses sim-a but
+            # still runs -> reducing, and must not reach the blocked-entities
+            # tool. port_in_use sits on sim-a deliberately: sim-a's own count is
+            # 2, so it is not a zero-impact simulator and this code is cited by
+            # no reported blocker. On sim-b (count 0) it would legitimately
+            # explain why that simulator contributes nothing, and the absence
+            # assertion below would be wrong rather than the code under test.
             'sim-b': {'9012': [{'reason': 'incompatible_os',
-                                'required': 'WINDOWS', 'actual': 'LINUX'}],
-                      '1234': [{'reason': 'port_in_use'}]},
+                                'required': 'WINDOWS', 'actual': 'LINUX'}]},
             'sim-a': {'9012': [{'reason': 'incompatible_os',
-                                'required': 'WINDOWS', 'actual': 'MAC'}]},
+                                'required': 'WINDOWS', 'actual': 'MAC'}],
+                      '1234': [{'reason': 'port_in_use'}]},
         },
         'attackerConstraints': {},
     },
@@ -12905,6 +12912,54 @@ class TestBlockedEntitiesVerdictComesFromCountsComputed:
         }
         assert len(summaries) == 3
 
+    @staticmethod
+    def _partially_scored():
+        # One step scored and clean, one never scored. The dangerous shape:
+        # "clean" is a claim about EVERY step, and half of them are unmeasured.
+        scored = _phase4_step(
+            response_step_index=0, simulationCount=240, moves={'1234': 240},
+            simulators={'sim-a': 2}, targetSimulators={'sim-a': 2},
+        )
+        never = _phase4_step(
+            response_step_index=1, simulationCount=None, counts_computed=False,
+            isLimitReached=True, moves={'9012': None},
+        )
+        return _phase7_report([scored, never], plan_step_count=2, truncated=True)
+
+    def test_a_partially_scored_scenario_is_not_called_clean(self):
+        verdict = _project_blocked_entities(self._partially_scored())['verdict']
+        assert verdict['state'] == 'partially_evaluated'
+
+    def test_a_partial_verdict_never_claims_every_attack_contributes(self):
+        verdict = _project_blocked_entities(self._partially_scored())['verdict']
+        assert VERDICT_CLEAN not in verdict['summary']
+        assert 'every attack and simulator' not in verdict['summary']
+
+    def test_a_partial_verdict_says_how_much_was_scored(self):
+        verdict = _project_blocked_entities(self._partially_scored())['verdict']
+        assert '1 of 2 step(s) were scored' in verdict['summary']
+        assert 'never scored' in verdict['summary']
+
+    def test_one_attack_blocked_in_three_steps_counts_once(self):
+        blocked_step = lambda i: _phase4_step(
+            response_step_index=i, simulationCount=0, moves={'226': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '226'),
+                                  'attackerConstraints': {}},
+        )
+        report = _phase7_report([blocked_step(0), blocked_step(1), blocked_step(2)],
+                                catalog=PHASE7_CATALOG, plan_step_count=3)
+        summary = _project_blocked_entities(report)['verdict']['summary']
+        assert summary.startswith('1 attack(s)')
+
+    def test_all_four_states_are_reachable_and_distinct(self):
+        states = {
+            _project_blocked_entities(r)['verdict']['state']
+            for r in (self._blocked(), self._clean(),
+                      self._partially_scored(), self._truncated())
+        }
+        assert states == {'blocked', 'clean', 'partially_evaluated', 'not_evaluated'}
+
     def test_flipping_only_counts_computed_turns_clean_into_not_evaluated(self):
         # The load-bearing case: both lists are empty in BOTH reports, so a
         # verdict derived from their length cannot tell these apart.
@@ -12951,6 +13006,17 @@ class TestNamedAttackResolvesToOneDisposition:
     def test_an_id_in_no_step_reports_absent(self):
         assert self._disposition(7777)['disposition'] == 'absent'
 
+    def test_a_repeated_id_is_answered_once(self):
+        projected = _project_attack_blockers(
+            self._report(), _parse_attack_ids("226,226", dedupe=True))
+        assert [d['attack_id'] for d in projected['dispositions']] == ['226']
+
+    def test_the_shared_parser_does_not_collapse_repeats_by_default(self):
+        # quick_run names an attack twice to RUN it twice; collapsing that in
+        # the shared parser would silently change a shipped execution tool.
+        assert _parse_attack_ids("8849,8849") == [8849, 8849]
+        assert _parse_attack_ids("8849,8849", dedupe=True) == [8849]
+
     def test_each_id_appears_once_in_the_order_asked(self):
         projected = _project_attack_blockers(self._report(), [281, 226, 7777])
         assert [d['attack_id'] for d in projected['dispositions']] == ['281', '226', '7777']
@@ -12958,6 +13024,26 @@ class TestNamedAttackResolvesToOneDisposition:
     def test_the_four_dispositions_are_pairwise_distinct(self):
         codes = {self._disposition(i)['disposition'] for i in (226, 281, 9012, 7777)}
         assert len(codes) == 4
+
+    def test_an_integer_zero_in_an_unscored_step_is_not_blocked(self):
+        # The API may still send integers on a limit-reached step. They mean
+        # nothing, and reading one would report an attack blocked on a number
+        # that was never computed.
+        report = _phase7_report([_phase4_step(
+            simulationCount=None, counts_computed=False, isLimitReached=True,
+            moves={'1234': 0},
+        )], plan_step_count=2, returned_step_count=1, truncated=True)
+        entry = _project_attack_blockers(report, [1234])['dispositions'][0]
+        assert entry['disposition'] == 'not_computed'
+
+    def test_an_unscored_step_agrees_with_the_blocked_entities_verdict(self):
+        report = _phase7_report([_phase4_step(
+            simulationCount=None, counts_computed=False, isLimitReached=True,
+            moves={'1234': 0},
+        )], plan_step_count=2, returned_step_count=1, truncated=True)
+        assert _project_blocked_entities(report)['verdict']['state'] == 'not_evaluated'
+        assert _project_attack_blockers(report, [1234])['dispositions'][0][
+            'disposition'] == 'not_computed'
 
     def test_asking_about_nothing_emits_no_dispositions_but_lists_the_blocked(self):
         projected = _project_attack_blockers(self._report(), [])
@@ -13003,6 +13089,154 @@ class TestFilteringPrecedesCapping:
         }
         assert codes == {'blocked', 'count_map_truncated'}
 
+    @staticmethod
+    def _blocked_ids_sort_past_the_cap():
+        # The shape the all-blocked fixture above cannot produce: a thousand
+        # attacks that RUN with low ids, and eleven blocked ones whose ids sort
+        # past COUNT_MAP_CAP. The counts map keeps the low ids; the zero-impact
+        # list keeps the blocked ones. Reading only the counts map loses them.
+        moves = {str(i): 4 for i in range(1, 1001)}
+        moves.update({str(i): 0 for i in range(9000, 9011)})
+        constraints = {f'sim-{i}': {str(i): [{'reason': 'incompatible_os'}]}
+                       for i in range(9000, 9011)}
+        return _phase7_report([_phase4_step(
+            simulationCount=4000, moves=moves,
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4},
+            simulatorConstraints={'targetConstraints': constraints,
+                                  'attackerConstraints': {}},
+        )], catalog=PHASE7_CATALOG)
+
+    def test_the_past_cap_fixture_really_excludes_the_blocked_ids(self):
+        step = self._blocked_ids_sort_past_the_cap()['steps'][0]
+        assert '9000' not in step['attacks']
+        assert any(str(e['attack_id']) == '9000' for e in step['zero_impact_attacks'])
+
+    def test_a_blocked_id_outside_the_counts_map_is_still_reported_blocked(self):
+        projected = _project_attack_blockers(self._blocked_ids_sort_past_the_cap(), [9000])
+        entry = projected['dispositions'][0]
+        assert entry['disposition'] == 'blocked'
+        assert entry['blockers']
+
+    def test_the_unnamed_blocked_listing_finds_ids_outside_the_counts_map(self):
+        projected = _project_attack_blockers(self._blocked_ids_sort_past_the_cap(), [])
+        assert {a['attack_id'] for a in projected['blocked_attacks']} == {
+            str(i) for i in range(9000, 9011)
+        }
+
+    def test_a_capped_map_on_an_unscored_step_still_forbids_absent(self):
+        # Whether the map is whole is a fact about the map, not about the
+        # counts in it — and a limit-reached step is the likeliest place to
+        # find a map too big to send whole.
+        report = _phase7_report(
+            [_phase4_step(simulationCount=None, counts_computed=False,
+                          isLimitReached=True,
+                          moves={str(i): None for i in range(1, 400)})],
+            plan_step_count=3, returned_step_count=1, truncated=True,
+        )
+        step = report['steps'][0]
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total']
+        entry = _project_attack_blockers(report, [350])['dispositions'][0]
+        assert entry['disposition'] == 'count_map_truncated'
+
+    def test_a_truncated_blocked_listing_says_so(self):
+        # Drawn from two capped maps, so a blocked attack can be missing. The
+        # flag reports only what is knowable — no invented shortfall.
+        projected = _project_attack_blockers(self._report(), [])
+        assert projected['blocked_attacks_listing_capped'] is True
+        assert 'may be partial' in projected['hint_to_agent']
+
+    def test_an_uncapped_listing_is_not_flagged_partial(self):
+        report = _phase7_report([_phase4_step(
+            simulationCount=0, moves={'226': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '226'),
+                                  'attackerConstraints': {}},
+        )], catalog=PHASE7_CATALOG)
+        projected = _project_attack_blockers(report, [])
+        assert projected['blocked_attacks_listing_capped'] is False
+        assert 'may be partial' not in projected['hint_to_agent']
+
+    def test_the_two_tools_agree_on_the_same_report(self):
+        # The contradiction this guards: blocked-entities says "blocked" while
+        # the blockers tool says it cannot tell, from one scoring.
+        report = self._blocked_ids_sort_past_the_cap()
+        assert _project_blocked_entities(report)['verdict']['state'] == 'blocked'
+        assert _project_attack_blockers(report, [])['blocked_attacks']
+
+    @staticmethod
+    def _blocked_in_one_step_running_in_another():
+        blocked = _phase4_step(
+            response_step_index=0, simulationCount=0, moves={'1234': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '1234'),
+                                  'attackerConstraints': {}},
+        )
+        # The SAME simulator, so neither the attack nor the simulator is
+        # blocked scenario-wide — both are zero in step 0 and positive in
+        # step 1. A different simulator here would be genuinely blocked and
+        # the verdict would be right to say so.
+        ran = _phase4_step(
+            response_step_index=1, simulationCount=240, moves={'1234': 240},
+            simulators={'sim-a': 2}, targetSimulators={'sim-a': 2},
+        )
+        return _phase7_report([blocked, ran], catalog=PHASE7_CATALOG,
+                              plan_step_count=2)
+
+    def test_the_two_tools_agree_when_an_attack_runs_in_only_one_step(self):
+        # The shape the single-step fixture above cannot produce: an attack
+        # scored 0 in one step and 240 in another. All three answers derived
+        # from that one scoring must say the same thing — it ran.
+        report = self._blocked_in_one_step_running_in_another()
+        assert _project_attack_blockers(report, [1234])[
+            'dispositions'][0]['disposition'] == 'ran'
+        assert _project_attack_blockers(report, [])['blocked_attacks'] == []
+        assert _project_blocked_entities(report)['verdict']['state'] == 'clean'
+
+    @staticmethod
+    def _runs_in_a_step_whose_map_was_capped():
+        # Blocked in step 0; runs 240 times in step 1, whose map is too large
+        # to send whole and stops before reaching the id. Absence from a capped
+        # map is unknown, not "did not run".
+        blocked = _phase4_step(
+            response_step_index=0, simulationCount=0, moves={'9000': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '9000'),
+                                  'attackerConstraints': {}},
+        )
+        big = {str(i): 4 for i in range(1, 200)}
+        big['9000'] = 240
+        ran = _phase4_step(
+            response_step_index=1, simulationCount=240, moves=big,
+            simulators={'sim-a': 240}, targetSimulators={'sim-a': 240},
+        )
+        return _phase7_report([blocked, ran], catalog=PHASE7_CATALOG,
+                              plan_step_count=2)
+
+    def test_the_capped_running_step_really_hides_the_id(self):
+        step = self._runs_in_a_step_whose_map_was_capped()['steps'][1]
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total']
+        assert '9000' not in step['attacks']
+
+    def test_an_id_a_capped_map_could_be_hiding_is_not_asserted_blocked(self):
+        report = self._runs_in_a_step_whose_map_was_capped()
+        entry = _project_attack_blockers(report, [9000])['dispositions'][0]
+        assert entry['disposition'] == 'blocked_where_measured'
+
+    def test_the_verdict_hedges_rather_than_asserting_over_a_capped_map(self):
+        report = self._runs_in_a_step_whose_map_was_capped()
+        verdict = _project_blocked_entities(report)['verdict']
+        # Not counted as confirmed-blocked, and not waved through as clean
+        # either — "clean" is a claim about everything, and a truncated map
+        # may be hiding this one.
+        assert verdict['state'] == 'clean_where_measured'
+        assert VERDICT_CLEAN not in verdict['summary']
+        assert 'could not be confirmed' in verdict['summary']
+
+    def test_a_running_attack_is_not_counted_as_contributing_nothing(self):
+        report = self._blocked_in_one_step_running_in_another()
+        summary = _project_blocked_entities(report)['verdict']['summary']
+        assert 'contribute nothing' not in summary
+
 
 class TestBlockedEntitiesCatalogIsNarrowed:
     """T-45 — the catalog carries only the codes its own reported blockers cite."""
@@ -13029,6 +13263,30 @@ class TestBlockedEntitiesCatalogIsNarrowed:
         catalog = {'incompatible_os': {'description': self.AWKWARD}}
         projected = _project_blocked_entities(self._report(catalog))
         assert projected['constraint_catalog']['incompatible_os']['description'] == self.AWKWARD
+
+    def test_a_blocker_code_past_the_conflict_cap_keeps_its_description(self):
+        # The conflicts list is capped; the zero-impact blockers are not. A
+        # blocker whose conflict sorted past the cap must still carry the
+        # description the console supplied — reporting null here would say the
+        # console explained nothing about a code it explained.
+        moves = {str(i): 0 for i in range(1, 61)}
+        moves['99'] = 4
+        constraints = {'sim-x': {str(i): [{'reason': 'code_a'}] for i in range(1, 61)}}
+        constraints['sim-z'] = {'99': [{'reason': 'code_b'}]}
+        simulators = {'sim-x': 0, 'sim-z': 0}
+        report = _phase7_report(
+            [_phase4_step(simulationCount=4, moves=moves, simulators=simulators,
+                          targetSimulators=simulators,
+                          simulatorConstraints={'targetConstraints': constraints,
+                                                'attackerConstraints': {}})],
+            catalog={'code_a': {'description': 'Reason A.'},
+                     'code_b': {'description': 'Reason B.'}},
+        )
+        step = report['steps'][0]
+        assert len(step['conflicts']) < step['conflicts_total']
+        assert 'code_b' not in {c['code'] for c in step['conflicts']}
+        catalog = _project_blocked_entities(report)['constraint_catalog']
+        assert catalog['code_b']['description'] == 'Reason B.'
 
     def test_an_undescribed_code_is_emitted_with_an_explicit_null(self):
         projected = _project_blocked_entities(self._report({'incompatible_os': {}}))
@@ -13104,6 +13362,28 @@ class TestBlockerDetailTruncatedIsNotNoConstraintReported:
         capped = _project_attack_blockers(self._capped_report(), [75])['dispositions'][0]
         plain = _project_attack_blockers(self._blockerless_report(), [226])['dispositions'][0]
         assert capped['detail_truncated'] != plain['detail_truncated']
+
+    @staticmethod
+    def _constraints_not_requested_report():
+        statistics = _phase4_statistics([_phase4_step(
+            simulationCount=0, moves={'226': 0},
+            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+        )])
+        statistics['params_used'] = dict(statistics['params_used'],
+                                         getConstraints=False)
+        return _build_plan_statistics_report(statistics, conflict_detail='summary')
+
+    def test_an_unrequested_reason_is_not_reported_as_no_reason(self):
+        entry = _project_attack_blockers(
+            self._constraints_not_requested_report(), [226])['dispositions'][0]
+        assert entry['blockers'] == []
+        assert entry['detail_truncated'] is False
+        assert entry['constraints_not_requested'] == CONSTRAINTS_NOT_REQUESTED
+
+    def test_blocked_entities_says_so_too_when_constraints_were_not_requested(self):
+        projected = _project_blocked_entities(self._constraints_not_requested_report())
+        assert projected['constraints_not_requested'] == CONSTRAINTS_NOT_REQUESTED
+        assert CONSTRAINTS_NOT_REQUESTED in projected['hint_to_agent']
 
 
 class TestAttackBlockersCatalogIsNarrowed:
@@ -13225,6 +13505,26 @@ class TestInvalidAttackIdIsRejectedBeforeAnyCall:
                 sb_get_scenario_attack_blockers(
                     console="test-console", scenario=self.SCENARIO, attack_ids="nope")
             post.assert_not_called()
+
+    def test_a_separator_only_value_is_rejected_not_reinterpreted(self):
+        # It must not silently become "list every blocked attack" — that is a
+        # different question, and the caller would be answered after paying
+        # for the call.
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="names no attack id"):
+                sb_get_scenario_attack_blockers(
+                    console="test-console", scenario=self.SCENARIO, attack_ids=",,")
+            post.assert_not_called()
+
+    def test_omitting_attack_ids_entirely_still_lists_everything_blocked(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_scenario_attack_blockers(
+                console="test-console", scenario=self.SCENARIO)
+        assert result['dispositions'] == []
+        assert result['blocked_attacks'] == []
+        assert result['blocked_attacks_listing_capped'] is False
 
     def test_empty_segments_are_skipped_not_rejected(
         self, mock_statistics_response_all_good
