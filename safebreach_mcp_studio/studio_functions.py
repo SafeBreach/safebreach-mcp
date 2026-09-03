@@ -3644,6 +3644,10 @@ def _project_attack_blockers(report, attack_ids):
 
         cited = _cited_codes(dispositions + blocked_attacks)
 
+        # Whether anything was scored at all. Without it a caller cannot tell an
+        # empty answer that searched the scenario from one that never read it,
+        # and "no blocked attack was found" is a claim only the first can make.
+        shaped['any_step_scored'] = bool(scored_steps)
         shaped['asked_about'] = [str(attack_id) for attack_id in (attack_ids or [])]
         shaped['dispositions'] = dispositions
         shaped['blocked_attacks'] = blocked_attacks

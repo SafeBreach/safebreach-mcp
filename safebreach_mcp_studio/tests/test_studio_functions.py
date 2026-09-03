@@ -9584,7 +9584,8 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
         'zero_impact_attacks_total': 1,
         'zero_impact_simulators': [{
             'simulator_id': 'sim-b',
-            'blockers': [{'code': 'incompatible_os', 'side': ['target'], 'attack_count': 1}],
+            'blockers': [{'code': 'incompatible_os', 'side': ['target'], 'attack_count': 1},
+                         {'code': 'port_in_use', 'side': ['attacker'], 'attack_count': 1}],
         }],
         'zero_impact_simulators_total': 1,
         'conflicts': [
@@ -9649,11 +9650,6 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
         assert 'incompatible_os' in text
         assert 'sim-b' in text
 
-    def test_conflicts_carry_severity_and_the_api_values(self):
-        text = self._render()
-        assert 'blocking' in text and 'reducing' in text
-        assert 'requiredOs' in text
-
     def test_the_catalog_states_a_missing_description_rather_than_the_code_twice(self):
         """A bare code is not an explanation, and the code is already the line's key."""
         text = self._render()
@@ -9669,7 +9665,7 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
                      'zero_impact_simulators': [], 'conflicts': []})
         text = self._render(steps=[step], truncated=True)
         assert 'not computed' in text
-        assert 'null is not zero' in text
+        assert 'not a zero' in text
         assert 'DNS Tunnel' not in text
 
     def test_a_null_count_is_never_rendered_as_zero(self):
@@ -9682,25 +9678,12 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
 
     def test_a_capped_collection_states_its_true_total(self):
         step = dict(self.STEP)
-        step['conflicts_total'] = 312
+        step['zero_impact_attacks_total'] = 312
         text = self._render(steps=[step])
-        assert '2 of 312' in text
+        assert '1 of 312' in text
 
     def test_truncation_is_flagged_in_the_narration(self):
         assert 'Truncated' in self._render(truncated=True)
-
-    def test_both_counts_renders_each_pass_under_its_own_heading(self):
-        report = {
-            'counts_mode': 'both',
-            'runnable': self._report(),
-            'expected': self._report(counts_mode='expected',
-                                     params_used={'includeDisabled': True, 'limit': 500000}),
-            'hint_to_agent': 'Two separate calls were issued.',
-        }
-        from safebreach_mcp_studio.studio_server import _format_plan_statistics
-        text = _format_plan_statistics(report)
-        assert '## Runnable' in text and '## Expected' in text
-        assert 'Two separate calls were issued.' in text
 
 
 class TestPlanInputIsExclusiveAndParsed:
@@ -13833,7 +13816,8 @@ class TestEveryVerdictAndDispositionRendersDistinctly:
     # --- the six dispositions --------------------------------------------
     def _disposition_line(self, report, attack_id):
         text = self._render_blockers(report, [attack_id])
-        hits = [l for l in text.splitlines() if str(attack_id) in l and l.strip().startswith(('-', '*'))]
+        hits = [l for l in text.splitlines()
+                if str(attack_id) in l and l.strip().startswith('- ')]
         assert hits, text
         return hits[0]
 
@@ -13892,6 +13876,24 @@ class TestEveryVerdictAndDispositionRendersDistinctly:
         text = self._render_blockers(capped, [75])
         assert 'no constraint reported' not in text
         assert 'truncat' in text.lower()
+
+    def test_an_unscored_report_does_not_report_nothing_blocked(self):
+        # "None found" is a claim only a search can make. A report where no step
+        # was scored has not searched the scenario.
+        report = _phase7_report(
+            [_phase4_step(simulationCount=None, counts_computed=False,
+                          isLimitReached=True, moves={'1234': None})],
+            plan_step_count=3, returned_step_count=1, truncated=True)
+        text = self._render_blockers(report, [])
+        assert 'No fully-blocked attack was found' not in text
+        assert 'Nothing was evaluated' in text
+
+    def test_a_scored_report_with_nothing_blocked_says_so_plainly(self):
+        report = _phase7_report([_phase4_step(
+            simulationCount=240, moves={'1234': 240},
+            simulators={'sim-a': 2}, targetSimulators={'sim-a': 2})])
+        text = self._render_blockers(report, [])
+        assert 'No fully-blocked attack was found' in text
 
     def test_no_optional_field_raises_when_absent(self):
         # A minimal report carries none of the optional markers.
@@ -14003,3 +14005,67 @@ class TestStepsAreNumberedFromZero:
         text = _format_scenario_simulation_counts(_project_simulation_counts(report))
         assert 'Step 0' in text
         assert 'Step 1' not in text
+
+
+class TestTheRegisteredToolsActuallyRun:
+    """T-24 (execution half) — the registered callables run end to end.
+
+    Every other test in this phase reaches past the tool wrapper: the narration
+    tests call `_format_scenario_*` and the function tests call
+    `sb_get_scenario_*`. That left the wrapper bodies — console resolution and
+    the exception ladder — the one part of the new surface nothing executed,
+    and a missing helper there raised an AttributeError that the broad
+    `except Exception` turned into a plausible-looking error string while every
+    test stayed green.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @staticmethod
+    def _callable(name):
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+
+        server = SafeBreachStudioServer()
+        return server.mcp._tool_manager._tools[name].fn
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_tool_returns_a_rendered_report(
+        self, name, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            text = self._callable(name)(console="test-console", scenario=self.SCENARIO)
+        assert isinstance(text, str)
+        assert text.startswith("## Scenario ")
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_no_tool_leaks_an_internal_error_as_its_answer(
+        self, name, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            text = self._callable(name)(console="test-console", scenario=self.SCENARIO)
+        # The failure this guards returned a fluent sentence, not a crash.
+        assert "object has no attribute" not in text
+        assert not text.startswith("Error ")
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_a_bad_argument_is_narrated_as_an_error_string_not_raised(self, name):
+        # The house convention: a tool returns its error, it does not raise.
+        # No transport is patched: validation must reject before any request.
+        text = self._callable(name)(console="test-console")
+        assert isinstance(text, str)
+        assert "Error" in text and "exactly one" in text
+
+    def test_the_blockers_tool_accepts_attack_ids_through_the_wrapper(
+        self, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good):
+            text = self._callable('get_scenario_attack_blockers')(
+                console="test-console", scenario=self.SCENARIO, attack_ids="9012")
+        assert "Asked about" in text and "9012" in text
