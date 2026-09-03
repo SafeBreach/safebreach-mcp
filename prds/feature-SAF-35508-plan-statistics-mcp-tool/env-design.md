@@ -1,130 +1,110 @@
 # Environment Design — SAF-35508
 
-**Owning ticket:** SAF-35508   **Env name (planned):** *none — reuse recommended, see below*
+**Owning ticket:** SAF-35508   **Env name (planned):** saf-35508
 **Environment class:** product / console env
-**Offering:** Validate (BAS) — _the test plan names `Validate console environment` verbatim for all five
-automatic e2e tests (T-28, T-29, T-30, T-31, T-40), which per the Level-2 ordering overrides the JIRA
-`Offering` field. No Propagate finding families are involved: nothing here runs an attack at all._
-**Builder:** `create-validate-environment` — **only if a dedicated env is chosen over reuse**
-**Runnability verdict:** env buildable: **yes** · feature exercisable E2E: **yes, on any console whose
-orchestrator carries SAF-35568** — and **NO** on one that does not, where T-40 degrades to a recorded skip
-**Source artifacts:** prd.md, test-plan.md, context.md
-**Status:** Draft (awaiting review)
+**Offering:** Validate (BAS) — _JIRA `Offering` (`customfield_13419`) = **"Helm AI Agent"**, which names the
+consumer rather than a build topology, so it does not resolve a builder on its own. The test plan resolves it
+explicitly: "Helm AI Agent over the **Validate** product surface — scenarios/plans, simulators, plan statistics".
+Deciding tests: T-28…T-31, T-40, T-48 all read scenarios, simulators and the playbook from a Validate console and
+score them through `plan/statistics`. Nothing in the plan touches lateral movement, AD, or patient-zero/victim
+topology, so Propagate is not merely unnecessary here — it could not exercise these tests at all._
+**Builder:** create-validate-environment
+**Runnability verdict:** env buildable: **yes** · feature exercisable E2E: **yes for the six automatic e2e tests**
+(they need only a console with a mixed-OS fleet) · **partially for T-35**, the Manual test that actually closes
+AC-4 — see *Gaps*.
+**Source artifacts:** prd.md, test-plan.md, context.md, test-results/ticket-compliance.md
+**Status:** Draft (awaiting review) — rewritten 2026-09-03, superseding the earlier draft whose console choice
+was left open
 
 ## Summary
 
-Five automatic e2e tests score real plans against a live console and read the numbers back. **Nothing is
-queued, attacked, or mutated** — `get_plan_statistics` is registered `readOnlyHint=True`, and the one test
-that raises (T-31) does so client-side before any request. The environment requirement is therefore not a
-topology at all: it is **a reachable Validate console whose orchestrator carries SAF-35568**, holding at
-least one scenario with steps and enough simulators that some attacks are eliminated.
+A minimal Validate console whose only job is to answer one question the 1 927 passing unit tests cannot:
+**do the three scenario-statistics tools report the numbers the product reports?** That is TI-4 / AC-4, the sole
+accepted gap on this ticket and the only criterion that tests correctness rather than self-consistency.
 
-**The recommendation is to reuse an existing console, not to build a dedicated environment.**
-
-## Reuse versus build — the cost trade-off, stated explicitly
-
-| | Reuse an existing console | Build `saf-35508` |
-|---|---|---|
-| Wall-clock | minutes (set two env vars) | ~6 min mgmt build + EC2 provisioning |
-| Cost | none | EC2 burn, 72 h TTL, teardown to remember |
-| Risk to the console | **none — every call is read-only** | n/a |
-| Satisfies T-28, T-29, T-31 | yes, if any scenario has steps | yes |
-| Satisfies T-30 | only if a disabled/offline simulator exists — else a recorded skip | yes, by construction |
-| Satisfies T-40 | **only if its orchestrator carries SAF-35568** | yes, if built from a develop that has it |
-
-A dedicated AWS lab to run five read-only scoring calls is disproportionate. The one thing a purpose-built
-env buys is **determinism for T-30** (guaranteeing a disabled simulator exists) — and T-30 already handles
-its absence with an explicit skip that asserts the unconditional half first. That is not worth a build on
-its own; it becomes worth it only if the reviewer wants T-30's conditional half genuinely exercised.
+The binding constraint is not scale — it is **OS diversity**. T-48 constructs a guaranteed block by aiming an
+OS-constrained attack at simulators of a different OS; on a single-OS fleet it can only skip. Two simulators of
+different OS families is therefore the floor, and also the ceiling for the automatic tests.
 
 ## Artifacts under test — DEPLOY MAP (developer: confirm this before approving)
 
-**Mission-scoped repo:** `safebreach-mcp` @ `feature/SAF-35508-plan-statistics-mcp-tool` (HEAD `fd03c14`).
+> **Read this row-by-row: there is deliberately nothing to deploy.**
 
-| Artifact | Where it runs for these tests | Deploy mechanism | Built? |
-|---|---|---|---|
-| `safebreach-mcp` (this branch) | **the local working tree** — pytest imports `sb_get_plan_statistics` | none; the checkout *is* the artifact | n/a |
-| in-console MCP server (`mcp-proxy`) | **not used by T-28…T-31, T-40** | — | — |
-| `orchestrator` | the console's own, **must carry SAF-35568** | stock; not built by this mission | must verify |
+| Repo (mission-scoped) | Image / service on mgmt | Build job | Branch tag to deploy | Deploy mechanism | Built? |
+|---|---|---|---|---|---|
+| safebreach-mcp | **none — not deployed** | n/a | n/a | n/a | n/a |
 
-**Two things a reader must not get wrong here:**
+**Why no deployment, against the usual rule.** The provisioning guidance says a `safebreach-mcp` change normally
+makes the in-console MCP server an artifact under test, deployed by rebuilding `mcp-proxy` with the branch
+pip-baked in. **That does not apply to the tests this env exists to run.** Every automatic e2e test in
+`test_e2e_plan_statistics.py` imports `sb_get_scenario_simulation_counts` / `..._blocked_entities` /
+`..._attack_blockers` **directly from the local worktree** and calls them with `console=E2E_CONSOLE`; the MCP
+functions execute locally and speak to the console's REST API. No request passes through a deployed `mcp-proxy`.
+Deploying one would cost a build and verify nothing these tests assert.
 
-1. **No `deploy-mcp-server-under-test` is required.** The plugin rule that "for `safebreach-mcp`, the
-   in-console MCP server is an artifact under test" does **not** apply to these five tests: they import the
-   Python function and call the console's REST API directly, never traversing an in-console MCP server.
-   Deploying `mcp-proxy` would be pure cost. *(It **is** required for the manual **T-32**, which exercises
-   the tool through Helm in the product — see Gaps.)*
-2. **`orchestrator` is not ours, but it is the decisive dependency.** SAF-35568 is what serves
-   `constraintCatalog`. T-40 is the only test in the whole plan that can *falsify* the relay design — every
-   Phase 1 test asserts MCP's behaviour *given* a catalog. On a console predating SAF-35568 it records a
-   skip and asserts the R11 degradation instead, so the design's central claim stays unverified.
+- **Console services:** all stock `develop`. Intended, and stated so the developer can confirm it.
+- **Code under test:** the local worktree at `feature/SAF-35508-plan-statistics-mcp-tool` (HEAD `35e62a9`),
+  exercised in-process by pytest.
+- **The one exception, out of scope here:** T-32 (Manual progression, `Passes after: Final`) drives an *MCP client
+  connected to the console* and would need `deploy-mcp-server-under-test`. It is not part of closing TI-4, and it
+  is not attempted by this env. Flagged so its absence is a decision, not an oversight.
 
-## Hosts (endpoints) — what the console must already have
+## Hosts (endpoints)
 
-Not a build spec. These are the properties any candidate console must satisfy:
+| # | Role | OS (version) | EDR sensor | Software | Notes |
+|---|---|---|---|---|---|
+| 1 | EP simulator | `windows2022` | — | — | Connected + approved. The **target-OS side** of T-48's constructed mismatch |
+| 2 | EP simulator | `ubuntu22` | — | — | Connected + approved. The **other-OS side**. Two OS families is what makes T-48 assertable rather than skippable |
+| 3 | EP simulator | `ubuntu22` | — | — | **Left unapproved** — see *Decisions needed*. `node.isEnabled = isConnected && approved`, so an unapproved node is "disabled" for `includeDisabled` without being switched off. Exercises T-30's conditional half |
 
-| # | Requirement | Needed by | If absent |
-|---|---|---|---|
-| 1 | ≥1 scenario carrying ≥1 step | T-28, T-29, T-30, T-40 | tests skip with a stated reason |
-| 2 | ≥1 custom plan (integer-string id) | T-29's second case | that case skips |
-| 3 | Enough simulators that some attacks are eliminated (OS mismatch etc.) | T-40 | no conflicts ⇒ nothing to relay ⇒ skip |
-| 4 | ≥1 disabled / unapproved / offline simulator | T-30's conditional half | recorded skip; the ordering half still asserts |
-| 5 | Orchestrator carrying **SAF-35568** | **T-40** | recorded skip; the relay design stays unverified |
-
-**If a dedicated env is chosen instead**, the minimal buildable spec is 2 simulators — `windows2022` and
-`ubuntu22` (both canonical `hosts.md` Validate ids, no-hyphen form) — with one deliberately left
-disconnected to satisfy requirement 4. No DC, no cloud attacker, no EDR sensor, no connectors: nothing here
-detects or blocks anything.
+- OS ids are the canonical no-hyphen Validate tokens from `hosts.md` "Buildable OS ids" (`windows2022`,
+  `ubuntu22`) — verified against the **Validate** row, not the hyphenated Propagate scheme.
+- No EDR sensors, no connectors, no email inboxes, no cloud nodes: `plan/statistics` is a **pre-execution
+  prediction** over configuration. Nothing in the plan runs a simulation or asserts a detection, so detection
+  tooling would add cost and cover nothing.
+- Cloud/network simulator: default cloud attacker only, as it ships.
+- Domain Controller: **no** — Validate, no AD in scope.
 
 ## Console configuration
 
-- **Cloud integrations:** none
-- **EDR/SIEM connectors:** none — no attack runs, so nothing detects
-- **Email inboxes:** none
-- **Impersonated users:** none
-- **Simulator roles & assets:** none required beyond the OS mismatch that produces a conflict
-- **Feature toggles:** none
-- **API keys:** one read-scope token for the chosen console (credential source below)
+- **Scenarios:** the OOB scenarios that ship with the console are sufficient — T-28/T-29/T-30/T-40 discover one
+  with steps at runtime and hardcode nothing. A custom plan is optional; T-29's integer-id case skips without one.
+- **Playbook:** ships with the console. T-48 queries it for an OS-constrained attack via
+  `target_platform_filter`.
+- **Simulator approval:** hosts 1 and 2 approved; host 3 deliberately left unapproved (pending the decision below).
+- **Impersonated users / roles / assets / connectors / toggles / RBAC / API keys:** none required.
+- **API key:** one console API token is required for the tests to authenticate — sourced, not created here.
 
 ## Credential sources (no secrets here)
 
-- Console API token ← `<console>_apitoken` env var, or `SB_API_KEY`, per the root `conftest.py`
-  `set_e2e_auth_context` fixture
-- Delivered via the private `.vscode/set_env.sh` (**absent in this checkout — only
-  `set_env.sh.template` is present**)
-
-## Runner-contract reconciliation
-
-`running-phase-tests` dispatches *(e2e × Automatic × Validate console)* → **`run-validate-attack`**. That is
-the wrong runner here: `run-validate-attack` executes attacks, and **these tests run no attack**. They are
-plain pytest making read-only API calls, invoked as:
-
-```
-export E2E_CONSOLE=<console>
-source .vscode/set_env.sh
-uv run --python 3.12 pytest safebreach_mcp_studio/tests/test_e2e_plan_statistics.py -m "e2e" -v
-```
-
-Surfaced per the SAF-33190 rule — a runner mismatch found at design time rather than after a build.
+- Console API token → AWS SSM under the console's configured parameter, per `environments_metadata.py`
+  (`secret_config.provider = aws_ssm`, parameter `<console>-apitoken`), read with `--profile dev`.
+- EC2 key → `~/.ssh/us-east-1.pem`.
+- The token is written only to `.vscode/set_env.sh`, which is gitignored and must never be committed.
 
 ## Decisions needed
 
-1. **Which console?** The repo's e2e default is `pentest01`. Any reachable Validate console works. *(This
-   is the only genuinely blocking decision.)*
-2. **Credentials.** No `.vscode/set_env.sh` exists in this checkout and no console env vars are set, so
-   **these tests cannot be run from this session as it stands** — a token must be supplied.
-3. **Is T-30's conditional half required?** If the chosen console has no disabled simulator, T-30 skips it.
-   Accepting the skip means reusing a console; requiring it means either disabling one simulator on the
-   chosen console or building a dedicated env.
-4. **Does the chosen console's orchestrator carry SAF-35568?** Verifiable in one call: score anything with
-   `get_constraints=True` and check whether `constraint_catalog` holds a non-null `description`.
+1. **Host 3 — build it, or accept T-30's skip?** T-30's conditional half (a positive runnable-vs-expected delta
+   *explained* by `simulator_is_offline`) needs a simulator that is disabled/unapproved **and fully blocks
+   something**. Its unconditional half (runnable ≤ expected) runs either way, and the test carries an explicit
+   skip with a stated reason. Building host 3 costs one small instance; skipping it leaves that assertion
+   unexercised. **Recommendation: build it** — "runnable excludes offline simulators and says why" is the
+   feature's most user-visible correction, and a skip here would leave it verified only against mocks.
+2. **T-35's browser access.** AC-4 as written compares the tools' numbers against the **Add Simulators Checkout
+   view** in the console UI. See *Gaps* — this needs a decision before the env is judged sufficient.
 
 ## Gaps
 
-- **T-32, T-33, T-35 are Manual and out of this design's scope** (`Passes after: Final`). **T-32 exercises
-  the tool through Helm in the product**, which *does* require the in-console MCP server — so it, unlike
-  the five automatic tests, needs `deploy-mcp-server-under-test`. **T-35 is the only test that checks the
-  numbers are right** rather than merely self-consistent, by comparing against the console's own Checkout
-  tab.
-- No environment can make T-40 meaningful on a pre-SAF-35568 console; that is a version dependency, not a
-  provisioning one.
+- 🔴 **T-35 cannot be fully executed as written.** It requires reading a rendered console view, and both browser
+  MCP servers (`sb-ui:playwright`, `sb-ui:chrome-devtools`) failed to connect this session. The env is buildable
+  and the *numbers* half is reachable another way: the Checkout view calls this same endpoint with
+  `includeDisabled=true, getConstraints=true` (`ui-react/src/actions/execution.tsx:615`), so the tools' output can
+  be compared against a direct call using the console's own parameter set. That verifies the real risk — **that
+  our parameter mapping diverges from the console's** — and is far stronger than any mocked assertion. It does not
+  verify the rendered figure. Recommend running that comparison and recording the rendered-view half as still
+  owed, rather than marking T-35 passed.
+- **No dispatch row fits these e2e tests.** `running-phase-tests` routes "e2e, Validate/BAS (console)" to
+  `run-validate-attack`, which *runs attacks*; these tests run no attack and live in the source repo, not
+  `automation`. They execute as `uv run pytest -m e2e` with `E2E_CONSOLE` set — a source-repo uv-pytest run that
+  happens to need a live console. Recorded so the runner's accounting reflects what actually ran.
+- **T-32 is not covered by this env** (needs a deployed MCP server; see the DEPLOY MAP).

@@ -309,10 +309,13 @@ class TestScenarioStatisticsToolsE2E:
         except Exception as e:
             pytest.skip(f"Could not list simulators on {E2E_CONSOLE}: {e}")
 
+        # The API returns OS as a nested object and camelCase connectivity
+        # flags. Reading a flat `os_type` finds nothing on ANY console, so the
+        # skip below would fire forever while blaming the fleet.
         by_os = {}
         for simulator in simulators:
-            os_type = (simulator.get('os_type') or '').upper()
-            if os_type:
+            os_type = ((simulator.get('OS') or {}).get('type') or '').upper()
+            if os_type and simulator.get('isConnected'):
                 by_os.setdefault(os_type, []).append(simulator['id'])
         if len(by_os) < 2:
             pytest.skip(
@@ -325,15 +328,18 @@ class TestScenarioStatisticsToolsE2E:
         try:
             attacks = sb_get_playbook_attacks(
                 console=E2E_CONSOLE, target_platform_filter=target_os,
-                page_number=0)['playbook_attacks']
+                page_number=0)['attacks_in_page']
         except Exception as e:
             pytest.skip(f"Could not list playbook attacks on {E2E_CONSOLE}: {e}")
         if not attacks:
             pytest.skip(f"No {target_os}-constrained attack found on '{E2E_CONSOLE}'.")
 
         blocked_attack = attacks[0]['id']
+        # Every filter carries operator+name+values; the console rejects a
+        # bare {"values": [...]} with a 400 schema error.
         body = json.dumps({"name": "", "steps": [{
-            "attacksFilter": {"playbook": {"values": [blocked_attack]}},
+            "attacksFilter": {"playbook": {"operator": "is", "name": "playbook",
+                                           "values": [blocked_attack]}},
             "targetFilter": {"simulators": {"operator": "is", "name": "simulators",
                                             "values": by_os[other_os]}},
         }]})
@@ -348,14 +354,29 @@ class TestScenarioStatisticsToolsE2E:
         assert blocked['verdict']['state'] in VERDICT_STATES
 
         disposition = blockers['dispositions'][0]['disposition']
-        if counts['steps'][0]['simulation_count'] == 0:
-            assert disposition in ('blocked', 'blocked_where_measured'), (
-                f"the counts tool reports 0 simulations, so the blockers tool must not "
-                f"say {disposition!r}"
-            )
-            assert blocked['verdict']['state'] in ('blocked', 'clean_where_measured')
-            for code in _blocker_codes(blocked):
-                assert code in blocked['constraint_catalog']
+        step = counts['steps'][0]
+        if step['simulation_count'] == 0:
+            # Two different zeros, and the orchestrator distinguishes them by
+            # whether the attack reached the moves map at all:
+            #   - map carries the id at 0  -> a move was generated and blocked
+            #   - map is empty of the id   -> no move was ever generated for it
+            # Only the first is what AC-9 calls inapplicable. Asserting
+            # "blocked" for both would demand a claim the data cannot support.
+            if str(blocked_attack) in step['attacks']:
+                assert disposition in ('blocked', 'blocked_where_measured'), (
+                    f"the attack is in the counts map at 0, so the blockers tool "
+                    f"must not say {disposition!r}"
+                )
+                assert blocked['verdict']['state'] in ('blocked', 'clean_where_measured')
+                for code in _blocker_codes(blocked):
+                    assert code in blocked['constraint_catalog']
+            else:
+                # No move generated. All three tools must at least agree that
+                # nothing runs — they must not disagree about the outcome.
+                assert disposition == 'absent'
+                assert not blocked['steps'][0]['zero_impact_attacks']
+                assert blocked['verdict']['state'] in (
+                    'clean', 'clean_where_measured', 'blocked')
         else:
             assert disposition == 'ran', (
                 f"the counts tool reports simulations, so the blockers tool must not "
