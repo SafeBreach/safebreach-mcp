@@ -12872,7 +12872,10 @@ class TestEachProjectionRendersOnlyItsSlice:
 
 
 class TestBlockedEntitiesVerdictComesFromCountsComputed:
-    """T-42 — the verdict is decided by counts_computed, never by list emptiness."""
+    """T-42 — the verdict is decided by counts_computed, never by list emptiness.
+
+    T-53 — and a partially scored scenario is never reported clean.
+    """
 
     @staticmethod
     def _blocked():
@@ -13052,7 +13055,11 @@ class TestNamedAttackResolvesToOneDisposition:
 
 
 class TestFilteringPrecedesCapping:
-    """T-44 — a named attack past the cap is still explained, never reported absent."""
+    """T-44 — a named attack past the cap is still explained, never reported absent.
+
+    T-54 — and an entity a truncated map may be hiding is never asserted
+    blocked or clean.
+    """
 
     @staticmethod
     def _report():
