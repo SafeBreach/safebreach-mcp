@@ -41,17 +41,11 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 # Get help with all external connection options
 uv run start_all_servers.py --help
 
-# Custom base URL for reverse proxy deployment
+# Custom base URL for reverse proxy deployment (the streamable-http endpoint becomes /api/mcp instead of /mcp)
 SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
 
 # Combined configuration with external access and custom base URL
 SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py --external
-
-# Streamable HTTP transport (default is SSE)
-SAFEBREACH_MCP_TRANSPORT=streamable-http uv run start_all_servers.py
-
-# Streamable HTTP with custom base URL (endpoint becomes /api/mcp instead of /mcp)
-SAFEBREACH_MCP_TRANSPORT=streamable-http SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
 
 # Single-tenant deployment (SafeBreach internal use)
 export DATA_URL="http://localhost:3400"
@@ -628,10 +622,6 @@ export SAFEBREACH_MCP_BIND_HOST=0.0.0.0
 # Per-agent concurrency limit (default: 2)
 export SAFEBREACH_MCP_CONCURRENCY_LIMIT=3
 
-# Transport mode (default: sse)
-export SAFEBREACH_MCP_TRANSPORT=sse            # Server-Sent Events (default) — endpoints: /sse + /messages/
-export SAFEBREACH_MCP_TRANSPORT=streamable-http # Streamable HTTP — single endpoint: /mcp (or $SAFEBREACH_MCP_BASE_URL)
-
 # Rate limiting (applies to all write tools)
 export SAFEBREACH_MCP_RATE_LIMIT_ENABLED=true              # Enable/disable (default: false)
 export SAFEBREACH_MCP_ACTION_LIMIT=10                      # Total actions per caller per window (default: 10)
@@ -754,7 +744,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8000/sse",
+        "http://127.0.0.1:8000/mcp",
         "--transport",
         "http-first"
       ]
@@ -763,7 +753,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8001/sse",
+        "http://127.0.0.1:8001/mcp",
         "--transport",
         "http-first"
       ]
@@ -772,7 +762,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8002/sse",
+        "http://127.0.0.1:8002/mcp",
         "--transport",
         "http-first"
       ]
@@ -781,7 +771,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8003/sse",
+        "http://127.0.0.1:8003/mcp",
         "--transport",
         "http-first"
       ]
@@ -798,7 +788,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8000/sse",
+        "http://your-server-ip:8000/mcp",
         "--transport",
         "http-first",
         "--headers",
@@ -809,7 +799,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8001/sse",
+        "http://your-server-ip:8001/mcp",
         "--transport",
         "http-first",
         "--headers",
@@ -820,7 +810,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8003/sse",
+        "http://your-server-ip:8003/mcp",
         "--transport",
         "http-first",
         "--headers",

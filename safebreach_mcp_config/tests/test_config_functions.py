@@ -32,11 +32,9 @@ class TestConfigFunctions:
     """Test suite for config functions."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
     
     def setup_method(self):
         """Setup for each test method."""
@@ -474,11 +472,9 @@ class TestGetAllScenariosFromCacheOrApi:
     """Test _get_all_scenarios_from_cache_or_api function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         clear_scenarios_cache()
@@ -542,11 +538,9 @@ class TestGetCategoriesMapFromCacheOrApi:
     """Test _get_categories_map_from_cache_or_api function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         clear_scenarios_cache()
@@ -745,11 +739,9 @@ class TestGetAllPlansFromCacheOrApi:
     """Test _get_all_plans_from_cache_or_api function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         clear_plans_cache()
@@ -916,11 +908,9 @@ class TestGetIntegrations:
     """Phase 1 — get_integrations catalog tool."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     # T-7 — core: endpoint, envelope unwrap, pagination, metadata
     @patch('safebreach_mcp_config.config_functions.is_caching_enabled', return_value=False)
@@ -1110,11 +1100,9 @@ class TestGetInstalledIntegrations:
     """Phase 2 — get_installed_integrations."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @pytest.fixture(autouse=True)
     def patch_catalog(self):
@@ -1245,11 +1233,9 @@ class TestGetInstalledIntegration:
     """Phase 3 — single connector, redacted."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _connectors(self):
         return [

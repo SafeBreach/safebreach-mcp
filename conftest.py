@@ -1,15 +1,19 @@
 """
-Root conftest.py — provides auth context for E2E tests (SAF-29974).
+Root conftest.py — provides auth context for tests (SAF-29974 / SAF-32387).
 
-E2E tests call tool functions directly (not through the MCP ASGI chain),
-so the _user_auth_artifacts ContextVar is not set by the middleware.
-This fixture reads the API token from the environment (same as set_env.sh)
-and sets the ContextVar so get_auth_headers_for_console() works.
+Production delivers the user's auth on the live MCP request: tool code reads it
+via token_context._get_auth_from_mcp_request_ctx(), which looks at the MCP SDK's
+request_ctx ContextVar. Tests call tool functions directly (no ASGI request), so
+the fixtures here set request_ctx to a fake request carrying the auth headers —
+the same path production uses, with no bridging shim.
 """
 
+import contextlib
 import os
+from types import SimpleNamespace
+
 import pytest
-from safebreach_mcp_core.token_context import _user_auth_artifacts
+from mcp.server.lowlevel.server import request_ctx
 from safebreach_mcp_core.rate_limiter import _rate_limit_store
 
 
@@ -19,9 +23,40 @@ def _resolve_api_token(console: str):
     return os.environ.get(token_key) or os.environ.get('SB_API_KEY')
 
 
+@contextlib.contextmanager
+def _request_ctx_with_auth(bundle):
+    """Set the MCP SDK request_ctx to a fake request whose headers carry `bundle`.
+
+    `bundle` is a dict of auth headers (x-apitoken / x-token / cookie) or None
+    for a request without user auth.
+    """
+    fake_ctx = SimpleNamespace(request=SimpleNamespace(headers=dict(bundle or {})))
+    token = request_ctx.set(fake_ctx)
+    try:
+        yield
+    finally:
+        request_ctx.reset(token)
+
+
+@pytest.fixture(scope="session")
+def mcp_request_auth():
+    """Factory fixture: run a block as if inside an MCP request carrying `bundle`.
+
+    Usage:
+        @pytest.fixture(autouse=True)
+        def set_auth_context(self, mcp_request_auth):
+            with mcp_request_auth({"x-apitoken": "test-token"}):
+                yield
+
+        with mcp_request_auth(None):   # request with no user auth
+            ...
+    """
+    return _request_ctx_with_auth
+
+
 @pytest.fixture(autouse=True, scope="session")
 def set_e2e_auth_context():
-    """Set auth ContextVar for E2E tests using the environment API token.
+    """Provide request auth for E2E tests using the environment API token.
 
     Session-scoped so it runs before class-scoped fixtures that call tool
     functions (e.g., sample_test_id, sample_simulation_id).
@@ -33,53 +68,29 @@ def set_e2e_auth_context():
         yield
         return
 
-    token = _user_auth_artifacts.set({"x-apitoken": api_token})
-    yield
-    _user_auth_artifacts.reset(token)
+    with _request_ctx_with_auth({"x-apitoken": api_token}):
+        yield
 
 
 @pytest.fixture
 def e2e_auth_for_console():
-    """Factory fixture: temporarily swap ContextVar to a different console's token.
+    """Factory fixture: temporarily switch request auth to a different console's token.
 
     Usage in tests that target a non-default console:
         def test_something(self, e2e_auth_for_console):
             with e2e_auth_for_console('staging'):
                 result = sb_some_tool(console='staging')
     """
-    import contextlib
 
     @contextlib.contextmanager
     def _swap(console: str):
         api_token = _resolve_api_token(console)
         if not api_token:
             pytest.skip(f"No API token found for console '{console}'")
-        old = _user_auth_artifacts.set({"x-apitoken": api_token})
-        try:
+        with _request_ctx_with_auth({"x-apitoken": api_token}):
             yield
-        finally:
-            _user_auth_artifacts.reset(old)
 
     return _swap
-
-
-@pytest.fixture(autouse=True)
-def route_auth_ctxvar_to_request_ctx(monkeypatch):
-    """Bridge the test auth ContextVar to the live-request reader.
-
-    Tests inject user auth via the _user_auth_artifacts ContextVar, but
-    get_auth_headers_for_console() now reads only the current MCP request
-    (_get_auth_from_mcp_request_ctx). With no real ASGI request in unit tests,
-    route the ContextVar value to that reader so existing injections still work.
-    """
-    from safebreach_mcp_core import token_context
-    real_reader = token_context._get_auth_from_mcp_request_ctx
-    monkeypatch.setattr(
-        token_context,
-        "_get_auth_from_mcp_request_ctx",
-        lambda: token_context._user_auth_artifacts.get() or real_reader(),
-    )
-    yield
 
 
 @pytest.fixture(autouse=True)
@@ -135,8 +146,8 @@ def cancel_e2e_leftovers():
     # session fixtures' teardown ordering).
     console_default = os.environ.get('E2E_CONSOLE', 'default')
     api_token = _resolve_api_token(console_default)
-    ctx = _user_auth_artifacts.set({"x-apitoken": api_token}) if api_token else None
-    try:
+    auth_ctx = _request_ctx_with_auth({"x-apitoken": api_token}) if api_token else contextlib.nullcontext()
+    with auth_ctx:
         from safebreach_mcp_studio.studio_functions import sb_manage_test
         seen = set()
         cancelled = 0
@@ -159,7 +170,4 @@ def cancel_e2e_leftovers():
                     pass
         print(f"\n[E2E epilogue] cancelled {cancelled} leftover test(s) of "
               f"{len(seen)} registered")
-    finally:
-        if ctx is not None:
-            _user_auth_artifacts.reset(ctx)
-        _E2E_CREATED_TESTS.clear()
+    _E2E_CREATED_TESTS.clear()
