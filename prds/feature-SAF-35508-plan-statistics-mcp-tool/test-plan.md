@@ -29,9 +29,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | R11 | No MCP-side caching, so any change to an earlier decision produces a fresh call | T-12 | Covered |
 | R12 | **Re-scoped for PRD v7** — three read-only tools registered (`get_scenario_simulation_counts`, `get_scenario_blocked_entities`, `get_scenario_attack_blockers`), `get_plan_statistics` unregistered; all three documented in the CLAUDE.md tool catalog; rate-limiting gate table not extended | T-24, T-25, T-34, T-32 | Covered |
 | R13 | `sb_quick_run` and `sb_run_scenario` verified behaviourally unchanged | T-13, T-14, T-15, T-17, T-33 | Covered |
-| R14 | Three tools, one question each, projecting the shipped report; `sb_get_plan_statistics` unchanged as the repo's single `plan/statistics` call site; no second fetch path and no duplicated zero-impact, severity, cap or null-safety logic | T-41, T-46, T-47, T-48 | Covered |
-| R15 | Full parameter pass-through on all three tools; only defaults differ, and only where the question differs — `get_scenario_simulation_counts` defaults `get_constraints=False` | T-26, T-27, T-46, T-50 | Covered |
-| R16 | Blocked-entities verdict distinguishes blocked / clean / **partially-evaluated** / **not-evaluated**; attack dispositions emitted only for ids the caller named; filtering precedes the zero-impact cap; fully-blocked (integer-`0`) scope only, with reducing conflicts stated as out of scope | T-42, T-43, T-44, T-45, T-48, T-49, T-51, T-52, T-53, T-54 | Covered |
+| R14 | Three tools, one question each, projecting the shipped report; `sb_get_plan_statistics` unchanged as the repo's single `plan/statistics` call site; no second fetch path and no duplicated zero-impact, severity, cap or null-safety logic | T-41, T-46, T-47, T-48, T-57 | Covered |
+| R15 | Full parameter pass-through on all three tools; only defaults differ, and only where the question differs — `get_scenario_simulation_counts` defaults `get_constraints=False` | T-26, T-27, T-46, T-50, T-56 | Covered |
+| R16 | Blocked-entities verdict distinguishes blocked / clean / **partially-evaluated** / **not-evaluated**; attack dispositions emitted only for ids the caller named; filtering precedes the zero-impact cap; fully-blocked (integer-`0`) scope only, with reducing conflicts stated as out of scope | T-42, T-43, T-44, T-45, T-48, T-49, T-51, T-52, T-53, T-54, T-55 | Covered |
 | R17 | Caller-facing vocabulary is `scenario` — tool names, parameters, descriptions and the CLAUDE.md catalog; shipped internals keep `plan`, which is the API's own name for the endpoint | T-24, T-26, T-34 | Covered |
 
 ## Change Coverage
@@ -41,9 +41,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 | `safebreach_mcp_core/plan_statistics.py` | T-6, T-7, T-8, T-9, T-10, T-11, T-12, T-16 | — |
 | `safebreach_mcp_studio/studio_functions.py` | T-1, T-3, T-13, T-14, T-15, T-17, T-18, T-19, T-20, T-21, T-22, T-23, T-26, T-36, T-38, T-39, T-41, T-42, T-43, T-44, T-45, T-46, T-49, T-50, T-51, T-52, T-53, T-54 | — |
 | `safebreach_mcp_studio/studio_types.py` | T-20, T-21, T-23, T-36 | — |
-| `safebreach_mcp_studio/studio_server.py` | T-24, T-25, T-47 | — |
+| `safebreach_mcp_studio/studio_server.py` | T-24, T-25, T-47, T-55, T-56, T-57 | — |
 | `CLAUDE.md` | T-34 | — |
-| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-24, T-25, T-26, T-41, T-42, T-43, T-44, T-45, T-46, T-47, T-49, T-50, T-51, T-52, T-53, T-54 | Test file — its own coverage is the cases it carries; listed in PRD §8 Phases 7 and 8 because both phases add to it. |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-24, T-25, T-26, T-41, T-42, T-43, T-44, T-45, T-46, T-47, T-49, T-50, T-51, T-52, T-53, T-54, T-55, T-56, T-57 | Test file — its own coverage is the cases it carries; listed in PRD §8 Phases 7 and 8 because both phases add to it. |
 | `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py` | T-48 | Test file — its own coverage is the e2e cases it carries (T-28…T-31, T-40, T-48). |
 
 ## Risk Landscape
@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 27 | 14 | 0 | 6 | 47 |
+| Automatic | 30 | 14 | 0 | 6 | 50 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **27** | **14** | **0** | **9** | **50** |
+| **Total** | **30** | **14** | **0** | **9** | **53** |
 
 ## Environment Requirements (aggregated)
 
@@ -188,6 +188,9 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-52 | The attack-blockers catalog carries only the codes its own rendered blockers cite | API-contract | Phase 7 | safebreach_mcp_studio |
 | T-53 | A partially scored scenario is never reported clean | API-contract | Phase 7 | safebreach_mcp_studio |
 | T-54 | An entity a truncated map may be hiding is never asserted blocked or clean | API-contract | Phase 7 | safebreach_mcp_studio |
+| T-55 | Every verdict state and every disposition renders as a distinct line | API-contract | Phase 8 | safebreach_mcp_studio |
+| T-56 | A both-counts result renders both passes, on every tool | — | Phase 8 | safebreach_mcp_studio |
+| T-57 | Coverage reads its denominator from the true total, never the capped map | — | Phase 8 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -708,7 +711,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: Every mocked test encodes an assumption about the real endpoint. The maps are untyped at the source, so only a live call confirms the shape.
 - Risk source: PRD §9 (assumptions)
 - Verify: Against the configured e2e console, build a scenario body from a step of an existing scenario read through the product's own scenario API, then call each of the three tools with default parameters.
-- Expected: The counts tool returns a per-step simulation count that is an integer and a total consistent with it. The blocked-entities tool returns a verdict in one of its three states plus, where applicable, entries carrying blockers that reference a catalog entry. The blockers tool, asked about an id present in the scenario, returns exactly one disposition for it. No tool's output contains a bare reason code as its explanation.
+- Expected: The counts tool returns a per-step simulation count that is an integer and a total consistent with it. The blocked-entities tool returns a verdict in one of its five shipped states plus, where applicable, entries carrying blockers that reference a catalog entry. The blockers tool, asked about an id present in the scenario, returns exactly one disposition for it, from the six shipped values. No tool's output contains a bare reason code as its explanation.
 - Evidence required: pytest e2e run output naming the test, plus the console name and the returned counts.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_e2e_plan_statistics.py`
 - Environment needs: Validate console environment
@@ -881,7 +884,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Risk: Reporting only blocked attacks makes an id that ran, an id nobody scored, and an id that is not in the scenario all appear identically — as absence. Two of those three are not constraint problems at all, so the caller would go looking for a conflict that does not exist.
 - Risk source: PRD §9 (R13)
 - Verify: Project a report whose attack counts hold an integer zero, a positive integer and a null, then ask about those three ids plus one appearing in no step. Then project the same report asking about nothing at all.
-- Expected: The zero id is reported blocked and carries its blockers. The positive id is reported as having run, with its count. The null id is reported as not computed. The absent id is reported as not present in this scenario. Each id receives exactly one disposition and the four are textually distinct. Asked about nothing, the projection reports every fully-blocked attack and emits no disposition entries at all.
+- Expected: The zero id is reported blocked and carries its blockers. The positive id is reported as having run, with its count. The null id is reported as not computed. The absent id is reported as not present in this scenario. Each id receives exactly one disposition and these four are textually distinct. (Two further dispositions ship for the truncation cases — `blocked_where_measured` and `count_map_truncated` — covered by T-44 and T-54; this test pins the four that need no cap to reach.) Asked about nothing, the projection reports every fully-blocked attack and emits no disposition entries at all.
 - Evidence required: pytest run output naming the test, with the four dispositions shown.
 - Automation lives in: planned: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
@@ -1063,6 +1066,53 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Environment needs: none
 
 
+### T-55 — Every verdict state and every disposition renders as a distinct line
+
+- Description: Proves the feature's central premise survives the last layer — the one a person actually reads. Two outcomes that mean opposite things must not look the same in the rendered answer.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: T-42, T-53 and T-54 pin the verdict states and dispositions in the returned dict, and T-47 pins which sections appear. Nothing pins what any of them *renders*. So `clean` and `clean_where_measured` could emit identical prose, `blocked_where_measured` could sit unqualified under a heading reading "did not run anywhere", or an optional field could raise `KeyError` — with every other test green. The whole point of the null-versus-zero work is that identical-looking output must never carry opposite meaning, and the narration is where that reaches the user.
+- Risk source: PRD §9 (R1, R13)
+- Verify: Render a projected result for each of the five verdict states, and one carrying every disposition — ran, blocked, blocked-where-measured, not-computed, count-map-truncated, absent — plus the `detail_truncated` and `constraints-not-requested` flags. Collect the line each produces.
+- Expected: All five verdict lines are pairwise distinct, and all six disposition lines are pairwise distinct. The hedged forms are visibly hedged: the blocked-where-measured line does not read as a plain "did not run anywhere" claim, and the count-map-truncated line states that whether it ran is unknown rather than that it is absent. A truncated blocker detail is marked as such rather than reading as "no constraint reported". No optional field raises when absent.
+- Evidence required: pytest run output naming the test, with all five verdict lines and all six disposition lines shown.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-56 — A both-counts result renders both passes, on every tool
+
+- Description: Proves the shape that carries no steps is handled before anything reaches for them — the likeliest way this layer breaks.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Risk: With `both_counts=True` the result is `{counts_mode, runnable, expected, hint_to_agent}` and has **no** top-level `steps` key. A narrator that indexes steps before checking the mode raises immediately. The retired tool carried a test for exactly this case; the three replacing it currently carry none, and T-27 and T-46 both stop at the dict.
+- Risk source: PRD §9 (R13)
+- Verify: For each of the three tools in turn, render a both-counts result and read the output.
+- Expected: Each renders both passes, each under its own labelled heading, with the runnable and expected figures distinguishable and the top-level hint present. No tool raises. A single-pass result still renders exactly one pass with no such headings.
+- Evidence required: pytest run output naming the test, with each tool's both-counts rendering shown.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-57 — Coverage reads its denominator from the true total, never the capped map
+
+- Description: Proves "N of M" tells the truth on a real scenario, where M is the number of attacks the step has rather than the number that fit in the response.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Risk: The shared coverage helper derives its denominator from the length of the count map it is handed, and that map is capped. A step the module's own note records as holding 9,613 attacks would narrate "9 of 100" — a denominator that is an artifact of truncation presented as a fact about the scenario. All three tools inherit this helper, and the projections carry the real totals precisely so it need not guess.
+- Risk source: PRD §9 (R1, R13)
+- Verify: Render a step whose count map was capped well below its true total, and one whose map is whole. Read the coverage clause of each.
+- Expected: The capped step's denominator is its true total, not the capped map's length, and its numerator is presented as a lower bound rather than an exact figure. The whole step's coverage is exact. Neither presents a truncation artifact as a measurement.
+- Evidence required: pytest run output naming the test, with both coverage clauses and the map length against its total.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -1076,9 +1126,9 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 5 | — (T-24, T-25, T-26, T-27, T-28, T-29, T-30, T-31 and T-40 re-scoped by PRD v7 and re-phased to 7/8) | 23 |
 | Phase 6 | — (T-34 re-scoped by PRD v7 and re-phased to 9) | 23 |
 | Phase 7 | T-26, T-27, T-41, T-42, T-43, T-44, T-45, T-46, T-49, T-50, T-51, T-52, T-53, T-54 | 37 |
-| Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48 | 46 |
-| Phase 9 | T-34 | 47 |
-| Final | T-32, T-33, T-35 | all (50) |
+| Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48, T-55, T-56, T-57 | 49 |
+| Phase 9 | T-34 | 50 |
+| Final | T-32, T-33, T-35 | all (53) |
 
 ## Sign-off
 
@@ -1094,6 +1144,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-03 (b) | **Three narrator-layer tests added at the Phase-8 planning gate; two stale `Expected` clauses widened.** The plan pinned the projections thoroughly and the narration barely at all — T-42/T-53/T-54 fix the verdict states and dispositions in the returned dict, T-47 fixes which sections appear, and nothing fixed what any of them *renders*. **T-55** closes that: all five verdict lines and all six disposition lines must be pairwise distinct in the rendered markdown, the hedged forms visibly hedged. Without it `clean` and `clean_where_measured` could emit identical prose with every other test green — which would undo, at the only layer a person reads, the distinction the whole feature exists to make. **T-56** covers `both_counts=True`, whose result carries no top-level `steps` key: a narrator that reaches for steps before checking the mode raises immediately. The retired tool had a test for exactly this; its three replacements had none. **T-57** pins the coverage denominator to the true total rather than the capped map length — a deferred Phase-7 review finding, and a behaviour defect all three narrators would otherwise inherit: a step holding 9,613 attacks would narrate "9 of 100", presenting a truncation artifact as a fact about the scenario. **Widened**: T-28 said the verdict is one of *three* states (five shipped) and T-43 named *four* dispositions (six shipped) — T-28's e2e assertion would have failed on a legitimate console response, so it now asserts membership in all five; T-43 keeps its four, now stated as the subset reachable without a cap, with the other two attributed to T-44 and T-54. **Step numbering is 0-based** across all three tools, matching PRD §4's own examples and the projections' `step_index`; the `run_scenario`/`quick_run` previews remain 1-based and that divergence is now a recorded decision rather than an accident. Regenerated views: 53 Active (30 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/37/49/50/53. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-09-03 | **T-54 added from the sixth Phase-7 review round.** Reproduced: an attack blocked in step 0 and running 240 times in step 1 was reported **blocked** by both tools, because "ran anywhere" was read from the counts map — capped at 100 by ascending id — and the attack's id sorted past that cap in the running step. Absence from a map that stopped at its cap is *unknown*, not "did not run": the null-versus-zero rule applied to the map itself rather than to the counts inside it. The module's own note records 9,613 attacks in one real step, so this is the normal case. **Two new hedged outcomes** rather than a false confident one: `blocked_where_measured` on the disposition and `clean_where_measured` on the verdict — because "clean" is a claim about everything, and an entity a truncated map may be hiding is not something the report can vouch for. A step's own zero-impact entry still counts as an account of the id, so a single-step capped report is unaffected. Regenerated views: 50 Active (27 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/37/46/47/50. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-09-02 (c) | **T-53 added from a Phase-7 code-review finding.** The review reproduced a severity-7 defect in the blocked-entities verdict: it branched only on **all** steps being unscored, so a report with one step scored clean and one never scored fell through to `clean` and asserted *"every attack and simulator in this scenario contributes at least one simulation"* — a blanket claim over steps nobody measured, and the same silent over-claim the execution side already refuses via its partial-scoring guard. T-42 could not catch it: its three fixtures are all-scored-clean, all-scored-blocked and nothing-scored, and the mixed case sits between them. **T-53 pins the fourth state** (`partially_evaluated`), which reports findings over the scored steps only and says plainly that the rest were never scored. Regenerated views: 49 Active (26 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/36/45/46/49. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-09-02 (b) | **Phase-7 planning gate: 4 tests added, 2 corrected.** The Phase-7 plan subagent surfaced two conflicts and four uncovered behaviours; the owner accepted all six resolutions. **Corrections.** T-46 contradicted itself — it required every parameter at a non-default value AND exactly one statistics call, but `both_counts=True` is a non-default value whose defined behaviour is two calls (T-27 asserts precisely that). Reworded to the invariant actually intended: one fetch per scoring pass, the projection adding none — one call at `both_counts=False`, exactly two (never three) at `True`. T-26 gained the R17 clause its Expected omitted: each rejection message names `scenario`/`scenario_id`/`test_id` and never `plan`, since the exclusivity rule is reused from shipped plumbing whose default wording says `plan` (resolved by an additive, behaviour-preserving `body_param` argument rather than a second copy of the rule). **Added T-49** — an attack that is `0` in one step and positive in another must report as *ran*: the PRD's literal precedence (blocked before ran) would have labelled it blocked under a heading reading "did not run anywhere", a confident false statement, and the answer must not depend on step order. **T-50** — an invalid `attack_ids` token raises before any call, naming the offending token, so a typo costs no round trip against a 120s timeout. **T-51** — a blocked attack whose blocker detail fell past `ZERO_IMPACT_CAP` must say so: an empty blocker list already renders as "no constraint reported", which asserts the console found no reason when the reason was truncated locally — the null-versus-zero confusion one level down. **T-52** — T-45's catalog narrowing applies to the blockers tool too, which also relays descriptions. Regenerated views: 48 Active (25 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/35/44/45/48. Status stays Draft — material change. In Sync with PRD v7. |

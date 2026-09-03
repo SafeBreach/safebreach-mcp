@@ -9561,72 +9561,6 @@ class TestPartiallyScoredRunIsRefusedNotSilentlyTrimmed:
         assert 'could not be scored' in error
 
 
-class TestPlanStatisticsToolRegistration:
-    """T-24 — the tool is registered under the agreed wire name and declared read-only."""
-
-    @staticmethod
-    def _tools():
-        import asyncio
-        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
-
-        server = SafeBreachStudioServer()
-        return {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-
-    def test_tool_is_registered_under_the_wire_name(self):
-        """The wire name carries no sb_ prefix."""
-        assert 'get_plan_statistics' in self._tools()
-
-    def test_tool_is_declared_read_only(self):
-        assert self._tools()['get_plan_statistics'].annotations.readOnlyHint is True
-
-    def test_tool_is_declared_non_destructive(self):
-        assert self._tools()['get_plan_statistics'].annotations.destructiveHint is False
-
-    def test_the_twelve_existing_tools_are_still_registered(self):
-        """Registration is additive: the 12 that existed, plus this one."""
-        tools = self._tools()
-        for name in ('validate_studio_code', 'save_studio_attack_draft',
-                     'get_all_studio_attacks', 'update_studio_attack_draft',
-                     'get_studio_attack_source', 'run_studio_attack',
-                     'get_studio_attack_latest_result', 'create_new_studio_attack',
-                     'set_studio_attack_status', 'run_scenario', 'quick_run',
-                     'manage_test'):
-            assert name in tools
-        assert len(tools) == 13
-
-    def test_description_states_include_disabled_selects_the_question(self):
-        """Omitting the inversion invites the caller to reproduce the defect being fixed."""
-        description = self._tools()['get_plan_statistics'].description
-        assert 'include_disabled' in description
-        assert 'WHICH QUESTION is asked' in description
-
-    def test_description_states_the_tool_reports_but_removes_nothing(self):
-        description = self._tools()['get_plan_statistics'].description
-        assert 'REPORTS entities whose count is a genuine 0' in description
-        assert 'removes nothing' in description
-
-    def test_description_states_limit_reached_means_not_computed(self):
-        description = self._tools()['get_plan_statistics'].description
-        assert 'NOT COMPUTED' in description
-        assert 'an integer 0 is' in description
-
-    def test_description_names_all_three_inputs(self):
-        """The three accepted inputs are the tool's whole entry surface."""
-        description = self._tools()['get_plan_statistics'].description
-        for name in ('`plan`', '`scenario_id`', '`test_id`'):
-            assert name in description
-
-    def test_description_states_the_investigative_use(self):
-        """The strongest reason to reach for this tool is explaining a run, not predicting one."""
-        description = self._tools()['get_plan_statistics'].description
-        assert 'why specific' in description
-        assert 'did not run' in description
-
-    def test_description_never_offers_plan_id(self):
-        """planId is in the request schema but is ignored; naming it invites a silent 400."""
-        assert 'planId' not in self._tools()['get_plan_statistics'].description
-
-
 class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
     """Studio narrates; it does not hand back structured payloads.
 
@@ -9678,8 +9612,20 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
         return report
 
     def _render(self, **overrides):
-        from safebreach_mcp_studio.studio_server import _format_plan_statistics
-        return _format_plan_statistics(self._report(**overrides))
+        """Render through the counts + blocked-entities narrators.
+
+        The single report renderer this class was written against is retired in
+        Phase 8; its assertions live on in the three tools that replaced it, so
+        the class renders both halves and asserts against the pair.
+        """
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts, _format_scenario_blocked_entities,
+        )
+        report = self._report(**overrides)
+        return "\n".join([
+            _format_scenario_simulation_counts(_project_simulation_counts(report)),
+            _format_scenario_blocked_entities(_project_blocked_entities(report)),
+        ])
 
     def test_every_studio_tool_returns_a_string(self):
         """The convention this tool previously broke, asserted for the whole server."""
@@ -9687,7 +9633,7 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         source = inspect.getsource(SafeBreachStudioServer)
         assert '        ) -> dict:' not in source
-        assert source.count('        ) -> str:') == 13
+        assert source.count('        ) -> str:') == 15
 
     def test_the_rendered_report_is_a_string(self):
         assert isinstance(self._render(), str)
@@ -13680,3 +13626,380 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO)
         assert _statistics_queries(post)[0]['getConstraints'] == ['true']
+
+
+# ---------------------------------------------------------------------------
+# three scenario-statistics tools — SAF-35508 Phase 8
+# ---------------------------------------------------------------------------
+
+SCENARIO_TOOL_NAMES = (
+    'get_scenario_simulation_counts',
+    'get_scenario_blocked_entities',
+    'get_scenario_attack_blockers',
+)
+
+PASS_THROUGH_PARAMS = (
+    'console', 'scenario', 'scenario_id', 'test_id', 'include_disabled',
+    'both_counts', 'get_constraints', 'get_all_constraints', 'limit',
+    'use_cache', 'conflict_detail',
+)
+
+
+def _studio_tools():
+    import asyncio
+    from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+
+    server = SafeBreachStudioServer()
+    return {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+
+
+class TestScenarioStatisticsToolsRegistration:
+    """T-24 — the three tools are registered read-only, and the retired one is gone."""
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_tool_is_registered_under_its_wire_name(self, name):
+        assert name in _studio_tools()
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_tool_is_declared_read_only_and_non_destructive(self, name):
+        annotations = _studio_tools()[name].annotations
+        assert annotations.readOnlyHint is True
+        assert annotations.destructiveHint is False
+
+    def test_the_retired_tool_is_no_longer_registered(self):
+        assert 'get_plan_statistics' not in _studio_tools()
+
+    def test_the_twelve_pre_existing_tools_are_untouched(self):
+        tools = _studio_tools()
+        for name in ('validate_studio_code', 'save_studio_attack_draft',
+                     'get_all_studio_attacks', 'update_studio_attack_draft',
+                     'get_studio_attack_source', 'run_studio_attack',
+                     'get_studio_attack_latest_result', 'create_new_studio_attack',
+                     'set_studio_attack_status', 'run_scenario', 'quick_run',
+                     'manage_test'):
+            assert name in tools
+        # 12 pre-existing + 3 new - 1 retired.
+        assert len(tools) == 15
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_tool_carries_the_full_pass_through_surface(self, name):
+        properties = _studio_tools()[name].inputSchema['properties']
+        for param in PASS_THROUGH_PARAMS:
+            assert param in properties, f"{name} is missing {param}"
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_the_body_parameter_is_scenario_not_plan(self, name):
+        # R17: the caller-facing vocabulary is the product's, not the API's.
+        properties = _studio_tools()[name].inputSchema['properties']
+        assert 'scenario' in properties
+        assert 'plan' not in properties
+
+    def test_only_the_blockers_tool_takes_attack_ids(self):
+        tools = _studio_tools()
+        assert 'attack_ids' in tools['get_scenario_attack_blockers'].inputSchema['properties']
+        assert 'attack_ids' not in tools['get_scenario_simulation_counts'].inputSchema['properties']
+        assert 'attack_ids' not in tools['get_scenario_blocked_entities'].inputSchema['properties']
+
+
+class TestEachNarrationCarriesOnlyItsOwnSections:
+    """T-47 — each narration renders only its own sections and routes to its siblings."""
+
+    def _projected(self, project):
+        return project(_phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG))
+
+    def _counts(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
+        return _format_scenario_simulation_counts(
+            self._projected(_project_simulation_counts))
+
+    def _blocked(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        return _format_scenario_blocked_entities(
+            self._projected(_project_blocked_entities))
+
+    def _blockers(self, ids=(9012,)):
+        from safebreach_mcp_studio.studio_server import _format_scenario_attack_blockers
+        report = _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
+        return _format_scenario_attack_blockers(
+            _project_attack_blockers(report, list(ids)))
+
+    def test_every_narrator_returns_a_string(self):
+        for text in (self._counts(), self._blocked(), self._blockers()):
+            assert isinstance(text, str) and text
+
+    def test_the_counts_narration_carries_no_conflict_or_catalog_section(self):
+        text = self._counts()
+        assert 'Constraint catalog' not in text
+        assert 'contributing nothing' not in text
+        assert 'incompatible_os' not in text
+
+    def test_the_counts_narration_routes_to_the_blocked_entities_tool(self):
+        assert 'get_scenario_blocked_entities' in self._counts()
+
+    def test_the_blocked_entities_narration_carries_no_conflicts_section(self):
+        text = self._blocked()
+        assert 'Conflicts' not in text
+        # port_in_use is cited only by a reducing conflict, which this tool drops.
+        assert 'port_in_use' not in text
+
+    def test_the_blocked_entities_narration_omits_per_step_simulation_counts(self):
+        # Its coverage denominators are the numbers it owns; the total is the
+        # counts tool's question.
+        assert 'Total simulations' not in self._blocked()
+
+    def test_the_blockers_narration_names_only_the_asked_about_attacks(self):
+        text = self._blockers(ids=(9012,))
+        assert '9012' in text
+        assert '1234' not in text
+
+    def test_the_blockers_narration_states_that_reductions_are_out_of_scope(self):
+        assert 'reduction' in self._blockers().lower()
+
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_each_description_names_its_own_question_and_its_siblings(self, name):
+        description = _studio_tools()[name].description
+        siblings = [n for n in SCENARIO_TOOL_NAMES if n != name]
+        for sibling in siblings:
+            assert sibling in description, f"{name} does not point at {sibling}"
+
+
+class TestEveryVerdictAndDispositionRendersDistinctly:
+    """T-55 — every verdict state and every disposition renders as a distinct line."""
+
+    @staticmethod
+    def _render_blocked(report):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        return _format_scenario_blocked_entities(_project_blocked_entities(report))
+
+    @staticmethod
+    def _render_blockers(report, ids):
+        from safebreach_mcp_studio.studio_server import _format_scenario_attack_blockers
+        return _format_scenario_attack_blockers(
+            _project_attack_blockers(report, list(ids)))
+
+    # --- the five verdict states -----------------------------------------
+    def _verdict_reports(self):
+        blocked = _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
+        clean = _phase7_report([_phase4_step(
+            simulationCount=240, moves={'1234': 240},
+            simulators={'sim-a': 2}, targetSimulators={'sim-a': 2})])
+        not_evaluated = _phase7_report(
+            [_phase4_step(simulationCount=None, counts_computed=False,
+                          isLimitReached=True, moves={'1234': None})],
+            plan_step_count=3, returned_step_count=1, truncated=True)
+        partial = _phase7_report([
+            _phase4_step(response_step_index=0, simulationCount=240,
+                         moves={'1234': 240}, simulators={'sim-a': 2},
+                         targetSimulators={'sim-a': 2}),
+            _phase4_step(response_step_index=1, simulationCount=None,
+                         counts_computed=False, isLimitReached=True,
+                         moves={'9012': None}),
+        ], plan_step_count=2, truncated=True)
+        big = {str(i): 4 for i in range(1, 200)}
+        big['9000'] = 240
+        clean_where = _phase7_report([
+            _phase4_step(response_step_index=0, simulationCount=0, moves={'9000': 0},
+                         simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+                         simulatorConstraints={
+                             'targetConstraints': _os_conflict('sim-a', '9000'),
+                             'attackerConstraints': {}}),
+            _phase4_step(response_step_index=1, simulationCount=240, moves=big,
+                         simulators={'sim-a': 240}, targetSimulators={'sim-a': 240}),
+        ], catalog=PHASE7_CATALOG, plan_step_count=2)
+        return {'blocked': blocked, 'clean': clean, 'not_evaluated': not_evaluated,
+                'partially_evaluated': partial, 'clean_where_measured': clean_where}
+
+    def test_all_five_verdict_states_are_reachable_from_these_fixtures(self):
+        states = {name: _project_blocked_entities(r)['verdict']['state']
+                  for name, r in self._verdict_reports().items()}
+        assert states == {k: k for k in states}, states
+
+    def test_the_five_verdict_renderings_are_pairwise_distinct(self):
+        lines = set()
+        for report in self._verdict_reports().values():
+            text = self._render_blocked(report)
+            verdict = [l for l in text.splitlines() if 'Verdict' in l]
+            assert verdict, text
+            lines.add(verdict[0])
+        assert len(lines) == 5
+
+    def test_a_hedged_verdict_does_not_read_as_a_flat_all_clear(self):
+        reports = self._verdict_reports()
+        hedged = self._render_blocked(reports['clean_where_measured'])
+        flat = self._render_blocked(reports['clean'])
+        assert 'every attack and simulator' in flat
+        assert 'every attack and simulator' not in hedged
+
+    # --- the six dispositions --------------------------------------------
+    def _disposition_line(self, report, attack_id):
+        text = self._render_blockers(report, [attack_id])
+        hits = [l for l in text.splitlines() if str(attack_id) in l and l.strip().startswith(('-', '*'))]
+        assert hits, text
+        return hits[0]
+
+    def test_the_six_disposition_renderings_are_pairwise_distinct(self):
+        simple = _phase7_report([_phase4_step(
+            simulationCount=40, moves={'226': 0, '281': 40, '9012': None},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '226'),
+                                  'attackerConstraints': {}})], catalog=PHASE7_CATALOG)
+        capped = _phase7_report([_phase4_step(
+            simulationCount=0, moves={str(i): 0 for i in range(400)},
+            simulators={'sim-0': 0}, targetSimulators={'sim-0': 0},
+            simulatorConstraints={
+                'targetConstraints': {f'sim-{i}': {str(i): [{'reason': 'incompatible_os'}]}
+                                      for i in range(400)},
+                'attackerConstraints': {}})], catalog=PHASE7_CATALOG)
+        big = {str(i): 4 for i in range(1, 200)}
+        big['9000'] = 240
+        where_measured = _phase7_report([
+            _phase4_step(response_step_index=0, simulationCount=0, moves={'9000': 0},
+                         simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
+                         simulatorConstraints={
+                             'targetConstraints': _os_conflict('sim-a', '9000'),
+                             'attackerConstraints': {}}),
+            _phase4_step(response_step_index=1, simulationCount=240, moves=big,
+                         simulators={'sim-a': 240}, targetSimulators={'sim-a': 240}),
+        ], catalog=PHASE7_CATALOG, plan_step_count=2)
+
+        lines = {
+            'ran': self._disposition_line(simple, 281),
+            'blocked': self._disposition_line(simple, 226),
+            'not_computed': self._disposition_line(simple, 9012),
+            'absent': self._disposition_line(simple, 7777),
+            'count_map_truncated': self._disposition_line(capped, 250),
+            'blocked_where_measured': self._disposition_line(where_measured, 9000),
+        }
+        assert len(set(lines.values())) == 6, lines
+
+    def test_the_truncated_line_does_not_claim_the_attack_is_absent(self):
+        capped = _phase7_report([_phase4_step(
+            simulationCount=0, moves={str(i): 0 for i in range(400)},
+            simulators={'sim-0': 0}, targetSimulators={'sim-0': 0})],
+            catalog=PHASE7_CATALOG)
+        line = self._disposition_line(capped, 250)
+        assert 'not present' not in line
+        assert 'unknown' in line.lower() or 'truncat' in line.lower()
+
+    def test_a_locally_truncated_blocker_list_is_not_rendered_as_no_reason(self):
+        capped = _phase7_report([_phase4_step(
+            simulationCount=0, moves={str(i): 0 for i in range(400)},
+            simulators={'sim-0': 0}, targetSimulators={'sim-0': 0},
+            simulatorConstraints={
+                'targetConstraints': {f'sim-{i}': {str(i): [{'reason': 'incompatible_os'}]}
+                                      for i in range(400)},
+                'attackerConstraints': {}})], catalog=PHASE7_CATALOG)
+        text = self._render_blockers(capped, [75])
+        assert 'no constraint reported' not in text
+        assert 'truncat' in text.lower()
+
+    def test_no_optional_field_raises_when_absent(self):
+        # A minimal report carries none of the optional markers.
+        bare = _phase7_report([_phase4_step(
+            simulationCount=40, moves={'281': 40},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+        assert self._render_blocked(bare)
+        assert self._render_blockers(bare, [281])
+        assert self._render_blockers(bare, [])
+
+
+class TestBothCountsRendersBothPasses:
+    """T-56 — a both-counts result renders both passes, on every tool."""
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    def _rendered(self, tool_fn, narrator, payload, **kwargs):
+        with _statistics_transport(payload):
+            projected = tool_fn(console="test-console", scenario=self.SCENARIO, **kwargs)
+        return narrator(projected)
+
+    def _cases(self):
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts,
+            _format_scenario_blocked_entities,
+            _format_scenario_attack_blockers,
+        )
+        return (
+            (sb_get_scenario_simulation_counts, _format_scenario_simulation_counts),
+            (sb_get_scenario_blocked_entities, _format_scenario_blocked_entities),
+            (sb_get_scenario_attack_blockers, _format_scenario_attack_blockers),
+        )
+
+    def test_each_tool_renders_both_passes_without_raising(
+        self, mock_statistics_response_all_good
+    ):
+        for tool_fn, narrator in self._cases():
+            text = self._rendered(tool_fn, narrator,
+                                  mock_statistics_response_all_good, both_counts=True)
+            assert isinstance(text, str)
+            assert 'Runnable' in text and 'Expected' in text
+
+    def test_a_single_pass_result_renders_one_pass_with_no_mode_headings(
+        self, mock_statistics_response_all_good
+    ):
+        for tool_fn, narrator in self._cases():
+            text = self._rendered(tool_fn, narrator, mock_statistics_response_all_good)
+            assert '## Runnable' not in text and '## Expected' not in text
+
+    def test_the_both_mode_hint_survives_to_the_rendering(
+        self, mock_statistics_response_all_good
+    ):
+        for tool_fn, narrator in self._cases():
+            text = self._rendered(tool_fn, narrator,
+                                  mock_statistics_response_all_good, both_counts=True)
+            assert 'cannot be derived' in text
+
+
+class TestCoverageUsesTheTrueTotal:
+    """T-57 — coverage reads its denominator from the true total, never the capped map."""
+
+    @staticmethod
+    def _render_counts(report):
+        from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
+        return _format_scenario_simulation_counts(_project_simulation_counts(report))
+
+    def _capped_report(self):
+        return _phase7_report([_phase4_step(
+            simulationCount=40, moves={str(i): 4 for i in range(400)},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+
+    def test_the_fixture_is_genuinely_capped(self):
+        step = self._capped_report()['steps'][0]
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total'] == 400
+
+    def test_the_denominator_is_the_true_total_not_the_capped_length(self):
+        text = self._render_counts(self._capped_report())
+        assert '400' in text
+        assert 'of 100 attacks' not in text
+
+    def test_a_capped_numerator_is_presented_as_a_lower_bound(self):
+        text = self._render_counts(self._capped_report())
+        assert 'at least' in text
+
+    def test_an_uncapped_step_states_its_coverage_exactly(self):
+        report = _phase7_report([_phase4_step(
+            simulationCount=40, moves={'226': 0, '281': 40},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+        text = self._render_counts(report)
+        assert '1 of 2' in text
+        assert 'at least' not in text
+
+
+class TestStepsAreNumberedFromZero:
+    """T-47 (numbering half) — the narration's step number matches the data's step_index."""
+
+    def test_the_first_step_is_step_zero(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
+        report = _phase7_report([_phase4_step(
+            simulationCount=40, moves={'281': 40},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+        text = _format_scenario_simulation_counts(_project_simulation_counts(report))
+        assert 'Step 0' in text
+        assert 'Step 1' not in text
