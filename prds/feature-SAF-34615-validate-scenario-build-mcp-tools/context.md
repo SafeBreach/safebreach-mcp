@@ -323,6 +323,62 @@ category of risk already accepted for `get_plan_statistics` itself (Decision on 
 extended one step further — acceptable per user direction, but worth restating at the Phase 7 DoD gate if
 SAF-35508's own timeline slips further before this story reaches implementation.
 
+### SAF-35508 — update (2026-09-03): the three tools are now implemented
+
+**Superseding the "not yet implemented"/"not started" framing above.** Fetched
+`origin/feature/SAF-35508-plan-statistics-mcp-tool` directly (`de8afff`, 11 commits ahead of our merge-base
+`9dcf523`) and read the commits, `CLAUDE.md`'s catalog, and the ticket-compliance record — not taken on a
+report alone. **PR [#91](https://github.com/SafeBreach/safebreach-mcp/pull/91) is open, not draft, but
+`mergeStateStatus: DIRTY` / `mergeable: CONFLICTING` against `main`** — a real merge conflict, though it
+doesn't block our branch since we're stacked on the branch itself, not `main`.
+
+**What actually shipped, verified against `CLAUDE.md`'s current catalog entries (25-27) on that branch:**
+
+- Phase 8 landed (`9131b5e`): the three tools are registered, `readOnlyHint=True`, unrated-limited, no
+  MCP-side cache — 1932 tests passing.
+- **`get_scenario_blocked_entities`'s verdict is five states, not three.** Correcting the D4 summary above:
+  entities blocked / nothing blocked / **`clean_where_measured`** (a truncated map may be hiding a count) /
+  **`partially_evaluated`** (only some steps were scored, findings cover those only) / nothing evaluated at
+  all. Decided by `counts_computed`, never by list emptiness (an unscored scenario and a clean one would
+  otherwise look identical).
+- **`get_scenario_attack_blockers`'s `attack_ids` is now required — in the JSON schema itself, not just at
+  runtime** (`b90a79d`). The D4 summary above said "optional"; that mode was removed. Rationale, verified
+  directly from the commit: the unnamed/listing mode duplicated `get_scenario_blocked_entities`'s own output,
+  "one scoring two owners and two phrasings" — merging or keeping both would have re-created the
+  `get_plan_statistics` shape the decomposition exists to avoid. Six dispositions per named id: `ran` (with
+  its count), `blocked`, `blocked_where_measured`, `not_computed`, `count_map_truncated`, or `absent` — "ran"
+  outranks "blocked" if a single attack scores nonzero in any one step.
+- **`fix_lever` was deleted, not carried forward.** SAF-35568 implemented `fixLever` separately, reviewed it,
+  and removed it as redundant against `description` — "a permanently MCP-owned artifact with no upstream
+  counterpart." **Every earlier mention of `fix_lever` in this document (§3 above) and in the breach-genie
+  sibling PRD is now describing a removed field — read as historical, not current.** A conflict's meaning and
+  suggested fix must now be composed from `description` alone.
+- **A genuine, disclosed-not-fixed product edge case, worth carrying into FR7's design**: an attack the
+  orchestrator never turns into a "move" (never generated, for structural reasons) reports as `absent` —
+  "not present in this scenario" — even when the caller named that exact attack in the scenario's own filter.
+  Both tools are individually spec-correct; the pair reads misleadingly together, which is "the same
+  misleading-but-plausible answer this feature exists to prevent, one level out" (SAF-35508's own words).
+  **Helm should not treat `absent` as proof the caller mistyped an ID** — the breach-genie skill's FR7
+  translation needs to account for this.
+- **AC-4 (console-number parity) is partially verified, not fully resolved as unverified either** —
+  refining the D4 summary's "still open, not discharged." A real Validate console was provisioned and the
+  e2e suite run against it (`367d2f2`): the **parameter mapping** (what the tool sends vs. what the console's
+  own `getPlanStatistics` sends) matches exactly on both `includeDisabled` settings for a real 4-step OOB
+  scenario. That's the risk that actually mattered — divergent parameter mapping. What's **still unverified**:
+  reading the console UI's own rendered figure and comparing it (T-35) — both browser MCPs failed to connect
+  during that run, so that half remains an explicitly accepted gap, not silently dropped.
+- **Ticket compliance**: 8 of 12 acceptance criteria covered, 4 accepted with reasons recorded (`35e62a9`) —
+  three are bookkeeping (the ticket predates decisions that superseded them: no separate `fix_lever` map, three
+  tools not one, OOB scenario UUIDs genuinely rejected by the endpoint), one (AC-4/TI-4) is the console-parity
+  gap above, accepted knowingly and explicitly, not silently.
+
+**Consequence for this PRD**: the "hard dependency, not yet implemented" framing in `prd.md` §3 Component F,
+§6, and §9 R1 is now **stale** — the tools exist, are tested, and are partially verified against a real
+console. `prd.md` needs a correction pass (tracked separately, not yet applied as of this note). The residual
+risk is narrower now: PR #91's merge conflict against `main`, the `attack_ids`-now-required contract change
+(affects any place this PRD describes that parameter as optional), the five-state (not three-state) verdict,
+the removed `fix_lever` field, and the `absent`-vs-`not_computed`-vs-genuinely-missing disposition nuance.
+
 ### SAF-35568 — constraint meanings *(dependency of SAF-35508, transitively of this story)*
 
 Supplies authoritative descriptions for the 88 emitted constraint codes. SAF-35508 emits

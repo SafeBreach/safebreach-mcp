@@ -225,14 +225,32 @@ components already touch.
 scope, but load-bearing for FR6/FR7/FR12/FR14/DoD2/DoD5/DoD6.
 
 **Key Features**:
-- **Dependency, not yet implemented as of this PRD's writing.** SAF-35508 (`feature/SAF-35508-plan-statistics-
-  mcp-tool`, this branch's base) is retiring its single `get_plan_statistics` tool for three narrow tools per
-  owner decision D4 (2026-09-02, confirmed by the user as the plan to design against, verified directly against
-  the uncommitted diff in that worktree — not yet pushed): `get_scenario_simulation_counts` ("how many
-  simulations?"), `get_scenario_blocked_entities` ("is anything fully blocked?" — three-state verdict:
-  blocked / nothing blocked / nothing evaluated), `get_scenario_attack_blockers` ("why didn't attack #N run?").
-  All three call the same shipped, untouched `sb_get_plan_statistics` plumbing.
-- **FR12's "re-check after any change"** may now require calling more than one of the three (e.g.
+- **Implemented and tested, as of 2026-09-03** — updated from this PRD's original "not yet implemented"
+  framing; re-verified directly against `origin/feature/SAF-35508-plan-statistics-mcp-tool` (`de8afff`) and
+  its `CLAUDE.md` catalog, not taken on a report. SAF-35508 retired its single `get_plan_statistics` tool for
+  three narrow tools per owner decision D4: `get_scenario_simulation_counts` ("how many simulations?"),
+  `get_scenario_blocked_entities` ("is anything fully blocked?" — a **five**-state verdict: entities blocked /
+  nothing blocked / `clean_where_measured` / `partially_evaluated` / nothing evaluated, decided by
+  `counts_computed`, never by list emptiness), `get_scenario_attack_blockers` ("why didn't attack #N run?" —
+  **`attack_ids` is required**, enforced in the tool's JSON schema, not optional as originally planned; six
+  per-id dispositions: `ran`, `blocked`, `blocked_where_measured`, `not_computed`, `count_map_truncated`,
+  `absent`). All three call the same shipped `sb_get_plan_statistics` plumbing, unchanged (AC-6 intact).
+  1932 tests passing; PR [#91](https://github.com/SafeBreach/safebreach-mcp/pull/91) is open (not draft) but
+  currently has a real merge conflict against `main` — doesn't block this branch, which stacks on the feature
+  branch directly, not `main`.
+- **`fix_lever` was removed**, not shipped — SAF-35568 implemented it separately and dropped it as redundant
+  against `description`. Any earlier assumption in this PRD or its `context.md` that a conflict's suggested
+  fix comes from a `fix_lever` field is stale; it must compose from `description` alone.
+- **A disclosed, not-fixed edge case affects FR7's translation**: an attack the orchestrator never generates
+  into a "move" reports `absent` even when the caller named it in the scenario's own filter — indistinguishable
+  from a genuinely wrong ID at the response-shape level. Worth a note in the `breach-genie` skill's conflict
+  -translation guidance, not something this repo's tools can fix (SAF-35508's own finding, orchestrator
+  -level).
+- **AC-4 (console-number parity) is partially verified**: a real console run confirmed the tool's parameter
+  mapping matches the console's own `getPlanStatistics` call exactly, on both `includeDisabled` settings —
+  the risk that actually mattered. Reading the console UI's own rendered figure (T-35) is still an explicitly
+  accepted gap (browser MCP connection failure during that run), not silently unverified.
+- **FR12's "re-check after any change"** may still require calling more than one of the three (e.g.
   `get_scenario_blocked_entities` for the verdict, `get_scenario_simulation_counts` for the number) — this
   story's tools don't call these themselves (that orchestration is Helm's job per FR13), but their response
   shapes (the accumulating draft body) must be exactly what those three tools expect as an ad-hoc `scenario`
@@ -241,7 +259,8 @@ scope, but load-bearing for FR6/FR7/FR12/FR14/DoD2/DoD5/DoD6.
   (`breach-genie`), not a tool change — noted here only so the draft body's shape is confirmed compatible with
   what `get_scenario_simulation_counts` needs.
 
-**Integration points**: none in this repo's code — purely a contract dependency. Tracked as Risk R1 (Section 9).
+**Integration points**: none in this repo's code — purely a contract dependency, now against an implemented,
+tested surface rather than a planning-only one. Tracked as Risk R1 (Section 9, narrowed accordingly).
 
 ---
 
@@ -292,10 +311,13 @@ All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a r
   independent of the account's Propagate license state.
 
 ### Technical Constraints
-- **Hard dependency, not yet implemented**: `get_scenario_simulation_counts`/`get_scenario_blocked_entities`/
-  `get_scenario_attack_blockers` (SAF-35508 D4, phases 7-9 "not started" as of this writing). This story's
-  implementation phases can proceed on Components A-E independently, but Component F's contract, and therefore
-  full DoD3/DoD5/DoD6/FR14 verification, is blocked until those tools exist.
+- **Dependency, now implemented (updated 2026-09-03)**: `get_scenario_simulation_counts`/
+  `get_scenario_blocked_entities`/`get_scenario_attack_blockers` (SAF-35508 D4) are implemented, tested
+  (1932 passing), and partially verified against a real console — see Component F for the precise, current
+  contract (five-state blocked-entities verdict, required `attack_ids` on attack-blockers, no `fix_lever`).
+  This story's implementation can now target the real contract in that branch's `CLAUDE.md` catalog entries
+  25-27, rather than a planned one. Residual: PR #91 (SAF-35508) has an open merge conflict against `main` —
+  worth resolving before this story's own PR is ready to merge.
 - **Backward compatibility**: N/A — all new tools; `get_playbook_attacks`'s new parameters are additive/optional.
 - **Deployment**: the draft cache assumes the single-process deployment `start_all_servers.py` runs today
   (verified — asyncio, one process, five ports, no `workers`/gunicorn). A future multi-worker deployment would
@@ -616,7 +638,7 @@ draft cache eviction.
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **SAF-35508's `get_scenario_simulation_counts`/`get_scenario_blocked_entities`/`get_scenario_attack_blockers` are not yet implemented** (D4 phases 7-9, "not started" at PRD time) — this story's DoD3/DoD5/DoD6/FR12/FR14 depend on their exact contract. | High | Components A-E can be implemented and unit-tested against a mocked contract; final integration/e2e verification is blocked on SAF-35508 landing. Track explicitly at the Phase 7 DoD gate rather than assuming it will have landed by then. |
+| R1 | **Narrowed 2026-09-03 — the three tools are now implemented and tested (1932 passing), re-verified directly against the live branch.** Residual: PR #91 has a real merge conflict against `main` (doesn't block this branch, which stacks on the feature branch); `attack_ids` on `get_scenario_attack_blockers` is required, not optional as this PRD originally assumed — any implementation must match; `get_scenario_blocked_entities`'s verdict is five states, not three; `fix_lever` was removed, conflict-fix composition must use `description` alone; AC-4 (console-number parity) is partially verified (parameter mapping confirmed against a real console) but the UI-rendered-figure comparison remains an accepted gap on SAF-35508's side. | Medium (down from High) | Implementation can now target the real, documented contract in `CLAUDE.md` catalog entries 25-27 instead of a planned one. Confirm PR #91's merge conflict is resolved before this story's own PR is ready to merge, and implement `save_scenario`'s pre-save gate against the confirmed five-state verdict, not the three-state one this PRD originally described. |
 | R2 | **Draft cache is in-process, single-worker state.** A process restart or a future multi-worker deployment loses in-flight drafts. | Medium | Documented assumption (current deployment is confirmed single-process); `save_scenario` against a missing `draft_id` fails clearly rather than silently, so the failure mode is legible, not corrupting. |
 | R3 | **This story's tool contract deliberately diverges from FR13's literal text** (no server `scenario_id`/`step_id` until save; filter-DSL parameters instead of plain arrays for some inputs). A reviewer judging "done" against the ticket's literal wording without reading this PRD's rationale could misjudge the implementation. | Medium | This PRD's Section 2 and `context.md` document every divergence with the platform constraint that forced it (no incremental step API, zero-step rejection, no server draft). Reference this PRD explicitly at the DoD/verification gate. |
 | R4 | **FR2's CVE/named-threat-group search remains only partially closed.** `tags_filter`'s generic group-keyed shape (Component D) supports it, but there is no dedicated `cve_filter`/`threat_actor_filter` parameter — Helm must know the exact tag group name (`"CVE"`, `"Threat Actor"`) to use it. | Low-Medium | Document the exact group names in the tool description; the breach-genie skill (companion PRD) is the natural place to encode this vocabulary for Helm. |
@@ -675,3 +697,4 @@ draft cache eviction.
 | Date | Change Description |
 |---|---|
 | 2026-09-02 16:49 | PRD created — initial draft |
+| 2026-09-03 15:20 | Fetched latest SAF-35508 (PR #91, `de8afff`) at user request — the three `get_scenario_*` tools are now implemented (1932 tests passing), not "not yet implemented" as originally written. Corrected Component F, §6, and Risk R1: `attack_ids` on `get_scenario_attack_blockers` is required not optional; `get_scenario_blocked_entities`'s verdict is five states not three; `fix_lever` was removed (SAF-35568); AC-4 is partially verified (parameter mapping confirmed against a real console, UI-rendered-figure comparison still an accepted gap); PR #91 has an open merge conflict against `main`. |
