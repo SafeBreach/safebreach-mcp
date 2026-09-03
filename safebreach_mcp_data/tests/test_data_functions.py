@@ -52,12 +52,10 @@ class TestDataFunctions:
     """Test suite for data functions."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
+    def set_auth_context(self, mcp_request_auth):
         """Set up auth context for all tests (SAF-29974)."""
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         """Setup for each test method."""
@@ -1716,25 +1714,21 @@ class TestDataFunctions:
     
     @patch('safebreach_mcp_data.data_functions.get_api_account_id', return_value='123')
     @patch('safebreach_mcp_data.data_functions.get_api_base_url', return_value='https://test.com')
-    def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id):
-        """Test that missing auth context raises AuthenticationRequired in embedded mode (SAF-29974)."""
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
+    def test_secret_provider_failure_validation(self, mock_base_url, mock_account_id, mcp_request_auth):
+        """Test that a request without user auth raises AuthenticationRequired in embedded mode (SAF-29974)."""
         from safebreach_mcp_core.secret_utils import AuthenticationRequired
 
-        # Temporarily clear the auth context set by the autouse fixture
-        token = _user_auth_artifacts.set(None)
-        try:
+        # Override the autouse fixture with a request that carries no user auth
+        with mcp_request_auth(None):
             # Simulate embedded mode (SAFEBREACH_LOCAL_ENV set by SIMP)
             with patch.dict('os.environ', {'SAFEBREACH_LOCAL_ENV': '{"default":{}}'}):
-                # All functions now use get_auth_headers_for_console which raises
-                # AuthenticationRequired when no ContextVar is set in embedded mode
+                # All functions use get_auth_headers_for_console which raises
+                # AuthenticationRequired when the request has no user auth in embedded mode
                 with pytest.raises(AuthenticationRequired):
                     sb_get_tests(console="test-console", test_type="validate", page_number=0)
 
                 with pytest.raises(AuthenticationRequired):
                     sb_get_test_details(console="test-console", test_id="test123")
-        finally:
-            _user_auth_artifacts.reset(token)
     
     # New parameter validation tests
     def test_sb_get_test_details_empty_test_id(self):
@@ -3093,12 +3087,10 @@ class TestPeerBenchmarkFunction:
     """Test suite for sb_get_peer_benchmark_score (SAF-29415 Phase 2)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
+    def set_auth_context(self, mcp_request_auth):
         """Set up auth context for all tests (SAF-29974)."""
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         """Clear the peer benchmark cache before each test."""
@@ -3592,11 +3584,9 @@ class TestLaunchedByEnrichment:
     """Tests for launched_by field in test results."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_core.user_lookup.get_user_name')
     @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state')
@@ -3738,11 +3728,9 @@ class TestStorageHintForTerminalTests:
     """Tests for delete hint in get_test_details for terminal tests."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_core.user_lookup.get_user_name', return_value=None)
     @patch('safebreach_mcp_core.queue_state.get_orchestrator_test_state', return_value=None)
@@ -3817,11 +3805,9 @@ class TestSimulationLogsFetchCore:
     """Phase 1: shared fetch core + cache for the v3 /simulationLogs endpoint."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @pytest.fixture(autouse=True)
     def clear_cache(self):
@@ -4091,11 +4077,9 @@ class TestFullSimulationLogsV3Migration:
     """get_full_simulation_logs fetches via the v3 result endpoint (includeLogs=true)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @staticmethod
     def _ok(payload):
@@ -4148,11 +4132,9 @@ class TestSimulationLogsEntryPoints:
     """Phase 2: public sb_* entry points + input validation."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     # --- single-sim tool: job_ids construction ------------------------------
 
@@ -4451,11 +4433,9 @@ class TestQueuedTestsMerge:
     """SAF-33511: get_tests merges orchestrator-queued tests into its response."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         tests_cache.clear()

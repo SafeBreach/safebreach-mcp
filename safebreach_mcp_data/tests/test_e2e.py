@@ -1080,14 +1080,14 @@ class TestDataServerE2E:
 # Override via PEER_BENCHMARK_E2E_CONSOLE if you need a different console.
 
 @pytest.fixture(scope="class")
-def peer_benchmark_e2e_console():
+def peer_benchmark_e2e_console(mcp_request_auth):
     """Resolve the console for the peer benchmark E2E test.
 
     Defaults to E2E_CONSOLE (pentest01) where the /score endpoint is now
     available. Override via PEER_BENCHMARK_E2E_CONSOLE. Skips (does not
     fail) when the resolved console isn't configured locally.
 
-    SAF-29974: Sets the ContextVar to the console-specific token so that
+    SAF-29974: Provides request auth with the console-specific token so that
     get_auth_headers_for_console() returns the right credentials.
     """
     console = os.environ.get('PEER_BENCHMARK_E2E_CONSOLE',
@@ -1100,7 +1100,6 @@ def peer_benchmark_e2e_console():
     )
 
     from safebreach_mcp_core.environments_metadata import get_environment_by_name
-    from safebreach_mcp_core.token_context import _user_auth_artifacts
 
     try:
         get_environment_by_name(console)
@@ -1112,10 +1111,9 @@ def peer_benchmark_e2e_console():
     if not api_token:
         pytest.skip(skip_msg)
 
-    # Swap ContextVar to this console's token
-    _user_auth_artifacts.set({"x-apitoken": api_token})
-
-    return console
+    # Provide request auth with this console's token for the whole class
+    with mcp_request_auth({"x-apitoken": api_token}):
+        yield console
 
 
 class TestPeerBenchmarkScoreE2E:
