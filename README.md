@@ -74,7 +74,7 @@ This MCP server enables AI agents to interact with SafeBreach management console
 ### 🔒 Security & Connectivity
 - **Security-First Design**: Localhost-only default with Bearer token authentication for external access
 - **External Connection Support**: Optional external network access with HTTP Authorization security
-- **SSE Transport**: Server-Sent Events transport for real-time communication
+- **Streamable HTTP Transport**: MCP streamable-http on a single `/mcp` endpoint (or `$SAFEBREACH_MCP_BASE_URL`)
 
 ### 📊 Data Management
 - **Simulator Management**: Query SafeBreach simulators, their status, and detailed configurations
@@ -457,10 +457,10 @@ When accessing externally enabled servers, clients must include the Authorizatio
 ```bash
 # Example HTTP request to external server
 curl -H "Authorization: Bearer your-secure-token" \
-     "http://your-server:8001/sse"
+     "http://your-server:8001/mcp"
 
 # Local connections don't require authentication
-curl "http://localhost:8001/sse"
+curl "http://localhost:8001/mcp"
 ```
 
 ### Security Warnings
@@ -487,7 +487,7 @@ For external servers, update your Claude Desktop configuration:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://100.117.2.202:8001/sse",
+        "http://100.117.2.202:8001/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -579,7 +579,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:8000/sse",
+        "http://127.0.0.1:8000/mcp",
         "--transport",
         "http-first"
       ]
@@ -588,7 +588,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:8001/sse",
+        "http://127.0.0.1:8001/mcp",
         "--transport",
         "http-first"
       ]
@@ -597,7 +597,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:8002/sse",
+        "http://127.0.0.1:8002/mcp",
         "--transport",
         "http-first"
       ]
@@ -606,7 +606,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:8003/sse",
+        "http://127.0.0.1:8003/mcp",
         "--transport",
         "http-first"
       ]
@@ -615,7 +615,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:8004/sse",
+        "http://127.0.0.1:8004/mcp",
         "--transport",
         "http-first"
       ]
@@ -636,7 +636,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "/c",
         "npx",
         "mcp-remote",
-        "http://your-server-ip:8000/sse",
+        "http://your-server-ip:8000/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -650,7 +650,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "/c",
         "npx",
         "mcp-remote",
-        "http://your-server-ip:8001/sse",
+        "http://your-server-ip:8001/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -664,7 +664,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "/c",
         "npx",
         "mcp-remote",
-        "http://your-server-ip:8002/sse",
+        "http://your-server-ip:8002/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -678,7 +678,7 @@ Claude Desktop reads the MCP server configurations from the file:
         "/c",
         "npx",
         "mcp-remote",
-        "http://your-server-ip:8003/sse",
+        "http://your-server-ip:8003/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -705,7 +705,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://100.117.2.202:8001/sse",
+        "http://100.117.2.202:8001/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -717,7 +717,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://100.117.2.202:8000/sse",
+        "http://100.117.2.202:8000/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -729,7 +729,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://100.117.2.202:8002/sse",
+        "http://100.117.2.202:8002/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -741,7 +741,7 @@ Claude Desktop reads the MCP server configurations from the file:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://100.117.2.202:8003/sse",
+        "http://100.117.2.202:8003/mcp",
         "--transport",
         "http-first",
         "--allow-http",
@@ -759,7 +759,7 @@ The MCP servers support OAuth 2.0 discovery for automatic authentication with co
 
 **Supported OAuth 2.0 Endpoints:**
 - `/.well-known/oauth-protected-resource` - OAuth discovery metadata
-- `/.well-known/oauth-authorization-server/sse` - OAuth authorization server metadata
+- `/.well-known/oauth-authorization-server/mcp` - OAuth authorization server metadata
 - `/register` (POST) - Dynamic client registration
 - `/auth` (GET) - Authorization endpoint (requires Bearer token)
 - `/token` (POST) - Token endpoint (requires Bearer token)
@@ -793,8 +793,8 @@ ssh user@server "cat ~/.config/safebreach-mcp/environment | grep SAFEBREACH_MCP_
 
 | Issue | Solution |
 |-------|----------|
-| **Connection Failed** | Verify server is running: `curl http://your-server-ip:8001/sse` |
-| **Authentication Failed** | Check Bearer token: `curl -H "Authorization: Bearer your-token" http://your-server-ip:8001/sse` |
+| **Connection Failed** | Verify server is running: `curl http://your-server-ip:8001/mcp` |
+| **Authentication Failed** | Check Bearer token: `curl -H "Authorization: Bearer your-token" http://your-server-ip:8001/mcp` |
 | **Tool Loading Failed** | Verify JSON syntax, check for extra commas, ensure `npx` is in PATH |
 | **mcp-remote Not Found** | Install globally: `npm install -g @anthropic/mcp-remote` |
 
@@ -1604,7 +1604,7 @@ aws secretsmanager create-secret --name "safebreach/new-console/api-token" --sec
 - **Root Cause**: Outdated MCP SDK version (1.11.0) and missing updated code on remote server
 - **Resolution**: Updated MCP SDK to 1.12.1 and deployed latest authentication wrapper code
 - **Current Status**: External connections fully operational with Bearer token authentication
-- **Access**: Direct external connections working: `curl -H "Authorization: Bearer token" http://server:port/sse`
+- **Access**: Direct external connections working: `curl -H "Authorization: Bearer token" http://server:port/mcp`
 
 **Middleware Bug Fix Summary:**
 1. **Root Cause**: Outdated MCP SDK (1.11.0) + missing code updates
