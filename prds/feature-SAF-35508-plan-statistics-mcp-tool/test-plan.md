@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 31 | 14 | 0 | 6 | 51 |
+| Automatic | 32 | 14 | 0 | 6 | 52 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **31** | **14** | **0** | **9** | **54** |
+| **Total** | **32** | **14** | **0** | **9** | **55** |
 
 ## Environment Requirements (aggregated)
 
@@ -192,6 +192,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-56 | A both-counts result renders both passes, on every tool | — | Phase 8 | safebreach_mcp_studio |
 | T-57 | Coverage reads its denominator from the true total, never the capped map | — | Phase 8 | safebreach_mcp_studio |
 | T-58 | The blockers tool answers only about ids it was given, and says so in its schema | API-contract | Phase 10 | safebreach_mcp_studio |
+| T-59 | Attack names are fetched for the entries a report shows, never for the whole playbook | performance | Phase 11 | safebreach_mcp_studio, safebreach_mcp_playbook |
 
 **Integration** — all Automatic
 
@@ -1129,6 +1130,22 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
+### T-59 — Attack names are fetched for the entries a report shows, never for the whole playbook
+
+- Description: Proves each tool pays only for the names it renders — the counts tool pays nothing — rather than downloading the console's entire attack library on every call.
+- Status: Active
+- Passes after: Phase 11
+- Level: unit
+- Execution: Automatic
+- Aspect: performance
+- Risk: The name map was built eagerly, before scoring, on all three tools. Measured live: the bulk KB listing is 58.62 MB across 9,659 moves and ~3.0 s, while the counts tool's projection drops every field a name can appear in — so it paid the whole 58.62 MB for a result it discards. The rendered output was already correct, which is exactly why no existing test could catch this: the defect is the cost, not the answer. A lazy per-id lookup during construction would be worse, not better, because one name is resolved per zero-count attack and per constrained move — sets that reach thousands — so resolution must happen after capping, where the set is bounded by the caps.
+- Risk source: PRD §8 (Phase 11)
+- Verify: With the statistics transport mocked and the name resolver patched, call each of the three tools on a report holding one attack at an integer 0 and one that ran. Assert on the resolver calls, not the output. Separately, drive the resolver itself: no ids, repeated ids, an id past the per-id limit, an id that 404s, a transport failure, and a warm bulk cache.
+- Expected: The counts tool calls the resolver **zero** times. The other two call it once, with only the blocked attack's id — never the id that ran, and never the bulk listing. A repeated id is fetched once; a both-counts call resolves each id once across both passes. Above the per-id limit exactly one bulk call is made and no per-move calls. An unresolved id is absent from the map rather than blank, and a transport failure costs the name while the report and its verdict survive.
+- Evidence required: pytest run output naming the tests, with the resolver call counts and arguments shown.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`, `safebreach_mcp_playbook/tests/test_playbook_functions.py`
+- Environment needs: none
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -1146,7 +1163,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 8 | T-24, T-25, T-28, T-29, T-30, T-31, T-40, T-47, T-48, T-55, T-56, T-57 | 49 |
 | Phase 9 | T-34 | 50 |
 | Phase 10 | T-58 | 51 |
-| Final | T-32, T-33, T-35 | all (54) |
+| Phase 11 | T-59 | 52 |
+| Final | T-32, T-33, T-35 | all (55) |
 
 ## Sign-off
 
@@ -1162,6 +1180,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-03 (d) | **T-59 added for Phase 11.** Explaining the call flow surfaced that the statistics call is not the first network call: the whole playbook — measured live at 58.62 MB / 9,659 moves / ~3.0 s — was fetched ahead of it on every call of all three tools, and the counts tool renders no names at all. The tests deliberately assert on the **requests made** rather than on the rendered names, because the output was always correct; the defect was that it was correct expensively, which is precisely the class of bug a green output-assertion suite cannot see. The resolver's own edge cases (per-id limit, 404, transport failure, warm cache, repeats) are pinned in the playbook repo alongside it. |
 | 2026-09-03 (c) | **T-58 added for Phase 10; T-49's `Expected` corrected.** The owner asked whether the blockers tool is a subtype of the blocked-entities tool. It is not — one reports simulators the other never does, and the other answers per named id including "it ran" and "it is absent", which an existential list cannot express — but its unnamed mode genuinely duplicated the sibling's attacks half, from the same field by the same rule. Removing it makes `attack_ids` required, and T-58 pins all three halves of that: the rejection happens before any call and names the sibling, the requirement is in the **schema** rather than only at runtime (the schema is what reaches the calling agent), and the projection volunteers no other blocked attack. T-49's `Expected` asserted the ran-attack "appears in no blocked listing" — a listing that no longer exists — and now asserts the cross-tool agreement it was really there to protect. |
 | 2026-09-03 (b) | **Three narrator-layer tests added at the Phase-8 planning gate; two stale `Expected` clauses widened.** The plan pinned the projections thoroughly and the narration barely at all — T-42/T-53/T-54 fix the verdict states and dispositions in the returned dict, T-47 fixes which sections appear, and nothing fixed what any of them *renders*. **T-55** closes that: all five verdict lines and all six disposition lines must be pairwise distinct in the rendered markdown, the hedged forms visibly hedged. Without it `clean` and `clean_where_measured` could emit identical prose with every other test green — which would undo, at the only layer a person reads, the distinction the whole feature exists to make. **T-56** covers `both_counts=True`, whose result carries no top-level `steps` key: a narrator that reaches for steps before checking the mode raises immediately. The retired tool had a test for exactly this; its three replacements had none. **T-57** pins the coverage denominator to the true total rather than the capped map length — a deferred Phase-7 review finding, and a behaviour defect all three narrators would otherwise inherit: a step holding 9,613 attacks would narrate "9 of 100", presenting a truncation artifact as a fact about the scenario. **Widened**: T-28 said the verdict is one of *three* states (five shipped) and T-43 named *four* dispositions (six shipped) — T-28's e2e assertion would have failed on a legitimate console response, so it now asserts membership in all five; T-43 keeps its four, now stated as the subset reachable without a cap, with the other two attributed to T-44 and T-54. **Step numbering is 0-based** across all three tools, matching PRD §4's own examples and the projections' `step_index`; the `run_scenario`/`quick_run` previews remain 1-based and that divergence is now a recorded decision rather than an accident. Regenerated views: 53 Active (30 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/37/49/50/53. Status stays Draft — material change. In Sync with PRD v7. |
 | 2026-09-03 | **T-54 added from the sixth Phase-7 review round.** Reproduced: an attack blocked in step 0 and running 240 times in step 1 was reported **blocked** by both tools, because "ran anywhere" was read from the counts map — capped at 100 by ascending id — and the attack's id sorted past that cap in the running step. Absence from a map that stopped at its cap is *unknown*, not "did not run": the null-versus-zero rule applied to the map itself rather than to the counts inside it. The module's own note records 9,613 attacks in one real step, so this is the normal case. **Two new hedged outcomes** rather than a false confident one: `blocked_where_measured` on the disposition and `clean_where_measured` on the verdict — because "clean" is a claim about everything, and an entity a truncated map may be hiding is not something the report can vouch for. A step's own zero-impact entry still counts as an account of the id, so a single-step capped report is unaffected. Regenerated views: 50 Active (27 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/37/46/47/50. Status stays Draft — material change. In Sync with PRD v7. |

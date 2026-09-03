@@ -504,6 +504,8 @@ Rate limiting environment variables:
   artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
   `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
   **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
+  **Costs no playbook request**: its projection renders no attack names, and the other two resolve names
+  only for the entries they actually show — one `moves/{id}` call each, never the 58 MB full KB listing.
 26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **will anything in this
   scenario not run at all?** Reports every attack and simulator whose count is a genuine integer `0`, with the
   constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.

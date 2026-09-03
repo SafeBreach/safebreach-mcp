@@ -3049,6 +3049,44 @@ def _resolve_scenario_to_plan(console, scenario_id):
     )
 
 
+def _fill_attack_names(report, console, conflict_detail, resolved):
+    """Name the attacks this report will actually show, and no others.
+
+    Runs AFTER capping, which is the whole point. The maps these entries were
+    drawn from can hold ten thousand attacks; what survives the caps is at most
+    a hundred. Resolving during construction meant downloading the entire
+    playbook — 58.6 MB and ~3 s on a live console — to print fifty names.
+
+    ``resolved`` is shared across both passes of a both-counts call, so the same
+    id is never looked up twice for one question.
+    """
+    # Conflicts carry a name only in the verbose modes; filling one in 'summary'
+    # would add a field the shaping layer deliberately leaves out.
+    named_conflicts = conflict_detail in ('per_attack', 'full')
+    entries = []
+    for step in report['steps']:
+        entries.extend(step['zero_impact_attacks'])
+        if named_conflicts:
+            entries.extend(step['conflicts'])
+    if not entries:
+        return
+
+    wanted = {str(entry['attack_id']) for entry in entries} - resolved.keys()
+    if wanted:
+        from safebreach_mcp_playbook.playbook_functions import get_attack_names_by_ids
+        try:
+            resolved.update(get_attack_names_by_ids(console, sorted(wanted)))
+        except Exception as e:
+            # Names are cosmetic; an answer without them beats no answer.
+            logger.warning(f"Failed to resolve attack names: {e}")
+            return
+
+    for entry in entries:
+        name = resolved.get(str(entry['attack_id']))
+        if name:
+            entry['attack_name'] = name
+
+
 def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
                      get_constraints, get_all_constraints, limit, use_cache,
                      attack_names, conflict_detail, both_present):
@@ -3081,7 +3119,8 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
                            get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
                            limit: int = DEFAULT_LIMIT,
                            use_cache: bool = DEFAULT_USE_CACHE,
-                           conflict_detail: str = "summary"):
+                           conflict_detail: str = "summary",
+                           resolve_attack_names: bool = True):
     """
     Report what a plan would do on a console, without running anything.
 
@@ -3097,6 +3136,9 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         limit: Simulations the orchestrator evaluates before stopping early.
         use_cache: Whether the orchestrator may answer from its own cache.
         conflict_detail: 'summary', 'per_attack' or 'full'.
+        resolve_attack_names: Look up names for the attacks the report will
+            show. False for a caller that renders none, which then costs no
+            playbook request at all.
 
     Returns:
         The report (see get_plan_statistics_response_mapping), or — with
@@ -3116,12 +3158,11 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         if from_scenario is not None:
             parsed_plan, resolved_scenario_id = from_scenario, None
 
-    # Resolved once and reused across both passes: zero_impact_attacks is
-    # meaningful without constraints, and a bare attack id is unusable.
-    attack_names = _build_attack_name_map(console)
+    # Shared across both passes so one id is never looked up twice per question.
+    resolved_names = {}
 
     def score(with_disabled, both_present):
-        return _fetch_and_shape(
+        report = _fetch_and_shape(
             console,
             plan=parsed_plan,
             scenario_id=resolved_scenario_id,
@@ -3131,10 +3172,14 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
             get_all_constraints=get_all_constraints,
             limit=limit,
             use_cache=use_cache,
-            attack_names=attack_names,
+            # Supplied after capping instead: see _fill_attack_names.
+            attack_names=None,
             conflict_detail=conflict_detail,
             both_present=both_present,
         )
+        if resolve_attack_names:
+            _fill_attack_names(report, console, conflict_detail, resolved_names)
+        return report
 
     if not both_counts:
         logger.info(
@@ -3648,7 +3693,7 @@ def _project_attack_blockers(report, attack_ids):
 
 def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
                     both_counts, get_constraints, get_all_constraints, limit,
-                    use_cache, conflict_detail):
+                    use_cache, conflict_detail, resolve_attack_names=True):
     """Validate in the caller's vocabulary, then score exactly once.
 
     The parse result is discarded — ``sb_get_plan_statistics`` does its own, and
@@ -3668,6 +3713,7 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
         limit=limit,
         use_cache=use_cache,
         conflict_detail=conflict_detail,
+        resolve_attack_names=resolve_attack_names,
     )
 
 
@@ -3684,12 +3730,15 @@ def sb_get_scenario_simulation_counts(
 
     ``get_constraints`` defaults to False here alone: this answer renders no
     conflicts, and evaluating them is not free — a single default step measured
-    38,531 conflicts and 11.8 MB on a real console.
+    38,531 conflicts and 11.8 MB on a real console. For the same reason it
+    resolves no attack names: its projection drops every field one could appear
+    in, so looking them up would be a playbook request whose result is discarded.
     """
     logger.info(f"Scenario simulation counts for console '{console}'")
     return _project_simulation_counts(_score_scenario(
         console, scenario, scenario_id, test_id, include_disabled, both_counts,
         get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+        resolve_attack_names=False,
     ))
 
 

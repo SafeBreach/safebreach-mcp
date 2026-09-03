@@ -6,6 +6,7 @@ specifically for accessing playbook attack data and details.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 
 import requests
@@ -94,6 +95,83 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Error fetching playbook attacks for console %s: %s", console, e)
         raise ValueError(f"Failed to fetch playbook attacks: {str(e)}") from e
+
+
+# Measured on a live console holding 9,659 moves: the bulk KB listing is 58.6 MB
+# and ~3.0 s, while a single move is ~10 KB and ~0.6 s. Sixteen at a time,
+# per-id resolution beats the bulk call up to ~100 ids and moves roughly 80x
+# less data; past that the one big call is faster and is used instead.
+ATTACK_NAME_WORKERS = 16
+ATTACK_NAME_PER_ID_LIMIT = 100
+
+
+def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
+    """Resolve {id: name} for the attacks named, fetching only those attacks.
+
+    Names are cosmetic: an id that does not resolve is simply absent from the
+    result, and a transport failure yields an empty map rather than raising, so
+    a caller renders the bare id instead of losing its answer.
+    """
+    wanted, seen = [], set()
+    for attack_id in attack_ids:
+        key = str(attack_id)
+        if key and key not in seen:
+            seen.add(key)
+            wanted.append(key)
+    if not wanted:
+        return {}
+
+    def pick(attacks):
+        names = {str(a['id']): a.get('name', '') for a in attacks if 'id' in a}
+        return {key: names[key] for key in wanted if names.get(key)}
+
+    # A warm bulk cache already holds every name. Asking the API again for ids
+    # it can answer from memory would be the waste this function exists to end.
+    if is_caching_enabled("playbook"):
+        cached = playbook_cache.get(f"attacks_{console}{get_cache_user_suffix()}")
+        if cached is not None:
+            logger.info("Resolved %d attack name(s) for console %s from the warm cache",
+                        len(wanted), console)
+            return pick(cached)
+
+    if len(wanted) > ATTACK_NAME_PER_ID_LIMIT:
+        logger.info("Resolving %d attack name(s) for console %s via the bulk listing "
+                    "(above the %d-id per-id limit)",
+                    len(wanted), console, ATTACK_NAME_PER_ID_LIMIT)
+        try:
+            return pick(_get_all_attacks_from_cache_or_api(console))
+        except Exception as e:
+            logger.warning("Bulk attack-name lookup failed for console %s: %s", console, e)
+            return {}
+
+    base_url = get_api_base_url(console, 'playbook')
+    # Resolved once, in this thread: auth lives in a ContextVar, which does not
+    # follow a worker into the pool below.
+    headers = {
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
+    }
+
+    def fetch(attack_id):
+        try:
+            response = requests.get(
+                f"{base_url}/api/kb/vLatest/moves/{attack_id}",
+                headers=headers, timeout=60,
+            )
+            if response.status_code != 200:
+                logger.warning("Attack name lookup for %s returned %s",
+                               attack_id, response.status_code)
+                return attack_id, None
+            return attack_id, (response.json().get('data') or {}).get('name')
+        except Exception as e:
+            logger.warning("Attack name lookup for %s failed: %s", attack_id, e)
+            return attack_id, None
+
+    logger.info("Resolving %d attack name(s) for console %s, one move each",
+                len(wanted), console)
+    with ThreadPoolExecutor(max_workers=min(ATTACK_NAME_WORKERS, len(wanted))) as pool:
+        return {attack_id: name
+                for attack_id, name in pool.map(fetch, wanted) if name}
 
 
 def sb_get_playbook_attacks(

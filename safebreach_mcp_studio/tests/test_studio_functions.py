@@ -13398,6 +13398,109 @@ class TestAttackBlockersCatalogIsNarrowed:
         assert catalog['incompatible_os']['description'] == 'OS is incompatible.'
 
 
+class TestAttackNamesAreFetchedForWhatIsShown:
+    """T-59 — each tool resolves the names it renders, and no more.
+
+    The playbook listing measured 58.6 MB / 9,659 moves on a live console, and
+    it was fetched on every call of all three tools. The counts tool's
+    projection drops every field a name can appear in, so it paid the whole
+    58.6 MB for nothing. These assert on the CALLS, because the rendered output
+    was already correct — it was correct expensively.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @staticmethod
+    def _blocked_response():
+        # One attack at an integer 0, so exactly one name is worth resolving.
+        return {"steps": [{
+            "simulationCount": 0,
+            "moves": {"226": 0, "281": 40},
+            "simulators": {"sim-a": 0},
+            "targetSimulators": {"sim-a": 0},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {"sim-a": {"226": [{"reason": "incompatible_os"}]}},
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def test_the_counts_tool_resolves_no_names_at_all(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids') as resolve:
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO)
+        # Its projection drops zero_impact_attacks and conflicts entirely, so a
+        # name it fetched could never reach the caller.
+        resolve.assert_not_called()
+
+    def test_the_blocked_entities_tool_resolves_only_the_blocked_attack(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids', return_value={}) as resolve:
+                sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO)
+        resolve.assert_called_once()
+        # 281 ran 40 times; asking for its name would be the old behaviour in
+        # miniature — fetching what is never shown.
+        assert list(resolve.call_args.args[1]) == ['226']
+
+    def test_the_resolved_name_reaches_the_blocked_entry(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids',
+                       return_value={'226': 'Write EICAR to disk'}):
+                result = sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO)
+        entry = result['steps'][0]['zero_impact_attacks'][0]
+        assert entry['attack_name'] == 'Write EICAR to disk'
+
+    def test_a_failed_lookup_costs_the_name_not_the_report(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids',
+                       side_effect=Exception("playbook unavailable")):
+                result = sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO)
+        entry = result['steps'][0]['zero_impact_attacks'][0]
+        assert entry['attack_id'] == '226'
+        assert 'attack_name' not in entry
+        assert result['verdict']['state'] == 'blocked'
+
+    def test_both_counts_resolves_each_id_once_across_the_two_passes(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids',
+                       return_value={'226': 'Write EICAR to disk'}) as resolve:
+                result = sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO, both_counts=True)
+        # Two scoring passes, one name lookup: the second pass reads the shared
+        # memo rather than asking again for an id already resolved.
+        assert resolve.call_count == 1
+        for mode in ('runnable', 'expected'):
+            assert result[mode]['steps'][0]['zero_impact_attacks'][0][
+                'attack_name'] == 'Write EICAR to disk'
+
+    def test_summary_mode_resolves_nothing_for_conflicts(self):
+        # Conflicts carry a name only in the verbose modes, so in 'summary'
+        # the only ids worth resolving are the zero-impact ones.
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_names_by_ids', return_value={}) as resolve:
+                sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO,
+                    conflict_detail='summary')
+        assert list(resolve.call_args.args[1]) == ['226']
+
+
 class TestScenarioInputIsExclusiveOnAllThreeTools:
     """T-26 — ambiguous input is rejected with a clear error, on all three tools."""
 

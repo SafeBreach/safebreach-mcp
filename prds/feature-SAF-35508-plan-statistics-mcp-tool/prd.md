@@ -781,6 +781,7 @@ parameter set actually used, and an error line carrying the full response body o
 | Phase 7: Three question projections + public functions (D4) | ✅ Complete | 2026-09-03 | 2ed9a3b, 1c4f5c2 | 1873 passed / 0 failed; the 1771 pre-existing all untouched. **Six review rounds, nine severity-6/7 defects**, every one an instance of the same fault: three aggregations of "what is blocked" that could disagree over one scoring. Now one shared rule. Scope extended twice with owner approval — `_build_plan_statistics_report` (a pre-existing catalog defect the split made load-bearing) and four plan tests added at the planning gate. Three regressions were introduced by earlier rounds' own fixes and caught by later rounds. |
 | Phase 8: Three narrators, three registrations, retire `get_plan_statistics` (D4) | ✅ Complete | 2026-09-03 | c9d0f46, 9131b5e | 13 tools → 15. 1913 passed / 0 failed. **Four review rounds.** The first found all three tools **100% broken** — they called a method that does not exist — with the whole suite green, because every test reached past the tool wrapper and the broad `except Exception` turned the `AttributeError` into a fluent sentence. `TestTheRegisteredToolsActuallyRun` now invokes the registered callables. Later rounds found the same over-claim shape three more times (a heading claiming what its entries disowned; "none found" over an unscored report; a note claiming `conflict_detail` was inert when `full` sharpens the coverage figures). Two deferred Phase-7 findings landed here (`_coverage`'s capped denominator; the duplicate count formatters), plus three copies of five hardcoded defaults that shadowed the exported constants. e2e suite retargeted too: 8 cases became 13, all driving the three tools, `sb_get_plan_statistics` gone from the file, and the offline-reason and catalog assertions re-sourced from reported blockers — the projections drop the conflicts list, so reading `step['conflicts']` there would have found nothing on any tool. They collect cleanly but have **never run**: no console. |
 | Phase 9: Documentation (D4) | ✅ Complete | 2026-09-03 | (this commit) | Entry 25 → entries 25/26/27, each naming the one question its tool answers, plus a retirement note redirecting a reader of the old name. T-34 retargeted to the three names, 19 cases green; its 4 gate-table assertions were green before **and** after, since "the gate table is left alone" is a property to preserve rather than create — verified: the CLAUDE.md diff contains no table rows. |
+| Phase 11: Fetch the attack names a report shows, not the whole playbook (D7) | ✅ Complete | 2026-09-03 | (this commit) | Owner review of the call flow asked why the statistics API is reached only at stage ⑥. It is reached there correctly — stages ①–⑤ build the request body — but the question exposed that **it is not the first network call**: `_build_attack_name_map` downloaded the entire playbook first. Measured live on `saf-35508`: **58.62 MB, 9,659 moves, ~3.0 s, on every call of all three tools**, while the counts tool renders no names at all. `details=true` proved inert (byte-identical without it) and no id-filter parameter is honoured, but `/api/kb/vLatest/moves/{id}` returns one move in ~10 KB / 0.6 s. Names now resolve **after capping**, per id, 16 at a time. Measured after: counts **0 bytes**, the other two **0.02 MB**. e2e wall-clock 113 s → 51.8 s. 1945 passed / 0 failed. |
 | Phase 10: `attack_ids` becomes required — the last overlap removed (D6) | ✅ Complete | 2026-09-03 | (this commit) | Owner review after Phase 9 asked whether entry 27 was a subtype of entry 26. It is not — 26 covers simulators, and 27 answers per named id including `ran` and `absent`, which an existential list cannot express — but its **unnamed mode was** the attacks half of 26, drawn from the same field by the same rule. Removed: `attack_ids` is now required in the tool's JSON schema (not merely rejected at runtime), and the rejection names `get_scenario_blocked_entities`. `blocked_attacks`, `blocked_attacks_listing_capped` and `_listing_may_be_partial` deleted with it. 1928 passed / 0 failed. |
 
 ### Phase 1 — Delete the translation table; relay the orchestrator's catalog
@@ -1167,6 +1168,68 @@ a count, and gave one scoring two owners and two phrasings.
 
 ---
 
+### Phase 11 — Fetch the attack names a report shows, not the whole playbook
+
+**Semantic change**: none. The rendered answers are byte-identical; what changes is what is fetched to
+produce them.
+
+**How it surfaced.** Walking the call flow, the owner asked why `plan/statistics` is only reached at stage ⑥
+rather than first. It is correct there — stages ①–⑤ decide the request body and reject inputs that would
+otherwise waste a 120-second call — but the question exposed something the walkthrough had glossed: **the
+statistics call is not the first network call.** `_build_attack_name_map` ran ahead of it, unconditionally, on
+all three tools.
+
+**Measured on `saf-35508`, not estimated:**
+
+| | bytes | time |
+|---|---|---|
+| `GET /api/kb/vLatest/moves` (what ran on every call) | **58.62 MB**, 9,659 moves | ~3.0 s |
+| `GET /api/kb/vLatest/moves/{id}` | ~10 KB | ~0.6 s |
+| 50 ids, 16 workers | 0.35 MB | 1.9 s |
+| 100 ids, 16 workers | 0.71 MB | 3.0 s — the break-even |
+
+Two narrowing routes were probed and **rejected on evidence**: `details=true` is inert (the payload is
+byte-identical without it), and no id-filter spelling tried (`ids`, `id`, `moveIds`, `filter`, `fields`,
+`projection`) changes the result — all return the full 9,659. The per-move endpoint is the only narrowing the
+API offers.
+
+**Why the fix had to be "after capping", not "lazy".** A lazy per-id lookup during construction would have been
+*worse*: `_zero_impact_attacks` looks up one name per attack at an integer 0, and `_summarize_constraints` one
+per move in the constraints — sets that can run to thousands (one real step measured 38,531 conflicts). Only
+after `_cap_list` is the id set bounded: ≤50 zero-impact + ≤50 conflicts per step, and in the default
+`summary` mode conflicts carry no name at all, so the only consumer is the zero-impact list.
+
+**Implementation details**
+- `get_attack_names_by_ids(console, ids)` in `playbook_functions.py`: dedupes, returns `{}` for none, serves
+  from a warm bulk cache when one exists, falls back to the single bulk call above `ATTACK_NAME_PER_ID_LIMIT`
+  (100 — the measured break-even), and otherwise fetches one move per id through a 16-wide pool. Auth headers
+  are resolved **in the calling thread**, since the credential ContextVar does not follow a worker into the pool.
+  Failures are per-id and non-fatal: names are cosmetic, and losing a whole scenario report over a decoration
+  would be the worse trade.
+- `_fill_attack_names(report, console, conflict_detail, resolved)` runs after shaping, over the capped entries
+  only, with a memo shared across both passes of a `both_counts` call so no id is looked up twice.
+- `sb_get_plan_statistics` gains `resolve_attack_names` (default True). `get_scenario_simulation_counts` passes
+  **False** — its projection drops every field a name could appear in, so any lookup is a request whose result
+  is discarded.
+- `_build_attack_name_map` is **kept**: `run_scenario`'s preview path still uses it, and changing shipped
+  preview text is not this phase's business.
+
+**Result, measured after the change:** counts tool **0 requests / 0 bytes**; blocked-entities and
+attack-blockers **0.02 MB** each. The e2e suite went 113 s → 51.8 s with the same 11 passed / 2 skipped.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_playbook/playbook_functions.py` | `get_attack_names_by_ids` — per-id resolution, warm-cache and bulk fallbacks |
+| `safebreach_mcp_studio/studio_functions.py` | `_fill_attack_names` post-cap pass; `resolve_attack_names` flag; the eager bulk map dropped from the statistics path |
+| `safebreach_mcp_playbook/tests/test_playbook_functions.py` | T-59 — 7 cases asserting on the requests made |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-59 — 6 cases; the counts tool must resolve nothing |
+
+**Git commit**: `perf(SAF-35508): fetch the attack names a report shows, not the whole 58MB playbook`
+
+---
+
 ## 9. Risks and Assumptions
 
 ### Technical risks
@@ -1315,6 +1378,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-09-03 (d) | **Phase 11 — the playbook is no longer downloaded to print a handful of names.** Explaining the call flow, the owner asked why `plan/statistics` is only called at stage ⑥. The ordering is right — ①–⑤ build the body and reject inputs that would waste a 120 s call — but the question exposed that it is **not the first network call**: `_build_attack_name_map` fetched the whole KB first. Measured live rather than argued: **58.62 MB / 9,659 moves / ~3.0 s on every call of all three tools**, and the counts tool renders no names whatsoever. Probed two narrowing routes and rejected both on evidence — `details=true` is inert, and six id-filter spellings all return the full 9,659 — but `/moves/{id}` returns one move in ~10 KB / 0.6 s. The fix had to be **after capping**, not lazy: a lazy lookup during construction resolves one name per zero-count attack and per constrained move, sets that reach thousands, so it would have been worse. After capping the set is ≤50+50 per step. Result: counts **0 bytes**, the other two **0.02 MB**, e2e 113 s → 51.8 s, 1945 passed. Tests assert on the *requests made*, because the rendered output was already correct — it was correct expensively. |
 | 2026-09-03 (c) | **Phase 10 — `attack_ids` becomes required (D6).** Owner review after Phase 9 asked whether `get_scenario_attack_blockers` is a subtype of `get_scenario_blocked_entities` and the two should merge. Checked rather than answered from the docstrings: **neither contains the other** — 26 reports simulators, which 27 never does, and 27 with ids named is a *total function* over those ids (`ran` with its count, `absent`, `not_computed`, `count_map_truncated`), none of which an existential list can express. An id missing from such a list could have run, be absent, or sit in an unscored step, and collapsing those three into one guess is the failure this decomposition exists to remove. Merging would produce a tool whose output shape flips on an optional parameter — the shape of the retired `get_plan_statistics`. **But the owner was right about the overlap**: the unnamed mode listed every fully-blocked attack from the same field by the same `_blocked_across_steps` rule that 26's verdict already counts, whose blockers 26 already carries inline and whose codes it already narrows the catalog to — a list where the sibling had a count, and one scoring with two owners. Removed. `attack_ids` is now **required in the JSON schema** (the wrapper takes it first), because a runtime rejection costs a round trip while the schema is what reaches the calling agent; the rejection names the sibling tool rather than leaving the caller to find it. `blocked_attacks`, `blocked_attacks_listing_capped` and `_listing_may_be_partial` deleted. The narrator's "no fully-blocked attack was found" line went with the listing it described; its `any_step_scored` guard is **kept and now reachable** — a page of per-id `not_computed` reads as bad luck with the ids chosen unless the report says once that nothing was scored at all. 1928 passed / 0 failed. CLAUDE.md's "the three are disjoint by construction" is now true rather than aspirational. |
 | 2026-09-03 (b) | **Phases 8 and 9 complete (`c9d0f46`, `9131b5e`, docs).** The MCP surface now carries the three tools and not the one they replace: studio goes 13 → 15, `get_plan_statistics` is unregistered, and `_format_plan_statistics` / `_format_one_report` / `_format_statistics_step` / `_format_count` / `_shown_of` go with it. `sb_get_plan_statistics` is untouched, so AC-6 still holds. CLAUDE.md's entry 25 became entries 25/26/27 with a retirement note that redirects rather than merely omitting; the rate-limiting gate table is verifiably untouched (the diff contains no table rows). 1927 passed / 0 failed. **Four review rounds, and the first one is the one worth recording**: all three tools were completely non-functional — they called `self._resolve_console`, which does not exist — and the entire 1901-test suite passed, because every test reached *past* the tool wrapper (narration tests called the formatters, function tests called the `sb_*` functions) and the broad `except Exception` turned the `AttributeError` into a plausible error sentence. The fix that matters is the coverage: `TestTheRegisteredToolsActuallyRun` invokes the registered callables, and reintroducing the bug turns all ten red. It then immediately earned its keep by catching a `KeyError` in the next round's fix. **The same over-claim shape recurred three more times** and was fixed each time: hedged entries filed under a heading reading "did not run anywhere" that each entry then disowned; "No fully-blocked attack was found" emitted over a report where nothing was scored (a search that read nothing has not searched — the projection now carries `any_step_scored`); and a note I added claiming `conflict_detail` could not change the counts answer, when `full` uncaps the coverage maps and turns "at least 100 of 400" into "400 of 400". **Three plan tests were added at the Phase-8 gate** (T-55/56/57) precisely because the plan pinned the projections thoroughly and the narration barely at all — the layer a person actually reads. **Two deferred Phase-7 findings landed here**: `_coverage` took its denominator from the capped map, so a step holding 9,613 attacks narrated "9 of 100"; and the byte-identical count formatters each re-implemented `is_computed_count` in a module that imports it. One reviewer suggestion was **reverted** — unifying the two missing-description spellings changed shipped `run_scenario` preview text that existing tests pin, which is not Phase 8's business. **Still open**: the six e2e tests (T-28…T-31, T-40, T-48) have never run against a console and are not retargeted; §8 Phase 8's e2e clause is therefore not discharged, and **AC-4 remains unchecked**. |
 | 2026-09-03 | **Phase 7 complete (`2ed9a3b`, `1c4f5c2`).** Three pure projections plus their public functions; nothing registered, so the MCP surface is unchanged and all 1771 pre-existing tests pass untouched (1873 total, 0 failed). **Six review rounds surfaced nine severity-6/7 defects, and they were all one fault**: three aggregations answering "what is blocked" — the verdict, the listing, and the per-id disposition — that could disagree about a single scoring. They now share one rule. The individual symptoms, in the order found: `clean` asserted over steps nobody scored; a blocked attack past `ZERO_IMPACT_CAP` reported `absent` while its blocker list sat in hand; an empty blocker list reading as "the console found no reason" when none was requested or detail was truncated; a false "listing is partial" hint from comparing distinct ids against per-step occurrence sums; and — the one that would have shipped — **an attack that ran 240 times reported as contributing nothing**, because "ran anywhere" was read from a counts map capped at 100 by ascending id. That last one generalised the feature's own doctrine: absence from a *truncated map* is unknown, not zero, so the null-versus-zero rule governs the map as well as the counts inside it. Two hedged outcomes now exist rather than confident wrong ones — `blocked_where_measured` and `clean_where_measured`. **Three of the nine were regressions from earlier rounds' own fixes**, each caught by a later round. **Two owner-approved scope extensions**: four plan tests added at the planning gate (T-49…T-52, joined later by T-53/T-54), and a one-line fix to `_build_plan_statistics_report` — a pre-existing defect where a constraint the console *did* describe reported `description: null`, because the catalog was built only from the capped conflicts list. That repair also fixes the shipped `get_plan_statistics`. §3 Component E revised to match what shipped, each deviation traced to the test that pinned it. |

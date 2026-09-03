@@ -10,8 +10,10 @@ from safebreach_mcp_playbook.playbook_functions import (
     sb_get_playbook_attacks,
     sb_get_playbook_attack_details,
     _get_all_attacks_from_cache_or_api,
+    get_attack_names_by_ids,
     clear_playbook_cache,
-    playbook_cache
+    playbook_cache,
+    ATTACK_NAME_PER_ID_LIMIT,
 )
 
 
@@ -195,6 +197,117 @@ class TestGetAllAttacksFromCacheOrApi:
 
         # Verify API call was made due to cache miss
         mock_requests_get.assert_called_once()
+
+
+class TestGetAttackNamesByIds:
+    """T-59 — names are fetched for the attacks asked about, not for the playbook.
+
+    The bulk KB listing measured 58.6 MB across 9,659 moves on a live console,
+    against ~10 KB for one move. Resolving a handful of names by downloading all
+    of them was the waste this function removes, so these tests assert on the
+    REQUESTS MADE, not merely on the names returned — a correct answer fetched
+    the expensive way is the exact defect here.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def setup_method(self):
+        clear_playbook_cache()
+
+    def teardown_method(self):
+        clear_playbook_cache()
+
+    @staticmethod
+    def _move(attack_id, name):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {'data': {'id': attack_id, 'name': name}}
+        return response
+
+    def test_no_ids_makes_no_request_at_all(self):
+        with patch('safebreach_mcp_playbook.playbook_functions.requests.get') as get:
+            assert get_attack_names_by_ids('test-console', []) == {}
+        get.assert_not_called()
+
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url',
+           return_value='https://console.test')
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_one_request_per_named_id_and_none_for_the_listing(self, get, _url):
+        get.side_effect = lambda url, **kw: self._move(
+            url.rsplit('/', 1)[-1], f"attack {url.rsplit('/', 1)[-1]}")
+
+        names = get_attack_names_by_ids('test-console', [226, 281])
+
+        assert names == {'226': 'attack 226', '281': 'attack 281'}
+        urls = [call.args[0] for call in get.call_args_list]
+        assert len(urls) == 2
+        assert all(url.endswith(('/moves/226', '/moves/281')) for url in urls)
+        # The defect: one call to /moves for everything, then a local lookup.
+        assert not any(url.endswith('/moves') for url in urls)
+
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url',
+           return_value='https://console.test')
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_a_repeated_id_is_fetched_once(self, get, _url):
+        get.side_effect = lambda url, **kw: self._move('226', 'attack 226')
+        assert get_attack_names_by_ids('test-console', [226, '226', 226]) == {
+            '226': 'attack 226'}
+        assert get.call_count == 1
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url',
+           return_value='https://console.test')
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_beyond_the_limit_it_falls_back_to_one_bulk_call(self, get, _url, bulk):
+        # Past ~100 ids the round trips cost more than the single big response,
+        # which is the only reason the bulk path is kept at all.
+        many = list(range(ATTACK_NAME_PER_ID_LIMIT + 1))
+        bulk.return_value = [{'id': i, 'name': f"attack {i}"} for i in many]
+
+        names = get_attack_names_by_ids('test-console', many)
+
+        assert len(names) == len(many)
+        bulk.assert_called_once_with('test-console')
+        get.assert_not_called()
+
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url',
+           return_value='https://console.test')
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_an_id_that_does_not_resolve_is_absent_not_blank(self, get, _url):
+        missing = Mock()
+        missing.status_code = 404
+        get.side_effect = [self._move('226', 'attack 226'), missing]
+
+        names = get_attack_names_by_ids('test-console', [226, 999])
+
+        assert names == {'226': 'attack 226'}
+        assert '999' not in names
+
+    @patch('safebreach_mcp_playbook.playbook_functions.get_api_base_url',
+           return_value='https://console.test')
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_a_transport_failure_costs_a_name_not_the_answer(self, get, _url):
+        get.side_effect = Exception("connection reset")
+        # Names are cosmetic. Raising here would lose a whole scenario report
+        # over a decoration.
+        assert get_attack_names_by_ids('test-console', [226]) == {}
+
+    @patch('safebreach_mcp_playbook.playbook_functions.is_caching_enabled',
+           return_value=True)
+    @patch('safebreach_mcp_playbook.playbook_functions.requests.get')
+    def test_a_warm_cache_answers_with_no_request(self, get, _caching):
+        from safebreach_mcp_core.token_context import get_cache_user_suffix
+        playbook_cache.set(f"attacks_test-console{get_cache_user_suffix()}",
+                           [{'id': 226, 'name': 'attack 226'},
+                            {'id': 281, 'name': 'attack 281'}])
+
+        assert get_attack_names_by_ids('test-console', [226]) == {'226': 'attack 226'}
+        get.assert_not_called()
 
 
 class TestGetPlaybookAttacks:
