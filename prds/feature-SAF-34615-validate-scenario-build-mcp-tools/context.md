@@ -1,6 +1,6 @@
 # SAF-34615 — MCP support for Validate scenario creation and update (Stage 1)
 
-**Status**: `Phase 7: Review`
+**Status**: `Phase 10: Publish the Plan` (Phase 9 skipped — Story, not Bug)
 
 **Branch**: `feature/SAF-34615-validate-scenario-build-mcp-tools`
 **Base**: `origin/feature/SAF-35508-plan-statistics-mcp-tool` (not `main` — see Dependencies)
@@ -1047,4 +1047,4 @@ through Phase 6, not fork a stale copy of today's brainstorm summary.
 | `add_simulators_to_step` / `remove_simulators_from_step` | studio | `draft_id`, `step_name`, `simulator_ids[]` **xor** `attacker_filter`/`target_filter` | mutates draft |
 | `save_scenario` | studio | `draft_id`, `save_as_new`, `name` (if `save_as_new`) | reads + wraps with `type`/`propagateDefinition`, POST/PUT `config/v3/plans`, evicts draft |
 
-**Status**: `Phase 7: Review`
+**Status**: `Phase 10: Publish the Plan` (Phase 9 skipped — Story, not Bug)
