@@ -21,7 +21,6 @@ from mcp.server.fastmcp.exceptions import ToolError
 from safebreach_mcp_core.token_context import (
     _get_auth_from_mcp_request_ctx,
     _get_session_id_from_mcp_ctx,
-    _user_auth_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,10 +151,8 @@ def get_caller_identity() -> str:
     Priority: auth token hash (survives reconnection) > session ID > anonymous.
     Auth token priority: x-apitoken > x-token > cookie value.
     """
-    # Try auth artifacts — ContextVar first, MCP request context fallback
-    bundle = _user_auth_artifacts.get()
-    if not bundle:
-        bundle = _get_auth_from_mcp_request_ctx()
+    # Auth artifacts from the live MCP request only (SAF-32387)
+    bundle = _get_auth_from_mcp_request_ctx()
 
     if bundle:
         # Priority: x-apitoken > x-token > cookie value

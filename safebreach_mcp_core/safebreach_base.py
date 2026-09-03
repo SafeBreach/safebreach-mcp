@@ -5,15 +5,12 @@ Base class for all SafeBreach MCP servers providing common functionality.
 """
 
 import asyncio
-import contextvars
 import hashlib
 import json
 import logging
 import os
-import re
 import sys
 import time
-import uuid
 from typing import Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from .cache_config import is_caching_enabled
@@ -58,21 +55,17 @@ def _parse_disable_tool_list(raw: Optional[str]) -> frozenset[str]:
     return frozenset(n for n in parsed if n)
 
 # Concurrency limiter state — shared across all server instances
-_mcp_session_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('mcp_session_id', default=None)
 # Stores (semaphore, creation_timestamp) tuples to enable stale entry cleanup
 _session_semaphores: Dict[str, tuple[asyncio.Semaphore, float]] = {}
 _concurrency_limit = int(os.environ.get('SAFEBREACH_MCP_CONCURRENCY_LIMIT', '2'))
 _SEMAPHORE_MAX_AGE = 3600  # 1 hour — stale semaphores are cleaned up after this
 
-# Auth artifact propagation (SAF-29974)
-from .token_context import (  # noqa: E402
-    _user_auth_artifacts, _session_auth_artifacts,
-    extract_auth_bundle, cleanup_stale_artifacts, mask_artifacts
-)
+# Auth bundle extraction for per-JWT concurrency bucketing (SAF-29974)
+from .token_context import extract_auth_bundle  # noqa: E402
 
 
 async def _cleanup_stale_semaphores() -> None:
-    """Periodically remove SSE session semaphores older than _SEMAPHORE_MAX_AGE."""
+    """Periodically remove concurrency semaphores older than _SEMAPHORE_MAX_AGE."""
     while True:
         await asyncio.sleep(600)  # Run every 10 minutes
         now = time.time()
@@ -83,9 +76,7 @@ async def _cleanup_stale_semaphores() -> None:
         for sid in stale:
             _session_semaphores.pop(sid, None)
         if stale:
-            logger.info(f"🧹 Cleaned up {len(stale)} stale SSE semaphore(s), {len(_session_semaphores)} remaining")
-        # Also clean up stale auth artifacts (SAF-29974)
-        cleanup_stale_artifacts(_SEMAPHORE_MAX_AGE)
+            logger.info(f"🧹 Cleaned up {len(stale)} stale semaphore(s), {len(_session_semaphores)} remaining")
 
 
 async def _send_concurrency_429(send) -> None:
@@ -232,49 +223,22 @@ class SafeBreachMCPBase:
             host: Host to bind to (default: 127.0.0.1)
             allow_external: Whether to allow external connections (default: False)
 
-        Transport is selected via the SAFEBREACH_MCP_TRANSPORT environment variable:
-            "sse" (default) — SSE transport, endpoints /sse and /messages/
-            "streamable-http"  — Streamable HTTP transport, single /mcp endpoint
+        Serves the MCP streamable-http transport on a single endpoint:
+        SAFEBREACH_MCP_BASE_URL when set, otherwise /mcp.
         """
         import uvicorn
         apply_patch()  # Apply MCP initialization patch
 
-        # Resolve transport from env var
-        transport = os.environ.get('SAFEBREACH_MCP_TRANSPORT', 'sse').strip().lower()
-        if transport not in ('sse', 'streamable-http'):
-            logger.warning(f"Unknown SAFEBREACH_MCP_TRANSPORT value '{transport}', falling back to 'sse'")
-            transport = 'sse'
-
         # Determine bind address based on configuration
         bind_host = self._determine_bind_host(host, allow_external)
 
-        if transport == 'streamable-http':
-            # For streamable-http, set the endpoint path to base_url (or /mcp when root)
-            # so the single /mcp endpoint respects SAFEBREACH_MCP_BASE_URL cleanly.
-            endpoint_path = self.base_url if self.base_url != '/' else '/mcp'
-            self.mcp.settings.streamable_http_path = endpoint_path
-            mcp_app = self.mcp.streamable_http_app()
-            app = mcp_app
-            logger.info("🔗 MCP server running with streamable-http transport")
-            logger.info(f"📡 Streamable HTTP endpoint available at: {endpoint_path}")
-        else:
-            # SSE transport — existing logic unchanged
-            mcp_app = self.mcp.sse_app()
-            if self.base_url != '/':
-                from starlette.applications import Starlette
-                from starlette.responses import JSONResponse
-                from starlette.routing import Mount
-
-                app = Starlette()
-                app.mount(self.base_url, mcp_app)
-
-                logger.info(f"🔗 MCP server mounted at base URL: {self.base_url}")
-                logger.info(f"📡 SSE endpoint will be available at: {self.base_url}/sse")
-            else:
-                app = mcp_app
-                logger.info("🔗 MCP server running at root URL: /")
-                logger.info("📡 SSE endpoint available at: /sse")
-            endpoint_path = '/sse'
+        # Set the endpoint path to base_url (or /mcp when root) so the single
+        # endpoint respects SAFEBREACH_MCP_BASE_URL cleanly.
+        endpoint_path = self.base_url if self.base_url != '/' else '/mcp'
+        self.mcp.settings.streamable_http_path = endpoint_path
+        app = self.mcp.streamable_http_app()
+        logger.info("🔗 MCP server running with streamable-http transport")
+        logger.info(f"📡 Streamable HTTP endpoint available at: {endpoint_path}")
 
         # Wrap with authentication for external connections
         if allow_external:
@@ -289,7 +253,7 @@ class SafeBreachMCPBase:
         app = self._install_disable_filtering(app)
 
         # Wrap with concurrency limiter (applies to all servers)
-        app = self._create_concurrency_limited_app(app, transport=transport, endpoint_path=endpoint_path)
+        app = self._create_concurrency_limited_app(app, endpoint_path=endpoint_path)
         logger.info(f"🔒 Concurrency limiter enabled: max {_concurrency_limit} concurrent requests per session")
 
         # Start background tasks
@@ -337,7 +301,7 @@ class SafeBreachMCPBase:
             
             # Handle OAuth discovery and registration endpoints for mcp-remote compatibility
             # These endpoints must be publicly accessible for OAuth flow to work
-            oauth_discovery_paths = ["/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/sse"]
+            oauth_discovery_paths = ["/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server/mcp"]
             if path in oauth_discovery_paths:
                 logger.info(f"🔍 OAuth discovery request: {path} from {client_host}")
                 
@@ -355,7 +319,7 @@ class SafeBreachMCPBase:
                     "authorization_endpoint": f"http://{server_name}:{server_port}{base_path}/auth",
                     "token_endpoint": f"http://{server_name}:{server_port}{base_path}/token",
                     "registration_endpoint": f"http://{server_name}:{server_port}{base_path}/register",
-                    "resource": f"http://{server_name}:{server_port}{base_path}/sse",
+                    "resource": f"http://{server_name}:{server_port}{self.base_url if self.base_url != '/' else '/mcp'}",
                     "response_types_supported": ["code"],
                     "grant_types_supported": ["authorization_code"],
                     "scopes_supported": ["mcp"],
@@ -613,174 +577,52 @@ class SafeBreachMCPBase:
             return None
         return f"{self.server_name}::{base_key}"
 
-    def _create_concurrency_limited_app(self, original_app, transport: str = "sse", endpoint_path: str = "/sse"):
-        """Create an ASGI wrapper that limits concurrent requests per MCP session."""
+    def _create_concurrency_limited_app(self, original_app, endpoint_path: str = "/mcp"):
+        """Create an ASGI wrapper that limits concurrent requests per caller.
+
+        Streamable-http uses a single endpoint; the session is identified by the
+        Mcp-Session-Id header and the limiter bucket by server + caller JWT (see
+        _bucket_key). Auth is not carried by this middleware — tool code reads
+        the live request via token_context._get_auth_from_mcp_request_ctx().
+        """
 
         async def concurrency_limited_app(scope, receive, send):
             if scope["type"] != "http":
                 return await original_app(scope, receive, send)
 
             path = scope.get("path", "/")
-
-            # Headers-first auth bundle extraction (SAF-29974)
-            bundle = extract_auth_bundle(scope)
-            if bundle:
-                _user_auth_artifacts.set(bundle)
-
-            # SSE connection establishment — assign a new session ID
-            if path.endswith("/sse"):
-                middleware_session_id = str(uuid.uuid4())
-                _mcp_session_id.set(middleware_session_id)
-                sem = asyncio.Semaphore(_concurrency_limit)
-                _session_semaphores[middleware_session_id] = (sem, time.time())
-                logger.info(
-                    f"🆔 New SSE session: {middleware_session_id[:8]}... "
-                    f"(limit={_concurrency_limit}, active_sessions={len(_session_semaphores)})"
-                )
-                # Stash auth bundle for SSE session resilience (SAF-29974)
-                if bundle:
-                    _session_auth_artifacts[middleware_session_id] = (bundle, time.time())
-                    logger.info(f"🔑 Auth artifacts for session {middleware_session_id[:8]}...: "
-                                f"{list(bundle.keys())}")
-
-                real_session_id = None
-
-                async def cleanup_send(message):
-                    nonlocal real_session_id
-                    await send(message)
-
-                    # Capture the real session_id from FastMCP's endpoint event
-                    # and migrate the semaphore so POST lookups find it.
-                    if real_session_id is None and message.get("type") == "http.response.body":
-                        body = message.get("body", b"")
-                        text = body.decode("utf-8", errors="replace")
-                        match = re.search(r"session_id=([a-f0-9]+)", text)
-                        if match:
-                            real_session_id = match.group(1)
-                            _session_semaphores.pop(middleware_session_id, None)
-                            _session_semaphores[real_session_id] = (sem, time.time())
-                            # Migrate auth artifacts alongside semaphore (SAF-29974)
-                            auth_entry = _session_auth_artifacts.pop(middleware_session_id, None)
-                            if auth_entry is not None:
-                                _session_auth_artifacts[real_session_id] = auth_entry
-                            logger.info(
-                                f"🔄 Session migrated: {middleware_session_id[:8]}... "
-                                f"→ {real_session_id[:8]}..."
-                            )
-                        else:
-                            logger.debug(
-                                f"SSE body chunk for {middleware_session_id[:8]}... "
-                                f"— no session_id found (len={len(body)})"
-                            )
-
-                    # Clean up semaphore and auth artifacts when SSE connection ends
-                    if message.get("type") == "http.response.body" and not message.get("more_body", False):
-                        cleanup_id = real_session_id or middleware_session_id
-                        _session_semaphores.pop(cleanup_id, None)
-                        _session_auth_artifacts.pop(cleanup_id, None)
-                        logger.info(
-                            f"🧹 Cleaned up session: {cleanup_id[:8]}... "
-                            f"(migrated={'yes' if real_session_id else 'no'}, "
-                            f"remaining={len(_session_semaphores)})"
-                        )
-
-                return await original_app(scope, receive, cleanup_send)
-
-            # Message endpoint — apply concurrency limit
-            if path.endswith("/messages/") or path.endswith("/messages"):
-                # Try ContextVar first (works within same async task)
-                session_id = _mcp_session_id.get()
-                lookup_source = "contextvar"
-
-                # Fallback: parse session_id from URL query string.
-                # ContextVar does NOT propagate across separate HTTP request
-                # tasks in uvicorn (root cause of SAF-28585).
-                if not session_id or session_id not in _session_semaphores:
-                    qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
-                    for param in qs.split("&"):
-                        if param.startswith("session_id="):
-                            session_id = param[len("session_id="):]
-                            lookup_source = "query_string"
-                            break
-
-                if session_id:
-                    # Auth bundle propagation (SAF-29974 Slice 6):
-                    # Store the user's auth bundle in the session store so that
-                    # get_auth_headers_for_console() can look it up by session_id
-                    # via the MCP SDK's request_ctx (which IS available in tool handlers).
-                    if bundle and ('x-token' in bundle or 'cookie' in bundle):
-                        _session_auth_artifacts[session_id] = (bundle, time.time())
-
-                    # Session store fallback for auth
-                    if not bundle:
-                        art_entry = _session_auth_artifacts.get(session_id)
-                        if art_entry:
-                            _user_auth_artifacts.set(art_entry[0])
-                            logger.debug(
-                                f"🔑 Auth from session store for {session_id[:8]}..."
-                            )
-
-                    conc_key = self._bucket_key(bundle, session_id)
-                    if conc_key not in _session_semaphores:
-                        _session_semaphores[conc_key] = (
-                            asyncio.Semaphore(_concurrency_limit), time.time()
-                        )
-                        logger.info(
-                            f"🆔 Concurrency bucket registered: {conc_key[:24]}..."
-                        )
-
-                    sem, _ = _session_semaphores[conc_key]
-                    if sem.locked():
-                        logger.warning(
-                            f"⚠️ Concurrency limit reached for {conc_key[:12]}... (limit={_concurrency_limit})"
-                        )
-                        await _send_concurrency_429(send)
-                        return
-
-                    async with sem:
-                        return await original_app(scope, receive, send)
-
-                # No session tracking — pass through
-                logger.debug(f"⏩ No session_id found — pass through (path={path})")
+            if path != endpoint_path:
+                # All other paths — pass through without limiting
                 return await original_app(scope, receive, send)
 
-            # Streamable HTTP — single endpoint, session identified by Mcp-Session-Id header
-            if transport == 'streamable-http' and path == endpoint_path:
-                headers_dict = dict(scope.get("headers", []))
-                session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
+            headers_dict = dict(scope.get("headers", []))
+            session_id = headers_dict.get(b"mcp-session-id", b"").decode("utf-8", errors="replace")
+            if not session_id:
+                # Initialize request — no session yet, pass through
+                return await original_app(scope, receive, send)
 
-                # Store auth bundle in session store for streamable-http (SAF-29974 Slice 6)
-                if bundle and session_id:
-                    _session_auth_artifacts[session_id] = (bundle, time.time())
+            if scope.get("method") != "POST":
+                # Long-lived GET channel must not hold a slot
+                return await original_app(scope, receive, send)
 
-                if not session_id:
-                    # Initialize request — no session yet, pass through
-                    return await original_app(scope, receive, send)
+            conc_key = self._bucket_key(extract_auth_bundle(scope), session_id)
+            if conc_key not in _session_semaphores:
+                _session_semaphores[conc_key] = (asyncio.Semaphore(_concurrency_limit), time.time())
+                logger.info(
+                    f"🆔 New concurrency bucket: {conc_key[:24]}... "
+                    f"(limit={_concurrency_limit}, active_buckets={len(_session_semaphores)})"
+                )
 
-                if scope.get("method") != "POST":
-                    return await original_app(scope, receive, send)
+            sem, _ = _session_semaphores[conc_key]
+            if sem.locked():
+                logger.warning(
+                    f"⚠️ Concurrency limit reached for {conc_key[:12]}... (limit={_concurrency_limit})"
+                )
+                await _send_concurrency_429(send)
+                return
 
-                conc_key = self._bucket_key(bundle, session_id)
-                if conc_key not in _session_semaphores:
-                    _session_semaphores[conc_key] = (asyncio.Semaphore(_concurrency_limit), time.time())
-                    logger.info(
-                        f"🆔 New concurrency bucket: {conc_key[:24]}... "
-                        f"(limit={_concurrency_limit}, active_buckets={len(_session_semaphores)})"
-                    )
-
-                sem, _ = _session_semaphores[conc_key]
-                if sem.locked():
-                    logger.warning(
-                        f"⚠️ Concurrency limit reached for {conc_key[:12]}... (limit={_concurrency_limit})"
-                    )
-                    await _send_concurrency_429(send)
-                    return
-
-                async with sem:
-                    return await original_app(scope, receive, send)
-
-            # All other paths — pass through without limiting
-            return await original_app(scope, receive, send)
+            async with sem:
+                return await original_app(scope, receive, send)
 
         return concurrency_limited_app
 

@@ -1,30 +1,17 @@
 """
 Per-request user auth context for RBAC token propagation (SAF-29974).
 
-Provides a ContextVar that carries the user's auth artifacts through the
-async call chain within a single request, and a session store for SSE
-transport resilience.
+All readers take the user's auth artifacts from the live MCP request
+(_get_auth_from_mcp_request_ctx) — the single source of truth, so a value
+captured from an earlier request can never be reused (SAF-32359, SAF-32387).
 """
 
-import contextvars
 import hashlib
 import os
-import time
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
-
-# Per-request ContextVar — set at the ASGI middleware layer, read by tool functions
-# via get_auth_headers_for_console().
-_user_auth_artifacts: contextvars.ContextVar[Optional[Dict[str, str]]] = \
-    contextvars.ContextVar('user_auth_artifacts', default=None)
-
-# Session artifact store — backup for SSE transport where headers may not be
-# present on /messages/ POST requests. Keyed by session_id.
-_session_auth_artifacts: Dict[str, Tuple[Dict[str, str], float]] = {}
-
-_SESSION_ARTIFACTS_TTL = 3600  # matches existing semaphore cleanup TTL
 
 AUTH_COOKIE_NAME = os.environ.get('SAFEBREACH_MCP_AUTH_COOKIE_NAME', 'X-Token')
 
@@ -92,9 +79,9 @@ def _get_auth_from_mcp_request_ctx() -> Optional[Dict[str, str]]:
 
 
 def _get_session_id_from_mcp_ctx() -> Optional[str]:
-    """Extract session_id from the MCP SDK's request context.
+    """Extract the streamable-http session id ('mcp-session-id' header) from
+    the MCP SDK's request context.
 
-    SSE: query_params['session_id'].  Streamable-HTTP: header 'mcp-session-id'.
     Returns None if request_ctx is not available or has no session_id.
     """
     try:
@@ -106,12 +93,6 @@ def _get_session_id_from_mcp_ctx() -> Optional[str]:
     request = getattr(ctx, 'request', None)
     if request is None:
         return None
-
-    qp = getattr(request, 'query_params', None)
-    if qp:
-        sid = qp.get('session_id')
-        if sid:
-            return sid
 
     hdrs = getattr(request, 'headers', None)
     if hdrs:
@@ -161,11 +142,9 @@ def get_cache_user_suffix() -> str:
     """Return a user-scoped cache key suffix based on the current auth artifacts.
 
     Returns '_' + first 8 chars of SHA-256 hex digest of the most stable
-    artifact present, or '' when no user bundle is set.
+    artifact present, or '' when the current request carries no user bundle.
     """
-    bundle = _user_auth_artifacts.get()
-    if not bundle:
-        bundle = _get_auth_from_mcp_request_ctx()
+    bundle = _get_auth_from_mcp_request_ctx()
     if not bundle:
         logger.debug("get_cache_user_suffix() → '' (no user bundle)")
         return ''
@@ -186,19 +165,3 @@ def get_cache_user_suffix() -> str:
     logger.info("get_cache_user_suffix() → '%s' (from token ***%s)", suffix, value[-4:])
     return suffix
 
-
-def cleanup_stale_artifacts(ttl: int = None) -> int:
-    """Remove stale entries from the session artifact store.
-
-    Returns the number of entries evicted.
-    """
-    if ttl is None:
-        ttl = _SESSION_ARTIFACTS_TTL
-    now = time.time()
-    stale_keys = [k for k, (_, ts) in _session_auth_artifacts.items() if now - ts > ttl]
-    for k in stale_keys:
-        _session_auth_artifacts.pop(k, None)
-    if stale_keys:
-        logger.info(f'Evicted {len(stale_keys)} stale auth artifact entries, '
-                     f'{len(_session_auth_artifacts)} remaining')
-    return len(stale_keys)
