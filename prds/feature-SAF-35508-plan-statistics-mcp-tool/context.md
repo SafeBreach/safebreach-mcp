@@ -655,3 +655,66 @@ Reading `_get_scenario_statistics` (:2446-:2492) confirms both defects at the ex
 * **Tests**: `safebreach_mcp_studio/tests/` — `test_studio_functions.py` (unit, 10 228 lines),
   `test_e2e*.py` (e2e, `@pytest.mark.e2e`), `test_rate_limiting.py`. A read-only tool needs **no**
   rate-limiting gates (`readOnlyHint=True` ⇒ outside the `check_limit`/`record_action` contract).
+
+
+---
+
+## Accepted Ticket-Compliance Gaps
+
+Recorded by `verifying-ticket-compliance` on 2026-09-03, at HEAD `1e93f1c`. Each entry names the item, why it
+is not met as the ticket literally words it, and where the superseding decision is documented. An entry here
+is a decision, not an oversight — and none of them is a claim that the work happened.
+
+### TI-4 — "Numbers match the console for the same configuration, per view and per parameter set"
+
+**Date**: 2026-09-03 · **Status**: unverified, accepted
+
+**Justification**: T-35 is the only test in the plan that compares the tools' numbers against what the console
+itself renders, and it has never run: no Validate console has been provisioned for this feature
+(`env-design.md` is still `Draft (awaiting review)` with the console choice recorded as the one genuinely
+blocking decision, and no `environment.md` exists). The six e2e tests are authored and collect cleanly but are
+in the same position.
+
+This gap is **load-bearing and must not be read as minor**. Every other criterion on this ticket is verified
+by tests that compare the implementation against itself or against a mocked transport — they establish
+**self-consistency, not correctness**. TI-4 is the only item that would establish that the numbers are right.
+Accepting it means the feature ships verified internally and unverified against the product.
+
+**To close it**: provision a Validate console, then run T-35 and the e2e suite (T-28…T-31, T-40, T-48).
+
+### TI-1 (mechanism only) — "`scenario_id` passed through to Core as `{id}` rather than resolved client-side"
+
+**Date**: 2026-09-03 · **Status**: superseded by observed API behaviour
+
+**Justification**: The substance is met — both an ad-hoc body and a saved `scenario_id` are accepted, and a
+step-less plan raises a typed error. The **mechanism** in the AC is not achievable: probing the orchestrator
+directly showed `{"id": 1}` and `{"id": "1"}` accepted, `{"id": "<uuid>"}` rejected with `/id must be
+integer`, and `{"testId": "<uuid>"}` rejected as not a test. An OOB scenario's UUID has **no field on the
+endpoint that accepts it**, so the tool resolves it to its steps and scores them as an ad-hoc body; an integer
+plan id is still passed through natively. Documented in `prd.md` §13 (2026-08-27) and verified live on
+`zircon-piculet`. The AC was written from the swagger, before the endpoint was probed.
+
+### TI-7 (lever half) and TI-8 (null-lever clause) — "All 88 emitted reason codes carry a `fix_lever`"
+
+**Date**: 2026-09-03 · **Status**: superseded by decision, recorded in PRD v5
+
+**Justification**: The deletion half is met — `CONSTRAINT_REASON_DESCRIPTIONS` is gone and no constraint
+meaning is vendored. The **lever map was deliberately not built**. The AC assumed SAF-35568 would serve
+`description` *and* `fixLever`; it implemented `fixLever`, reviewed it, and **removed it as redundant relative
+to `description`**. A lever map here would then be a permanently MCP-owned artifact with no upstream
+counterpart, drifting against 97 codes forever, asserting a remedy from an enum never validated against the
+orchestrator's own `ValidatePlan` fields — and re-adopting a design its own author rejected. The repo now
+asserts the **absence** of any lever symbol (`test_no_constraint_fix_levers_symbol`). Recorded in `prd.md` §2
+(alternatives table), §3 Component A, §9 R7, and the v5 change-log entry.
+
+### TI-12 (wire name) — "The tool is registered as `get_plan_statistics`"
+
+**Date**: 2026-09-03 · **Status**: superseded by decision D4
+
+**Justification**: Every substantive clause is met — read-only registration, CLAUDE.md catalogue entry, and
+the rate-limiting gate table deliberately unextended. Only the **count and the names** differ: the single tool
+was decomposed into `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and
+`get_scenario_attack_blockers`, and `get_plan_statistics` was retired. This was a user decision taken on
+2026-09-02 (D4) on the grounds that one tool answering three questions forced the caller to read past two of
+them. `sb_get_plan_statistics` survives as the shared plumbing, so AC-6's single-call-site guarantee is
+untouched. Recorded in `prd.md` §2 (Revision), §3 Component E, §8 Phases 7–9, and the v7 change-log entry.
