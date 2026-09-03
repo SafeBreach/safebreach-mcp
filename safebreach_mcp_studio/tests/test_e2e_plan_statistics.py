@@ -86,6 +86,18 @@ SCENARIO_TOOLS = (
 )
 
 
+def _required_kwargs(tool):
+    """The extra input the blockers tool cannot be called without.
+
+    It explains attacks the caller names; naming none is a different question
+    with its own tool. Without this a shared assertion would meet that error
+    instead of the one it is checking.
+    """
+    if tool is sb_get_scenario_attack_blockers:
+        return {'attack_ids': '9012'}
+    return {}
+
+
 @skip_e2e
 @pytest.mark.e2e
 class TestScenarioStatisticsToolsE2E:
@@ -237,7 +249,8 @@ class TestScenarioStatisticsToolsE2E:
     def test_step_less_scenario_yields_the_typed_error(self, tool):
         """T-31 — the guard fires before the request, identically on all three."""
         with pytest.raises(ValueError) as excinfo:
-            tool(console=E2E_CONSOLE, scenario='{"steps": []}')
+            tool(console=E2E_CONSOLE, scenario='{"steps": []}',
+                 **_required_kwargs(tool))
 
         message = str(excinfo.value)
         assert 'steps' in message.lower()

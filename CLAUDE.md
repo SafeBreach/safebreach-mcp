@@ -520,7 +520,10 @@ Rate limiting environment variables:
   `description` relayed verbatim from the console (`null` where it supplied none — MCP vendors no constraint
   vocabulary). **Not rate-limited**; no MCP-side cache.
 27. `get_scenario_attack_blockers` ✨ **NEW** 📖 **Read-only** - Answers one question: **why did specific attacks
-  not run?** Takes optional comma-separated `attack_ids`; omit it to report every fully-blocked attack instead.
+  not run?** **`attack_ids` is required** (comma-separated, and required in the tool's JSON schema, not merely
+  rejected at runtime): this tool explains the attacks the caller *names*. Listing whatever happens to be blocked
+  is entry 26's question, and answering it here too let one scoring be narrated two ways — so the unnamed mode was
+  removed, and its rejection names `get_scenario_blocked_entities` rather than leaving the caller to guess.
   **Only fully-blocked attacks (an integer `0`) are analysed** — a reduction is not a block and is not explained
   here. Same three inputs, same `include_disabled` semantics, `get_constraints` defaults `True`.
   **Every named id gets exactly one answer, so silence never stands in for one**: `ran` (with its count),
@@ -531,8 +534,9 @@ Rate limiting environment variables:
   the named ids **before** the zero-impact cap applies, so a named attack is never dropped from the list that
   exists to explain it. An empty blocker list distinguishes its three causes — truncated locally, never
   requested, or genuinely none — because "the console found no reason" is a finding and the other two are not.
-  Hedged entries render under their own heading rather than under "did not run anywhere". **Not rate-limited**;
-  no MCP-side cache.
+  Hedged entries render under their own heading rather than under "did not run anywhere". A report where **no
+  step was scored** says so once as a fact about the report, because a page of per-id `not_computed` otherwise
+  reads as bad luck with the ids chosen. **Not rate-limited**; no MCP-side cache.
 
   > **`get_plan_statistics` is retired** (SAF-35508 Phase 8). It answered all three questions at once and left
   > the caller to read past two of them. `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and

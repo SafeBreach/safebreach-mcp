@@ -282,6 +282,20 @@ SCENARIO_TOOL_NAMES = (
     'get_scenario_attack_blockers',
 )
 
+# get_scenario_attack_blockers is the one scenario tool with a second required
+# input: it explains attacks the caller names, and naming none is a different
+# question with its own tool. Suites that exercise all three supply it here so
+# a shared assertion keeps testing what it says it tests.
+SCENARIO_TOOL_REQUIRED_KWARGS = {
+    'get_scenario_attack_blockers': {'attack_ids': '9012'},
+}
+
+
+def _required_kwargs(tool):
+    """The extra input a given scenario tool cannot be called without."""
+    name = tool if isinstance(tool, str) else tool.__name__
+    return SCENARIO_TOOL_REQUIRED_KWARGS.get(name.removeprefix('sb_'), {})
+
 class TestValidateStudioCode:
     """Test the sb_validate_studio_code function."""
 
@@ -13016,10 +13030,20 @@ class TestNamedAttackResolvesToOneDisposition:
         assert _project_attack_blockers(report, [1234])['dispositions'][0][
             'disposition'] == 'not_computed'
 
-    def test_asking_about_nothing_emits_no_dispositions_but_lists_the_blocked(self):
-        projected = _project_attack_blockers(self._report(), [])
-        assert projected['dispositions'] == []
-        assert [a['attack_id'] for a in projected['blocked_attacks']] == ['226']
+    def test_it_answers_only_about_the_ids_named(self):
+        # 226 is blocked in this report. Asking about 281 must not volunteer it:
+        # "what is blocked?" is get_scenario_blocked_entities' question, and one
+        # report answered by both tools is one finding with two phrasings.
+        projected = _project_attack_blockers(self._report(), [281])
+        assert [d['attack_id'] for d in projected['dispositions']] == ['281']
+        assert '226' not in repr(projected['dispositions'])
+
+    def test_no_unnamed_blocked_listing_is_emitted(self):
+        # Guards the removal itself: re-adding the listing would restore the
+        # overlap this tool was narrowed to remove.
+        projected = _project_attack_blockers(self._report(), [281])
+        assert 'blocked_attacks' not in projected
+        assert 'blocked_attacks_listing_capped' not in projected
 
 
 class TestFilteringPrecedesCapping:
@@ -13092,11 +13116,14 @@ class TestFilteringPrecedesCapping:
         assert entry['disposition'] == 'blocked'
         assert entry['blockers']
 
-    def test_the_unnamed_blocked_listing_finds_ids_outside_the_counts_map(self):
-        projected = _project_attack_blockers(self._blocked_ids_sort_past_the_cap(), [])
-        assert {a['attack_id'] for a in projected['blocked_attacks']} == {
-            str(i) for i in range(9000, 9011)
-        }
+    def test_every_blocked_id_outside_the_counts_map_is_explained_when_named(self):
+        named = list(range(9000, 9011))
+        projected = _project_attack_blockers(
+            self._blocked_ids_sort_past_the_cap(), named)
+        assert [d['attack_id'] for d in projected['dispositions']] == [
+            str(i) for i in named
+        ]
+        assert {d['disposition'] for d in projected['dispositions']} == {'blocked'}
 
     def test_a_capped_map_on_an_unscored_step_still_forbids_absent(self):
         # Whether the map is whole is a fact about the map, not about the
@@ -13113,30 +13140,13 @@ class TestFilteringPrecedesCapping:
         entry = _project_attack_blockers(report, [350])['dispositions'][0]
         assert entry['disposition'] == 'count_map_truncated'
 
-    def test_a_truncated_blocked_listing_says_so(self):
-        # Drawn from two capped maps, so a blocked attack can be missing. The
-        # flag reports only what is knowable — no invented shortfall.
-        projected = _project_attack_blockers(self._report(), [])
-        assert projected['blocked_attacks_listing_capped'] is True
-        assert 'may be partial' in projected['hint_to_agent']
-
-    def test_an_uncapped_listing_is_not_flagged_partial(self):
-        report = _phase7_report([_phase4_step(
-            simulationCount=0, moves={'226': 0},
-            simulators={'sim-a': 0}, targetSimulators={'sim-a': 0},
-            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '226'),
-                                  'attackerConstraints': {}},
-        )], catalog=PHASE7_CATALOG)
-        projected = _project_attack_blockers(report, [])
-        assert projected['blocked_attacks_listing_capped'] is False
-        assert 'may be partial' not in projected['hint_to_agent']
-
     def test_the_two_tools_agree_on_the_same_report(self):
         # The contradiction this guards: blocked-entities says "blocked" while
         # the blockers tool says it cannot tell, from one scoring.
         report = self._blocked_ids_sort_past_the_cap()
         assert _project_blocked_entities(report)['verdict']['state'] == 'blocked'
-        assert _project_attack_blockers(report, [])['blocked_attacks']
+        assert _project_attack_blockers(report, [9000])[
+            'dispositions'][0]['disposition'] == 'blocked'
 
     @staticmethod
     def _blocked_in_one_step_running_in_another():
@@ -13164,7 +13174,6 @@ class TestFilteringPrecedesCapping:
         report = self._blocked_in_one_step_running_in_another()
         assert _project_attack_blockers(report, [1234])[
             'dispositions'][0]['disposition'] == 'ran'
-        assert _project_attack_blockers(report, [])['blocked_attacks'] == []
         assert _project_blocked_entities(report)['verdict']['state'] == 'clean'
 
     @staticmethod
@@ -13295,10 +13304,6 @@ class TestMultiStepDispositionPrecedence:
         reverse = _project_attack_blockers(self._report(reverse=True), [1234])['dispositions'][0]
         assert forward['disposition'] == reverse['disposition'] == 'ran'
 
-    def test_it_appears_in_no_blocked_listing(self):
-        projected = _project_attack_blockers(self._report(), [])
-        assert [a['attack_id'] for a in projected['blocked_attacks']] == []
-
 
 class TestBlockerDetailTruncatedIsNotNoConstraintReported:
     """T-51 — a blocked attack whose blocker detail was capped away says so."""
@@ -13412,42 +13417,46 @@ class TestScenarioInputIsExclusiveOnAllThreeTools:
     def test_both_a_body_and_an_id_is_rejected(self, tool):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="exactly one"):
-                tool(console="test-console", scenario=self.SCENARIO, scenario_id="1771")
+                tool(console="test-console", scenario=self.SCENARIO,
+                     scenario_id="1771", **_required_kwargs(tool))
             post.assert_not_called()
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_neither_is_rejected(self, tool):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="exactly one"):
-                tool(console="test-console")
+                tool(console="test-console", **_required_kwargs(tool))
             post.assert_not_called()
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_a_blank_string_counts_as_absent_not_as_supplied(self, tool):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="exactly one"):
-                tool(console="test-console", scenario="   ")
+                tool(console="test-console", scenario="   ",
+                     **_required_kwargs(tool))
             post.assert_not_called()
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_malformed_json_is_rejected_before_any_call(self, tool):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError):
-                tool(console="test-console", scenario="{not json")
+                tool(console="test-console", scenario="{not json",
+                     **_required_kwargs(tool))
             post.assert_not_called()
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_a_non_object_body_is_rejected(self, tool):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="JSON object"):
-                tool(console="test-console", scenario="[]")
+                tool(console="test-console", scenario="[]",
+                     **_required_kwargs(tool))
             post.assert_not_called()
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_the_message_uses_the_caller_facing_vocabulary(self, tool):
         with _statistics_transport({}):
             with pytest.raises(ValueError) as excinfo:
-                tool(console="test-console")
+                tool(console="test-console", **_required_kwargs(tool))
         message = str(excinfo.value)
         assert "'scenario'" in message and "'scenario_id'" in message
         assert "'test_id'" in message
@@ -13491,15 +13500,22 @@ class TestInvalidAttackIdIsRejectedBeforeAnyCall:
                     console="test-console", scenario=self.SCENARIO, attack_ids=",,")
             post.assert_not_called()
 
-    def test_omitting_attack_ids_entirely_still_lists_everything_blocked(
-        self, mock_statistics_response_all_good
-    ):
-        with _statistics_transport(mock_statistics_response_all_good):
-            result = sb_get_scenario_attack_blockers(
+    @pytest.mark.parametrize("omitted", (None, "", "   "))
+    def test_omitting_attack_ids_is_rejected_before_any_call(self, omitted):
+        # And the error names the tool that does answer "what is blocked?", so
+        # the caller is redirected rather than left to guess.
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="attack_ids is required"):
+                sb_get_scenario_attack_blockers(
+                    console="test-console", scenario=self.SCENARIO,
+                    attack_ids=omitted)
+            post.assert_not_called()
+
+    def test_the_rejection_points_at_the_tool_that_answers_it(self):
+        with pytest.raises(ValueError) as excinfo:
+            sb_get_scenario_attack_blockers(
                 console="test-console", scenario=self.SCENARIO)
-        assert result['dispositions'] == []
-        assert result['blocked_attacks'] == []
-        assert result['blocked_attacks_listing_capped'] is False
+        assert 'get_scenario_blocked_entities' in str(excinfo.value)
 
     def test_empty_segments_are_skipped_not_rejected(
         self, mock_statistics_response_all_good
@@ -13597,7 +13613,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
-                 both_counts=False, **self.OVERRIDES)
+                 both_counts=False, **self.OVERRIDES, **_required_kwargs(tool))
         assert post.call_count == 1
 
     @pytest.mark.parametrize("tool", TOOLS)
@@ -13606,7 +13622,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
-                 both_counts=False, **self.OVERRIDES)
+                 both_counts=False, **self.OVERRIDES, **_required_kwargs(tool))
         query = _statistics_queries(post)[0]
         assert query['includeDisabled'] == ['true']
         assert query['getAllConstraints'] == ['false']
@@ -13618,7 +13634,8 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         self, tool, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
-            tool(console="test-console", scenario=self.SCENARIO, both_counts=True)
+            tool(console="test-console", scenario=self.SCENARIO,
+                 both_counts=True, **_required_kwargs(tool))
         assert post.call_count == 2
 
     @pytest.mark.parametrize("tool", TOOLS)
@@ -13627,7 +13644,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         with patch('safebreach_mcp_studio.studio_functions.sb_get_plan_statistics',
                    return_value=report) as delegate:
             tool(console="test-console", scenario=self.SCENARIO,
-                 conflict_detail='per_attack')
+                 conflict_detail='per_attack', **_required_kwargs(tool))
         assert delegate.call_count == 1
         assert delegate.call_args.kwargs['conflict_detail'] == 'per_attack'
         assert delegate.call_args.kwargs['plan'] == self.SCENARIO
@@ -13646,7 +13663,8 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         self, tool, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
-            tool(console="test-console", scenario=self.SCENARIO)
+            tool(console="test-console", scenario=self.SCENARIO,
+                 **_required_kwargs(tool))
         assert _statistics_queries(post)[0]['getConstraints'] == ['true']
 
 
@@ -13715,6 +13733,25 @@ class TestScenarioStatisticsToolsRegistration:
         assert 'attack_ids' in tools['get_scenario_attack_blockers'].inputSchema['properties']
         assert 'attack_ids' not in tools['get_scenario_simulation_counts'].inputSchema['properties']
         assert 'attack_ids' not in tools['get_scenario_blocked_entities'].inputSchema['properties']
+
+    def test_attack_ids_is_required_by_the_schema_not_only_at_runtime(self):
+        # The schema is what reaches the calling agent. A runtime rejection
+        # costs a round trip; a required parameter is stated up front — which is
+        # the point of narrowing this tool to the ids the caller names.
+        schema = _studio_tools()['get_scenario_attack_blockers'].inputSchema
+        assert schema.get('required') == ['attack_ids']
+
+    @pytest.mark.parametrize("name", ('get_scenario_simulation_counts',
+                                      'get_scenario_blocked_entities'))
+    def test_the_other_two_require_nothing(self, name):
+        # Their scenario input is one-of-three, enforced at runtime with a
+        # message naming all three; a schema `required` could not express it.
+        assert not _studio_tools()[name].inputSchema.get('required')
+
+    def test_the_blockers_tool_description_routes_the_unnamed_question_away(self):
+        # The overlap this removed: it used to answer "what is blocked?" too.
+        description = _studio_tools()['get_scenario_attack_blockers'].description
+        assert 'get_scenario_blocked_entities' in description
 
 
 class TestEachNarrationCarriesOnlyItsOwnSections:
@@ -13921,12 +13958,13 @@ class TestEveryVerdictAndDispositionRendersDistinctly:
         assert 'No fully-blocked attack was found' not in text
         assert 'Nothing was evaluated' in text
 
-    def test_a_scored_report_with_nothing_blocked_says_so_plainly(self):
+    def test_a_scored_report_says_plainly_that_a_named_attack_ran(self):
         report = _phase7_report([_phase4_step(
             simulationCount=240, moves={'1234': 240},
             simulators={'sim-a': 2}, targetSimulators={'sim-a': 2})])
-        text = self._render_blockers(report, [])
-        assert 'No fully-blocked attack was found' in text
+        text = self._render_blockers(report, [1234])
+        assert 'Not blocked' in text and '240' in text
+        assert 'Nothing was evaluated' not in text
 
     def test_no_optional_field_raises_when_absent(self):
         # A minimal report carries none of the optional markers.
@@ -13952,7 +13990,8 @@ class TestBothCountsRendersBothPasses:
 
     def _rendered(self, tool_fn, narrator, payload, **kwargs):
         with _statistics_transport(payload):
-            projected = tool_fn(console="test-console", scenario=self.SCENARIO, **kwargs)
+            projected = tool_fn(console="test-console", scenario=self.SCENARIO,
+                                **_required_kwargs(tool_fn), **kwargs)
         return narrator(projected)
 
     def _cases(self):
@@ -14073,7 +14112,8 @@ class TestTheRegisteredToolsActuallyRun:
         self, name, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good):
-            text = self._callable(name)(console="test-console", scenario=self.SCENARIO)
+            text = self._callable(name)(console="test-console", scenario=self.SCENARIO,
+                                        **_required_kwargs(name))
         assert isinstance(text, str)
         assert text.startswith("## Scenario ")
 
@@ -14082,7 +14122,8 @@ class TestTheRegisteredToolsActuallyRun:
         self, name, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good):
-            text = self._callable(name)(console="test-console", scenario=self.SCENARIO)
+            text = self._callable(name)(console="test-console", scenario=self.SCENARIO,
+                                        **_required_kwargs(name))
         # The failure this guards returned a fluent sentence, not a crash.
         assert "object has no attribute" not in text
         assert not text.startswith("Error ")
@@ -14091,7 +14132,7 @@ class TestTheRegisteredToolsActuallyRun:
     def test_a_bad_argument_is_narrated_as_an_error_string_not_raised(self, name):
         # The house convention: a tool returns its error, it does not raise.
         # No transport is patched: validation must reject before any request.
-        text = self._callable(name)(console="test-console")
+        text = self._callable(name)(console="test-console", **_required_kwargs(name))
         assert isinstance(text, str)
         assert "Error" in text and "exactly one" in text
 

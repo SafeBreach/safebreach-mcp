@@ -3382,16 +3382,6 @@ def _blocked_across_steps(steps, count_field, zero_impact_field, id_key):
     return blocked - unconfirmable, unconfirmable
 
 
-def _listing_may_be_partial(steps):
-    """Whether any cap could be hiding a blocked entity from this report."""
-    return any(
-        len(step['zero_impact_attacks']) < step['zero_impact_attacks_total']
-        or len(step['zero_impact_simulators']) < step['zero_impact_simulators_total']
-        or len(step['attacks']) < step['attacks_total']
-        for step in steps
-    )
-
-
 def _blocked_entities_verdict(steps):
     """Blocked, clean, partially evaluated, or never evaluated.
 
@@ -3608,10 +3598,11 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
 
 
 def _project_attack_blockers(report, attack_ids):
-    """"Why didn't attack #N run?" — fully-blocked attacks, and only those asked about.
+    """"Why didn't attack #N run?" — one disposition per attack asked about.
 
-    Named ids get a disposition each; unnamed callers get the full blocked list
-    and no dispositions, because no expectation was stated to correct.
+    Every named id gets exactly one answer. Listing whatever happens to be
+    blocked, unasked, is `get_scenario_blocked_entities`' question; answering it
+    here too gave one report two owners and two ways to phrase one finding.
     """
     def project(one):
         shaped = _projection_header(one)
@@ -3633,41 +3624,19 @@ def _project_attack_blockers(report, attack_ids):
                 unconfirmable=str(attack_id) in unsure,
             )
 
-        dispositions = [resolve(attack_id) for attack_id in (attack_ids or [])]
-
-        blocked_attacks = []
-        if not attack_ids:
-            for attack_id in sorted(occurrences, key=_attack_sort_key):
-                resolved = resolve(attack_id)
-                if resolved['disposition'] in ('blocked', 'blocked_where_measured'):
-                    blocked_attacks.append(resolved)
-
-        cited = _cited_codes(dispositions + blocked_attacks)
+        dispositions = [resolve(attack_id) for attack_id in attack_ids]
+        cited = _cited_codes(dispositions)
 
         # Whether anything was scored at all. Without it a caller cannot tell an
         # empty answer that searched the scenario from one that never read it,
         # and "no blocked attack was found" is a claim only the first can make.
         shaped['any_step_scored'] = bool(scored_steps)
-        shaped['asked_about'] = [str(attack_id) for attack_id in (attack_ids or [])]
+        shaped['asked_about'] = [str(attack_id) for attack_id in attack_ids]
         shaped['dispositions'] = dispositions
-        shaped['blocked_attacks'] = blocked_attacks
-        # Drawn from two capped maps, so a blocked attack can be missing from
-        # it. There is no honest total to state: the per-step figures count
-        # (attack, step) occurrences, and this list is distinct attacks, so
-        # comparing them manufactures a shortfall that does not exist. Report
-        # only what is knowable — that a cap could be hiding something.
-        shaped['blocked_attacks_listing_capped'] = (
-            not attack_ids and _listing_may_be_partial(steps)
-        )
         shaped['constraint_catalog'] = _build_constraint_catalog(
             one['constraint_catalog'], cited
         )
         hint = f"{one['hint_to_agent']} {ATTACK_BLOCKERS_HINT}"
-        if shaped['blocked_attacks_listing_capped']:
-            hint = (f"{hint} This listing may be partial — some of this "
-                    f"scenario's attack lists were truncated, so a blocked "
-                    f"attack could be missing from it. Name specific "
-                    f"attack_ids to ask about one that is not listed.")
         if not requested:
             shaped['constraints_not_requested'] = CONSTRAINTS_NOT_REQUESTED
             hint = f"{hint} {CONSTRAINTS_NOT_REQUESTED}"
@@ -3753,18 +3722,27 @@ def sb_get_scenario_attack_blockers(
 ):
     """Why specific attacks did not run — the constraints that blocked them.
 
-    ``attack_ids`` is parsed before anything is scored, so a typo costs no
-    request. Omit it to report every fully-blocked attack instead.
+    ``attack_ids`` is required, and parsed before anything is scored, so a typo
+    costs no request. "Is anything blocked?" is a different question with its
+    own tool; answering it from here as well would let one report be narrated
+    two ways.
     """
+    if not attack_ids or not attack_ids.strip():
+        raise ValueError(
+            "attack_ids is required: name the attack id(s) to ask about, e.g. "
+            "attack_ids='9012,1234'. To ask whether anything in this scenario "
+            "is blocked without naming ids, call get_scenario_blocked_entities."
+        )
     parsed_ids = _parse_attack_ids(attack_ids, dedupe=True)
-    # Omitting attack_ids asks a different question — "list everything blocked"
-    # — and separators alone are not that request. Switching questions on the
-    # caller silently, after paying for a scoring call, is the failure here;
-    # quick_run rejects the same input rather than reinterpreting it.
-    if attack_ids and attack_ids.strip() and not parsed_ids:
+    # Separators alone name nothing. Reinterpreting them as "list everything
+    # blocked" would answer a question the caller did not ask, after charging
+    # them for the scoring call; quick_run rejects the same input rather than
+    # guessing at it.
+    if not parsed_ids:
         raise ValueError(
             f"attack_ids was supplied as {attack_ids!r} but names no attack id. "
-            f"Omit it entirely to report every fully-blocked attack instead."
+            f"Name the attack id(s) to ask about, or call "
+            f"get_scenario_blocked_entities to ask what is blocked."
         )
     logger.info(
         f"Scenario attack blockers for console '{console}': "

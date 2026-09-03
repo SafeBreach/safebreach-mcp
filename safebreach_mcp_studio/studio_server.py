@@ -1790,25 +1790,26 @@ fewer simulators than were offered is a reduction, not a block, and is not expla
 
 """ + _SCENARIO_INPUTS + """
 
-- attack_ids (optional, str): Comma-separated playbook attack IDs to ask about, e.g.
+- attack_ids (REQUIRED, str): Comma-separated playbook attack IDs to ask about, e.g.
   "9012,1234". Every id you name gets exactly one answer — blocked, ran (with its count),
   not computed, truncated away, or not present in this scenario — so silence never stands
-  in for an answer. Omit it to report every fully-blocked attack instead.
+  in for an answer. To ask what is blocked without naming ids, call
+  get_scenario_blocked_entities; this tool explains attacks you name.
 - get_constraints (optional, bool, default True): Populate the blockers and the catalog that
   describes them. With False the answer says so rather than reporting "no reason found".
 
-Returns markdown: the attacks that ran nowhere with the constraints that blocked them and
-the console's own description of each, then a one-line disposition for every named id that
-was not blocked.
+Returns markdown: the named attacks that ran nowhere with the constraints that blocked
+them and the console's own description of each, then a one-line disposition for every
+named id that was not blocked.
 
 Examples:
 get_scenario_attack_blockers(console="demo", test_id="1764165600525.2", attack_ids="9012")
-get_scenario_attack_blockers(console="demo", scenario_id="3b8eade5-...")"""
+get_scenario_attack_blockers(console="demo", scenario_id="3b8eade5-...", attack_ids="9012,1234")"""
         )
         def get_scenario_attack_blockers(
+            attack_ids: str,
             console: str = "default", scenario: str | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
-            attack_ids: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
             get_constraints: bool = DEFAULT_GET_CONSTRAINTS, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
             limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
@@ -2165,29 +2166,20 @@ _NOT_BLOCKED_LINES = {
 def _render_attack_blockers(one: dict) -> list:
     """Why named attacks did not run — and a plain answer when they did."""
     parts = _statistics_header(one, inline=True)
-    if one['asked_about']:
-        parts.append(f"**Asked about:** "
-                     f"{', '.join('#' + a for a in one['asked_about'])}")
+    parts.append(f"**Asked about:** "
+                 f"{', '.join('#' + a for a in one['asked_about'])}")
     if one.get('constraints_not_requested'):
         parts.append(f"**Note:** {one['constraints_not_requested']}")
     parts.append("")
 
     catalog = one['constraint_catalog']
-    candidates = one['dispositions'] + one['blocked_attacks']
+    candidates = one['dispositions']
     # The hedged entries get their own heading. Filing them under "did not run
     # anywhere" would make the heading claim exactly what each entry then goes
     # on to disown — and a reader skimming headings only sees the claim.
     blocked = [e for e in candidates if e['disposition'] == 'blocked']
     where_measured = [e for e in candidates
                       if e['disposition'] == 'blocked_where_measured']
-
-    # Ahead of the sections, not inside them: an empty listing is exactly when a
-    # caller most needs to know it might be partial.
-    if one.get('blocked_attacks_listing_capped'):
-        parts.append("*This listing may be partial — some of this scenario's attack "
-                     "lists were truncated. Name specific attack_ids to ask about "
-                     "one that is not listed.*")
-        parts.append("")
 
     if blocked:
         parts.append("### Blocked — did not run anywhere")
@@ -2213,15 +2205,14 @@ def _render_attack_blockers(one: dict) -> list:
             parts.append(f"- **#{entry['attack_id']}** — {line}")
         parts.append("")
 
-    if not blocked and not where_measured and not others:
-        # "None found" is a negative claim, and it is only available when
-        # something was actually looked at. A report where no step was scored
-        # has not searched this scenario — it has not read it.
-        if one['any_step_scored']:
-            parts.append("No fully-blocked attack was found in this scenario.")
-        else:
-            parts.append("Nothing was evaluated — SafeBreach stopped before scoring any "
-                         "step, so this is not a finding that nothing is blocked.")
+    if not one['any_step_scored']:
+        # Every disposition above already reads `not_computed`, but each is a
+        # statement about one id. That no step was scored at all is a fact about
+        # the report, and without it a caller could read a page of "not
+        # computed" as bad luck with the ids they picked.
+        parts.append("Nothing was evaluated — SafeBreach stopped before scoring any "
+                     "step, so this is not a finding that these attacks are not "
+                     "blocked.")
         parts.append("")
 
     parts.extend(_format_constraint_catalog(catalog))
