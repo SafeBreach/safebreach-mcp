@@ -360,6 +360,17 @@ All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a r
 **Deliverables**: `scenario_draft_cache` instance; `sb_create_scenario` business function; `create_scenario`
 tool registration; rate-limit gate; docs; tests.
 
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `scenario_draft_cache` instance, `sb_create_scenario` |
+| `safebreach_mcp_studio/studio_types.py` | Modified — add `get_create_scenario_response_mapping` |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `create_scenario` |
+| `CLAUDE.md` | Modified — rate-limit gate row, catalog entry, cache-strategy bullet |
+| `CHANGELOG.md` | Modified — `### Added` bullet |
+| `pyproject.toml` | Modified — version bump |
+
 **Implementation Details**:
 - `safebreach_mcp_studio/studio_functions.py`: instantiate `scenario_draft_cache = SafeBreachCache(name=
   "scenario_drafts", maxsize=20, ttl=3600)` at module scope, alongside the existing `studio_draft_cache`.
@@ -392,6 +403,14 @@ body)` → response. No external HTTP call in this phase.
 
 **Deliverables**: `sb_add_step`, `sb_remove_step`; two tool registrations; tests.
 
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_step`, `sb_remove_step` |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_step`, `remove_step` |
+| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
+
 **Implementation Details**:
 - `sb_add_step(draft_id: str, step_name: str, console: str) -> dict`: reads the draft from
   `scenario_draft_cache`, raising a clear "draft not found" error if absent (evicted or unknown id); rejects an
@@ -419,6 +438,14 @@ external HTTP call.
 
 **Deliverables**: `sb_add_attacks_to_step`, `sb_remove_attacks_from_step`; the `attacksFilter` construction
 helper; tests covering both selection modes and the mutual-exclusivity rejection.
+
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_attacks_to_step`, `sb_remove_attacks_from_step`, the `Filter` merge helper |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_attacks_to_step`, `remove_attacks_from_step` |
+| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
 
 **Implementation Details**:
 - A small internal helper builds/merges a `Filter` object (`{"operator": "is", "values": [...], "name": key}`)
@@ -455,6 +482,15 @@ introduced, so Helm can discover matching attacks before committing a filter liv
 
 **Deliverables**: three new optional parameters on `get_playbook_attacks`; corresponding filtering logic; tests.
 
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_playbook/playbook_types.py` | Modified — extend `filter_attacks_by_criteria`, thread raw tags through |
+| `safebreach_mcp_playbook/playbook_functions.py` | Modified — add 3 params to `sb_get_playbook_attacks` |
+| `safebreach_mcp_playbook/playbook_server.py` | Modified — update registered parameter list + description |
+| `CLAUDE.md` | Modified — update `get_playbook_attacks` catalog entry |
+
 **Implementation Details**:
 - `safebreach_mcp_playbook/playbook_types.py`: extend `filter_attacks_by_criteria` to accept
   `attack_type_filter`, `attack_phase_filter`, `tags_filter`, applied against the **raw** per-attack tag data
@@ -480,6 +516,14 @@ the existing platform-filter behavior for attacks with `None` platform.
 
 **Deliverables**: `sb_list_simulators`; tool registration (`readOnlyHint=True`).
 
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_list_simulators` (delegates to `config_functions.py`) |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `list_simulators` (`readOnlyHint=True`, no gate row) |
+| `CLAUDE.md` | Modified — catalog entry only |
+
 **Implementation Details**:
 - `sb_list_simulators(filters: dict | None, console) -> list[dict]`: delegates to the existing
   `get_console_simulators` business logic in `safebreach_mcp_config/config_functions.py` (same connected-status/
@@ -502,6 +546,14 @@ external HTTP call.
 
 **Deliverables**: `sb_add_simulators_to_step`, `sb_remove_simulators_from_step`; tests.
 
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_simulators_to_step`, `sb_remove_simulators_from_step` |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_simulators_to_step`, `remove_simulators_from_step` |
+| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
+
 **Implementation Details**:
 - `sb_add_simulators_to_step(draft_id, step_name, role: str, simulator_ids: list[str], console)`: look up the
   draft/step; validate `role` is exactly `"attacker"` or `"target"`; merge `simulator_ids` into
@@ -522,6 +574,16 @@ external HTTP call.
 
 **Deliverables**: `sb_save_scenario`; the final wire-body assembler; tests (unit against a mocked
 `config/v3/plans` response, plus e2e against a real console per Risk R6's elevated scrutiny).
+
+**Changes**:
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_save_scenario` (pre-save gate, wire-body assembly, DB-uniqueness error handling, draft eviction) |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `save_scenario` |
+| `CLAUDE.md` | Modified — rate-limit gate row, catalog entry |
+| `CHANGELOG.md` | Modified — final feature bullet |
+| `pyproject.toml` | Modified — version bump |
 
 **Implementation Details**:
 1. Look up the draft; raise a clear "draft not found" error if absent.
