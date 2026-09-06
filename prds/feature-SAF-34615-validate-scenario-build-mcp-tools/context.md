@@ -1120,3 +1120,75 @@ tools are not independently mergeable until that lands.
 **breach-genie side**: still Phase 3 (context.md only). No PR opened there yet — deferred, per user decision,
 until Phase 4-6 produce a real `prd.md` there; `creating-pr`'s own gate requires both files, non-stub. Branch
 and context.md are already pushed and safe.
+
+---
+
+## Architecture decision (2026-09-06): one public entry point, skill orchestrates
+
+**Decision (owner)**: exactly one public MCP entry point for scenario creation. The Helm skill in `breach-genie`
+becomes the flow orchestrator; the MCP tool is the final persistence call and nothing more.
+
+### What was explored before landing here
+
+The question started as access control — "I don't want the user to be able to call `add_step` or
+`create_scenario` directly; only the skill should invoke them" — and the investigation established that this is
+**not achievable** with any available mechanism:
+
+- **Skills and tools are independent axes in `breach-genie`.** `SkillRegistry.getSkillsForAgent()` resolves which
+  skill *instructions* an agent receives; `AgentFactory` resolves the toolset separately via `mcp: true` plus a
+  static `excludeTools` list. Nothing cross-references them, so no tool can be scoped to "only callable while
+  skill X is active". Verified in source.
+- **Mastra has no such primitive either.** `createSkill()` supports a `user-invocable` boolean (the Agent Skills
+  spec field Claude Code also implements), but it gates a *direct invocation surface* — Helm has none, users type
+  natural language and the model decides. `breach-genie`'s own zod schema parses only `{name, description,
+  featureFlag}` and silently drops unknown frontmatter keys, so the field wouldn't even reach `createSkill`.
+- **Mastra Workspaces + Sandbox** can execute scripts bundled in a skill's `scripts/` folder, but execution runs
+  through the agent-wide Sandbox capability, not gated per skill — and `breach-genie` uses only the Workspace
+  *filesystem* piece (`WorkspaceService`, per-user flat file storage for the PDF skill), with no command
+  execution wired at all.
+- **A Mastra Workflow** *would* remove granular tools from the LLM-callable surface (workflow code calls them,
+  the model never selects them) — but Mastra has an open issue (mastra-ai/mastra#11283) where a workflow invoked
+  *by an agent* that suspends for human input doesn't reliably resume the agent's flow. This feature is
+  inherently multi-turn, so that's the exact pattern flagged as unreliable. Rejected on risk.
+
+Conclusion carried into the decision: **tool-count and tool-placement choices cannot deliver access control**, so
+they should be made on their own merits — surface size, correctness, and where the logic is most expressible.
+
+### What changed in the design
+
+| | Original | Now |
+|---|---|---|
+| Public write tools | 9 (`create_scenario`, `add_step`/`remove_step`, `add_attacks_to_step`/`remove_attacks_from_step`, `list_simulators`, `add_simulators_to_step`/`remove_simulators_from_step`, `save_scenario`) | **1** (`create_plan`) |
+| State | `scenario_draft_cache`, module-scope `maxsize=20`, `ttl=3600` | none — stateless |
+| Orchestration | implicit in the tool-call sequence | the Helm skill's procedure |
+| Pre-save impact check | inside `save_scenario` | the skill's preview stage, via SAF-35508's ad-hoc-body statistics tools |
+| Phases | 7 | 2 |
+
+Supporting findings that independently favored dropping the draft:
+
+- The planned cache was **module-scope and shared process-wide across all callers** at `maxsize=20`. Under
+  concurrent Helm users, LRU eviction could silently drop one user's in-flight draft because of another's
+  activity. Mitigable by raising `maxsize`, but not eliminable while the draft exists.
+- Anthropic's published tool-design guidance
+  ([Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents))
+  explicitly warns against the CRUD-pair shape the original had three of, and against tool-count sprawl. The
+  repo already matches the rest of that guidance well (resolved identifiers over raw UUIDs, `conflict_detail`-style
+  verbosity enums, pagination, actionable errors, annotations tied to rate limiting).
+- **Verified with the ticket owner**: the orchestrator statistics endpoint does **not** require `actions`/`edges`,
+  so the skill can preview the same `{name, steps}` body it later passes to `create_plan`, and the tool adds the
+  DAG at persist time. This is what makes a one-tool design possible without also adding a preview tool.
+
+### What this costs, recorded honestly
+
+- **FR13 divergence is now substantial** — the ticket enumerates nine tool names; this ships one and relocates
+  the rest into Helm. Tracked as `prd.md` Risk R3 and **flagged as needing the ticket owner's explicit sign-off
+  before implementation starts**.
+- **The preview-then-confirm sequence is enforced by skill text, not by the tool** (Risk R2). `create_plan` still
+  refuses anything structurally invalid or Propagate-tainted, so the failure mode is "unreviewed", not "broken".
+- **The skill now owns plan-body assembly** — a new LLM failure surface the nine-tool design didn't have
+  (Risk R8). Mitigated by per-path validation in `create_plan` and by the tool, not the model, building the DAG.
+- **Other MCP clients lose the guided flow** — Claude Desktop and friends get `create_plan` only. A deliberate
+  departure from treating `safebreach-mcp` as a generic capability layer, consistent with treating this flow as a
+  Helm product feature.
+- **Update (PUT) is not in Stage 1** despite the ticket title saying "creation and update" — Risk R6, open for
+  the owner.

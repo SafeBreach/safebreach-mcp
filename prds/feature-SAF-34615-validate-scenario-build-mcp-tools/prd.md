@@ -5,28 +5,32 @@
 - **Title**: MCP support for Validate scenario creation and update (Stage 1) — SAF-34615
 - **Task Type**: Feature
 - **Purpose**: Today, building a custom Validate scenario is a manual, multi-screen console flow (Studio, Add
-  Simulators Select/Checkout, Requirements Status). This story exposes that flow as a set of discrete, low-level
-  MCP tools so Helm can guide a user through building a scenario conversationally — proposing an attack plan
-  grouped into themed steps, letting the user pick simulators, surfacing only conflicts that actually matter, and
-  saving a fully configured, ready-to-run scenario. Running or scheduling the scenario is explicitly excluded.
+  Simulators Select/Checkout, Requirements Status). This story exposes the **persistence** half of that flow as a
+  single MCP tool — `create_plan` — so Helm can guide a user through building a scenario conversationally and
+  then commit the result. The conversation itself (proposing an attack plan grouped into themed steps, letting
+  the user pick simulators, surfacing only conflicts that actually matter) is orchestrated by a Helm **skill**,
+  not by a family of MCP tools. Running or scheduling the scenario is explicitly excluded.
 - **Target Consumer**: Helm (SafeBreach's AI agent), and — through Helm — any SafeBreach customer or internal
   user who talks to Helm to build a scenario instead of using the console directly.
 - **Target Roles (RBAC)**: No new roles. Every tool call carries the caller's own console API credentials
-  (existing `get_auth_headers_for_console`/RBAC pattern); a user can only build/save scenarios their console
+  (existing `get_auth_headers_for_console`/RBAC pattern); a user can only create scenarios their console
   account is already authorized to create.
 - **Key Benefits**:
   1. Turns a 5-screen manual console flow into a guided conversation with the same underlying validation.
   2. Keeps impact and conflict numbers backed by one authoritative source (the Core statistics engine) instead of
      letting an AI agent estimate them.
   3. Structurally keeps Propagate scenarios and attacks out of this flow, regardless of account licensing.
+  4. Exposes exactly **one** public entry point that can change anything, so there is a single place where
+     console-parity validation, Propagate exclusion, and rate limiting are enforced.
 - **Business Alignment**: Epic SAF-34231, "Helm Skills & Tools for CTEM answer quality." Stage 1 of 4
   (SAF-35484 Stage 2 — filter-based simulator selection; SAF-35485 Stage 3 — editing; SAF-35051 Stage 4 — asset
   association).
 - **Originating Request**: [SAF-34615](https://safebreach.atlassian.net/browse/SAF-34615), reported by Tal Rotem.
 
-**Companion PRD**: the Helm-side orchestration this capability is designed for — search strategy, step-grouping
-procedure, confirmation cadence, conflict-to-plain-language translation, and simulation-count presentation — is a
-separate deliverable in `breach-genie`, branch `feature/SAF-34615-validate-scenario-building-skill`,
+**Companion PRD**: the Helm-side orchestration — search strategy, step-grouping procedure, confirmation cadence,
+conflict-to-plain-language translation, simulation-count presentation, and (new in this revision) **assembly of
+the plan body this tool consumes** — is a separate deliverable in `breach-genie`, branch
+`feature/SAF-34615-validate-scenario-building-skill`,
 `prds/feature-SAF-34615-validate-scenario-building-skill/`. Same JIRA ticket, no subtask split, tracked as two
 repos/branches/PRs by design (see this PRD's `context.md` §6 Decision 6). **This PRD's Section 5 (Example
 Customer Flow) is omitted for that reason — the user-facing conversation is that PRD's content, not this one's.**
@@ -38,7 +42,7 @@ Customer Flow) is omitted for that reason — the user-facing conversation is th
 | Field | Value |
 |---|---|
 | **PRD Status** | Draft |
-| **Last Updated** | 2026-09-02 16:49 |
+| **Last Updated** | 2026-09-06 |
 | **Owner** | AI Agent (Claude), planning session with Boris Berezovsky |
 | **Current Phase** | N/A |
 
@@ -48,219 +52,218 @@ Customer Flow) is omitted for that reason — the user-facing conversation is th
 
 ### Chosen Solution
 
-Eight new mutating MCP tools plus one enhanced read tool, all in `safebreach_mcp_studio`, built around an
-**in-process draft cache**: `create_scenario` mints a `draft_id` and seeds a `ValidatePlan`-shaped body
-(`{name, steps: []}`) in a new bounded `SafeBreachCache`. Every subsequent tool (`add_step`,
-`add_attacks_to_step`, `add_simulators_to_step`, and their `remove_*` counterparts) takes `draft_id` and mutates
-that cached body locally — no server write happens until `save_scenario`, which assembles the final
-`config/v3/plans` request (adding `type:'validate'` and `propagateDefinition:null`, fields the draft never
-carries), POSTs/PUTs it, and evicts the draft.
+**One new mutating MCP tool, plus one enhanced read tool**, both consumed by a Helm skill that owns the entire
+conversational flow.
 
-Attack selection on `add_attacks_to_step` accepts either explicit `attack_ids[]` (→ `attacksFilter.playbook`) or
-exactly one of `attack_type_filter`/`attack_phase_filter`/`tags_filter` (→ `attacksFilter.attackType`/
-`attackPhase`/`tags[group]`) — never both in one call. Simulator selection on `add_simulators_to_step` accepts
-**only** explicit `simulator_ids[]` — no filter escape hatch, because FR5 explicitly restricts Stage 1 to manual
-simulator selection (filter-based selection is Stage 2, SAF-35484). `get_playbook_attacks` gains matching
-`attack_type_filter`/`attack_phase_filter`/`tags_filter` parameters so Helm can discover which attacks match a
-filter before committing it live into a step.
+`create_plan(name, steps, console)` is a thin wrapper over `POST config/v3/accounts/{accountId}/plans`. It holds
+no state, mints no draft id, and orchestrates nothing. It does exactly three things beyond the HTTP call:
+
+1. **Mechanical body assembly** — generates the execution DAG (`actions`/`edges`) from the ordered step list, the
+   same way `run_scenario`'s `_build_linear_dag(steps)` already does, and force-sets `type:'validate'` /
+   `propagateDefinition:null`. The caller never hand-writes orchestrator-internal execution structures.
+2. **Console-parity validation (FR9)** — themed step names, non-empty steps, attack-selection mutual
+   exclusivity, no `tags` input surface, DB unique-constraint error shaping. This is the enforcement boundary;
+   skill text is guidance, and guidance is not a guard.
+3. **Rate limiting** — one `check_limit`/`record_action` pair, because this is the only mutating call in the
+   feature.
+
+Everything upstream of persistence is the skill's job: attack discovery via the existing read tools, step
+grouping, presentation and confirmation, simulator selection, and the **pre-save preview** — which needs no new
+tool, because SAF-35508's `get_scenario_simulation_counts` / `get_scenario_blocked_entities` /
+`get_scenario_attack_blockers` already score an **ad-hoc, never-saved plan body** (`get_plan_statistics`'s `plan`
+input exists precisely for this). Verified with the ticket owner: the statistics endpoint does not require
+`actions`/`edges`, so the skill previews the same `{name, steps}` structure it later hands to `create_plan`.
+
+`get_playbook_attacks` gains matching `attack_type_filter`/`attack_phase_filter`/`tags_filter` parameters so the
+skill can discover which attacks match a filter while assembling the body.
 
 ### Alternatives Considered
 
 | Alternative | Pros | Cons | Why not chosen |
 |---|---|---|---|
-| **Stateless — Helm holds the full plan body across calls** (mirrors `get_plan_statistics`'s own ad-hoc-body input) | Zero new infra; no cache expiry/eviction/multi-worker risk at all | Every mutating call round-trips a potentially large nested JSON body; risks the LLM mangling a large structure over many turns | Draft-cache is closer to FR13's literal contract and to the console's own throwaway-uuid draft model; the token/fidelity cost was judged worse than the cache's documented restart risk |
-| **Persist immediately on `create_scenario`** (real `scenario_id` from turn one, read-modify-write PUT per `add_*` call) | Matches FR13's literal text most closely; survives process restarts (state in Postgres, not memory) | Contradicts the console's own verified behavior (§6.4 of `context.md` — Studio never persists before Save); publishes an unfinished scenario into the user's real catalog before they've agreed to save it; a Validate plan cannot even be created with zero steps (server-side 400), so "create empty, then add steps" is not just undesirable but **impossible** this way | Product risk (half-built scenarios visible/nameable in the customer's catalog) outweighs the console-restart benefit |
-| **Config server** (co-locate with `get_scenarios`/`get_scenario_details`/`get_console_simulators`) | Architecturally closer to the backend service that actually owns Plan/Step CRUD; keeps scenario read+write together | Splits the build→check→run arc across two servers; would be Config's first-ever mutating tool | Studio already owns `get_plan_statistics`'s successors and `run_scenario`; keeping build-check-run in one server won out |
-| **`config/v2/plans`** instead of `v3` | Self-guards `type='validate'` automatically on create; exact console behavior, easiest to diff for FR9 parity | Flagged `// DELETE WHEN v2 IS REMOVED` in its own code | User chose the forward-looking surface; the self-guard is rebuilt explicitly in `save_scenario` instead |
+| **Nine granular draft-mutation tools + an in-process draft cache** (this PRD's original design) | Small per-turn payloads; server holds the truth, so no LLM drift risk; one user decision = one tool call; matches `save_studio_attack_draft`/`update_studio_attack_draft` precedent | Nine public write tools, against the owner's explicit "one public entry point" requirement; a module-scope `maxsize=20` cache shared process-wide across all callers can LRU-evict a live draft mid-conversation; three redundant add/remove pairs are the exact shape Anthropic's tool-design guidance warns against | Superseded by the owner's decision (2026-09-06) that the skill orchestrates and MCP only persists. The shared-cache concurrency flaw independently favored dropping the draft |
+| **One `build_scenario(spec, dry_run)` tool** — stateless, preview and persist in one contract | Single entry point; `dry_run` makes the save-gate intrinsic; mirrors `quick_run`'s evaluate→execute precedent | Still puts flow-shaped logic (preview semantics, spec normalization) inside MCP, when the flow genuinely lives in Helm; duplicates preview capability SAF-35508's tools already provide for ad-hoc bodies | Owner chose the thinner split: MCP persists, the skill orchestrates and previews through the existing statistics tools |
+| **Persist immediately on a `create_scenario` call**, read-modify-write per mutation | Survives process restarts (state in Postgres, not memory) | Contradicts the console's own verified behavior (`context.md` §6.4 — Studio never persists before Save); publishes an unfinished scenario into the user's real catalog; a Validate plan cannot be created with zero steps (server-side 400), so "create empty, then add steps" is **impossible** | Product risk outweighs the benefit; also moot now that there is no incremental mutation surface at all |
+| **`config/v2/plans`** instead of `v3` | Self-guards `type='validate'` automatically on create; exact console behavior, easiest to diff for FR9 parity | Flagged `// DELETE WHEN v2 IS REMOVED` in its own code | User chose the forward-looking surface; the self-guard is rebuilt explicitly in `create_plan` instead |
 
 ### Decision Rationale
 
-The draft-cache design is the only one of the three storage alternatives consistent with a hard platform
-constraint: `configuration`'s Plan write API has no incremental step endpoint (`PUT` deletes and recreates
-**every** step on every save) and rejects a zero-step plan outright. Building anything that assumes an
-incrementally-addressable server-side scenario would not work against the real API. Studio-as-home and
-v3-as-surface were user decisions (see `context.md` §7 Decisions 3-4) made with full knowledge of their
-tradeoffs, not default picks.
+Two constraints drove the shape, and one owner decision settled it.
+
+The **platform constraint** is unchanged from the original investigation: `configuration`'s Plan write API has no
+incremental step endpoint (`PUT` deletes and recreates **every** step on every save) and rejects a zero-step plan
+outright. Nothing incrementally addressable exists server-side to model, so a scenario is only ever created as a
+whole — which makes a single whole-body create the natural fit, not a compromise.
+
+The **product constraint** is the owner's: exactly one public entry point for scenario creation, with
+orchestration living in a Helm skill rather than in the MCP tool surface. That relocates the flow logic to where
+it is actually expressible (natural-language procedure) and leaves MCP owning what only a server can own —
+validation, credentials, and the write itself.
+
+Studio-as-home and v3-as-surface remain user decisions (see `context.md` §7 Decisions 3-4).
 
 ---
 
 ## 3. Core Feature Components
 
-### Component A — Draft Scenario Store
+### Component A — `create_plan` (the single public entry point)
 
-**Purpose**: New infrastructure. Holds an in-progress, not-yet-saved scenario's accumulating `name`/`steps[]`
-across multiple tool calls in one conversation, standing in for the server-side draft concept that does not
-exist in the underlying platform.
+**Purpose**: Persist a fully-assembled Validate scenario. The only tool in this story that changes anything.
 
 **Key Features**:
-- A new bounded `SafeBreachCache` instance in `safebreach_mcp_studio` (e.g. `scenario_draft_cache`), following
-  the `studio_draft_cache` pattern (`studio_functions.py:51`) but sized and TTL'd for a multi-turn conversational
-  build rather than a single attack-draft edit — proposed starting values `maxsize=20`, `ttl=3600` (60 min),
-  flagged as tunable pending real usage data.
-- `create_scenario(name?: str, console: str) -> draft_id, seeded body` — mints a `uuid4` draft id, stores
-  `{"name": name or "", "steps": []}`.
-- Every mutating tool below reads-modifies-writes this cache entry by `draft_id`; a `draft_id` not found in the
-  cache (evicted by TTL, or the process restarted) is a clear, typed error — never a silent no-op.
-- `save_scenario` is the only tool that evicts an entry (on success) or leaves it in place (on failure, so the
-  user doesn't lose work to a transient save error).
+- `create_plan(name: str, steps: list[dict], console: str) -> {scenario_id, name}`.
+- **Stateless** — no draft id, no cache, no cross-call continuity. The caller supplies the whole scenario; the
+  tool validates, assembles, POSTs, and returns. Nothing to evict, expire, or contend over between callers.
+- **DAG assembly is the tool's job, not the caller's.** `planFields` includes `actions` and `edges` (the
+  execution DAG). These derive mechanically from the ordered step list — `run_scenario` already builds them via
+  `_build_linear_dag(steps)` — so the tool generates them rather than asking an LLM to hand-write internal
+  execution structures it could get subtly, silently wrong.
+- **Force-sets `type:'validate'` and `propagateDefinition:null`** on every request. `config/v3/plans` does not
+  self-guard this the way `v2` does — `validatePlanShape`
+  (`configuration/src/server/utils/model-validators.js:45-59`) requires the pairing, so it must be explicit.
+- **`readOnlyHint=False`** with the standard rate-limit gate pair (`check_limit` after validation and before the
+  POST; `record_action` only after the POST succeeds).
+- Returns `{scenario_id, name}` plus a `hint_to_agent` pointing at `run_scenario` as the natural next action.
 
-**Integration points**: none outside this repo. Pure new Python state, no new external API call.
+**Integration points**: `POST config/v3/accounts/{accountId}/plans` (`configuration`). No other external call.
 
-### Component B — Step & Attack Composition
+### Component B — The Plan Body Contract
 
-**Purpose**: Build up the themed steps and their attack selections that make up a scenario, before any
-simulator is chosen (FR4's ordering).
+**Purpose**: Define precisely what `steps[]` must contain — the shape the skill assembles, the tool validates,
+and SAF-35508's statistics tools score. This component builds no tool of its own; it is the contract three
+parties agree on, and the reference the companion skill PRD encodes for Helm.
 
-**Key Features**:
-- `add_step(draft_id, step_name: str) -> updated draft`. **`step_name` is required with no default** — the
-  console's own `getDefaultStep` names steps `"Step 1"`/`"Step 2"` (`planUtils.ts:160`), which is exactly the
-  anti-pattern `scenario-step-grouping.md` rule 1 forbids ("Never leave steps named 'Step 1', 'Step 2'"). This
-  tool must not replicate that console behavior.
-- `remove_step(draft_id, step_name) -> updated draft`. Removes the step and its attacks/simulators.
-- `add_attacks_to_step(draft_id, step_name, attack_ids?: list[int], attack_type_filter?: str,
-  attack_phase_filter?: str, tags_filter?: dict[str, list[str]]) -> updated step attack selection`.
-  - `attack_ids` is mutually exclusive, per call, with the three filter parameters combined — grounded directly
-    in `scenario-step-grouping.md` rule 5 ("a step can select attacks by criteria, explicit playbook_ids, or
-    attack_tags" — a free choice, not a combination). Passing both is a validation error.
-  - `attack_ids` → merges into `attacksFilter.playbook.values` (`operator:'is'`) — **verified** as the real,
-    orchestrator-implemented explicit-id filter (`orchestrator/src/server/other/playbook_filter.js:53`,
-    `valuesExtractorByFilter.playbook = move => move.id`); the schema's `methodIds` field has no implementation
-    anywhere in `orchestrator/src` and must not be used.
-  - `attack_type_filter` → `attacksFilter.attackType`; `attack_phase_filter` → `attacksFilter.attackPhase`
-    (accepts `infiltration|lateral|exfiltration|host_level`, mapped internally to the orchestrator's `Package`
-    enum `INFILTRATION=2|LATERAL=1|EXFILTRATION=0|HOST_LEVEL=5`); `tags_filter` → `attacksFilter.tags[group]`,
-    a generic group-keyed dict (e.g. `{"Threat Actor": ["APT29"]}`) covering Threat Actor, CVE, and custom tags
-    without needing a dedicated parameter per group.
-  - Repeated calls against the same axis (e.g. two `attack_ids` calls) **extend** that axis's `values`, they
-    don't replace it.
-  - **Scope note carried into the tool description**: `scenario-step-grouping.md` rule 5's `criteria` mode is
-    defined as attack type **+ OS** together. The OS half is a simulator filter, and FR5 restricts Stage 1 to
-    manual simulator selection only — so this tool only ever builds the attack-side half of true "criteria"
-    mode. The tool's own description must say this plainly.
-- `remove_attacks_from_step(draft_id, step_name, attack_ids: list[int]) -> updated step attack selection`.
-  Removes ids from `attacksFilter.playbook.values` only — removing from a criteria-based filter isn't a
-  well-defined operation without negation logic Stage 1 doesn't need.
+**Step shape** (one dict per step, order significant — it becomes the DAG):
 
-**Integration points**: none outside this repo at call time (pure local mutation); the resulting `attacksFilter`
-shape is exactly what `get_scenario_simulation_counts`/`get_scenario_blocked_entities`/`get_scenario_attack_blockers`
-(Component F dependency) and the final `save_scenario` POST/PUT consume.
-
-### Component C — Simulator Composition
-
-**Purpose**: Let the user browse and manually pick simulators for a step, per FR5.
+```
+{"name": "<themed name>", "attacksFilter": {...}, "attackerFilter": {...}, "targetFilter": {...}}
+```
 
 **Key Features**:
-- `list_simulators(filters?: dict) -> candidate simulator list`. Read-only (`readOnlyHint=True`, no rate-limit
-  gate). Reuses `get_console_simulators`'s existing filter vocabulary (connected status, OS, name) — browse-only,
-  never auto-suggests based on the planned attacks (explicitly out of scope, FR5).
-- `add_simulators_to_step(draft_id, step_name, role: 'attacker'|'target', simulator_ids: list[str]) -> updated
-  step simulator selection`. **Explicit ids only — no filter escape hatch on the simulator side**, unlike
-  `add_attacks_to_step`. This is a deliberate asymmetry, not an oversight: FR5's text is explicit that
-  "automatic simulator suggestion based on the planned attacks is out of scope for this story," and the ticket's
-  own Future Scope section names "filter based simulator selection... matching the console's Add Simulators
-  flow" as Stage 2 (SAF-35484). `role` determines **which** filter object the selection is written into
-  (`attackerFilter.simulators` vs `targetFilter.simulators`) — it is not itself a filter value; both use the
-  same real, orchestrator-implemented key (`orchestrator/src/server/other/simulators_filter.js:6,17`,
-  `valuesExtractorByFilter.simulators = simulator => simulator.id`).
-- `remove_simulators_from_step(draft_id, step_name, role, simulator_ids: list[str]) -> updated step simulator
-  selection`.
+- **`name` is required and must be themed.** The console's own `getDefaultStep` names steps `"Step 1"`/`"Step 2"`
+  (`planUtils.ts:160`) — exactly the anti-pattern `scenario-step-grouping.md` rule 1 forbids ("Never leave steps
+  named 'Step 1', 'Step 2'"). `create_plan` rejects those defaults rather than replicating the console's
+  behavior. This is a deliberate, documented divergence from console parity, in the stricter direction.
+- **Attack selection is one mode per step, not a combination** — grounded in `scenario-step-grouping.md` rule 5
+  ("a step can select attacks by criteria, explicit playbook_ids, or attack_tags" — a free choice). A step
+  carrying both explicit ids and criteria filters is a validation error.
+  - Explicit ids → `attacksFilter.playbook` with `{"operator": "is", "values": [...], "name": "playbook"}` —
+    **verified** as the real, orchestrator-implemented explicit-id filter
+    (`orchestrator/src/server/other/playbook_filter.js:53`,
+    `valuesExtractorByFilter.playbook = move => move.id`). The schema's `methodIds` field has **no
+    implementation anywhere in `orchestrator/src`** and must never be used.
+  - Attack type → `attacksFilter.attackType`; attack phase → `attacksFilter.attackPhase`, where the
+    caller-facing strings `infiltration|lateral|exfiltration|host_level` map to the orchestrator's `Package`
+    enum `INFILTRATION=2|LATERAL=1|EXFILTRATION=0|HOST_LEVEL=5`. **The tool owns this mapping** — the skill
+    supplies the readable string, and an unrecognized value is a validation error, never a silent drop.
+  - Tags → `attacksFilter.tags[group]`, a generic group-keyed dict (e.g. `{"Threat Actor": ["APT29"]}`) covering
+    Threat Actor, CVE, and custom tags without a dedicated parameter per group.
+- **Simulator selection is explicit ids only** in Stage 1 — written into `attackerFilter.simulators` /
+  `targetFilter.simulators`, using the real orchestrator-implemented key
+  (`orchestrator/src/server/other/simulators_filter.js:6,17`,
+  `valuesExtractorByFilter.simulators = simulator => simulator.id`). FR5 is explicit that "automatic simulator
+  suggestion based on the planned attacks is out of scope for this story," and the ticket's Future Scope names
+  filter-based simulator selection as Stage 2 (SAF-35484).
+- **Scope note the tool description must carry**: `scenario-step-grouping.md` rule 5's `criteria` mode is
+  attack type **+ OS** together. The OS half is a simulator-side filter, and FR5 restricts Stage 1 to manual
+  simulator selection — so this contract only ever expresses the attack-side half of true "criteria" mode.
 
-**Integration points**: `list_simulators` proxies the existing `get_console_simulators` business logic
-(`safebreach_mcp_config/config_functions.py`) rather than duplicating it.
+**Integration points**: this exact shape is what `get_scenario_simulation_counts` /
+`get_scenario_blocked_entities` / `get_scenario_attack_blockers` consume as an ad-hoc `plan` body, and what the
+`create_plan` POST body carries. One shape, three consumers — which is why the skill can preview and persist the
+same structure without translation.
 
-### Component D — Attack Search Parity
-
-**Purpose**: Let Helm discover which attacks match a type/phase/tag before committing that filter live into a
-saved step (closing the "select blind" gap the escape hatch in Component B would otherwise create), and close
-FR2's CVE/named-threat-group bulk-search gap found during investigation as a side effect.
-
-**Key Features**:
-- `get_playbook_attacks` (existing tool, `safebreach_mcp_playbook`) gains `attack_type_filter`,
-  `attack_phase_filter`, `tags_filter` parameters, in the same style as its existing `mitre_technique_filter`/
-  platform filters — comma-separated where applicable, applied Python-side against the already-cached full
-  attack fetch (`_get_all_attacks_from_cache_or_api` → `filter_attacks_by_criteria`). No new upstream API call:
-  the raw tag data (including these axes) is already present in every fetched attack; it is simply not carried
-  through `transform_reduced_playbook_attack` today unless `include_tags=True`.
-
-**Integration points**: `safebreach_mcp_playbook/playbook_types.py`, `playbook_functions.py`.
-
-### Component E — Console-Validation Parity Guard (FR9, FR1/DoD3)
+### Component C — Console-Validation Parity Guard (FR9, FR1/DoD3)
 
 **Purpose**: Everything the console enforces that the raw `config/v3/plans` API does **not** — so this MCP path
 is not a backdoor around console logic (FR9), and so no scenario can be created with a Propagate attack in it
-regardless of license (FR1/DoD3).
+regardless of license (FR1/DoD3). All of it lives inside `create_plan`, because a single entry point means a
+single enforcement point.
 
 **Key Features**:
-- **`save_scenario` force-sets `type:'validate'` and `propagateDefinition:null`** on every create and update
-  request. `config/v3/plans` does **not** self-guard this the way `v2` does — `validatePlanShape`
-  (`configuration/src/server/utils/model-validators.js:45-59`) requires the pairing, so this must be explicit,
-  not inherited.
-- **No tool accepts a `tags` input parameter in Stage 1** — closes the legacy `tags:['ALM']` Propagate signal
-  (verified: `orchestrator`'s `isPropagateTest` ORs `type==='propagate'` with `systemTags.includes('ALM')`,
-  and plan `tags` become `systemTags` at fire time) by never exposing the input surface that could set it,
-  rather than building a reject-filter for an input this story doesn't need.
-- **DoD3's attack-level guard is structural, not a new check**: `get_scenario_blocked_entities`/
-  `get_scenario_attack_blockers` (Component F's dependency) already reuse the exact orchestrator method
-  (`PlanPreparation.filterMoves`) that strips every `ALM=1`-tagged move for any step where `!step.isPropagate`
-  — and since these tools only ever build `Plan.steps[]` (never `propagateDefinition`), that predicate is
-  always true. Any Propagate attack a user asks for scores zero simulations and is caught by DoD6's removal
-  flow (Component F). `save_scenario` must therefore require a fresh, all-clear `get_scenario_blocked_entities`
-  check immediately before persisting — not merely offer one.
-- **`save_scenario` handles the DB-level unique-constraint failure** (`(name, accountId)` unique index,
-  `configuration/src/server/models/plans.js:101-108`) with a clear, typed error — the console has no
-  client-side pre-check for this either, so an MCP-side pre-check would be a nice-to-have, not parity.
-- **Every step created by `add_step` requires a real, themed name** (Component B) — the one console default
-  this story deliberately does not mirror.
-- **Documented, not built, this story**: step-name length/uniqueness-within-scenario, and most "is this
-  scenario runnable" logic (branching validity, attacker+target presence) are **client-only in the console
-  today** (verified — no server-side equivalent found in `configuration`). Building full parity for all of
-  these is out of scope for Stage 1; Section 9 (Risks) names this explicitly so it isn't silently assumed done.
+- **`type:'validate'` / `propagateDefinition:null` force-set** on every request (Component A).
+- **No `tags` input parameter exists** — this closes the legacy `tags:['ALM']` Propagate signal (verified:
+  `orchestrator`'s `isPropagateTest` ORs `type==='propagate'` with `systemTags.includes('ALM')`, and plan `tags`
+  become `systemTags` at fire time) by never exposing the input surface that could set it, rather than building
+  a reject-filter for an input this story doesn't need.
+- **DoD3's attack-level guard is structural, not a new check**: `get_scenario_blocked_entities` /
+  `get_scenario_attack_blockers` reuse the exact orchestrator method (`PlanPreparation.filterMoves`) that strips
+  every `ALM=1`-tagged move for any step where `!step.isPropagate` — and since this contract only ever builds
+  `Plan.steps[]` (never `propagateDefinition`), that predicate is always true. Any Propagate attack a user asks
+  for scores zero simulations and is caught during the skill's preview stage (DoD6).
+- **Themed step names enforced**, per Component B.
+- **DB-level unique-constraint failure handled** (`(name, accountId)` unique index,
+  `configuration/src/server/models/plans.js:101-108`) with a clear, typed "name already in use" error rather
+  than a raw Sequelize error. The console has no client-side pre-check for this either, so an MCP-side
+  pre-check would be a nice-to-have, not parity.
+- **Per-path validation errors.** A rejection names the offending path (`steps[2].name`), not just the fact that
+  something was wrong — the whole-body shape must not cost the caller the error precision a per-field tool
+  surface would have given.
+- **Documented, not built, this story**: step-name length, most "is this scenario runnable" logic (branching
+  validity, attacker+target presence) are **client-only in the console today** (verified — no server-side
+  equivalent in `configuration`). Full parity is out of scope for Stage 1; Risk R4 names this so it isn't
+  silently assumed done.
 
-**Integration points**: `save_scenario`'s implementation in Component A/F; no new files beyond what those
-components already touch.
+**Integration points**: `create_plan`'s own implementation; no additional files.
 
-### Component F — Impact/Conflict Integration (dependency, not built here)
+### Component D — Attack Search Parity
 
-**Purpose**: Document how this story's tools consume SAF-35508's statistics tools — no new code in this PRD's
-scope, but load-bearing for FR6/FR7/FR12/FR14/DoD2/DoD5/DoD6.
+**Purpose**: Let the skill discover which attacks match a type/phase/tag while assembling the body, and close
+FR2's CVE/named-threat-group bulk-search gap found during investigation.
 
 **Key Features**:
-- **Implemented and tested, as of 2026-09-03** — updated from this PRD's original "not yet implemented"
-  framing; re-verified directly against `origin/feature/SAF-35508-plan-statistics-mcp-tool` (`de8afff`) and
-  its `CLAUDE.md` catalog, not taken on a report. SAF-35508 retired its single `get_plan_statistics` tool for
-  three narrow tools per owner decision D4: `get_scenario_simulation_counts` ("how many simulations?"),
-  `get_scenario_blocked_entities` ("is anything fully blocked?" — a **five**-state verdict: entities blocked /
-  nothing blocked / `clean_where_measured` / `partially_evaluated` / nothing evaluated, decided by
-  `counts_computed`, never by list emptiness), `get_scenario_attack_blockers` ("why didn't attack #N run?" —
-  **`attack_ids` is required**, enforced in the tool's JSON schema, not optional as originally planned; six
-  per-id dispositions: `ran`, `blocked`, `blocked_where_measured`, `not_computed`, `count_map_truncated`,
-  `absent`). All three call the same shipped `sb_get_plan_statistics` plumbing, unchanged (AC-6 intact).
-  1932 tests passing; PR [#91](https://github.com/SafeBreach/safebreach-mcp/pull/91) is open (not draft) but
-  currently has a real merge conflict against `main` — doesn't block this branch, which stacks on the feature
-  branch directly, not `main`.
+- `get_playbook_attacks` (existing tool, `safebreach_mcp_playbook`) gains `attack_type_filter`,
+  `attack_phase_filter`, `tags_filter` parameters, in the same style as its existing `mitre_technique_filter` /
+  platform filters — comma-separated where applicable, applied Python-side against the already-cached full
+  attack fetch (`_get_all_attacks_from_cache_or_api` → `filter_attacks_by_criteria`). No new upstream API call:
+  the raw tag data is already present in every fetched attack; it is simply not carried through
+  `transform_reduced_playbook_attack` today unless `include_tags=True`.
+- This keeps the skill's search vocabulary and the plan body's filter vocabulary aligned — the same axis names
+  mean the same thing on both sides.
+
+**Integration points**: `safebreach_mcp_playbook/playbook_types.py`, `playbook_functions.py`.
+
+### Component E — Impact/Conflict Integration (dependency, not built here)
+
+**Purpose**: Document how the skill consumes SAF-35508's statistics tools — no new code in this PRD's scope, but
+load-bearing for FR6/FR7/FR12/FR14/DoD2/DoD5/DoD6, and now for the **pre-save preview** that replaced this PRD's
+original in-tool save gate.
+
+**Key Features**:
+- **Implemented and tested, as of 2026-09-03** — re-verified directly against
+  `origin/feature/SAF-35508-plan-statistics-mcp-tool` (`de8afff`) and its `CLAUDE.md` catalog, not taken on a
+  report. SAF-35508 retired its single `get_plan_statistics` tool for three narrow tools per owner decision D4:
+  `get_scenario_simulation_counts` ("how many simulations?"), `get_scenario_blocked_entities` ("is anything
+  fully blocked?" — a **five**-state verdict: entities blocked / nothing blocked / `clean_where_measured` /
+  `partially_evaluated` / nothing evaluated, decided by `counts_computed`, never by list emptiness),
+  `get_scenario_attack_blockers` ("why didn't attack #N run?" — **`attack_ids` is required**, enforced in the
+  tool's JSON schema; six per-id dispositions: `ran`, `blocked`, `blocked_where_measured`, `not_computed`,
+  `count_map_truncated`, `absent`). All three call the same shipped `sb_get_plan_statistics` plumbing (AC-6
+  intact). 1932 tests passing; PR [#91](https://github.com/SafeBreach/safebreach-mcp/pull/91) is open (not
+  draft) but currently has a real merge conflict against `main` — doesn't block this branch, which stacks on
+  the feature branch directly, not `main`.
+- **These tools score an ad-hoc, never-saved body** via `get_plan_statistics`'s `plan` input — which is what
+  makes a pre-save preview possible without any new tool in this story. **Verified with the ticket owner
+  (2026-09-06): the statistics endpoint does not require `actions`/`edges`**, so the skill previews the same
+  `{name, steps}` structure it later passes to `create_plan`, and `create_plan` adds the DAG at persist time.
 - **`fix_lever` was removed**, not shipped — SAF-35568 implemented it separately and dropped it as redundant
-  against `description`. Any earlier assumption in this PRD or its `context.md` that a conflict's suggested
-  fix comes from a `fix_lever` field is stale; it must compose from `description` alone.
+  against `description`. Conflict-fix composition must use `description` alone.
 - **A disclosed, not-fixed edge case affects FR7's translation**: an attack the orchestrator never generates
   into a "move" reports `absent` even when the caller named it in the scenario's own filter — indistinguishable
-  from a genuinely wrong ID at the response-shape level. Worth a note in the `breach-genie` skill's conflict
-  -translation guidance, not something this repo's tools can fix (SAF-35508's own finding, orchestrator
-  -level).
+  from a genuinely wrong ID at the response-shape level. Worth a note in the `breach-genie` skill's
+  conflict-translation guidance; not something this repo's tools can fix (orchestrator-level).
 - **AC-4 (console-number parity) is partially verified**: a real console run confirmed the tool's parameter
-  mapping matches the console's own `getPlanStatistics` call exactly, on both `includeDisabled` settings —
-  the risk that actually mattered. Reading the console UI's own rendered figure (T-35) is still an explicitly
-  accepted gap (browser MCP connection failure during that run), not silently unverified.
-- **FR12's "re-check after any change"** may still require calling more than one of the three (e.g.
-  `get_scenario_blocked_entities` for the verdict, `get_scenario_simulation_counts` for the number) — this
-  story's tools don't call these themselves (that orchestration is Helm's job per FR13), but their response
-  shapes (the accumulating draft body) must be exactly what those three tools expect as an ad-hoc `scenario`
-  input.
-- **FR14 (added post-brainstorm)**: presenting the resulting count to the user is skill-layer behavior
-  (`breach-genie`), not a tool change — noted here only so the draft body's shape is confirmed compatible with
-  what `get_scenario_simulation_counts` needs.
+  mapping matches the console's own `getPlanStatistics` call exactly, on both `includeDisabled` settings — the
+  risk that actually mattered. Reading the console UI's own rendered figure (T-35) remains an explicitly
+  accepted gap on SAF-35508's side.
+- **Who calls these**: the skill, not `create_plan`. This is the substantive change from this PRD's original
+  design, where `save_scenario` itself required a fresh all-clear `get_scenario_blocked_entities` verdict before
+  persisting. With orchestration in the skill, the preview-then-confirm sequence is the skill's procedure
+  (companion PRD), and `create_plan` enforces structural validity rather than conversational sequence — see
+  Risk R2.
 
-**Integration points**: none in this repo's code — purely a contract dependency, now against an implemented,
-tested surface rather than a planning-only one. Tracked as Risk R1 (Section 9, narrowed accordingly).
+**Integration points**: none in this repo's code — purely a contract dependency, against an implemented, tested
+surface. Tracked as Risk R1.
 
 ---
 
@@ -270,27 +273,19 @@ tested surface rather than a planning-only one. Tracked as Risk R1 (Section 9, n
 
 | API | URL | Method | Consumed by |
 |---|---|---|---|
-| Plan create/update | `config/v3/accounts/{accountId}/plans[/{id}]` | POST / PUT | `save_scenario` (Component E) |
-| Plan statistics (via three successor tools, dependency) | `orch/v1/accounts/{accountId}/plan/statistics` | POST | Indirectly — this story's draft body is designed to be fed to `get_scenario_simulation_counts`/`get_scenario_blocked_entities`/`get_scenario_attack_blockers` by Helm, not called directly by these tools |
+| Plan create | `config/v3/accounts/{accountId}/plans` | POST | `create_plan` (Component A) |
+| Plan statistics (via three successor tools, dependency) | `orch/v1/accounts/{accountId}/plan/statistics` | POST | Indirectly — the skill feeds the same `{name, steps}` body to `get_scenario_simulation_counts`/`get_scenario_blocked_entities`/`get_scenario_attack_blockers` before calling `create_plan` |
 | Playbook attacks (moves) | `{base_url}/api/kb/vLatest/moves?details=true` | GET | Component D, via the existing `get_playbook_attacks` fetch-all-and-cache path — no new call |
-| Console simulators | proxied via existing `get_console_simulators` | — | Component C (`list_simulators`) |
+| Console simulators | existing `get_console_simulators` (Config server) | GET | The skill's simulator-selection stage — **no new tool**; the originally-planned `list_simulators` is dropped as redundant |
 
 ### New MCP Tools to Create
 
-All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a rate-limiting gate
-(`check_limit` before the mutating step, `record_action` only after success — `CLAUDE.md`'s documented pattern).
+| Tool | Server | Input | Output | Errors |
+|---|---|---|---|---|
+| `create_plan` | `safebreach_mcp_studio` | `name: str`, `steps: list[dict]` (Component B shape), `console: str` | `{scenario_id, name, hint_to_agent}` | empty/missing name; zero steps; unthemed step name (`"Step 1"`-style); step with both explicit ids and criteria filters; unrecognized attack-phase string; DB unique-constraint violation on `(name, accountId)`; upstream 4xx/5xx |
 
-| Tool | Input | Output | Errors |
-|---|---|---|---|
-| `create_scenario` | `name?: str`, `console: str` | `draft_id`, seeded `{name, steps: []}` | — |
-| `add_step` | `draft_id`, `step_name: str` (required) | updated draft, new step's identity within it | draft not found; duplicate step name in this draft |
-| `remove_step` | `draft_id`, `step_name` | updated draft | draft/step not found |
-| `add_attacks_to_step` | `draft_id`, `step_name`, `attack_ids?: list[int]` XOR (`attack_type_filter?`, `attack_phase_filter?`, `tags_filter?`) | updated step attack selection | draft/step not found; both id-list and filter params supplied (mutually exclusive) |
-| `remove_attacks_from_step` | `draft_id`, `step_name`, `attack_ids: list[int]` | updated step attack selection | draft/step not found; id not present |
-| `list_simulators` | `filters?: dict` (connected status, OS, name) | candidate simulator list | — (**`readOnlyHint=True`, no rate-limit gate**) |
-| `add_simulators_to_step` | `draft_id`, `step_name`, `role: 'attacker'\|'target'`, `simulator_ids: list[str]` | updated step simulator selection | draft/step not found; invalid role |
-| `remove_simulators_from_step` | `draft_id`, `step_name`, `role`, `simulator_ids: list[str]` | updated step simulator selection | draft/step not found |
-| `save_scenario` | `draft_id`, `save_as_new: bool`, `name?: str` (required if `save_as_new`) | `scenario_id`, `name` | draft not found; unclean `get_scenario_blocked_entities` verdict; DB unique-constraint violation on `(name, accountId)`; upstream 4xx/5xx |
+`readOnlyHint=False`, with the standard rate-limiting gate pair. **This is the only new tool in this story** —
+down from nine in the original design.
 
 ### Enhanced Existing Tool
 
@@ -303,31 +298,28 @@ All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a r
 ## 6. Non-Functional Requirements
 
 ### Security & Compliance
-- **Authentication**: every tool uses the existing per-console auth pattern (`get_auth_headers_for_console`,
+- **Authentication**: `create_plan` uses the existing per-console auth pattern (`get_auth_headers_for_console`,
   `check_rbac_response`) — no new auth mechanism.
 - **RBAC**: inherited from the caller's console API token; no new roles.
-- **Compliance (Propagate/license)**: FR1/DoD3's guard (Component E) is structural — no tool accepts a `tags`
-  input, and `save_scenario` force-sets `type:'validate'`/`propagateDefinition:null` on every request,
+- **Compliance (Propagate/license)**: FR1/DoD3's guard (Component C) is structural — no `tags` input surface
+  exists, and `create_plan` force-sets `type:'validate'`/`propagateDefinition:null` on every request,
   independent of the account's Propagate license state.
 
 ### Technical Constraints
-- **Dependency, now implemented (updated 2026-09-03)**: `get_scenario_simulation_counts`/
-  `get_scenario_blocked_entities`/`get_scenario_attack_blockers` (SAF-35508 D4) are implemented, tested
-  (1932 passing), and partially verified against a real console — see Component F for the precise, current
-  contract (five-state blocked-entities verdict, required `attack_ids` on attack-blockers, no `fix_lever`).
-  This story's implementation can now target the real contract in that branch's `CLAUDE.md` catalog entries
-  25-27, rather than a planned one. Residual: PR #91 (SAF-35508) has an open merge conflict against `main` —
-  worth resolving before this story's own PR is ready to merge.
-- **Backward compatibility**: N/A — all new tools; `get_playbook_attacks`'s new parameters are additive/optional.
-- **Deployment**: the draft cache assumes the single-process deployment `start_all_servers.py` runs today
-  (verified — asyncio, one process, five ports, no `workers`/gunicorn). A future multi-worker deployment would
-  break `draft_id` continuity across requests; not a concern for this story's target environment.
+- **Dependency, implemented (verified 2026-09-03)**: `get_scenario_simulation_counts` /
+  `get_scenario_blocked_entities` / `get_scenario_attack_blockers` (SAF-35508 D4) are implemented, tested (1932
+  passing), and partially verified against a real console — see Component E for the current contract (five-state
+  blocked-entities verdict, required `attack_ids`, no `fix_lever`). Residual: PR #91 has an open merge conflict
+  against `main`, worth resolving before this story's own PR is ready to merge.
+- **Statelessness**: `create_plan` holds no state between calls. This removes the original design's in-process
+  draft cache entirely — and with it the concurrency hazard that a module-scope `maxsize=20` cache, shared
+  process-wide across all callers, could LRU-evict one user's in-flight draft because of another user's
+  activity. There is no longer any deployment assumption about single-process operation.
+- **Backward compatibility**: N/A — new tool; `get_playbook_attacks`'s new parameters are additive/optional.
 
 ### Performance
-- Draft cache sized for a multi-turn conversational build (proposed `maxsize=20`, `ttl=3600`), larger than
-  `studio_draft_cache`'s `5`/`1800` (a single attack-draft edit is a much shorter-lived, lower-concurrency use
-  case). Values are a starting proposal, not empirically validated — flagged for adjustment once real usage
-  data exists.
+- One POST per scenario creation; no caching, no polling, no background work. The skill's preview stage costs
+  whatever SAF-35508's statistics calls cost, unchanged by this story.
 
 ---
 
@@ -335,31 +327,31 @@ All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a r
 
 **Core Functionality**
 - [ ] A user can, through conversation with Helm alone, build from scratch and save a fully configured,
-      ready-to-run Validate scenario using only this story's tools (DoD1).
+      ready-to-run Validate scenario (DoD1) — the conversation via the companion skill, the persistence via
+      `create_plan`.
 - [ ] No scenario is created with a `type='propagate'` plan or a `tags`-carried `'ALM'` marker through this
       flow, and no ALM-tagged attack survives into a saved scenario, regardless of the account's Propagate
       license (DoD3/FR1).
 - [ ] No association of data assets, proxies, or impersonated users is handled by this flow (DoD4 — explicitly
       out of scope, covered by SAF-35051).
-- [ ] `create_scenario`, `add_step`/`remove_step`, `add_attacks_to_step`/`remove_attacks_from_step`,
-      `list_simulators`, `add_simulators_to_step`/`remove_simulators_from_step`, `save_scenario` are all
-      registered, documented in `CLAUDE.md` (catalog entry + rate-limit gate row where applicable), and
+- [ ] `create_plan` is registered, documented in `CLAUDE.md` (catalog entry + rate-limit gate row), and
       versioned in `CHANGELOG.md`.
 - [ ] `get_playbook_attacks` supports `attack_type_filter`/`attack_phase_filter`/`tags_filter`.
 
 **Quality Gates**
 - [ ] Every test in `test-plan.md` for this feature is green, with evidence in `test-results/`.
-- [ ] Draft-cache eviction and "draft not found" error paths are covered (process-restart / TTL-expiry
-      simulation).
-- [ ] `save_scenario`'s force-set of `type:'validate'`/`propagateDefinition:null` and its rejection of any
-      `tags` input are covered by tests independent of SAF-35508's own test suite.
-- [ ] `attack_ids` vs filter-parameter mutual exclusivity on `add_attacks_to_step` is covered (both-supplied
-      rejection; each mode individually).
+- [ ] `create_plan`'s force-set of `type:'validate'`/`propagateDefinition:null` and the absence of any `tags`
+      input surface are covered by tests independent of SAF-35508's own test suite.
+- [ ] DAG assembly (`actions`/`edges` derived from step order) is covered, including the single-step and
+      many-step cases.
+- [ ] Per-step attack-selection mutual exclusivity is covered (both-modes rejection; each mode individually).
+- [ ] Themed-step-name enforcement is covered, including rejection of the console's own `"Step 1"` default.
+- [ ] Per-path validation errors name the offending element (`steps[N].<field>`), asserted rather than assumed.
 
 **Deployment Readiness**
-- [ ] Rate-limiting gate table (`CLAUDE.md`) updated for all eight mutating tools.
-- [ ] Dependency on SAF-35508's `get_scenario_*` tools is either merged and verified, or this story's own
-      Phase 7 DoD gate documents the residual risk explicitly (Section 9, R1) rather than silently assuming it.
+- [ ] Rate-limiting gate table (`CLAUDE.md`) updated for `create_plan`.
+- [ ] Dependency on SAF-35508's `get_scenario_*` tools is either merged and verified, or the residual risk is
+      documented explicitly (Section 9, R1) rather than silently assumed.
 
 ---
 
@@ -367,270 +359,84 @@ All in `safebreach_mcp_studio`, `readOnlyHint=False` unless noted, each with a r
 
 | Phase | Status | Completed | Commit SHA | Notes |
 |---|---|---|---|---|
-| Phase 1: Draft store + `create_scenario` | ⏳ Pending | - | - | |
-| Phase 2: `add_step` / `remove_step` | ⏳ Pending | - | - | |
-| Phase 3: `add_attacks_to_step` / `remove_attacks_from_step` | ⏳ Pending | - | - | |
-| Phase 4: `get_playbook_attacks` filter parity | ⏳ Pending | - | - | Independent of Phase 3, sequenced after it to reuse the same filter vocabulary |
-| Phase 5: `list_simulators` | ⏳ Pending | - | - | |
-| Phase 6: `add_simulators_to_step` / `remove_simulators_from_step` | ⏳ Pending | - | - | |
-| Phase 7: `save_scenario` | ⏳ Pending | - | - | Blocked on SAF-35508's `get_scenario_blocked_entities` for full verification (Risk R1) |
+| Phase 1: `create_plan` — validation, DAG assembly, persistence | ⏳ Pending | - | - | The whole write surface, in one phase |
+| Phase 2: `get_playbook_attacks` filter parity | ⏳ Pending | - | - | Independent of Phase 1; sequenced after it so both share one filter vocabulary |
 
-### Phase 1: Draft store + `create_scenario`
+### Phase 1: `create_plan` — validation, DAG assembly, persistence
 
-**Semantic Change**: Introduce the bounded in-process draft cache and the tool that creates an entry in it.
+**Semantic Change**: Introduce the story's single public entry point — a stateless tool that validates a
+caller-supplied scenario, assembles the wire body, and persists it as a real Validate plan.
 
-**Deliverables**: `scenario_draft_cache` instance; `sb_create_scenario` business function; `create_scenario`
-tool registration; rate-limit gate; docs; tests.
+**Deliverables**: `sb_create_plan` business function; the validation layer; the DAG assembler; `create_plan` tool
+registration with rate-limit gates; docs; tests (unit against a mocked `config/v3/plans` response, plus e2e
+against a real console per Risk R5's elevated scrutiny).
 
 **Changes**:
 
 | File | Change |
 |---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `scenario_draft_cache` instance, `sb_create_scenario` |
-| `safebreach_mcp_studio/studio_types.py` | Modified — add `get_create_scenario_response_mapping` |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `create_scenario` |
-| `CLAUDE.md` | Modified — rate-limit gate row, catalog entry, cache-strategy bullet |
+| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_create_plan` (validation, DAG assembly, wire-body construction, DB-uniqueness error shaping) |
+| `safebreach_mcp_studio/studio_types.py` | Modified — add `get_create_plan_response_mapping` |
+| `safebreach_mcp_studio/studio_server.py` | Modified — register `create_plan` |
+| `CLAUDE.md` | Modified — rate-limit gate row, Studio catalog entry |
 | `CHANGELOG.md` | Modified — `### Added` bullet |
 | `pyproject.toml` | Modified — version bump |
 
 **Implementation Details**:
-- `safebreach_mcp_studio/studio_functions.py`: instantiate `scenario_draft_cache = SafeBreachCache(name=
-  "scenario_drafts", maxsize=20, ttl=3600)` at module scope, alongside the existing `studio_draft_cache`.
-- Add `sb_create_scenario(name: str | None, console: str) -> dict`: generates a `uuid4` string as `draft_id`;
-  builds the seed body `{"name": name or "", "steps": []}`; stores it in `scenario_draft_cache` keyed by
-  `draft_id`; applies the rate-limit gate (`check_limit` before the cache write, `record_action` after — this
-  is a local operation, so "success" means the cache write succeeded, not an upstream API call); returns
-  `{draft_id, name, steps: []}`.
-- `safebreach_mcp_studio/studio_types.py`: add `get_create_scenario_response_mapping(draft_id, body) ->
-  dict[str, Any]` following the existing flat dict-mapping pattern (no pydantic/TypedDict).
-- `safebreach_mcp_studio/studio_server.py`: register `create_scenario` with
-  `ToolAnnotations(readOnlyHint=False, destructiveHint=False)`, a thin wrapper formatting the markdown response,
-  `except ValueError`/`except Exception` arms matching every other tool in the file.
-- `CLAUDE.md`: add a rate-limiting gate table row for `create_scenario`; add a numbered catalog entry under
-  Studio Server; add a bullet to the Caching Strategy section noting the new `scenario_drafts` cache
-  (`maxsize=20`, `ttl=3600`).
-- `CHANGELOG.md` / `pyproject.toml`: new `### Added` bullet, minor version bump.
+1. **Validate the input** before anything else, collecting per-path errors: `name` non-empty; `steps` non-empty;
+   each step's `name` present, non-empty, and not a `"Step <n>"`-style console default; each step's attack
+   selection using exactly one mode (explicit `attacksFilter.playbook` ids XOR criteria/tag filters); each
+   attack-phase string in `{infiltration, lateral, exfiltration, host_level}`. Errors name the offending path
+   (`steps[2].name`), never just the fact of failure.
+2. **Normalize filters** into the orchestrator's wire shape — `{"operator": "is", "values": [...], "name": key}`
+   per axis — and map the caller-facing attack-phase string onto the `Package` enum
+   (`INFILTRATION=2|LATERAL=1|EXFILTRATION=0|HOST_LEVEL=5`).
+3. **Assemble the DAG**: derive `actions`/`edges` from the ordered step list, reusing the existing
+   `_build_linear_dag(steps)` helper rather than a second implementation.
+4. **Assemble the wire body** from `planFields`, force-setting `type: "validate"` and
+   `propagateDefinition: null` — never inherited from the caller, who has no surface to supply them.
+5. **Rate-limit gate**: `check_limit` after validation, before the POST.
+6. `POST config/v3/accounts/{accountId}/plans`.
+7. `record_action` only after the POST succeeds.
+8. On a DB unique-constraint violation (`(name, accountId)`), surface a clear "name already in use" error rather
+   than the raw Sequelize error.
+9. Return `{scenario_id, name}` plus a `hint_to_agent` pointing at `run_scenario`.
 
-**What can go wrong**: a `name` collision is not checked here (the DB-level unique constraint is Phase 7's
-concern) — two drafts can share a proposed name simultaneously, since nothing is persisted yet.
+**What can go wrong**: a name collision; an upstream 4xx/5xx from `configuration`; a DAG shape that saves but
+misbehaves at run time (why step 3 reuses the proven helper rather than reimplementing).
 
-**Data flow**: caller → `create_scenario` tool → `sb_create_scenario` → `scenario_draft_cache.set(draft_id,
-body)` → response. No external HTTP call in this phase.
+**Data flow**: skill → `create_plan` → validation → normalization → DAG assembly → `config/v3/plans` POST →
+`{scenario_id, name}`.
 
-**Git Commit**: `feat(studio): add create_scenario tool and the scenario draft cache`
+**Git Commit**: `feat(studio): add create_plan tool for Validate scenario persistence`
 
-### Phase 2: `add_step` / `remove_step`
+### Phase 2: `get_playbook_attacks` filter parity
 
-**Semantic Change**: Let a draft accumulate named steps.
+**Semantic Change**: Extend the existing playbook search tool so the skill's discovery vocabulary matches the
+plan body's filter vocabulary.
 
-**Deliverables**: `sb_add_step`, `sb_remove_step`; two tool registrations; tests.
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_step`, `sb_remove_step` |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_step`, `remove_step` |
-| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
-
-**Implementation Details**:
-- `sb_add_step(draft_id: str, step_name: str, console: str) -> dict`: reads the draft from
-  `scenario_draft_cache`, raising a clear "draft not found" error if absent (evicted or unknown id); rejects an
-  empty/whitespace-only `step_name` (mirrors the console's own `disallowEmpty` client check, since nothing
-  server-side enforces this); rejects a `step_name` already present among the draft's steps (case-sensitive
-  match, mirroring the console's `forbiddenValues` sibling-name check); appends a new step object
-  `{"name": step_name, "attacksFilter": {}, "attackerFilter": {}, "targetFilter": {}}` (`attacksFilter`/
-  `attackerFilter`/`targetFilter` start empty, matching `getStepsForApi`'s base-object convention rather than
-  being omitted); writes the updated draft back to the cache; returns the full updated step list.
-- `sb_remove_step(draft_id, step_name, console)`: same draft lookup; raises if `step_name` is not found; removes
-  the step (and, implicitly, whatever attacks/simulators it held); writes back; returns the updated step list.
-- Tool registrations follow Phase 1's pattern; both are rate-limited.
-
-**What can go wrong**: removing a step that doesn't exist raises rather than silently no-opping — matches this
-repo's convention of never masking a caller error as success.
-
-**Data flow**: caller → tool → draft cache read → local list mutation → draft cache write → response. No
-external HTTP call.
-
-**Git Commit**: `feat(studio): add add_step and remove_step tools`
-
-### Phase 3: `add_attacks_to_step` / `remove_attacks_from_step`
-
-**Semantic Change**: Let a step accumulate an attack selection, by explicit id or by type/phase/tag filter.
-
-**Deliverables**: `sb_add_attacks_to_step`, `sb_remove_attacks_from_step`; the `attacksFilter` construction
-helper; tests covering both selection modes and the mutual-exclusivity rejection.
+**Deliverables**: `attack_type_filter`/`attack_phase_filter`/`tags_filter` on `get_playbook_attacks`; tests.
 
 **Changes**:
 
 | File | Change |
 |---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_attacks_to_step`, `sb_remove_attacks_from_step`, the `Filter` merge helper |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_attacks_to_step`, `remove_attacks_from_step` |
-| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
+| `safebreach_mcp_playbook/playbook_functions.py` | Modified — extend `filter_attacks_by_criteria` with the three new axes |
+| `safebreach_mcp_playbook/playbook_types.py` | Modified — carry tag/type/phase data through `transform_reduced_playbook_attack` |
+| `safebreach_mcp_playbook/playbook_server.py` | Modified — expose the new parameters |
+| `CLAUDE.md` | Modified — update the `get_playbook_attacks` catalog entry |
 
-**Implementation Details**:
-- A small internal helper builds/merges a `Filter` object (`{"operator": "is", "values": [...], "name": key}`)
-  for a given `attacksFilter` key, extending `values` if the key already exists on the step rather than
-  overwriting it.
-- `sb_add_attacks_to_step(draft_id, step_name, attack_ids: list[int] | None, attack_type_filter: str | None,
-  attack_phase_filter: str | None, tags_filter: dict[str, list[str]] | None, console)`:
-  1. Look up the draft and the named step (raise if either is missing).
-  2. Validate exactly one selection mode is present: `attack_ids` non-empty XOR at least one of the three
-     filter parameters non-empty. Reject with a clear message if both or neither are supplied.
-  3. If `attack_ids`: merge into the step's `attacksFilter.playbook` (key `"playbook"`, not `"methodIds"`).
-  4. If `attack_type_filter`: merge into `attacksFilter.attackType`.
-  5. If `attack_phase_filter`: map the input string (`infiltration|lateral|exfiltration|host_level`) to the
-     orchestrator's `Package` integer (`INFILTRATION=2|LATERAL=1|EXFILTRATION=0|HOST_LEVEL=5`); merge into
-     `attacksFilter.attackPhase`. An unrecognized phase string is a validation error, not a silent drop.
-  6. If `tags_filter`: for each `{group: values}` entry, merge into `attacksFilter.tags[group]`.
-  7. Write the draft back; return the step's updated `attacksFilter` (full, so the caller can see the
-     accumulated state, not just what this call added).
-- `sb_remove_attacks_from_step(draft_id, step_name, attack_ids: list[int], console)`: removes the given ids
-  from `attacksFilter.playbook.values` only; raises if `attacksFilter.playbook` doesn't exist or an id isn't
-  present in it (criteria-based removal is out of scope, per Component B's design note).
+**Implementation Details**: filters apply Python-side against the already-cached full attack fetch — no new
+upstream API call, since the raw tag data is already present in every fetched attack and simply isn't carried
+through the reduced transform today unless `include_tags=True`. Axis names and the attack-phase vocabulary match
+Component B exactly, so a filter that finds attacks here expresses the same selection there.
 
-**What can go wrong**: a phase string outside the four known values; both `attack_ids` and a filter parameter
-supplied together; removing an id that was never added.
+**What can go wrong**: a mistyped tag group name returns zero results rather than erroring — call this out in the
+tool description, and name the exact group strings (`"CVE"`, `"Threat Actor"`) so the skill can encode them.
 
-**Data flow**: same local cache read-mutate-write shape as Phase 2; no external HTTP call.
+**Data flow**: caller → `get_playbook_attacks` → cached attack list → Python-side filtering → paginated results.
 
-**Git Commit**: `feat(studio): add add_attacks_to_step and remove_attacks_from_step tools`
-
-### Phase 4: `get_playbook_attacks` filter parity
-
-**Semantic Change**: Let the existing attack-search tool filter by the same type/phase/tag axes Phase 3
-introduced, so Helm can discover matching attacks before committing a filter live into a step.
-
-**Deliverables**: three new optional parameters on `get_playbook_attacks`; corresponding filtering logic; tests.
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_playbook/playbook_types.py` | Modified — extend `filter_attacks_by_criteria`, thread raw tags through |
-| `safebreach_mcp_playbook/playbook_functions.py` | Modified — add 3 params to `sb_get_playbook_attacks` |
-| `safebreach_mcp_playbook/playbook_server.py` | Modified — update registered parameter list + description |
-| `CLAUDE.md` | Modified — update `get_playbook_attacks` catalog entry |
-
-**Implementation Details**:
-- `safebreach_mcp_playbook/playbook_types.py`: extend `filter_attacks_by_criteria` to accept
-  `attack_type_filter`, `attack_phase_filter`, `tags_filter`, applied against the **raw** per-attack tag data
-  (the same nested `[{id, name, values}]` shape `_transform_tags` already parses) — this requires threading the
-  raw tags through to the filter step, since `transform_reduced_playbook_attack` currently drops them unless
-  `include_tags=True`.
-- `safebreach_mcp_playbook/playbook_functions.py`: add the three parameters to `sb_get_playbook_attacks`'s
-  signature; pass them through to the extended filter function; same comma-separated, OR-logic, case-sensitive-
-  where-applicable style as `mitre_technique_filter`/the platform filters.
-- `safebreach_mcp_playbook/playbook_server.py`: update the tool's registered parameter list and description.
-- `CLAUDE.md`: update `get_playbook_attacks`'s catalog entry.
-
-**What can go wrong**: an attack with no tag data for a requested axis should be excluded (not error), matching
-the existing platform-filter behavior for attacks with `None` platform.
-
-**Data flow**: no new upstream call — filtering happens against the already-cached full attack fetch.
-
-**Git Commit**: `feat(playbook): add attack_type_filter, attack_phase_filter, tags_filter to get_playbook_attacks`
-
-### Phase 5: `list_simulators`
-
-**Semantic Change**: Expose a browse-only simulator listing scoped to scenario building.
-
-**Deliverables**: `sb_list_simulators`; tool registration (`readOnlyHint=True`).
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_list_simulators` (delegates to `config_functions.py`) |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `list_simulators` (`readOnlyHint=True`, no gate row) |
-| `CLAUDE.md` | Modified — catalog entry only |
-
-**Implementation Details**:
-- `sb_list_simulators(filters: dict | None, console) -> list[dict]`: delegates to the existing
-  `get_console_simulators` business logic in `safebreach_mcp_config/config_functions.py` (same connected-status/
-  OS/name filters), returning the candidate list unchanged in shape — this tool adds no new filtering
-  capability, only a Studio-server-local entry point so Helm doesn't need to reach across servers mid-build.
-- No rate-limit gate (`readOnlyHint=True`); no CLAUDE.md gate-table row, per the `get_plan_statistics`
-  precedent's "Not rate-limited" pattern.
-
-**What can go wrong**: nothing new — errors are whatever `get_console_simulators`'s underlying call already
-raises.
-
-**Data flow**: caller → `list_simulators` → existing config-server simulator-listing logic → response. No new
-external HTTP call.
-
-**Git Commit**: `feat(studio): add list_simulators tool`
-
-### Phase 6: `add_simulators_to_step` / `remove_simulators_from_step`
-
-**Semantic Change**: Let a step accumulate an explicit, role-scoped simulator selection.
-
-**Deliverables**: `sb_add_simulators_to_step`, `sb_remove_simulators_from_step`; tests.
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_add_simulators_to_step`, `sb_remove_simulators_from_step` |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `add_simulators_to_step`, `remove_simulators_from_step` |
-| `CLAUDE.md` | Modified — rate-limit gate rows, catalog entries |
-
-**Implementation Details**:
-- `sb_add_simulators_to_step(draft_id, step_name, role: str, simulator_ids: list[str], console)`: look up the
-  draft/step; validate `role` is exactly `"attacker"` or `"target"`; merge `simulator_ids` into
-  `attackerFilter.simulators` (if `role == "attacker"`) or `targetFilter.simulators` (if `role == "target"`) —
-  same `Filter` merge helper as Phase 3, no filter-parameter alternative on this tool (Component C's documented
-  scope boundary). Write back; return the step's updated `attackerFilter`/`targetFilter`.
-- `sb_remove_simulators_from_step`: symmetric removal from the given role's `simulators.values`.
-
-**What can go wrong**: an invalid `role` value; removing an id never added.
-
-**Data flow**: local cache read-mutate-write; no external HTTP call.
-
-**Git Commit**: `feat(studio): add add_simulators_to_step and remove_simulators_from_step tools`
-
-### Phase 7: `save_scenario`
-
-**Semantic Change**: Persist the draft as a real Validate plan, with the console-parity guards from Component E.
-
-**Deliverables**: `sb_save_scenario`; the final wire-body assembler; tests (unit against a mocked
-`config/v3/plans` response, plus e2e against a real console per Risk R6's elevated scrutiny).
-
-**Changes**:
-
-| File | Change |
-|---|---|
-| `safebreach_mcp_studio/studio_functions.py` | Modified — add `sb_save_scenario` (pre-save gate, wire-body assembly, DB-uniqueness error handling, draft eviction) |
-| `safebreach_mcp_studio/studio_server.py` | Modified — register `save_scenario` |
-| `CLAUDE.md` | Modified — rate-limit gate row, catalog entry |
-| `CHANGELOG.md` | Modified — final feature bullet |
-| `pyproject.toml` | Modified — version bump |
-
-**Implementation Details**:
-1. Look up the draft; raise a clear "draft not found" error if absent.
-2. **Pre-save gate**: call the equivalent of `get_scenario_blocked_entities` against the draft body (via the
-   same `sb_get_plan_statistics` plumbing SAF-35508 exposes — exact call shape depends on that dependency
-   landing, Risk R1) and require its three-state verdict to be "nothing blocked" or "nothing evaluated"-with-
-   caller-override before proceeding; a "blocked" verdict is a typed error surfaced back to the caller (Helm),
-   not a silent partial save.
-3. Assemble the final wire body from the draft's `name`/`steps`, adding `type: "validate"` and
-   `propagateDefinition: null` (never inherited from the draft, since the draft never carries them).
-4. If `save_as_new` is true or the draft has no prior `scenario_id`: `POST config/v3/accounts/{accountId}/plans`
-   with the assembled body (no `id`). Else: `PUT config/v3/accounts/{accountId}/plans/{id}`.
-5. On a DB unique-constraint violation (`(name, accountId)`), surface a clear "name already in use" error
-   rather than the raw Sequelize error.
-6. On success: evict the `draft_id` entry from `scenario_draft_cache`; return `{scenario_id, name}` from the
-   response.
-7. On any failure: leave the draft entry in place so the user's work isn't lost to a transient error.
-
-**What can go wrong**: the pre-save gate call itself failing (SAF-35508 dependency not yet available — Risk
-R1); a name collision; an upstream 4xx/5xx from `configuration`.
-
-**Data flow**: caller → `save_scenario` → (pre-save checkout call) → `config/v3/plans` POST/PUT → response →
-draft cache eviction.
-
-**Git Commit**: `feat(studio): add save_scenario tool`
+**Git Commit**: `feat(playbook): add attack type, phase and tag filters to get_playbook_attacks`
 
 ---
 
@@ -638,56 +444,57 @@ draft cache eviction.
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **Narrowed 2026-09-03 — the three tools are now implemented and tested (1932 passing), re-verified directly against the live branch.** Residual: PR #91 has a real merge conflict against `main` (doesn't block this branch, which stacks on the feature branch); `attack_ids` on `get_scenario_attack_blockers` is required, not optional as this PRD originally assumed — any implementation must match; `get_scenario_blocked_entities`'s verdict is five states, not three; `fix_lever` was removed, conflict-fix composition must use `description` alone; AC-4 (console-number parity) is partially verified (parameter mapping confirmed against a real console) but the UI-rendered-figure comparison remains an accepted gap on SAF-35508's side. | Medium (down from High) | Implementation can now target the real, documented contract in `CLAUDE.md` catalog entries 25-27 instead of a planned one. Confirm PR #91's merge conflict is resolved before this story's own PR is ready to merge, and implement `save_scenario`'s pre-save gate against the confirmed five-state verdict, not the three-state one this PRD originally described. |
-| R2 | **Draft cache is in-process, single-worker state.** A process restart or a future multi-worker deployment loses in-flight drafts. | Medium | Documented assumption (current deployment is confirmed single-process); `save_scenario` against a missing `draft_id` fails clearly rather than silently, so the failure mode is legible, not corrupting. |
-| R3 | **This story's tool contract deliberately diverges from FR13's literal text** (no server `scenario_id`/`step_id` until save; filter-DSL parameters instead of plain arrays for some inputs). A reviewer judging "done" against the ticket's literal wording without reading this PRD's rationale could misjudge the implementation. | Medium | This PRD's Section 2 and `context.md` document every divergence with the platform constraint that forced it (no incremental step API, zero-step rejection, no server draft). Reference this PRD explicitly at the DoD/verification gate. |
-| R4 | **FR2's CVE/named-threat-group search remains only partially closed.** `tags_filter`'s generic group-keyed shape (Component D) supports it, but there is no dedicated `cve_filter`/`threat_actor_filter` parameter — Helm must know the exact tag group name (`"CVE"`, `"Threat Actor"`) to use it. | Low-Medium | Document the exact group names in the tool description; the breach-genie skill (companion PRD) is the natural place to encode this vocabulary for Helm. |
-| R5 | **Console validation parity is intentionally partial** (Component E) — step-name length/uniqueness and most "is this runnable" branching/attacker-target-presence logic are client-only in the console and are not rebuilt here. | Medium | Explicitly scoped out in Component E and this risk entry, not silently assumed covered; a fast-follow could add these if product asks. |
-| R6 | **`config/v3/plans` has zero existing production callers anywhere in the codebase.** `save_scenario` is its first real use — untested edge cases are more likely than on the console-verified `v2` surface. | Medium | Elevated test-plan scrutiny for `save_scenario` specifically (unit + e2e), called out at the Phase 8 test-plan step. |
-| R7 | **AC-4/T-35 on SAF-35508's own PRD (whether its numbers match the console) is unverified**, independent of the D4 tool-decomposition. | Low (inherited, not created by this story) | Not this story's risk to close, but worth tracking since DoD2 depends on it transitively. |
+| R1 | **SAF-35508 dependency.** The three `get_scenario_*` tools are implemented and tested (1932 passing), re-verified against the live branch — but PR #91 has a real merge conflict against `main` (doesn't block this branch, which stacks on the feature branch). Contract specifics any implementation must match: `attack_ids` on `get_scenario_attack_blockers` is **required**; `get_scenario_blocked_entities`'s verdict is **five** states; `fix_lever` was removed, so conflict-fix composition uses `description` alone; AC-4 is partially verified. | Medium | Implementation targets the real, documented contract in `CLAUDE.md` catalog entries 25-27. Confirm PR #91's conflict is resolved before this story's PR is ready to merge. |
+| R2 | **The preview-then-confirm sequence is now enforced by skill text, not by the tool.** The original design had `save_scenario` require a fresh all-clear `get_scenario_blocked_entities` verdict before persisting. With orchestration in the skill, `create_plan` enforces structural validity but cannot know whether the user actually saw and approved a preview — a caller that skips straight to `create_plan` gets a structurally valid scenario nobody reviewed. | Medium | Deliberate, owner-approved consequence of relocating orchestration. `create_plan` still refuses anything structurally invalid or Propagate-tainted, so the failure mode is "unreviewed", not "broken". The companion skill PRD owns the confirmation cadence; if this proves insufficient in practice, a `preview_token`-style handshake is the natural fast-follow. |
+| R3 | **This story's tool contract deliberately diverges from FR13's literal text.** FR13 enumerates nine tools by name (`create_scenario`, `add_step`, `add_attacks_to_step`, …); this design ships one (`create_plan`) and relocates the rest into the Helm skill. This is a larger departure than the original PRD's (which diverged on `scenario_id`/`step_id` semantics but kept the tool names). | **High** | **Needs the ticket owner's explicit sign-off before implementation starts** — flagged as an open item, not an assumption. Section 2 and `context.md` document the reasoning (one-entry-point requirement, orchestration belongs where it's expressible, the platform's whole-body-only write API). A reviewer judging "done" against FR13's literal wording without this context would misjudge the implementation. |
+| R4 | **Console validation parity is intentionally partial** (Component C) — step-name length and most "is this runnable" branching/attacker-target-presence logic are client-only in the console and are not rebuilt here. | Medium | Explicitly scoped out in Component C and this entry, not silently assumed covered; a fast-follow could add these if product asks. |
+| R5 | **`config/v3/plans` has zero existing production callers anywhere in the codebase.** `create_plan` is its first real use — untested edge cases are more likely than on the console-verified `v2` surface. | Medium | Elevated test-plan scrutiny for `create_plan` specifically (unit + e2e against a real console). |
+| R6 | **Update (PUT) is not in this story.** The ticket title says "creation **and update**", but with editing scoped to Stage 3 (SAF-35485) and no draft to re-open, `create_plan` is create-only. | Low-Medium | Named here rather than silently dropped; confirm with the ticket owner whether Stage 1 must carry an update path, in which case a sibling `update_plan` (PUT `config/v3/plans/{id}`) is a small addition to Phase 1. |
+| R7 | **FR2's CVE/named-threat-group search remains only partially closed.** `tags_filter`'s generic group-keyed shape supports it, but there is no dedicated `cve_filter`/`threat_actor_filter` — the skill must know the exact tag group names. | Low-Medium | Document the exact group names in the tool description; the companion skill PRD encodes this vocabulary for Helm. |
+| R8 | **The skill now owns plan-body assembly**, including filter nesting and step ordering. An LLM emitting a subtly wrong body is a new failure surface that the original nine-tool design didn't have (there, the server held the structure). | Medium | `create_plan`'s per-path validation is the backstop — a malformed body is rejected with the offending path named, never silently persisted. The DAG, the riskiest structure, is built by the tool rather than the model. The companion skill PRD carries the body contract as a `references/` file rather than relying on inline prose. |
 
 ---
 
 ## 10. Future Enhancements
 
+- **`update_plan` (PUT)** for scenario editing — Stage 3, SAF-35485; see Risk R6 if Stage 1 must carry it.
+- **A `preview_token`-style handshake** requiring a fresh statistics check before `create_plan` will persist, if
+  R2's skill-enforced confirmation proves insufficient in practice.
 - **Filter-based / criteria-based simulator selection** (the OS-half of `scenario-step-grouping.md` rule 5's
   "criteria" mode) — Stage 2, SAF-35484.
 - **Automatic simulator shortlist suggestion** based on the planned attacks — Stage 2, SAF-35484.
 - **Partial-impact / fail-rate conflict handling** with a configurable per-step threshold and swap-or-proceed
   choice — Stage 2, SAF-35484.
-- **Edit-mode step placement** (place suggested attacks into an existing matching step rather than always
-  creating a new one), **OOB-vs-custom scenario differentiation**, **`rename_scenario`/`delete_scenario`
+- **Edit-mode step placement**, **OOB-vs-custom scenario differentiation**, **`rename_scenario`/`delete_scenario`
   tools** — Stage 3, SAF-35485.
 - **Data asset / proxy / impersonated-user association** — Stage 4, SAF-35051.
-- **Dedicated first-class `cve_filter`/`threat_actor_filter` parameters** instead of routing through the
-  generic `tags_filter` — candidate fast-follow if Helm usage shows the generic shape is friction-prone.
-- **Offering a matching catalog scenario as a starting point** instead of always building from scratch —
-  unassigned in the ticket, candidate for a later story.
-- **Full console-validation parity** (step-name length/uniqueness enforcement, branching validity,
-  attacker/target-presence at save time) — see Risk R5.
+- **Dedicated first-class `cve_filter`/`threat_actor_filter` parameters** instead of routing through the generic
+  `tags_filter` — candidate fast-follow if usage shows the generic shape is friction-prone.
+- **Full console-validation parity** (step-name length, branching validity, attacker/target-presence at save
+  time) — see Risk R4.
 
 ---
 
 ## 11. Executive Summary
 
 - **Issue/Feature Description**: Enable Helm to build and save a custom Validate scenario entirely through
-  conversation, via a set of low-level, structured MCP tools.
-- **What Was Built**: Eight new mutating tools (draft-backed scenario/step/attack/simulator composition plus
-  save) and one enhanced read tool (`get_playbook_attacks` gains type/phase/tag filters), all in
-  `safebreach_mcp_studio`, writing through `config/v3/plans`.
-- **Key Technical Decisions**: an in-process draft cache stands in for the server-side draft the platform
-  doesn't have; attack selection supports both explicit ids and a structured type/phase/tags filter (mutually
-  exclusive per call, grounded in the ticket's own attached grouping spec); simulator selection stays
-  explicit-id-only per FR5's own scope boundary; Propagate exclusion (FR1/DoD3) is structural (no `tags` input
-  surface exists to guard) rather than a bolted-on filter.
-- **Scope Changes**: FR13's literal tool contract (server-assigned `scenario_id`/`step_id` from the first call)
-  was found unimplementable against the real platform (no incremental step API, no server draft, zero-step
-  plans rejected) and replaced with the draft-cache design documented in Section 2. FR14 (present simulation
-  counts to the user) was added post-brainstorm as skill-layer behavior. `get_playbook_attacks`'s filter
-  expansion was added in-scope after the attacks-filter design surfaced the same gap FR2's investigation had
-  already found.
-- **Business Value Delivered**: replaces a 5-screen manual console flow with a conversational one, backed by
-  the same authoritative impact/conflict data the console itself uses, with Propagate scenarios structurally
+  conversation, with the conversation orchestrated by a Helm skill and persistence handled by a single MCP tool.
+- **What Was Built**: One new mutating tool (`create_plan` — validation, DAG assembly, `config/v3/plans` POST)
+  and one enhanced read tool (`get_playbook_attacks` gains type/phase/tag filters).
+- **Key Technical Decisions**: exactly one public entry point, so validation, Propagate exclusion and rate
+  limiting have a single enforcement point; the tool is stateless, which removes the original design's
+  process-wide draft cache and its cross-user eviction hazard; the execution DAG is assembled by the tool rather
+  than by the calling model; attack selection is one mode per step (explicit ids XOR criteria/tags), grounded in
+  the ticket's own attached grouping spec; simulator selection stays explicit-id-only per FR5's scope boundary;
+  Propagate exclusion (FR1/DoD3) is structural — no `tags` input surface exists to guard.
+- **Scope Changes**: **This PRD was restructured on 2026-09-06.** The original design shipped nine granular
+  draft-mutation tools backed by an in-process cache; the owner's decision that the Helm skill orchestrates and
+  MCP only persists collapsed that to one tool. FR13's literal nine-tool contract is therefore substantially
+  diverged from and **needs owner sign-off** (Risk R3). Earlier, FR13's server-assigned `scenario_id`/`step_id`
+  semantics had already been found unimplementable (no incremental step API, no server draft, zero-step plans
+  rejected). FR14 was added post-brainstorm as skill-layer behavior.
+- **Business Value Delivered**: replaces a 5-screen manual console flow with a conversational one, backed by the
+  same authoritative impact/conflict data the console itself uses, with Propagate scenarios structurally
   excluded regardless of account licensing.
 
 ---
@@ -697,4 +504,5 @@ draft cache eviction.
 | Date | Change Description |
 |---|---|
 | 2026-09-02 16:49 | PRD created — initial draft |
-| 2026-09-03 15:20 | Fetched latest SAF-35508 (PR #91, `de8afff`) at user request — the three `get_scenario_*` tools are now implemented (1932 tests passing), not "not yet implemented" as originally written. Corrected Component F, §6, and Risk R1: `attack_ids` on `get_scenario_attack_blockers` is required not optional; `get_scenario_blocked_entities`'s verdict is five states not three; `fix_lever` was removed (SAF-35568); AC-4 is partially verified (parameter mapping confirmed against a real console, UI-rendered-figure comparison still an accepted gap); PR #91 has an open merge conflict against `main`. |
+| 2026-09-03 15:20 | Fetched latest SAF-35508 (PR #91, `de8afff`) at user request — the three `get_scenario_*` tools are now implemented (1932 tests passing), not "not yet implemented" as originally written. Corrected Component F, §6, and Risk R1: `attack_ids` on `get_scenario_attack_blockers` is required not optional; `get_scenario_blocked_entities`'s verdict is five states not three; `fix_lever` was removed (SAF-35568); AC-4 is partially verified; PR #91 has an open merge conflict against `main`. |
+| 2026-09-06 | **Architecture restructured on owner decision**: exactly one public entry point for scenario creation, with the Helm skill as the flow orchestrator. Nine mutating tools + in-process draft cache → one stateless `create_plan` tool; the granular composition logic becomes private Python; `list_simulators` dropped (`get_console_simulators` covers it); the pre-save gate moves from inside the tool to the skill's preview stage, using SAF-35508's ad-hoc-body statistics tools (owner verified the statistics endpoint does not require `actions`/`edges`). Phases 7→2. New risks R2 (confirmation now skill-enforced), R3 (FR13 divergence, **needs owner sign-off**), R6 (update/PUT not in Stage 1), R8 (skill owns body assembly); former R2 (draft-cache single-worker state) retired with the cache. |
