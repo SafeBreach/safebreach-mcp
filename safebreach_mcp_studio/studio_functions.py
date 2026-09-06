@@ -3186,11 +3186,13 @@ def _fill_attack_details(report, console, conflict_detail, resolved,
         facts = resolved.get(str(entry['attack_id'])) or {}
         if facts.get('name'):
             entry['attack_name'] = facts['name']
-        # The platforms an attack DECLARES. Stated beside the constraints the
-        # console cited, never merged into them: "this attack targets LINUX" is
-        # a fact, "it was blocked because of the OS" is a cause the console did
-        # not report.
-        for field in ('target_platform', 'attacker_platform'):
+        # The platforms an attack DECLARES, its tags, and the mapping that
+        # turns an advanced-action id into a capability name. Stated beside the
+        # constraints the console cited, never merged into them: "this attack
+        # targets LINUX" is a fact, "it was blocked because of the OS" is a
+        # cause the console did not report.
+        for field in ('target_platform', 'attacker_platform',
+                      'tags', 'advanced_actions'):
             if facts.get(field):
                 entry[field] = facts[field]
 

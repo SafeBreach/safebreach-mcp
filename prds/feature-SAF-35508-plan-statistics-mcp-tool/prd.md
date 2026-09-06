@@ -784,7 +784,8 @@ parameter set actually used, and an error line carrying the full response body o
 | Phase 10: `attack_ids` becomes required — the last overlap removed (D6) | ✅ Complete | 2026-09-03 | (this commit) | Owner review after Phase 9 asked whether entry 27 was a subtype of entry 26. It is not — 26 covers simulators, and 27 answers per named id including `ran` and `absent`, which an existential list cannot express — but its **unnamed mode was** the attacks half of 26, drawn from the same field by the same rule. Removed: `attack_ids` is now required in the tool's JSON schema (not merely rejected at runtime), and the rejection names `get_scenario_blocked_entities`. `blocked_attacks`, `blocked_attacks_listing_capped` and `_listing_may_be_partial` deleted with it. 1928 passed / 0 failed. |
 | Phase 11: Fetch the attack names a report shows, not the whole playbook (D7) | ✅ Complete | 2026-09-03 | (this commit) | Owner review of the call flow asked why the statistics API is reached only at stage ⑥. It is reached there correctly — stages ①–⑤ build the request body — but the question exposed that **it is not the first network call**: `_build_attack_name_map` downloaded the entire playbook first. Measured live on `saf-35508`: **58.62 MB, 9,659 moves, ~3.0 s, on every call of all three tools**, while the counts tool renders no names at all. `details=true` proved inert (byte-identical without it) and no id-filter parameter is honoured, but `/api/kb/vLatest/moves/{id}` returns one move in ~10 KB / 0.6 s. Names now resolve **after capping**, per id, 16 at a time. Measured after: counts **0 bytes**, the other two **0.02 MB**. e2e wall-clock 113 s → 51.8 s. 1945 passed / 0 failed. |
 | Phase 12: Two tools — merge the blockers into blocked-entities, filter before capping, enrich both entity kinds (D8) | ✅ Complete | 2026-09-03 | (this commit) | Owner review after Phase 11: `get_scenario_attack_blockers` becomes a **section** of `get_scenario_blocked_entities` rather than a tool; named ids are **pinned ahead of the caps** so a named attack never loses its explanation to truncation; blocked attacks carry their declared platforms and in-scope simulators carry name/OS/state. Partially reverts Phase 10's *requirement* on `attack_ids` while keeping what Phase 10 established — every named id gets exactly one answer. |
-| Phase 13: The counts tool names which attacks will run, paginated (D8) | ✅ Complete | 2026-09-03 | (this commit) | `get_scenario_simulation_counts` gains a paginated attack listing, so "which attacks" is answerable rather than a capped sample. Costs the zero-playbook-request property Phase 11 won — bounded to one page of names (~10 ids, 0.08 MB) rather than the 58.6 MB listing. |
+| Phase 13: The counts tool names which attacks will run, paginated (D8) | ✅ Complete | 2026-09-03 | 335d4b9 |
+| Phase 14: Name the advanced actions a constraint reports by id; relay the attack's tags (D9) | ✅ Complete | 2026-09-03 | (this commit) | Field feedback: the report relayed "required action [0] not present on the simulator". An id names no capability. The attack's own `Advanced_Actions` tag carries the mapping, so `#0` becomes `#0 "Loading of Malicious Entities"` at **no extra request** — the KB catalog endpoint probed for this turned out to be unnecessary. Tags are kept and rendered too (Attack Type, Threat_Name, Malware_Category, Security Controls): ~900 bytes of a record already fetched and previously discarded. An id the attack does not list stays a bare id. | `get_scenario_simulation_counts` gains a paginated attack listing, so "which attacks" is answerable rather than a capped sample. Costs the zero-playbook-request property Phase 11 won — bounded to one page of names (~10 ids, 0.08 MB) rather than the 58.6 MB listing. |
 
 ### Phase 1 — Delete the translation table; relay the orchestrator's catalog
 
@@ -1446,6 +1447,70 @@ the zero-request behaviour Phase 11 won.
 
 ---
 
+### Phase 14 — Name the advanced actions a constraint reports by id; relay the attack's tags
+
+**Semantic change**: none to what is measured. A constraint that reports capability **ids** now reports
+capability **names**, and the attack's own tags reach the reader.
+
+**Why.** The field report read: *"Missing required advanced actions — required action [0] not present on the
+simulator."* `[0]` names nothing. The owner asked for the capability name.
+
+**The correction that had to happen first.** The name expected was *"Malware Pre-execution"*. That is a real,
+structured field — the attack's **`Attack Type`** tag — but it is **not** the advanced action. Two independent
+sources on the console agree that advanced action **id 0 is "Loading of Malicious Entities"**: the KB catalog
+(`GET /api/kb/vLatest/advancedActions`, 16 rows) and the attack's own **`Advanced_Actions`** tag. Rendering the
+expected label would have printed a confident, plausible-reading, wrong capability beside a real constraint —
+the failure class this feature exists to prevent. The attack carries both facts, and both are now shown, as
+separate things.
+
+**And the fix got cheaper than proposed.** The catalog endpoint is unnecessary: tag 31 on the move record we
+already fetch carries the mapping. Zero additional requests, against the 9.9 KB call first sketched.
+
+**Implementation details**
+- `_attack_facts` keeps `tags` (indexed `{name: [values]}`) and `advanced_actions` (`{id: name}` from the
+  `Advanced_Actions` tag). ~900 bytes of a 5.9 KB record we already pay for and were discarding.
+- `_named_advanced_actions` turns `{"required": [0], "actual": []}` into
+  *requires advanced action #0 "Loading of Malicious Entities"; simulator has none* — replacing the raw JSON
+  blob for this code only. `actual: []` reads as **none** rather than an empty list.
+- **An id the attack does not list stays a bare id.** No catalog is consulted to fill the gap and nothing is
+  guessed: a plausible capability name beside a real constraint is worse than a number the reader can look up.
+- Tags render as one line beside the attack. **Numeric-valued tags are omitted** — "IoC Based: 1" carries no
+  meaning without its scale, and an opaque number invites a reader to supply one. They stay in the data.
+
+**Two defects of my own, found while doing this**
+- **`SCENARIO_TOOL_NAMES` had carried a duplicate since Phase 12.** A global rename turned the retired third
+  entry into a second copy of `get_scenario_blocked_entities`, and the follow-up fix targeted the pre-rename
+  text so it silently no-opped. Every shared parametrization has since run one tool twice and the other never —
+  green, while covering less than its name promised. A guard now asserts the list matches the registered
+  `get_scenario_*` tools and holds no duplicates.
+- **Phase 13 was committed with two failing tests.** The suite was run *before* the CLAUDE.md edit, not after;
+  the edit moved the first mention of `get_scenario_blocked_entities` into entry 25, and a catalog test that
+  split on the first mention began reading the wrong paragraph. The test now anchors on the numbered entry
+  heading. Fixed here (`335d4b9` is red on those two; this commit is green).
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_playbook/playbook_functions.py` | `_index_tags`, `_advanced_action_names`; `_attack_facts` keeps both |
+| `safebreach_mcp_studio/studio_functions.py` | the fill carries `tags` and `advanced_actions` |
+| `safebreach_mcp_studio/studio_server.py` | `_named_advanced_actions`, `_render_attack_tags` |
+| `safebreach_mcp_studio/tests/test_studio_functions.py` | T-67; the duplicate-list guard; the catalog-entry anchor |
+
+**Verification gap, stated plainly.** The id→name rendering is unit-verified but **not** live-verified:
+`saf-35508` has advanced actions disabled, so the same scenario yields `advanced_actions_are_disabled` and
+`some_advanced_actions_are_disabled` rather than `missing_required_advanced_actions`. What *is* live-verified
+is the tag line, which carries `Advanced_Actions: Loading of Malicious Entities` on the real Akira attack.
+
+**Still open from earlier**: `declares target platform: ANY` remains wrong for this attack — its OS requirement
+is a JSON Schema at `constraints.nodeInfo…MACHINE_INFO.TYPE.pattern`, which `_extract_platform_data` cannot
+see. In the live output it now sits beside the schema error saying *"must match pattern LINUX"*, contradicting
+it. Not addressed here.
+
+**Git commit**: `feat(SAF-35508): name the advanced actions a constraint reports, and relay the attack's tags`
+
+---
+
 ## 9. Risks and Assumptions
 
 ### Technical risks
@@ -1598,6 +1663,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-09-03 (h) | **Phase 14 complete.** A constraint reporting capability **ids** now reports capability **names**: `required: [0]` becomes `#0 "Loading of Malicious Entities"`, resolved from the attack's own `Advanced_Actions` tag at **no extra request** — the KB catalog endpoint probed for the job proved unnecessary. The attack's tags are relayed too (Attack Type, Threat_Name, Malware_Category, Security Controls), ~900 bytes of a record already fetched and previously binned. **The requested label was wrong and saying so came first**: "Malware Pre-execution" is the attack's `Attack Type` tag, not its advanced action, and two independent console sources agree id 0 is "Loading of Malicious Entities". Printing the expected label would have put a plausible, wrong capability beside a real constraint. **Two of my own defects surfaced**: `SCENARIO_TOOL_NAMES` had held a duplicate since Phase 12 (a global rename, and the follow-up fix silently no-opped against pre-rename text), so shared parametrizations covered one tool twice and another never; and Phase 13 was committed red because the suite ran before the docs edit rather than after. Both fixed, both now guarded. 1971 passed. |
 | 2026-09-03 (g) | **Phase 13 complete.** `get_scenario_simulation_counts` now answers *which* attacks run, not only how many — `page`/`page_size` (default 0/10, max 100) over the step's attack map, with names resolved for **the page only**. Both denominators are reported where they differ: how many ids the response lets you page through, and how many the step actually holds, because collapsing them would present a truncation artifact as the scenario's size. `page_size=0` lists nothing and costs no playbook request — the documented way back to Phase 11's behaviour. Live: default page 5 lookups / 0.03 MB, `page_size=0` **0 lookups / 0.00 MB**. **A stale routing hint was found by reading the live output, not by the suite**: it still named `get_scenario_attack_blockers`, retired in Phase 12, so an agent following it would have called a tool that does not exist. Fixed, and a test now asserts every `get_scenario_*` name in either narration is actually registered. 1976 passed; e2e 11 passed / 1 skipped. **The PR's blocking review point (#0 — do not expose a dedicated tool; fold into `run_scenario`/`quick_run`'s `evaluate`) remains unresolved**, and this phase does not address it. |
 | 2026-09-03 (f) | **Phase 12 complete.** Three tools became two: `get_scenario_attack_blockers` is folded into `get_scenario_blocked_entities` as an optional `attack_ids` filter, 15 tools → 14. Named ids are **pinned ahead of the caps** in the shaping layer, so naming one attack can no longer answer `count_map_truncated` because a hundred unasked attacks sorted ahead of it. Blocked attacks carry their declared platforms; the step's in-scope simulators carry name, OS, connection state and roles — facts beside the console's codes, never a cause. **R18 earned its place**: the planned fleet join measured 499 KB for four nodes (~61 MB extrapolated to 500), so it ships per-id, capped at 10 per step, blocked-first; `details=false` was probed and rejected because it carries neither OS nor connection state. Live: counts **0 bytes**, blocked-entities **0.23 MB**, versus ~59 MB for a naive build. 1957 passed, e2e 11 passed / 1 skipped. **Two mutations survived the first test pass** — the count-map pin was covered only by the zero-impact pin, and the R16 verdict guard turned out unfalsifiable because the verdict reads two independent unfiltered sources. Both are now pinned by assertions that discriminate. |
 | 2026-09-03 (e) | **Phases 12 and 13 specified (D8) — awaiting approval, no code written.** Owner review after Phase 11 asked for two tools instead of three, with three further requirements: enrich blocked attacks from their own playbook records, filter by attack id **before** rendering, and return in-scope simulator information. Reviewed rather than accepted wholesale, and the review changed the design twice. First: the id filter's value is not token-trimming but **correctness of explanation** — it lives in the projection today and reads maps the shaping layer has already capped, so a caller can name one attack and be told `count_map_truncated` because a hundred attacks they never asked about sorted ahead of it. The fix is **pin-then-cap** in the shaping layer, which also makes CLAUDE.md entry 27's existing claim ("never dropped from the list that exists to explain it") true rather than aspirational. Second: the simulator enrichment must cover **in-scope** simulators, not blocked ones — the field report that prompted all this had **no** blocked simulator, and the machine that mattered was the one that worked. Recorded as risks: R15 (the merge drifting back toward the retired all-in-one tool), R16 (a filtered report claiming scenario-wide cleanliness), R17 (adjacent facts read as causation — the original miss was an agent asserting a fix the tool never vouched for), and R18 (**the simulator join is unmeasured**, which is exactly how the 58.6 MB playbook fetch survived unnoticed — measure before shipping). |

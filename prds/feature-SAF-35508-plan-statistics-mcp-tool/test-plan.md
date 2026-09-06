@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 39 | 14 | 0 | 6 | 59 |
+| Automatic | 40 | 14 | 0 | 6 | 60 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **39** | **14** | **0** | **9** | **62** |
+| **Total** | **40** | **14** | **0** | **9** | **63** |
 
 ## Environment Requirements (aggregated)
 
@@ -200,6 +200,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-64 | One page of "which attacks run, and how many", with both denominators | API-contract | Phase 13 | safebreach_mcp_studio |
 | T-65 | Attack names are resolved for the listed page and nothing else | performance | Phase 13 | safebreach_mcp_studio |
 | T-66 | `page_size=0` lists nothing, asks for nothing, and explains nothing | API-contract | Phase 13 | safebreach_mcp_studio |
+| T-67 | A constraint reporting capability ids reports capability names, and guesses none | API-contract | Phase 14 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -1265,6 +1266,22 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
+### T-67 — A constraint reporting capability ids reports capability names, and guesses none
+
+- Description: Proves `required: [0]` is rendered as the capability the console calls it, that an id the attack does not list stays an id, and that the attack's tags reach the reader.
+- Status: Active
+- Passes after: Phase 14
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Field feedback: the report relayed "required action [0] not present on the simulator", which names no capability an operator can act on. The dangerous fix is worse than the defect — the label first expected, "Malware Pre-execution", is the attack's `Attack Type` tag rather than its advanced action, and two console sources agree id 0 is "Loading of Malicious Entities". Printing a plausible, wrong capability beside a real constraint is exactly the class of confident-and-mistaken answer this feature exists to remove, so an unmappable id must stay an id and no catalog may be consulted to fill the gap.
+- Risk source: PRD §8 (Phase 14), §9 (R17)
+- Verify: Score a step whose only attack is blocked by `missing_required_advanced_actions` with `required: [0], actual: []`, supplying the attack's `Advanced_Actions` mapping. Repeat with the simulator holding the action, with an id the attack does not list, and with no tags at all. Read the rendered text and the projected entry.
+- Expected: The required action renders as `#0 "Loading of Malicious Entities"`; an empty `actual` reads as "none" rather than `[]`; actions the simulator does have are named too. An unlisted id renders bare, with no name attached. With no mapping the constraint is still reported rather than vanishing. The attack's non-numeric tags render beside it, numeric ones do not, and all tags remain in the data.
+- Evidence required: pytest run output naming the tests, with the rendered lines and the projected entry fields.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -1285,7 +1302,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 11 | T-59 | 52 |
 | Phase 12 | T-60, T-61, T-62, T-63 | 56 |
 | Phase 13 | T-64, T-65, T-66 | 59 |
-| Final | T-32, T-33, T-35 | all (62) |
+| Phase 14 | T-67 | 60 |
+| Final | T-32, T-33, T-35 | all (63) |
 
 ## Sign-off
 
@@ -1301,6 +1319,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-03 (g) | **T-67 added for Phase 14, plus two guards for faults in this suite itself.** `SCENARIO_TOOL_NAMES` had held `get_scenario_blocked_entities` **twice** since Phase 12 — a global rename produced the duplicate and the follow-up fix silently no-opped against pre-rename text — so every shared parametrization ran one tool twice and the retired one never, staying green while covering less than its name promised. A test now asserts the list matches the registered `get_scenario_*` tools with no duplicates. Separately, the CLAUDE.md catalog tests split on the **first mention** of a tool name; once entry 25 began cross-referencing entry 26, they started asserting against the wrong paragraph, and Phase 13 was committed with two of them red. They now anchor on the numbered entry heading. |
 | 2026-09-03 (f) | **T-64…T-66 added for Phase 13** (the spec sketched T-65…T-67; Phase 12 consumed through T-63, so they landed three lower). T-66 carries a clause the plan did not anticipate: a stale routing hint was found by **reading the live output**, not by the suite — the counts tool still pointed at `get_scenario_attack_blockers`, retired one phase earlier, so an agent following it would have called a tool that does not exist. The test now extracts every `get_scenario_*` name from both narrations and asserts it is registered, which makes the class of error checkable rather than the one instance. |
 | 2026-09-03 (e) | **T-60…T-63 added for Phase 12.** Two of them exist because the first test pass had two mutations survive. The count-map pin was covered only incidentally by the zero-impact pin — every fixture's named id sat in both lists — so T-60 gained a case where the named attack **ran**, putting it in the counts map and out of the zero-impact list, which is the only shape the count-map pin alone can carry. And the R16 verdict-ordering guard proved unfalsifiable: the verdict reads two independent unfiltered sources and the projection narrows only its own copy, so scoping either alone cannot change it. T-61 therefore pins the invariants that *could* regress — the counts map is never filtered, and the projection never mutates the report it was given — rather than an ordering that cannot currently break. |
 | 2026-09-03 (d) | **T-59 added for Phase 11.** Explaining the call flow surfaced that the statistics call is not the first network call: the whole playbook — measured live at 58.62 MB / 9,659 moves / ~3.0 s — was fetched ahead of it on every call of all three tools, and the counts tool renders no names at all. The tests deliberately assert on the **requests made** rather than on the rendered names, because the output was always correct; the defect was that it was correct expensively, which is precisely the class of bug a green output-assertion suite cannot see. The resolver's own edge cases (per-id limit, 404, transport failure, warm cache, repeats) are pinned in the playbook repo alongside it. |

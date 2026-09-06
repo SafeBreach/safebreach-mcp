@@ -279,7 +279,6 @@ def mock_run_response():
 SCENARIO_TOOL_NAMES = (
     'get_scenario_simulation_counts',
     'get_scenario_blocked_entities',
-    'get_scenario_blocked_entities',
 )
 
 # get_scenario_attack_blockers is the one scenario tool with a second required
@@ -9341,16 +9340,38 @@ class TestToolCatalogDocumentsTheScenarioTools:
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_each_entry_names_the_read_only_posture(self, name):
-        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
+        assert "read-only" in self._catalog_entry(self._claude_md(), name).lower()
 
-        assert "read-only" in entry.lower()
+    def test_the_shared_tool_list_matches_what_is_registered(self):
+        """The guard for the fault above: a stale list tests less than it claims.
+
+        A rename left this tuple holding one tool twice and the retired one
+        never, and every shared parametrization kept passing while covering less
+        than its name promised.
+        """
+        registered = {name for name in _studio_tools()
+                      if name.startswith('get_scenario_')}
+        assert set(SCENARIO_TOOL_NAMES) == registered
+        assert len(SCENARIO_TOOL_NAMES) == len(set(SCENARIO_TOOL_NAMES))
+
+    @staticmethod
+    def _catalog_entry(text, name):
+        """The numbered catalog entry for a tool, not the first mention of it.
+
+        Sibling entries cross-reference each other, so splitting on the first
+        backtick-quoted occurrence lands inside whichever entry happens to point
+        at this one — a test that then asserts things about the wrong paragraph.
+        """
+        import re
+
+        match = re.search(rf"^\d+\. `{re.escape(name)}`", text, re.MULTILINE)
+        assert match, f"no numbered catalog entry for {name}"
+        return text[match.start():match.start() + 2500]
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_each_entry_names_the_one_question_its_tool_answers(self, name):
-        """Three sibling entries are only useful if a reader can tell them apart."""
-        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
-
-        assert "?" in entry
+        """Sibling entries are only useful if a reader can tell them apart."""
+        assert "?" in self._catalog_entry(self._claude_md(), name)
 
     @pytest.mark.parametrize("retired,replacements", (
         ('get_plan_statistics', SCENARIO_TOOL_NAMES),
@@ -13708,6 +13729,108 @@ class TestTheCountsToolNamesWhichAttacksRun:
         text = _format_scenario_simulation_counts(self._counts()[0]).lower()
         for word in ('blocked by', 'constraint catalog', 'contributing nothing'):
             assert word not in text
+
+
+class TestAdvancedActionIdsAreNamed:
+    """T-67 — `required: [0]` becomes a capability, not an integer.
+
+    Field feedback: the report relayed "required action [0] not present on the
+    simulator". An id alone tells a reader nothing, and the attack's own
+    Advanced_Actions tag already carries the mapping — so naming it costs no
+    request. What it must NOT do is guess: an id the attack does not list stays
+    an id, because a plausible capability name beside a real constraint is worse
+    than a number the reader can look up.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+    FACTS = {'10000': {
+        'name': 'Pre-execution phase of Akira_v2 (be3f75) ransomware (Linux)',
+        'target_platform': 'ANY',
+        'advanced_actions': {'0': 'Loading of Malicious Entities'},
+        'tags': {'Attack Type': ['Malware Pre-Execution'],
+                 'Threat_Name': ['CISA Alert AA24-109A (Akira ransomware)'],
+                 'Malware_Category': ['Ransomware'],
+                 'IoC Based': ['1']},
+    }}
+
+    @staticmethod
+    def _blocked_on_advanced_actions(required=(0,), actual=()):
+        return {"steps": [{
+            "simulationCount": 0,
+            "moves": {"10000": 0},
+            "simulators": {"sim-a": 0},
+            "targetSimulators": {"sim-a": 0},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {"sim-a": {"10000": [{
+                    "reason": "missing_required_advanced_actions",
+                    "required": list(required), "actual": list(actual),
+                }]}},
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def _rendered(self, payload=None, facts=None):
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_blocked_entities)
+        with _statistics_transport(payload or self._blocked_on_advanced_actions()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids',
+                       return_value=self.FACTS if facts is None else facts):
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids', return_value={}):
+                    result = sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO,
+                        attack_ids="10000")
+        return result, _format_scenario_blocked_entities(result)
+
+    def test_the_required_action_is_named_not_left_as_an_id(self):
+        text = self._rendered()[1]
+        assert 'requires advanced action #0 "Loading of Malicious Entities"' in text
+
+    def test_an_empty_actual_reads_as_none_not_an_empty_list(self):
+        text = self._rendered()[1]
+        assert 'simulator has none' in text
+        assert '"actual": []' not in text
+
+    def test_actions_the_simulator_does_have_are_named_too(self):
+        text = self._rendered(self._blocked_on_advanced_actions(
+            required=(0,), actual=(0,)))[1]
+        assert 'simulator has #0 "Loading of Malicious Entities"' in text
+
+    def test_an_unmappable_id_stays_an_id_rather_than_being_guessed(self):
+        # The attack lists only action 0; 7 is not its to name.
+        text = self._rendered(self._blocked_on_advanced_actions(required=(7,)))[1]
+        assert 'requires advanced action #7;' in text
+        assert '"' not in text.split('requires advanced action #7')[1][:20]
+
+    def test_a_missing_mapping_still_reports_the_constraint(self):
+        # No tags at all: the blocker must not vanish because it cannot be named.
+        _, text = self._rendered(facts={'10000': {'name': 'Akira'}})
+        assert 'missing_required_advanced_actions' in text
+
+    def test_the_attack_tags_reach_the_reader(self):
+        text = self._rendered()[1]
+        assert 'Attack Type: Malware Pre-Execution' in text
+        assert 'Threat_Name: CISA Alert AA24-109A (Akira ransomware)' in text
+        assert 'Malware_Category: Ransomware' in text
+
+    def test_a_numeric_tag_is_left_out(self):
+        # "IoC Based: 1" carries no meaning without the scale behind it, and an
+        # opaque number invites a reader to guess one.
+        assert 'IoC Based' not in self._rendered()[1]
+
+    def test_the_tags_are_carried_in_the_data_even_when_not_rendered(self):
+        entry = self._rendered()[0]['steps'][0]['zero_impact_attacks'][0]
+        assert entry['tags']['IoC Based'] == ['1']
+        assert entry['advanced_actions'] == {'0': 'Loading of Malicious Entities'}
 
 
 class TestNamedIdsSurviveTheCaps:

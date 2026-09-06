@@ -540,7 +540,12 @@ Rate limiting environment variables:
   **Blocked attacks carry the platforms they declare, and the step's in-scope simulators carry name, OS,
   connection state and roles** — stated as facts *beside* the constraints the console cited, **never as the
   cause of a block**. If an attack declares LINUX and the only in-scope simulator is WINDOWS, both are shown and
-  the reader draws the line; MCP vendors no root causes and implies no remedy. Simulators are described
+  the reader draws the line; MCP vendors no root causes and implies no remedy. **A constraint that reports
+  capability ids is rendered with their names** — `required: [0]` becomes `#0 "Loading of Malicious Entities"`,
+  resolved from the attack's own `Advanced_Actions` tag at no extra request; an id the attack does not list
+  stays a bare id rather than being guessed. **The attack's tags are relayed** (Attack Type, Threat_Name,
+  Malware_Category, Security Controls); numeric-valued tags are kept in the data but not rendered, since an
+  opaque number invites a reader to supply a scale for it. Simulators are described
   blocked-first and capped at 10 per step (one node with `details=true` measured ~125 KB live, and the fleet
   listing costs the same per node — ~61 MB extrapolated to a 500-node console), with the count of how many were
   described. **Not rate-limited**; no MCP-side cache.

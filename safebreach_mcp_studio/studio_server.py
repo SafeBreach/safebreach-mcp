@@ -2092,6 +2092,13 @@ def _render_blocked_entities(one: dict) -> list:
                 declared = _declared_platforms(entry)
                 if declared:
                     parts.append(f"    - declares {declared}")
+                described = _render_attack_tags(entry)
+                if described:
+                    parts.append(f"    - {described}")
+                for blocker in entry['blockers']:
+                    named = _named_advanced_actions(blocker, entry)
+                    if named:
+                        parts.append(f"    - {named}")
 
         simulators = step['zero_impact_simulators']
         if simulators:
@@ -2181,6 +2188,9 @@ def _render_dispositions(one: dict) -> list:
             declared = _declared_platforms(entry)
             if declared:
                 parts.append(f"  - declares {declared}")
+            described = _render_attack_tags(entry)
+            if described:
+                parts.append(f"  - {described}")
         else:
             render = _NOT_BLOCKED_LINES.get(entry['disposition'])
             line = render(entry) if render else entry['disposition']
@@ -2211,12 +2221,70 @@ def _render_blocker_lines(entry: dict, catalog: dict) -> list:
     lines = []
     for blocker in entry['blockers']:
         description = _catalog_description(catalog.get(blocker['code'], {}))
+        named = _named_advanced_actions(blocker, entry)
         lines.append(
             f"  - `{blocker['code']}` ({'/'.join(blocker['side'])}, "
             f"{blocker['simulator_count']} simulator(s)) — {description}"
-            f"{_format_values(blocker)}"
+            f"{'' if named else _format_values(blocker)}"
         )
+        if named:
+            lines.append(f"    - {named}")
     return lines
+
+
+ADVANCED_ACTION_CODE = 'missing_required_advanced_actions'
+
+
+def _advanced_action_label(action_id, names: dict) -> str:
+    """An id, plus the console's name for it when the attack carries one.
+
+    Never invents: an id the attack's own Advanced_Actions tag does not list is
+    rendered bare, because a plausible-sounding capability name attached to a
+    real constraint is worse than an id the reader can look up.
+    """
+    name = names.get(str(action_id))
+    return f'#{action_id} "{name}"' if name else f"#{action_id}"
+
+
+def _named_advanced_actions(blocker: dict, entry: dict) -> str:
+    """Turn `{"required": [0], "actual": []}` into capabilities, not ids.
+
+    The console reports which advanced actions a move needs as bare integers.
+    The attack's own tag carries the mapping, so no lookup is needed — and an
+    unresolvable id still appears rather than being dropped.
+    """
+    if blocker['code'] != ADVANCED_ACTION_CODE:
+        return ""
+    values = blocker.get('values')
+    if not isinstance(values, dict):
+        return ""
+    names = entry.get('advanced_actions') or {}
+    required = values.get('required')
+    actual = values.get('actual')
+    if not isinstance(required, list) or not isinstance(actual, list):
+        return ""
+
+    needs = ", ".join(_advanced_action_label(a, names) for a in required)
+    has = (", ".join(_advanced_action_label(a, names) for a in actual)
+           if actual else "none")
+    if not needs:
+        return ""
+    return f"requires advanced action {needs}; simulator has {has}"
+
+
+def _render_attack_tags(entry: dict) -> str:
+    """What the attack IS, in the console's own labels.
+
+    Numeric-valued tags are left out: "IoC Based: 1" carries no meaning without
+    the scale behind it, and an opaque number invites a reader to guess one.
+    """
+    tags = entry.get('tags') or {}
+    shown = [
+        f"{name}: {', '.join(values)}"
+        for name, values in tags.items()
+        if not all(str(value).strip().lstrip('-').isdigit() for value in values)
+    ]
+    return " · ".join(shown)
 
 
 def _blocked_heading(entry: dict) -> str:

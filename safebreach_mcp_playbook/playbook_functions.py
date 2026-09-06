@@ -113,15 +113,70 @@ def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
             if facts.get('name')}
 
 
+ADVANCED_ACTIONS_TAG = 'advanced_actions'
+
+
+def _tag_values(tag: Dict[str, Any]) -> list:
+    """A tag's values as the console labels them, display name winning."""
+    return [
+        str(value.get('displayName') or value.get('value'))
+        for value in (tag.get('values') or [])
+        if isinstance(value, dict) and (value.get('displayName') or value.get('value'))
+    ]
+
+
+def _index_tags(tags) -> Dict[str, list]:
+    """{tag name: [values]} — the console's own labels, relayed unchanged."""
+    indexed = {}
+    for tag in tags or []:
+        if not isinstance(tag, dict) or not tag.get('name'):
+            continue
+        values = _tag_values(tag)
+        if values:
+            indexed[str(tag['name'])] = values
+    return indexed
+
+
+def _advanced_action_names(tags) -> Dict[str, str]:
+    """{advanced action id: name} from the attack's own Advanced_Actions tag.
+
+    The constraint `missing_required_advanced_actions` reports ids — `required:
+    [0]` — and an id alone tells a reader nothing. The attack record already
+    carries the mapping, so no catalog request is needed to name them.
+    """
+    for tag in tags or []:
+        if not isinstance(tag, dict):
+            continue
+        if str(tag.get('name', '')).strip().lower() != ADVANCED_ACTIONS_TAG:
+            continue
+        return {
+            str(value['id']): str(value.get('displayName') or value.get('value'))
+            for value in (tag.get('values') or [])
+            if isinstance(value, dict) and value.get('id') is not None
+            and (value.get('displayName') or value.get('value'))
+        }
+    return {}
+
+
 def _attack_facts(attack: Dict[str, Any]) -> Dict[str, Any]:
     """The fields that identify an attack or explain why it did not run.
 
-    Deliberately narrow. Description, MITRE data and parameters explain nothing
-    about a block, and fifty full records is a response-size problem — the same
-    trade the per-id fetch exists to make.
+    Deliberately narrow — description, MITRE data and parameters explain nothing
+    about a block, and fifty full records is a response-size problem. Tags are
+    the exception: they are ~900 bytes of the record we already fetch, they name
+    what the attack IS (attack type, threat, malware category), and one of them
+    is the only thing that can turn `required: [0]` into a capability a reader
+    can act on.
     """
     facts = {'name': attack.get('name', '')}
     facts.update(_extract_platform_data(attack.get('content') or {}))
+    tags = attack.get('tags')
+    indexed = _index_tags(tags)
+    if indexed:
+        facts['tags'] = indexed
+    advanced_actions = _advanced_action_names(tags)
+    if advanced_actions:
+        facts['advanced_actions'] = advanced_actions
     return facts
 
 
