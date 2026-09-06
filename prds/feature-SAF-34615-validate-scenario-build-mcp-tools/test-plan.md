@@ -1,3 +1,21 @@
+> ## ⚠️ STALE — most of this plan tests code that no longer ships from this repo
+>
+> Written when this branch carried the whole SAF-34615 write path (nine MCP tools, then one). Two owner
+> decisions on 2026-09-06 moved that work to `breach-genie` as the native `createValidateScenario` tool, and
+> the PRD moved with it. **This repo's remaining scope is one phase: `get_playbook_attacks` filter parity.**
+>
+> Every test below that targets scenario creation — draft handling, step/attack/simulator mutation, validation,
+> DAG assembly, persistence, Propagate exclusion — now belongs to `breach-genie`'s test plan, against its
+> Phase 7. The tests are not wrong; they are in the wrong repo.
+>
+> **Deliberately not rewritten here.** Removing, renumbering or migrating `T-<n>` items is a
+> `validating-test-plan` / Phase-2-gate activity, not a silent edit — test IDs are immortal, and a migration
+> needs the owner's sign-off on what survives. Flagged so no one reads this as current.
+>
+> **What this repo actually needs**: a small plan for the three new filters — each individually, in combination
+> with the existing MITRE/platform filters, a mistyped tag group returning zero results rather than raising, and
+> pagination unchanged when the filters are active (PRD §7).
+
 # Test Plan — MCP support for Validate scenario creation and update, Stage 1 (SAF-34615)
 
 > PRD: ./prd.md  |  Branch: feature/SAF-34615-validate-scenario-build-mcp-tools  |  Status: Draft  |  Updated: 2026-09-03 06:20
