@@ -39,7 +39,6 @@ from .studio_functions import (
     sb_manage_test,
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
-    sb_get_scenario_attack_blockers,
 )
 
 logger = logging.getLogger(__name__)
@@ -1725,17 +1724,31 @@ get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", both_
         @self.mcp.tool(
             name="get_scenario_blocked_entities",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
-            description="""Answers ONE question: will anything in this scenario not run at all?
+            description="""Answers ONE question: what in this scenario will not run, and why?
 
-For how many simulations it produces, call `get_scenario_simulation_counts`. For why one
-specific attack did not run, call `get_scenario_attack_blockers`.
+For how many simulations it produces, call `get_scenario_simulation_counts`. This tool
+explains what contributes nothing; it does not report totals.
 
 Reports every attack and simulator whose count is a genuine 0, with the constraint that
-eliminated it. It REPORTS — it removes nothing from the scenario. Attacks that ran on fewer
-simulators than were offered are reductions, not blocks, and are deliberately not listed.
+eliminated it, plus what each blocked attack declares it needs and what the step's in-scope
+simulators actually are. It REPORTS — it removes nothing from the scenario. Attacks that ran
+on fewer simulators than were offered are reductions, not blocks, and are deliberately not
+listed.
+
+Platforms and simulator OS are stated as FACTS beside the constraints the console cited,
+never as the cause of a block. If an attack declares LINUX and the only in-scope simulator is
+WINDOWS, both are shown; concluding they are related is the reader's call, not this tool's,
+and no remedy is implied.
 
 """ + _SCENARIO_INPUTS + """
 
+- attack_ids (optional, str): Comma-separated playbook attack IDs, e.g. "9012,1234". Narrows
+  the attack lists to those ids and answers each one explicitly — blocked, ran (with its
+  count), not computed, or not present in this scenario — so silence never stands in for an
+  answer. The ids are pinned ahead of the internal per-step caps, so naming an attack is
+  enough to be answered about it however large the scenario. The VERDICT stays scenario-wide:
+  it can report other blocked attacks you did not ask about, which is deliberate — otherwise
+  "nothing is blocked" would be true of your query and false of your scenario.
 - get_constraints (optional, bool, default True): Populate the blockers and the catalog that
   describes them. With False the answer says so rather than reporting "no reason found".
 
@@ -1752,6 +1765,7 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
         def get_scenario_blocked_entities(
             console: str = "default", scenario: str | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
+            attack_ids: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
             get_constraints: bool = DEFAULT_GET_CONSTRAINTS, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
             limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
@@ -1762,7 +1776,8 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
                 console = _resolve_single_tenant_console(console)
                 return _format_scenario_blocked_entities(sb_get_scenario_blocked_entities(
                     console=console, scenario=scenario, scenario_id=scenario_id,
-                    test_id=test_id, include_disabled=include_disabled,
+                    test_id=test_id, attack_ids=attack_ids,
+                    include_disabled=include_disabled,
                     both_counts=both_counts, get_constraints=get_constraints,
                     get_all_constraints=get_all_constraints, limit=limit,
                     use_cache=use_cache, conflict_detail=conflict_detail,
@@ -1776,66 +1791,6 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
             except Exception as e:
                 logger.error(f"Error in get_scenario_blocked_entities: {e}")
                 return f"Error getting scenario blocked entities: {str(e)}"
-
-        @self.mcp.tool(
-            name="get_scenario_attack_blockers",
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
-            description="""Answers ONE question: why did specific attacks not run?
-
-For how many simulations the scenario produces, call `get_scenario_simulation_counts`. For
-whether anything at all fails to run, call `get_scenario_blocked_entities`.
-
-Only fully-blocked attacks — a count of exactly 0 — are analysed. An attack that ran on
-fewer simulators than were offered is a reduction, not a block, and is not explained here.
-
-""" + _SCENARIO_INPUTS + """
-
-- attack_ids (REQUIRED, str): Comma-separated playbook attack IDs to ask about, e.g.
-  "9012,1234". Every id you name gets exactly one answer — blocked, ran (with its count),
-  not computed, truncated away, or not present in this scenario — so silence never stands
-  in for an answer. To ask what is blocked without naming ids, call
-  get_scenario_blocked_entities; this tool explains attacks you name.
-- get_constraints (optional, bool, default True): Populate the blockers and the catalog that
-  describes them. With False the answer says so rather than reporting "no reason found".
-
-Returns markdown: the named attacks that ran nowhere with the constraints that blocked
-them and the console's own description of each, then a one-line disposition for every
-named id that was not blocked.
-
-Examples:
-get_scenario_attack_blockers(console="demo", test_id="1764165600525.2", attack_ids="9012")
-get_scenario_attack_blockers(console="demo", scenario_id="3b8eade5-...", attack_ids="9012,1234")"""
-        )
-        def get_scenario_attack_blockers(
-            attack_ids: str,
-            console: str = "default", scenario: str | None = None,
-            scenario_id: str | None = None, test_id: str | None = None,
-            include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-            get_constraints: bool = DEFAULT_GET_CONSTRAINTS, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-            limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
-            conflict_detail: str = "summary",
-        ) -> str:
-            """Why specific attacks in a scenario did not run."""
-            try:
-                console = _resolve_single_tenant_console(console)
-                return _format_scenario_attack_blockers(sb_get_scenario_attack_blockers(
-                    console=console, scenario=scenario, scenario_id=scenario_id,
-                    test_id=test_id, attack_ids=attack_ids,
-                    include_disabled=include_disabled, both_counts=both_counts,
-                    get_constraints=get_constraints,
-                    get_all_constraints=get_all_constraints, limit=limit,
-                    use_cache=use_cache, conflict_detail=conflict_detail,
-                ))
-            except PermissionError as e:
-                logger.error(f"Scenario attack blockers permission error: {e}")
-                return f"Scenario Attack Blockers Permission Error: {str(e)}"
-            except ValueError as e:
-                logger.error(f"Scenario attack blockers error: {e}")
-                return f"Scenario Attack Blockers Error: {str(e)}"
-            except Exception as e:
-                logger.error(f"Error in get_scenario_attack_blockers: {e}")
-                return f"Error getting scenario attack blockers: {str(e)}"
-
 
 def _is_computed_positive(count) -> bool:
     """Whether a count is a real number greater than zero.
@@ -2064,6 +2019,11 @@ def _render_blocked_entities(one: dict) -> list:
     parts = _statistics_header(one, inline=True)
     parts.append("")
     parts.append(f"**Verdict:** {one['verdict']['summary']}")
+    if one['asked_about']:
+        parts.append("")
+        parts.append(f"**Scoped to:** "
+                     f"{', '.join('#' + a for a in one['asked_about'])} — the verdict "
+                     f"above is not, it covers the whole scenario.")
     if one.get('constraints_not_requested'):
         parts.append("")
         parts.append(f"**Note:** {one['constraints_not_requested']}")
@@ -2092,6 +2052,9 @@ def _render_blocked_entities(one: dict) -> list:
                     for b in entry['blockers']
                 ) or "no constraint reported"
                 parts.append(f"  - {label} — blocked by {blockers}")
+                declared = _declared_platforms(entry)
+                if declared:
+                    parts.append(f"    - declares {declared}")
 
         simulators = step['zero_impact_simulators']
         if simulators:
@@ -2104,10 +2067,92 @@ def _render_blocked_entities(one: dict) -> list:
                     for b in entry['blockers']
                 ) or "no constraint reported"
                 parts.append(f"  - {label} — {blockers}")
+
+        parts.extend(_render_simulators_in_scope(step))
         parts.append("")
 
+    parts.extend(_render_dispositions(one))
     parts.extend(_format_constraint_catalog(one['constraint_catalog']))
     parts.append(f"**Hint:** {one['hint_to_agent']}")
+    return parts
+
+
+def _declared_platforms(entry: dict) -> str:
+    """What an attack declares it needs — a fact, stated beside the constraints.
+
+    Never merged into the blocker line: "this attack targets LINUX" is
+    something the record says, while "it was blocked because of the OS" is a
+    cause the console did not report. The reader draws that line, not this
+    layer.
+    """
+    return ", ".join(
+        f"{field.replace('_', ' ')}: {entry[field]}"
+        for field in ('target_platform', 'attacker_platform')
+        if entry.get(field)
+    )
+
+
+def _render_simulators_in_scope(step: dict) -> list:
+    """The machines this step could use, whether or not they ran anything.
+
+    Not restricted to the ones contributing nothing: the case that prompted this
+    had no blocked simulator at all, and the machine that mattered was the one
+    that worked and was simply the wrong OS for the attack that did not.
+    """
+    details = step.get('simulator_details') or {}
+    if not details:
+        return []
+    described = step.get('simulator_details_total', len(details))
+    lines = [f"- **Simulators in scope** ({len(details)} of {described:,} described):"]
+    for simulator_id in details:
+        count = step['simulators'].get(simulator_id)
+        known = details[simulator_id]
+        facts = [known.get('name') or simulator_id]
+        operating_system = known.get('OS') or {}
+        if operating_system.get('type'):
+            facts.append(" ".join(
+                str(part) for part in
+                (operating_system.get('type'), operating_system.get('version'))
+                if part
+            ))
+        facts.append('connected' if known.get('isConnected') else 'not connected')
+        if known.get('isEnabled') is False:
+            facts.append('disabled')
+        roles = sorted(known.get('roles') or {})
+        if roles:
+            facts.append(", ".join(roles))
+        count_text = count if count is not None else 'not computed'
+        lines.append(f"  - {' — '.join(facts)} — {count_text} simulation(s)")
+    return lines
+
+
+def _render_dispositions(one: dict) -> list:
+    """One line per named id, rendered even when nothing is blocked.
+
+    Absence from a filtered list is silence, not an answer, so an id that ran
+    is said to have run rather than simply not appearing.
+    """
+    dispositions = one['dispositions']
+    if not dispositions:
+        return []
+    catalog = one['constraint_catalog']
+    parts = ["### Attacks you asked about"]
+    for entry in dispositions:
+        if entry['disposition'] in ('blocked', 'blocked_where_measured'):
+            parts.append(_blocked_heading(entry))
+            parts.extend(_render_blocker_lines(entry, catalog))
+            declared = _declared_platforms(entry)
+            if declared:
+                parts.append(f"  - declares {declared}")
+        else:
+            render = _NOT_BLOCKED_LINES.get(entry['disposition'])
+            line = render(entry) if render else entry['disposition']
+            parts.append(f"- **#{entry['attack_id']}** — {line}")
+    if not one['any_step_scored']:
+        parts.append("Nothing was evaluated — SafeBreach stopped before scoring any "
+                     "step, so this is not a finding that these attacks are not "
+                     "blocked.")
+    parts.append("")
     return parts
 
 
@@ -2161,69 +2206,6 @@ _NOT_BLOCKED_LINES = {
         "so whether it ran is unknown. This is not the same as it being absent."),
     'absent': lambda e: "not present in this scenario.",
 }
-
-
-def _render_attack_blockers(one: dict) -> list:
-    """Why named attacks did not run — and a plain answer when they did."""
-    parts = _statistics_header(one, inline=True)
-    parts.append(f"**Asked about:** "
-                 f"{', '.join('#' + a for a in one['asked_about'])}")
-    if one.get('constraints_not_requested'):
-        parts.append(f"**Note:** {one['constraints_not_requested']}")
-    parts.append("")
-
-    catalog = one['constraint_catalog']
-    candidates = one['dispositions']
-    # The hedged entries get their own heading. Filing them under "did not run
-    # anywhere" would make the heading claim exactly what each entry then goes
-    # on to disown — and a reader skimming headings only sees the claim.
-    blocked = [e for e in candidates if e['disposition'] == 'blocked']
-    where_measured = [e for e in candidates
-                      if e['disposition'] == 'blocked_where_measured']
-
-    if blocked:
-        parts.append("### Blocked — did not run anywhere")
-        for entry in blocked:
-            parts.append(_blocked_heading(entry))
-            parts.extend(_render_blocker_lines(entry, catalog))
-        parts.append("")
-
-    if where_measured:
-        parts.append("### Blocked where measured — may have run elsewhere")
-        for entry in where_measured:
-            parts.append(_blocked_heading(entry))
-            parts.extend(_render_blocker_lines(entry, catalog))
-        parts.append("")
-
-    others = [e for e in one['dispositions']
-              if e['disposition'] not in ('blocked', 'blocked_where_measured')]
-    if others:
-        parts.append("### Not blocked")
-        for entry in others:
-            render = _NOT_BLOCKED_LINES.get(entry['disposition'])
-            line = render(entry) if render else entry['disposition']
-            parts.append(f"- **#{entry['attack_id']}** — {line}")
-        parts.append("")
-
-    if not one['any_step_scored']:
-        # Every disposition above already reads `not_computed`, but each is a
-        # statement about one id. That no step was scored at all is a fact about
-        # the report, and without it a caller could read a page of "not
-        # computed" as bad luck with the ids they picked.
-        parts.append("Nothing was evaluated — SafeBreach stopped before scoring any "
-                     "step, so this is not a finding that these attacks are not "
-                     "blocked.")
-        parts.append("")
-
-    parts.extend(_format_constraint_catalog(catalog))
-    parts.append(f"**Hint:** {one['hint_to_agent']}")
-    return parts
-
-
-def _format_scenario_attack_blockers(projected: dict) -> str:
-    """Narrate the attack-blockers answer."""
-    return _format_both_aware(projected, "Scenario Attack Blockers",
-                              _render_attack_blockers)
 
 
 def _human_bytes(n: int) -> str:

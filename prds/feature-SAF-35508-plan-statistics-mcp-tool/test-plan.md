@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 32 | 14 | 0 | 6 | 52 |
+| Automatic | 36 | 14 | 0 | 6 | 56 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **32** | **14** | **0** | **9** | **55** |
+| **Total** | **36** | **14** | **0** | **9** | **59** |
 
 ## Environment Requirements (aggregated)
 
@@ -193,6 +193,10 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-57 | Coverage reads its denominator from the true total, never the capped map | — | Phase 8 | safebreach_mcp_studio |
 | T-58 | The blockers tool answers only about ids it was given, and says so in its schema | API-contract | Phase 10 | safebreach_mcp_studio |
 | T-59 | Attack names are fetched for the entries a report shows, never for the whole playbook | performance | Phase 11 | safebreach_mcp_studio, safebreach_mcp_playbook |
+| T-60 | A named attack survives both per-step caps, entry and explanation alike | API-contract | Phase 12 | safebreach_mcp_studio |
+| T-61 | A scoped report narrows what is shown, never what is claimed | API-contract | Phase 12 | safebreach_mcp_studio |
+| T-62 | Blocked attacks and in-scope simulators carry what they are, never why they failed | API-contract | Phase 12 | safebreach_mcp_studio |
+| T-63 | One tool answers "what will not run, and why" | regression | Phase 12 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -1146,6 +1150,70 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`, `safebreach_mcp_playbook/tests/test_playbook_functions.py`
 - Environment needs: none
 
+### T-60 — A named attack survives both per-step caps, entry and explanation alike
+
+- Description: Proves that naming an attack is enough to be answered about it, however large the scenario — the caps order themselves around the request instead of discarding it.
+- Status: Active
+- Passes after: Phase 12
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: The id filter lived in the projection and read maps the shaping layer had already capped. A caller could name ONE attack and be told `count_map_truncated` — "whether it ran is unknown" — purely because a hundred attacks they never asked about sorted ahead of it; or be told it is blocked while its blockers had been capped away, leaving the explanation they asked for missing. Two independent pins are needed and neither implies the other: an attack that RAN is in the counts map and not in the zero-impact list, so the zero-impact pin alone leaves it truncated.
+- Risk source: PRD §8 (Phase 12a)
+- Verify: Drive the whole path — pinning happens in shaping, so a projection-level test cannot see it. Score a 400-attack step in which every attack is blocked and ask about the highest id; then score one in which the highest id alone RAN, and ask about it.
+- Expected: The blocked id is answered `blocked` with its blockers intact and appears in the shown list; the running id is answered `ran` with its count. Both `<map>_total` figures still report 400, so pinning never distorts a coverage denominator. The fixture is asserted to genuinely exceed both caps, so none of it can pass vacuously.
+- Evidence required: pytest run output naming the tests, with the dispositions, the blocker codes and the totals shown.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-61 — A scoped report narrows what is shown, never what is claimed
+
+- Description: Proves a report filtered to two attacks cannot say the scenario is clean, and that a named attack which ran is told it ran rather than simply omitted.
+- Status: Active
+- Passes after: Phase 12
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: A report scoped to named ids could truthfully report "nothing is blocked" while other attacks in the same scenario are — true of the query, false of the scenario, and indistinguishable in the output. Separately, absence from a filtered list is silence: an id that ran must be said to have run, or the caller reads "not mentioned" as "no problem". The verdict's robustness rests on it reading sources the projection does not narrow, which is exactly the kind of invariant a later change breaks silently.
+- Risk source: PRD §9 (R16)
+- Verify: Project a step holding one attack that ran and one that is blocked, scoped to the one that ran. Read the verdict, the shown list, the disposition, and the source report afterwards. Render it and read the scope note.
+- Expected: The verdict reports the scenario blocked; the shown zero-impact list is empty while its total still reports 1; the named id is answered `ran` with its count. The counts map is **not** filtered, and the source report is not mutated — the two facts the verdict depends on. The narration states which claim is scoped and which is not.
+- Evidence required: pytest run output naming the tests, with the verdict state, the shown list, the disposition and the post-call source report.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-62 — Blocked attacks and in-scope simulators carry what they are, never why they failed
+
+- Description: Proves the report states an attack's declared platforms and a simulator's identity, OS and state beside the console's constraint codes — and asserts no cause and no remedy.
+- Status: Active
+- Passes after: Phase 12
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: The field case: two opaque constraint codes were reported for a Linux attack aimed at a Windows simulator, and nothing in the response mentioned either OS — so the agent reading it invented a remedy ("the simulator needs to be upgraded") the tool never vouched for. Adding the facts fixes the omission but invites the opposite failure: printing them as a cause the console did not report. Scope matters too — that case had NO blocked simulator, so describing only zero-count nodes would have missed the machine that mattered.
+- Risk source: PRD §9 (R17), §8 (Phase 12b, 12c)
+- Verify: Score a step whose single attack is blocked on one simulator, with the attack's record declaring LINUX and the node reporting WINDOWS. Read the entry, the simulator details and the rendered text. Then make the simulator lookup fail.
+- Expected: The attack carries `target_platform`, the simulator carries name, OS and connection state, and both reach the narration. The rendered text contains no causal phrasing and no remedy. A failed lookup costs the identities while the verdict and the blockers survive.
+- Evidence required: pytest run output naming the tests, with the entry fields, the rendered lines and the degraded-path result.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-63 — One tool answers "what will not run, and why"
+
+- Description: Proves the merge actually happened — the retired tool is unregistered and its function is gone, rather than left dormant behind an unused code path.
+- Status: Active
+- Passes after: Phase 12
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: A retirement that unregisters the tool but leaves the function and projection in the module invites a caller to keep using them, and leaves two implementations of one question to drift apart — the exact fault the decomposition was undertaken to remove.
+- Risk source: PRD §8 (Phase 12), §9 (R12, R15)
+- Verify: List the registered tools and inspect the studio functions module.
+- Expected: `get_scenario_attack_blockers` is absent from the registry and the tool count is 14; `sb_get_scenario_attack_blockers` and `_project_attack_blockers` are absent from the module; `get_scenario_blocked_entities` is registered and takes `attack_ids`, and neither scenario tool requires anything in its JSON schema.
+- Evidence required: pytest run output naming the tests, with the tool count and the absent symbols.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -1164,7 +1232,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 9 | T-34 | 50 |
 | Phase 10 | T-58 | 51 |
 | Phase 11 | T-59 | 52 |
-| Final | T-32, T-33, T-35 | all (55) |
+| Phase 12 | T-60, T-61, T-62, T-63 | 56 |
+| Final | T-32, T-33, T-35 | all (59) |
 
 ## Sign-off
 
@@ -1180,6 +1249,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-03 (e) | **T-60…T-63 added for Phase 12.** Two of them exist because the first test pass had two mutations survive. The count-map pin was covered only incidentally by the zero-impact pin — every fixture's named id sat in both lists — so T-60 gained a case where the named attack **ran**, putting it in the counts map and out of the zero-impact list, which is the only shape the count-map pin alone can carry. And the R16 verdict-ordering guard proved unfalsifiable: the verdict reads two independent unfiltered sources and the projection narrows only its own copy, so scoping either alone cannot change it. T-61 therefore pins the invariants that *could* regress — the counts map is never filtered, and the projection never mutates the report it was given — rather than an ordering that cannot currently break. |
 | 2026-09-03 (d) | **T-59 added for Phase 11.** Explaining the call flow surfaced that the statistics call is not the first network call: the whole playbook — measured live at 58.62 MB / 9,659 moves / ~3.0 s — was fetched ahead of it on every call of all three tools, and the counts tool renders no names at all. The tests deliberately assert on the **requests made** rather than on the rendered names, because the output was always correct; the defect was that it was correct expensively, which is precisely the class of bug a green output-assertion suite cannot see. The resolver's own edge cases (per-id limit, 404, transport failure, warm cache, repeats) are pinned in the playbook repo alongside it. |
 | 2026-09-03 (c) | **T-58 added for Phase 10; T-49's `Expected` corrected.** The owner asked whether the blockers tool is a subtype of the blocked-entities tool. It is not — one reports simulators the other never does, and the other answers per named id including "it ran" and "it is absent", which an existential list cannot express — but its unnamed mode genuinely duplicated the sibling's attacks half, from the same field by the same rule. Removing it makes `attack_ids` required, and T-58 pins all three halves of that: the rejection happens before any call and names the sibling, the requirement is in the **schema** rather than only at runtime (the schema is what reaches the calling agent), and the projection volunteers no other blocked attack. T-49's `Expected` asserted the ran-attack "appears in no blocked listing" — a listing that no longer exists — and now asserts the cross-tool agreement it was really there to protect. |
 | 2026-09-03 (b) | **Three narrator-layer tests added at the Phase-8 planning gate; two stale `Expected` clauses widened.** The plan pinned the projections thoroughly and the narration barely at all — T-42/T-53/T-54 fix the verdict states and dispositions in the returned dict, T-47 fixes which sections appear, and nothing fixed what any of them *renders*. **T-55** closes that: all five verdict lines and all six disposition lines must be pairwise distinct in the rendered markdown, the hedged forms visibly hedged. Without it `clean` and `clean_where_measured` could emit identical prose with every other test green — which would undo, at the only layer a person reads, the distinction the whole feature exists to make. **T-56** covers `both_counts=True`, whose result carries no top-level `steps` key: a narrator that reaches for steps before checking the mode raises immediately. The retired tool had a test for exactly this; its three replacements had none. **T-57** pins the coverage denominator to the true total rather than the capped map length — a deferred Phase-7 review finding, and a behaviour defect all three narrators would otherwise inherit: a step holding 9,613 attacks would narrate "9 of 100", presenting a truncation artifact as a fact about the scenario. **Widened**: T-28 said the verdict is one of *three* states (five shipped) and T-43 named *four* dispositions (six shipped) — T-28's e2e assertion would have failed on a legitimate console response, so it now asserts membership in all five; T-43 keeps its four, now stated as the subset reachable without a cap, with the other two attributed to T-44 and T-54. **Step numbering is 0-based** across all three tools, matching PRD §4's own examples and the projections' `step_index`; the `run_scenario`/`quick_run` previews remain 1-based and that divergence is now a recorded decision rather than an accident. Regenerated views: 53 Active (30 unit / 14 integration / 9 e2e), phases 4/11/16/23/23/23/37/49/50/53. Status stays Draft — material change. In Sync with PRD v7. |

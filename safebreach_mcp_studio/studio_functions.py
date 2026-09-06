@@ -2806,29 +2806,57 @@ def _zero_impact_simulators(simulators, simulator_index, simulator_names=None):
     return entries
 
 
-def _cap_list(shaped, key, entries, cap, uncapped):
-    """Emit a list with its true total, capped unless the caller asked for full."""
+def _pin_first(entries, pinned, id_key):
+    """Reorder so the caller's named ids come first, keeping relative order.
+
+    A cap then cannot drop what the caller asked about. Without this the caps
+    bite before the id filter does, and a caller who names ONE attack can be
+    told "whether it ran is unknown" because a hundred attacks they never asked
+    about sorted ahead of it.
+    """
+    if not pinned:
+        return entries
+    named = [e for e in entries if str(e.get(id_key)) in pinned]
+    if not named:
+        return entries
+    rest = [e for e in entries if str(e.get(id_key)) not in pinned]
+    return named + rest
+
+
+def _cap_list(shaped, key, entries, cap, uncapped, pinned=(), id_key=None):
+    """Emit a list with its true total, capped unless the caller asked for full.
+
+    ``pinned`` survives the cap; ``<key>_total`` still counts everything, so a
+    pinned entry never distorts the denominator.
+    """
+    if pinned and id_key:
+        entries = _pin_first(entries, pinned, id_key)
     shaped[key] = entries if uncapped else entries[:cap]
     shaped[f'{key}_total'] = len(entries)
 
 
-def _cap_count_map(shaped, key, mapping, uncapped):
+def _cap_count_map(shaped, key, mapping, uncapped, pinned=()):
     """Emit a count map with its true size.
 
     A real console returns thousands of attack ids per step. The full map is
     available under conflict_detail='full'; otherwise a deterministic prefix is
-    emitted and the total states what was left out.
+    emitted and the total states what was left out — with the caller's named
+    ids placed ahead of that prefix, so naming an id is enough to be answered
+    about it whatever the scenario's size.
     """
     if uncapped or len(mapping) <= COUNT_MAP_CAP:
         shaped[key] = mapping
     else:
         ordered = sorted(mapping.items(), key=lambda kv: _attack_sort_key(kv[0]))
+        if pinned:
+            ordered = ([kv for kv in ordered if kv[0] in pinned] +
+                       [kv for kv in ordered if kv[0] not in pinned])
         shaped[key] = dict(ordered[:COUNT_MAP_CAP])
     shaped[f'{key}_total'] = len(mapping)
 
 
 def _shape_statistics_step(step, attack_names=None, simulator_names=None,
-                           conflict_detail='summary'):
+                           conflict_detail='summary', pinned_attack_ids=()):
     """One caller-facing step, with all reporting suppressed when nothing was computed."""
     uncapped = conflict_detail == 'full'
     shaped = {
@@ -2837,7 +2865,8 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
         'counts_computed': step['counts_computed'],
         'is_limit_reached': step['isLimitReached'],
     }
-    _cap_count_map(shaped, 'attacks', step['moves'], uncapped)
+    _cap_count_map(shaped, 'attacks', step['moves'], uncapped,
+                   pinned=pinned_attack_ids)
     _cap_count_map(shaped, 'simulators', step['simulators'], uncapped)
     _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
     _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
@@ -2845,7 +2874,7 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
     # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
     if not step['counts_computed']:
-        _cap_list(shaped, 'zero_impact_attacks', [], ZERO_IMPACT_CAP, uncapped)
+        _cap_list(shaped, 'zero_impact_attacks', [], ZERO_IMPACT_CAP, uncapped)  # noqa: E501
         _cap_list(shaped, 'zero_impact_simulators', [], ZERO_IMPACT_CAP, uncapped)
         _cap_list(shaped, 'conflicts', [], CONFLICTS_CAP, uncapped)
         return shaped
@@ -2858,19 +2887,20 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
     # strip an attack's blockers before they were collected.
     _cap_list(shaped, 'zero_impact_attacks', _zero_impact_attacks(
         step['moves'], conflicts, attack_names=attack_names
-    ), ZERO_IMPACT_CAP, uncapped)
+    ), ZERO_IMPACT_CAP, uncapped, pinned=pinned_attack_ids, id_key='attack_id')
     _cap_list(shaped, 'zero_impact_simulators', _zero_impact_simulators(
         step['simulators'],
         _index_constraints_by_simulator(step['simulatorConstraints']),
         simulator_names=simulator_names,
     ), ZERO_IMPACT_CAP, uncapped)
-    _cap_list(shaped, 'conflicts', conflicts, CONFLICTS_CAP, uncapped)
+    _cap_list(shaped, 'conflicts', conflicts, CONFLICTS_CAP, uncapped,
+              pinned=pinned_attack_ids, id_key='attack_id')
     return shaped
 
 
 def _build_plan_statistics_report(statistics, conflict_detail='summary',
                                   attack_names=None, simulator_names=None,
-                                  both_present=False):
+                                  both_present=False, pinned_attack_ids=()):
     """Turn a fetch_plan_statistics result into the caller-facing report.
 
     Static facts live once in `constraint_catalog`; each conflict references it
@@ -2884,7 +2914,7 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
     steps = [
         _shape_statistics_step(
             step, attack_names=attack_names, simulator_names=simulator_names,
-            conflict_detail=conflict_detail,
+            conflict_detail=conflict_detail, pinned_attack_ids=pinned_attack_ids,
         )
         for step in statistics['steps']
     ]
@@ -3049,7 +3079,73 @@ def _resolve_scenario_to_plan(console, scenario_id):
     )
 
 
-def _fill_attack_names(report, console, conflict_detail, resolved):
+SIMULATOR_DETAIL_FIELDS = ('name', 'OS', 'isConnected', 'isEnabled', 'roles',
+                           'assets', 'simulationUsers')
+
+# Measured live: one node with `details=true` is ~125 KB, and the fleet listing
+# costs the same per node (~61 MB extrapolated to 500 nodes) — the shape of the
+# playbook mistake Phase 11 fixed. Without `details=true` the payload is 1.8 KB
+# but carries neither OS nor connection state, which is the whole point. So the
+# describing is bounded: the nodes that contribute nothing first, then the rest,
+# and the narration states how many of how many it described.
+SIMULATOR_DETAIL_CAP = 10
+
+
+def _simulators_worth_describing(step):
+    """Which nodes to describe, blocked ones first.
+
+    Ordered rather than filtered: the field case that prompted this had NO
+    blocked simulator — the machine that mattered was the one that WORKED and
+    was simply the wrong OS for the attack that did not. So a working node is
+    still described; it just yields to a dead one when the cap bites.
+    """
+    blocked = {str(entry['simulator_id']) for entry in step['zero_impact_simulators']}
+    ordered = sorted(step['simulators'], key=lambda sid: (str(sid) not in blocked, str(sid)))
+    return [str(sid) for sid in ordered[:SIMULATOR_DETAIL_CAP]]
+
+
+def _fill_simulator_details(report, console, resolved):
+    """Describe the simulators in scope for each step, not only the dead ones.
+
+    Facts only: what the machine IS. Whether its OS explains a block is an
+    inference the console did not make, and this layer does not make it either.
+    """
+    wanted = set()
+    for step in report['steps']:
+        if step['simulators']:
+            wanted.update(_simulators_worth_describing(step))
+    missing = wanted - resolved.keys()
+    if missing:
+        from safebreach_mcp_config.config_functions import get_simulator_details_by_ids
+        try:
+            for simulator_id, details in get_simulator_details_by_ids(
+                    console, sorted(missing)).items():
+                resolved[str(simulator_id)] = {
+                    field: details.get(field)
+                    for field in SIMULATOR_DETAIL_FIELDS
+                    if details.get(field) is not None
+                }
+        except Exception as e:
+            # Identity is an aid to reading, not the answer. A caller gets ids
+            # rather than losing the report.
+            logger.warning(f"Failed to resolve simulator details: {e}")
+            return
+
+    for step in report['steps']:
+        if not step['simulators']:
+            continue
+        details = {
+            simulator_id: resolved[simulator_id]
+            for simulator_id in _simulators_worth_describing(step)
+            if simulator_id in resolved
+        }
+        if details:
+            step['simulator_details'] = details
+            step['simulator_details_total'] = len(step['simulators'])
+
+
+def _fill_attack_details(report, console, conflict_detail, resolved,
+                        pinned_attack_ids=()):
     """Name the attacks this report will actually show, and no others.
 
     Runs AFTER capping, which is the whole point. The maps these entries were
@@ -3068,28 +3164,41 @@ def _fill_attack_names(report, console, conflict_detail, resolved):
         entries.extend(step['zero_impact_attacks'])
         if named_conflicts:
             entries.extend(step['conflicts'])
+    if pinned_attack_ids:
+        # A scoped report shows only the ids the caller named, so resolving the
+        # rest is the same waste one scale down: three lookups to render one.
+        wanted_ids = set(pinned_attack_ids)
+        entries = [e for e in entries if str(e['attack_id']) in wanted_ids]
     if not entries:
         return
 
     wanted = {str(entry['attack_id']) for entry in entries} - resolved.keys()
     if wanted:
-        from safebreach_mcp_playbook.playbook_functions import get_attack_names_by_ids
+        from safebreach_mcp_playbook.playbook_functions import get_attack_facts_by_ids
         try:
-            resolved.update(get_attack_names_by_ids(console, sorted(wanted)))
+            resolved.update(get_attack_facts_by_ids(console, sorted(wanted)))
         except Exception as e:
-            # Names are cosmetic; an answer without them beats no answer.
-            logger.warning(f"Failed to resolve attack names: {e}")
+            # These are an aid to reading; an answer without them beats no answer.
+            logger.warning(f"Failed to resolve attack details: {e}")
             return
 
     for entry in entries:
-        name = resolved.get(str(entry['attack_id']))
-        if name:
-            entry['attack_name'] = name
+        facts = resolved.get(str(entry['attack_id'])) or {}
+        if facts.get('name'):
+            entry['attack_name'] = facts['name']
+        # The platforms an attack DECLARES. Stated beside the constraints the
+        # console cited, never merged into them: "this attack targets LINUX" is
+        # a fact, "it was blocked because of the OS" is a cause the console did
+        # not report.
+        for field in ('target_platform', 'attacker_platform'):
+            if facts.get(field):
+                entry[field] = facts[field]
 
 
 def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
                      get_constraints, get_all_constraints, limit, use_cache,
-                     attack_names, conflict_detail, both_present):
+                     attack_names, conflict_detail, both_present,
+                     pinned_attack_ids=()):
     """One scoring pass: fetch, then shape into the caller-facing report."""
     statistics = fetch_plan_statistics(
         console,
@@ -3107,6 +3216,7 @@ def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
         conflict_detail=conflict_detail,
         attack_names=attack_names,
         both_present=both_present,
+        pinned_attack_ids=pinned_attack_ids,
     )
 
 
@@ -3120,7 +3230,8 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
                            limit: int = DEFAULT_LIMIT,
                            use_cache: bool = DEFAULT_USE_CACHE,
                            conflict_detail: str = "summary",
-                           resolve_attack_names: bool = True):
+                           resolve_details: bool = True,
+                           pinned_attack_ids=()):
     """
     Report what a plan would do on a console, without running anything.
 
@@ -3136,9 +3247,12 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         limit: Simulations the orchestrator evaluates before stopping early.
         use_cache: Whether the orchestrator may answer from its own cache.
         conflict_detail: 'summary', 'per_attack' or 'full'.
-        resolve_attack_names: Look up names for the attacks the report will
-            show. False for a caller that renders none, which then costs no
-            playbook request at all.
+        resolve_details: Look up what the attacks and simulators the report
+            will show actually are. False for a caller that renders neither,
+            which then costs no playbook and no config request at all.
+        pinned_attack_ids: Ids placed ahead of the per-step caps, so naming an
+            attack is enough to be answered about it whatever the scenario's
+            size.
 
     Returns:
         The report (see get_plan_statistics_response_mapping), or — with
@@ -3158,8 +3272,8 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
         if from_scenario is not None:
             parsed_plan, resolved_scenario_id = from_scenario, None
 
-    # Shared across both passes so one id is never looked up twice per question.
-    resolved_names = {}
+    # Shared across both passes so one lookup is never repeated per question.
+    resolved_names, resolved_simulators = {}, {}
 
     def score(with_disabled, both_present):
         report = _fetch_and_shape(
@@ -3176,9 +3290,12 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
             attack_names=None,
             conflict_detail=conflict_detail,
             both_present=both_present,
+            pinned_attack_ids=pinned_attack_ids,
         )
-        if resolve_attack_names:
-            _fill_attack_names(report, console, conflict_detail, resolved_names)
+        if resolve_details:
+            _fill_attack_details(report, console, conflict_detail, resolved_names,
+                                 pinned_attack_ids=pinned_attack_ids)
+            _fill_simulator_details(report, console, resolved_simulators)
         return report
 
     if not both_counts:
@@ -3218,6 +3335,12 @@ BLOCKED_ENTITIES_HINT = (
     "These entities remain in the scenario — this reports, it removes nothing. "
     "Attacks that ran on fewer simulators than were offered are reductions, not "
     "blocks, and are not listed here."
+)
+
+SCOPED_TO_NAMED_HINT = (
+    "The attack lists above are scoped to the ids you named. The verdict is NOT "
+    "— it is computed over the whole scenario, so it can report other blocked "
+    "attacks you did not ask about."
 )
 
 ATTACK_BLOCKERS_HINT = (
@@ -3499,24 +3622,38 @@ def _blocked_entities_verdict(steps):
     return {'state': 'blocked', 'summary': f"{found} in this scenario."}
 
 
-def _project_blocked_entities(report):
-    """"Will anything not run at all?" — a yes/no question, answered as one.
+def _project_blocked_entities(report, attack_ids=()):
+    """"What will not run, and why?" — answered as one question.
 
     Carries both zero-impact lists with their blockers and the coverage
     denominators that make "N of M" legible. Drops the conflicts list: it holds
     the reducing rows, and an attack that runs on fewer simulators than offered
     is not an answer to "what runs nowhere". Omits per-step simulation counts
     for the same reason — that is the counts tool's question.
+
+    ``attack_ids`` narrows what is SHOWN, never what is CLAIMED. Each named id
+    gets exactly one disposition — including "it ran" — because absence from a
+    filtered list is silence, not an answer. The verdict is computed over the
+    UNFILTERED report, so "nothing is blocked" can never be true of the query
+    and false of the scenario with nothing in the output to tell them apart.
     """
+    named = {str(attack_id) for attack_id in (attack_ids or [])}
+
     def project(one):
         shaped = _projection_header(one)
+        # Before any filtering: a verdict read off a narrowed list would answer
+        # a different question than the one it appears to answer.
+        verdict = _blocked_entities_verdict(one['steps'])
         steps, cited = [], set()
         for step in one['steps']:
             step_view = {
                 'step_index': step['step_index'],
                 'counts_computed': step['counts_computed'],
                 'is_limit_reached': step['is_limit_reached'],
-                'zero_impact_attacks': list(step['zero_impact_attacks']),
+                'zero_impact_attacks': [
+                    entry for entry in step['zero_impact_attacks']
+                    if not named or str(entry['attack_id']) in named
+                ],
                 'zero_impact_attacks_total': step['zero_impact_attacks_total'],
                 'zero_impact_simulators': list(step['zero_impact_simulators']),
                 'zero_impact_simulators_total': step['zero_impact_simulators_total'],
@@ -3527,17 +3664,32 @@ def _project_blocked_entities(report):
                 'simulators': dict(step['simulators']),
                 'simulators_total': step['simulators_total'],
             }
+            # What the machines in scope actually are. Carried explicitly
+            # because this projection copies named fields rather than the step,
+            # so an unlisted key is silently dropped.
+            if step.get('simulator_details'):
+                step_view['simulator_details'] = dict(step['simulator_details'])
+                step_view['simulator_details_total'] = step['simulator_details_total']
             _carry_coverage(step, step_view)
             cited |= _cited_codes(step_view['zero_impact_attacks'])
             cited |= _cited_codes(step_view['zero_impact_simulators'])
             steps.append(step_view)
 
         shaped['steps'] = steps
-        shaped['verdict'] = _blocked_entities_verdict(steps)
+        shaped['verdict'] = verdict
+        # Whether anything was scored at all: a caller cannot tell an empty
+        # answer that searched the scenario from one that never read it.
+        shaped['any_step_scored'] = any(
+            step['counts_computed'] for step in one['steps'])
+        shaped['asked_about'] = sorted(named, key=_attack_sort_key)
+        shaped['dispositions'] = _dispositions_for(one, attack_ids)
+        cited |= _cited_codes(shaped['dispositions'])
         shaped['constraint_catalog'] = _build_constraint_catalog(
             one['constraint_catalog'], cited
         )
         hint = f"{one['hint_to_agent']} {BLOCKED_ENTITIES_HINT}"
+        if named:
+            hint = f"{hint} {SCOPED_TO_NAMED_HINT}"
         # Without this the empty blocker lists below read as "the console found
         # no reason", when in fact no reason was ever asked for.
         if not one['params_used'].get('getConstraints'):
@@ -3547,6 +3699,31 @@ def _project_blocked_entities(report):
         return shaped
 
     return _project_both_aware(report, project)
+
+
+def _dispositions_for(one, attack_ids):
+    """One answer per named id — never silence, never a second question.
+
+    Empty when no id was named: listing whatever happens to be blocked is what
+    the report above already does, and answering it twice let one scoring be
+    narrated two ways.
+    """
+    if not attack_ids:
+        return []
+    steps = one['steps']
+    occurrences, blockers_by_id, capped = _index_attack_occurrences(steps)
+    requested = bool(one['params_used'].get('getConstraints'))
+    scored_steps = [step for step in steps if step['counts_computed']]
+    _, unsure = _blocked_across_steps(
+        scored_steps, 'attacks', 'zero_impact_attacks', 'attack_id')
+    return [
+        _resolve_disposition(
+            attack_id, occurrences, blockers_by_id, capped,
+            constraints_requested=requested,
+            unconfirmable=str(attack_id) in unsure,
+        )
+        for attack_id in attack_ids
+    ]
 
 
 def _index_attack_occurrences(steps):
@@ -3642,58 +3819,10 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
     return entry
 
 
-def _project_attack_blockers(report, attack_ids):
-    """"Why didn't attack #N run?" — one disposition per attack asked about.
-
-    Every named id gets exactly one answer. Listing whatever happens to be
-    blocked, unasked, is `get_scenario_blocked_entities`' question; answering it
-    here too gave one report two owners and two ways to phrase one finding.
-    """
-    def project(one):
-        shaped = _projection_header(one)
-        steps = one['steps']
-        occurrences, blockers_by_id, capped = _index_attack_occurrences(steps)
-        # A blocker list is empty for three different reasons, and only one of
-        # them means the console found nothing.
-        requested = bool(one['params_used'].get('getConstraints'))
-        # Shared with the verdict so the two cannot reach different answers
-        # about which attacks a capped map leaves unconfirmed.
-        scored_steps = [step for step in steps if step['counts_computed']]
-        _, unsure = _blocked_across_steps(
-            scored_steps, 'attacks', 'zero_impact_attacks', 'attack_id')
-
-        def resolve(attack_id):
-            return _resolve_disposition(
-                attack_id, occurrences, blockers_by_id, capped,
-                constraints_requested=requested,
-                unconfirmable=str(attack_id) in unsure,
-            )
-
-        dispositions = [resolve(attack_id) for attack_id in attack_ids]
-        cited = _cited_codes(dispositions)
-
-        # Whether anything was scored at all. Without it a caller cannot tell an
-        # empty answer that searched the scenario from one that never read it,
-        # and "no blocked attack was found" is a claim only the first can make.
-        shaped['any_step_scored'] = bool(scored_steps)
-        shaped['asked_about'] = [str(attack_id) for attack_id in attack_ids]
-        shaped['dispositions'] = dispositions
-        shaped['constraint_catalog'] = _build_constraint_catalog(
-            one['constraint_catalog'], cited
-        )
-        hint = f"{one['hint_to_agent']} {ATTACK_BLOCKERS_HINT}"
-        if not requested:
-            shaped['constraints_not_requested'] = CONSTRAINTS_NOT_REQUESTED
-            hint = f"{hint} {CONSTRAINTS_NOT_REQUESTED}"
-        shaped['hint_to_agent'] = hint
-        return shaped
-
-    return _project_both_aware(report, project)
-
-
 def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
                     both_counts, get_constraints, get_all_constraints, limit,
-                    use_cache, conflict_detail, resolve_attack_names=True):
+                    use_cache, conflict_detail, resolve_details=True,
+                    pinned_attack_ids=()):
     """Validate in the caller's vocabulary, then score exactly once.
 
     The parse result is discarded — ``sb_get_plan_statistics`` does its own, and
@@ -3713,7 +3842,8 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
         limit=limit,
         use_cache=use_cache,
         conflict_detail=conflict_detail,
-        resolve_attack_names=resolve_attack_names,
+        resolve_details=resolve_details,
+        pinned_attack_ids=pinned_attack_ids,
     )
 
 
@@ -3738,28 +3868,11 @@ def sb_get_scenario_simulation_counts(
     return _project_simulation_counts(_score_scenario(
         console, scenario, scenario_id, test_id, include_disabled, both_counts,
         get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
-        resolve_attack_names=False,
+        resolve_details=False,
     ))
 
 
 def sb_get_scenario_blocked_entities(
-    console: str = "default", scenario: str | None = None,
-    scenario_id: str | None = None, test_id: str | None = None,
-    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-    get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
-    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
-    conflict_detail: str = "summary",
-):
-    """Whether any attack or simulator in a scenario would contribute nothing."""
-    logger.info(f"Scenario blocked entities for console '{console}'")
-    return _project_blocked_entities(_score_scenario(
-        console, scenario, scenario_id, test_id, include_disabled, both_counts,
-        get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
-    ))
-
-
-def sb_get_scenario_attack_blockers(
     console: str = "default", scenario: str | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
     attack_ids: str | None = None,
@@ -3769,37 +3882,30 @@ def sb_get_scenario_attack_blockers(
     limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
     conflict_detail: str = "summary",
 ):
-    """Why specific attacks did not run — the constraints that blocked them.
+    """What in a scenario would not run, and why.
 
-    ``attack_ids`` is required, and parsed before anything is scored, so a typo
-    costs no request. "Is anything blocked?" is a different question with its
-    own tool; answering it from here as well would let one report be narrated
-    two ways.
+    ``attack_ids`` narrows the report to the attacks named, and answers each of
+    them explicitly — including "it ran". It is parsed before anything is
+    scored, so a typo costs no request, and the ids are pinned ahead of the
+    per-step caps, so naming an attack is enough to be answered about it
+    whatever the scenario's size.
     """
-    if not attack_ids or not attack_ids.strip():
-        raise ValueError(
-            "attack_ids is required: name the attack id(s) to ask about, e.g. "
-            "attack_ids='9012,1234'. To ask whether anything in this scenario "
-            "is blocked without naming ids, call get_scenario_blocked_entities."
-        )
     parsed_ids = _parse_attack_ids(attack_ids, dedupe=True)
-    # Separators alone name nothing. Reinterpreting them as "list everything
-    # blocked" would answer a question the caller did not ask, after charging
-    # them for the scoring call; quick_run rejects the same input rather than
-    # guessing at it.
-    if not parsed_ids:
+    # Separators alone name nothing. Treating them as "no filter" would silently
+    # widen the report the caller asked to narrow, after charging for the call.
+    if attack_ids and attack_ids.strip() and not parsed_ids:
         raise ValueError(
             f"attack_ids was supplied as {attack_ids!r} but names no attack id. "
-            f"Name the attack id(s) to ask about, or call "
-            f"get_scenario_blocked_entities to ask what is blocked."
+            f"Name the attack id(s) to narrow the report to, or omit it to ask "
+            f"about the whole scenario."
         )
-    logger.info(
-        f"Scenario attack blockers for console '{console}': "
-        f"{len(parsed_ids)} id(s) named"
-    )
-    return _project_attack_blockers(_score_scenario(
+    logger.info(f"Scenario blocked entities for console '{console}': "
+                f"{len(parsed_ids) or 'all'} attack(s) in scope")
+    pinned = tuple(str(attack_id) for attack_id in parsed_ids)
+    return _project_blocked_entities(_score_scenario(
         console, scenario, scenario_id, test_id, include_disabled, both_counts,
         get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+        pinned_attack_ids=pinned,
     ), parsed_ids)
 
 

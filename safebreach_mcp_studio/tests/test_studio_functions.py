@@ -35,10 +35,9 @@ from safebreach_mcp_studio.studio_functions import (
     _parse_attack_ids,
     _project_simulation_counts,
     _project_blocked_entities,
-    _project_attack_blockers,
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
-    sb_get_scenario_attack_blockers,
+    sb_get_scenario_blocked_entities,
     CONFLICT_SIMULATOR_ID_SAMPLE,
     CONFLICT_VALUES_VARIANT_CAP,
     CONFLICTS_CAP,
@@ -279,7 +278,7 @@ def mock_run_response():
 SCENARIO_TOOL_NAMES = (
     'get_scenario_simulation_counts',
     'get_scenario_blocked_entities',
-    'get_scenario_attack_blockers',
+    'get_scenario_blocked_entities',
 )
 
 # get_scenario_attack_blockers is the one scenario tool with a second required
@@ -287,7 +286,7 @@ SCENARIO_TOOL_NAMES = (
 # question with its own tool. Suites that exercise all three supply it here so
 # a shared assertion keeps testing what it says it tests.
 SCENARIO_TOOL_REQUIRED_KWARGS = {
-    'get_scenario_attack_blockers': {'attack_ids': '9012'},
+    'get_scenario_blocked_entities': {'attack_ids': '9012'},
 }
 
 
@@ -9352,14 +9351,22 @@ class TestToolCatalogDocumentsTheScenarioTools:
 
         assert "?" in entry
 
-    def test_the_catalog_records_the_retirement_and_its_replacements(self):
-        """A reader looking for the retired tool must be redirected, not left guessing."""
-        text = self._claude_md()
+    @pytest.mark.parametrize("retired,replacements", (
+        ('get_plan_statistics', SCENARIO_TOOL_NAMES),
+        ('get_scenario_attack_blockers', ('get_scenario_blocked_entities',)),
+    ))
+    def test_each_retirement_note_names_what_replaced_it(self, retired, replacements):
+        """A reader looking for a retired tool must be redirected, not left guessing.
 
-        assert "retired" in text.lower()
-        retirement = text.lower().split("retired", 1)[1][:600]
-        for name in SCENARIO_TOOL_NAMES:
-            assert name in retirement
+        Two tools have now been retired from this catalog, so splitting on the
+        first "retired" would check one note twice and the other never.
+        """
+        text = self._claude_md()
+        marker = f"**`{retired}` is retired**"
+        assert marker in text, f"no retirement note for {retired}"
+        note = text.split(marker, 1)[1][:700]
+        for name in replacements:
+            assert name in note, f"{retired}'s note does not point at {name}"
 
     def test_the_catalog_no_longer_lists_the_retired_tool_as_an_entry(self):
         """It may be named in the retirement note — that is the redirect — but
@@ -9687,7 +9694,7 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         source = inspect.getsource(SafeBreachStudioServer)
         assert '        ) -> dict:' not in source
-        assert source.count('        ) -> str:') == 15
+        assert source.count('        ) -> str:') == 14
 
     def test_the_rendered_report_is_a_string(self):
         assert isinstance(self._render(), str)
@@ -12840,7 +12847,7 @@ class TestEachProjectionRendersOnlyItsSlice:
         assert 'port_in_use' not in json.dumps(projected)
 
     def test_attack_blockers_reports_only_the_ids_it_was_asked_about(self):
-        projected = _project_attack_blockers(self._report(), [9012])
+        projected = _project_blocked_entities(self._report(), [9012])
         assert [d['attack_id'] for d in projected['dispositions']] == ['9012']
 
     def test_no_projection_mutates_the_report_it_was_given(self):
@@ -12849,7 +12856,7 @@ class TestEachProjectionRendersOnlyItsSlice:
         before = copy.deepcopy(report)
         _project_simulation_counts(report)
         _project_blocked_entities(report)
-        _project_attack_blockers(report, [9012])
+        _project_blocked_entities(report, [9012])
         assert report == before
 
 
@@ -12972,7 +12979,7 @@ class TestNamedAttackResolvesToOneDisposition:
         )], catalog=PHASE7_CATALOG)
 
     def _disposition(self, attack_id):
-        projected = _project_attack_blockers(self._report(), [attack_id])
+        projected = _project_blocked_entities(self._report(), [attack_id])
         return projected['dispositions'][0]
 
     def test_a_zero_count_is_blocked_and_carries_its_blockers(self):
@@ -12992,7 +12999,7 @@ class TestNamedAttackResolvesToOneDisposition:
         assert self._disposition(7777)['disposition'] == 'absent'
 
     def test_a_repeated_id_is_answered_once(self):
-        projected = _project_attack_blockers(
+        projected = _project_blocked_entities(
             self._report(), _parse_attack_ids("226,226", dedupe=True))
         assert [d['attack_id'] for d in projected['dispositions']] == ['226']
 
@@ -13003,7 +13010,7 @@ class TestNamedAttackResolvesToOneDisposition:
         assert _parse_attack_ids("8849,8849", dedupe=True) == [8849]
 
     def test_each_id_appears_once_in_the_order_asked(self):
-        projected = _project_attack_blockers(self._report(), [281, 226, 7777])
+        projected = _project_blocked_entities(self._report(), [281, 226, 7777])
         assert [d['attack_id'] for d in projected['dispositions']] == ['281', '226', '7777']
 
     def test_the_four_dispositions_are_pairwise_distinct(self):
@@ -13018,7 +13025,7 @@ class TestNamedAttackResolvesToOneDisposition:
             simulationCount=None, counts_computed=False, isLimitReached=True,
             moves={'1234': 0},
         )], plan_step_count=2, returned_step_count=1, truncated=True)
-        entry = _project_attack_blockers(report, [1234])['dispositions'][0]
+        entry = _project_blocked_entities(report, [1234])['dispositions'][0]
         assert entry['disposition'] == 'not_computed'
 
     def test_an_unscored_step_agrees_with_the_blocked_entities_verdict(self):
@@ -13027,21 +13034,21 @@ class TestNamedAttackResolvesToOneDisposition:
             moves={'1234': 0},
         )], plan_step_count=2, returned_step_count=1, truncated=True)
         assert _project_blocked_entities(report)['verdict']['state'] == 'not_evaluated'
-        assert _project_attack_blockers(report, [1234])['dispositions'][0][
+        assert _project_blocked_entities(report, [1234])['dispositions'][0][
             'disposition'] == 'not_computed'
 
     def test_it_answers_only_about_the_ids_named(self):
         # 226 is blocked in this report. Asking about 281 must not volunteer it:
         # "what is blocked?" is get_scenario_blocked_entities' question, and one
         # report answered by both tools is one finding with two phrasings.
-        projected = _project_attack_blockers(self._report(), [281])
+        projected = _project_blocked_entities(self._report(), [281])
         assert [d['attack_id'] for d in projected['dispositions']] == ['281']
         assert '226' not in repr(projected['dispositions'])
 
     def test_no_unnamed_blocked_listing_is_emitted(self):
         # Guards the removal itself: re-adding the listing would restore the
         # overlap this tool was narrowed to remove.
-        projected = _project_attack_blockers(self._report(), [281])
+        projected = _project_blocked_entities(self._report(), [281])
         assert 'blocked_attacks' not in projected
         assert 'blocked_attacks_listing_capped' not in projected
 
@@ -13074,16 +13081,16 @@ class TestFilteringPrecedesCapping:
         assert len(step['zero_impact_attacks']) == ZERO_IMPACT_CAP
 
     def test_an_id_past_the_zero_impact_cap_is_still_blocked(self):
-        entry = _project_attack_blockers(self._report(), [75])['dispositions'][0]
+        entry = _project_blocked_entities(self._report(), [75])['dispositions'][0]
         assert entry['disposition'] == 'blocked'
 
     def test_an_id_past_the_count_map_cap_is_not_reported_absent(self):
-        entry = _project_attack_blockers(self._report(), [250])['dispositions'][0]
+        entry = _project_blocked_entities(self._report(), [250])['dispositions'][0]
         assert entry['disposition'] == 'count_map_truncated'
 
     def test_truncated_and_absent_stay_distinct_answers(self):
         codes = {
-            _project_attack_blockers(self._report(), [i])['dispositions'][0]['disposition']
+            _project_blocked_entities(self._report(), [i])['dispositions'][0]['disposition']
             for i in (75, 250)
         }
         assert codes == {'blocked', 'count_map_truncated'}
@@ -13111,14 +13118,14 @@ class TestFilteringPrecedesCapping:
         assert any(str(e['attack_id']) == '9000' for e in step['zero_impact_attacks'])
 
     def test_a_blocked_id_outside_the_counts_map_is_still_reported_blocked(self):
-        projected = _project_attack_blockers(self._blocked_ids_sort_past_the_cap(), [9000])
+        projected = _project_blocked_entities(self._blocked_ids_sort_past_the_cap(), [9000])
         entry = projected['dispositions'][0]
         assert entry['disposition'] == 'blocked'
         assert entry['blockers']
 
     def test_every_blocked_id_outside_the_counts_map_is_explained_when_named(self):
         named = list(range(9000, 9011))
-        projected = _project_attack_blockers(
+        projected = _project_blocked_entities(
             self._blocked_ids_sort_past_the_cap(), named)
         assert [d['attack_id'] for d in projected['dispositions']] == [
             str(i) for i in named
@@ -13137,7 +13144,7 @@ class TestFilteringPrecedesCapping:
         )
         step = report['steps'][0]
         assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total']
-        entry = _project_attack_blockers(report, [350])['dispositions'][0]
+        entry = _project_blocked_entities(report, [350])['dispositions'][0]
         assert entry['disposition'] == 'count_map_truncated'
 
     def test_the_two_tools_agree_on_the_same_report(self):
@@ -13145,7 +13152,7 @@ class TestFilteringPrecedesCapping:
         # the blockers tool says it cannot tell, from one scoring.
         report = self._blocked_ids_sort_past_the_cap()
         assert _project_blocked_entities(report)['verdict']['state'] == 'blocked'
-        assert _project_attack_blockers(report, [9000])[
+        assert _project_blocked_entities(report, [9000])[
             'dispositions'][0]['disposition'] == 'blocked'
 
     @staticmethod
@@ -13172,7 +13179,7 @@ class TestFilteringPrecedesCapping:
         # scored 0 in one step and 240 in another. All three answers derived
         # from that one scoring must say the same thing — it ran.
         report = self._blocked_in_one_step_running_in_another()
-        assert _project_attack_blockers(report, [1234])[
+        assert _project_blocked_entities(report, [1234])[
             'dispositions'][0]['disposition'] == 'ran'
         assert _project_blocked_entities(report)['verdict']['state'] == 'clean'
 
@@ -13203,7 +13210,7 @@ class TestFilteringPrecedesCapping:
 
     def test_an_id_a_capped_map_could_be_hiding_is_not_asserted_blocked(self):
         report = self._runs_in_a_step_whose_map_was_capped()
-        entry = _project_attack_blockers(report, [9000])['dispositions'][0]
+        entry = _project_blocked_entities(report, [9000])['dispositions'][0]
         assert entry['disposition'] == 'blocked_where_measured'
 
     def test_the_verdict_hedges_rather_than_asserting_over_a_capped_map(self):
@@ -13296,12 +13303,12 @@ class TestMultiStepDispositionPrecedence:
         return _phase7_report(steps, catalog=PHASE7_CATALOG, plan_step_count=2)
 
     def test_an_attack_that_ran_somewhere_is_not_reported_blocked(self):
-        entry = _project_attack_blockers(self._report(), [1234])['dispositions'][0]
+        entry = _project_blocked_entities(self._report(), [1234])['dispositions'][0]
         assert entry['disposition'] == 'ran'
 
     def test_the_answer_does_not_depend_on_step_order(self):
-        forward = _project_attack_blockers(self._report(), [1234])['dispositions'][0]
-        reverse = _project_attack_blockers(self._report(reverse=True), [1234])['dispositions'][0]
+        forward = _project_blocked_entities(self._report(), [1234])['dispositions'][0]
+        reverse = _project_blocked_entities(self._report(reverse=True), [1234])['dispositions'][0]
         assert forward['disposition'] == reverse['disposition'] == 'ran'
 
 
@@ -13329,18 +13336,18 @@ class TestBlockerDetailTruncatedIsNotNoConstraintReported:
         )])
 
     def test_a_capped_away_blocker_list_is_marked_truncated(self):
-        entry = _project_attack_blockers(self._capped_report(), [75])['dispositions'][0]
+        entry = _project_blocked_entities(self._capped_report(), [75])['dispositions'][0]
         assert entry['blockers'] == []
         assert entry['detail_truncated'] is True
 
     def test_a_genuinely_blockerless_attack_is_not_marked_truncated(self):
-        entry = _project_attack_blockers(self._blockerless_report(), [226])['dispositions'][0]
+        entry = _project_blocked_entities(self._blockerless_report(), [226])['dispositions'][0]
         assert entry['blockers'] == []
         assert entry['detail_truncated'] is False
 
     def test_the_two_cases_are_distinguishable(self):
-        capped = _project_attack_blockers(self._capped_report(), [75])['dispositions'][0]
-        plain = _project_attack_blockers(self._blockerless_report(), [226])['dispositions'][0]
+        capped = _project_blocked_entities(self._capped_report(), [75])['dispositions'][0]
+        plain = _project_blocked_entities(self._blockerless_report(), [226])['dispositions'][0]
         assert capped['detail_truncated'] != plain['detail_truncated']
 
     @staticmethod
@@ -13354,7 +13361,7 @@ class TestBlockerDetailTruncatedIsNotNoConstraintReported:
         return _build_plan_statistics_report(statistics, conflict_detail='summary')
 
     def test_an_unrequested_reason_is_not_reported_as_no_reason(self):
-        entry = _project_attack_blockers(
+        entry = _project_blocked_entities(
             self._constraints_not_requested_report(), [226])['dispositions'][0]
         assert entry['blockers'] == []
         assert entry['detail_truncated'] is False
@@ -13374,8 +13381,12 @@ class TestAttackBlockersCatalogIsNarrowed:
         return _phase7_report([_phase4_step(
             simulationCount=0,
             moves={'226': 0, '281': 0},
-            simulators={'sim-a': 0, 'sim-b': 0},
-            targetSimulators={'sim-a': 0, 'sim-b': 0},
+            # sim-b produces simulations, so it is not a blocked simulator and
+            # its code reaches the catalog only through attack 281 — which is
+            # what makes "a code belonging to an unasked attack" testable now
+            # that the simulator section is rendered unfiltered.
+            simulators={'sim-a': 0, 'sim-b': 2},
+            targetSimulators={'sim-a': 0, 'sim-b': 2},
             simulatorConstraints={
                 'targetConstraints': {
                     'sim-a': {'226': [{'reason': 'incompatible_os'}]},
@@ -13386,15 +13397,15 @@ class TestAttackBlockersCatalogIsNarrowed:
         )], catalog=PHASE7_CATALOG)
 
     def test_only_the_asked_about_attacks_codes_appear(self):
-        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        catalog = _project_blocked_entities(self._report(), [226])['constraint_catalog']
         assert set(catalog) == {'incompatible_os'}
 
     def test_a_code_belonging_to_an_unasked_attack_is_absent(self):
-        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        catalog = _project_blocked_entities(self._report(), [226])['constraint_catalog']
         assert 'simulator_is_offline' not in catalog
 
     def test_descriptions_are_relayed_verbatim(self):
-        catalog = _project_attack_blockers(self._report(), [226])['constraint_catalog']
+        catalog = _project_blocked_entities(self._report(), [226])['constraint_catalog']
         assert catalog['incompatible_os']['description'] == 'OS is incompatible.'
 
 
@@ -13435,17 +13446,25 @@ class TestAttackNamesAreFetchedForWhatIsShown:
     def test_the_counts_tool_resolves_no_names_at_all(self):
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids') as resolve:
+                       'get_attack_facts_by_ids') as resolve:
                 sb_get_scenario_simulation_counts(
                     console="test-console", scenario=self.SCENARIO)
         # Its projection drops zero_impact_attacks and conflicts entirely, so a
         # name it fetched could never reach the caller.
         resolve.assert_not_called()
 
+    def test_the_counts_tool_resolves_no_simulator_details_either(self):
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_config.config_functions.'
+                       'get_simulator_details_by_ids') as fleet:
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO)
+        fleet.assert_not_called()
+
     def test_the_blocked_entities_tool_resolves_only_the_blocked_attack(self):
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids', return_value={}) as resolve:
+                       'get_attack_facts_by_ids', return_value={}) as resolve:
                 sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO)
         resolve.assert_called_once()
@@ -13453,11 +13472,51 @@ class TestAttackNamesAreFetchedForWhatIsShown:
         # miniature — fetching what is never shown.
         assert list(resolve.call_args.args[1]) == ['226']
 
+    @staticmethod
+    def _two_blocked_response():
+        return {"steps": [{
+            "simulationCount": 0,
+            "moves": {"226": 0, "281": 0},
+            "simulators": {"sim-a": 0},
+            "targetSimulators": {"sim-a": 0},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {"sim-a": {"226": [{"reason": "incompatible_os"}],
+                                               "281": [{"reason": "incompatible_os"}]}},
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def test_a_scoped_report_resolves_only_the_named_attack(self):
+        # Verified live before this was fixed: a report scoped to one attack
+        # still fetched all three blocked ones, which is the same waste the
+        # phase exists to remove, one scale down.
+        with _statistics_transport(self._two_blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}) as resolve:
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids', return_value={}):
+                    sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO,
+                        attack_ids="226")
+        assert list(resolve.call_args.args[1]) == ['226']
+
+    def test_an_unscoped_report_resolves_every_blocked_attack(self):
+        with _statistics_transport(self._two_blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}) as resolve:
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids', return_value={}):
+                    sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO)
+        assert sorted(resolve.call_args.args[1]) == ['226', '281']
+
     def test_the_resolved_name_reaches_the_blocked_entry(self):
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids',
-                       return_value={'226': 'Write EICAR to disk'}):
+                       'get_attack_facts_by_ids',
+                       return_value={'226': {'name': 'Write EICAR to disk',
+                                             'target_platform': 'LINUX'}}):
                 result = sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO)
         entry = result['steps'][0]['zero_impact_attacks'][0]
@@ -13466,7 +13525,7 @@ class TestAttackNamesAreFetchedForWhatIsShown:
     def test_a_failed_lookup_costs_the_name_not_the_report(self):
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids',
+                       'get_attack_facts_by_ids',
                        side_effect=Exception("playbook unavailable")):
                 result = sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO)
@@ -13478,8 +13537,8 @@ class TestAttackNamesAreFetchedForWhatIsShown:
     def test_both_counts_resolves_each_id_once_across_the_two_passes(self):
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids',
-                       return_value={'226': 'Write EICAR to disk'}) as resolve:
+                       'get_attack_facts_by_ids',
+                       return_value={'226': {'name': 'Write EICAR to disk'}}) as resolve:
                 result = sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO, both_counts=True)
         # Two scoring passes, one name lookup: the second pass reads the shared
@@ -13494,11 +13553,308 @@ class TestAttackNamesAreFetchedForWhatIsShown:
         # the only ids worth resolving are the zero-impact ones.
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_names_by_ids', return_value={}) as resolve:
+                       'get_attack_facts_by_ids', return_value={}) as resolve:
                 sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO,
                     conflict_detail='summary')
         assert list(resolve.call_args.args[1]) == ['226']
+
+
+class TestNamedIdsSurviveTheCaps:
+    """T-60 — a named attack keeps its entry and its blockers, whatever the size.
+
+    The defect: the id filter lived in the projection and read maps the shaping
+    layer had already capped, so naming ONE attack could still answer "whether
+    it ran is unknown" because a hundred attacks the caller never asked about
+    sorted ahead of it. These drive the whole path — pinning happens in shaping,
+    so a projection-level test cannot see it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @staticmethod
+    def _four_hundred_blocked():
+        # Every id blocked, so both caps bite: the counts map at COUNT_MAP_CAP
+        # and the zero-impact list at ZERO_IMPACT_CAP, by ascending id.
+        return {"steps": [{
+            "simulationCount": 0,
+            "moves": {str(i): 0 for i in range(400)},
+            "simulators": {"sim-a": 0},
+            "targetSimulators": {"sim-a": 0},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {
+                    f"sim-{i}": {str(i): [{"reason": "incompatible_os"}]}
+                    for i in range(400)
+                },
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def _blocked(self, attack_ids):
+        with _statistics_transport(self._four_hundred_blocked()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}):
+                with patch('safebreach_mcp_config.config_functions.'
+                           '_get_all_simulators_from_cache_or_api', return_value=[]):
+                    return sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO,
+                        attack_ids=attack_ids)
+
+    def test_the_fixture_genuinely_exceeds_both_caps(self):
+        # Without this the rest of the class could pass vacuously.
+        step = self._blocked("399")['steps'][0]
+        assert step['attacks_total'] == 400 > len(step['attacks'])
+        assert step['zero_impact_attacks_total'] == 400 > ZERO_IMPACT_CAP
+
+    def test_the_highest_id_is_answered_blocked_not_truncated_away(self):
+        entry = self._blocked("399")['dispositions'][0]
+        assert entry['disposition'] == 'blocked', (
+            "a named id past COUNT_MAP_CAP used to answer count_map_truncated")
+
+    def test_the_named_id_keeps_its_blockers(self):
+        entry = self._blocked("399")['dispositions'][0]
+        assert entry['blockers'], (
+            "its zero-impact entry used to be capped away, leaving the "
+            "explanation the caller asked for missing")
+        assert entry['blockers'][0]['code'] == 'incompatible_os'
+
+    def test_the_named_id_appears_in_the_shown_list_too(self):
+        shown = self._blocked("399")['steps'][0]['zero_impact_attacks']
+        assert [e['attack_id'] for e in shown] == ['399']
+
+    @staticmethod
+    def _four_hundred_one_of_which_runs():
+        # 399 RUNS. It is therefore in the counts map and NOT in the zero-impact
+        # list, so only the count-map pin can carry it past the cap. Without
+        # this case the zero-impact pin alone satisfies every assertion and the
+        # count-map pin could be deleted with the suite still green.
+        moves = {str(i): 0 for i in range(399)}
+        moves['399'] = 240
+        return {"steps": [{
+            "simulationCount": 240,
+            "moves": moves,
+            "simulators": {"sim-a": 1},
+            "targetSimulators": {"sim-a": 1},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {
+                    f"sim-{i}": {str(i): [{"reason": "incompatible_os"}]}
+                    for i in range(399)
+                },
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def test_a_named_id_that_ran_past_the_count_map_cap_is_answered_ran(self):
+        with _statistics_transport(self._four_hundred_one_of_which_runs()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}):
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids', return_value={}):
+                    result = sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO,
+                        attack_ids="399")
+        entry = result['dispositions'][0]
+        assert entry['disposition'] == 'ran', (
+            "399 is in the counts map but not the zero-impact list, so without "
+            "the count-map pin it answers count_map_truncated")
+        assert entry['simulation_count'] == 240
+
+    def test_pinning_does_not_distort_the_totals(self):
+        # The denominator must stay the scenario's, or coverage would report a
+        # figure that is an artifact of what the caller happened to ask about.
+        step = self._blocked("399")['steps'][0]
+        assert step['attacks_total'] == 400
+        assert step['zero_impact_attacks_total'] == 400
+
+
+class TestFilteringNarrowsWhatIsShownNotWhatIsClaimed:
+    """T-61, T-62 — a scoped report never claims the scenario is clean.
+
+    R16: a report narrowed to two attacks could truthfully say "nothing is
+    blocked" while forty others are — true of the query, false of the scenario,
+    and indistinguishable in the output. The verdict is therefore computed over
+    the unfiltered report, and a named id that ran is still answered.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    @staticmethod
+    def _one_clean_one_blocked():
+        return _phase7_report([_phase4_step(
+            simulationCount=40,
+            moves={'1234': 40, '226': 0},
+            simulators={'sim-a': 40},
+            targetSimulators={'sim-a': 40},
+            simulatorConstraints={'targetConstraints': _os_conflict('sim-a', '226'),
+                                  'attackerConstraints': {}},
+        )], catalog=PHASE7_CATALOG)
+
+    def test_the_verdict_covers_the_scenario_not_the_query(self):
+        scoped = _project_blocked_entities(self._one_clean_one_blocked(), [1234])
+        assert scoped['verdict']['state'] == 'blocked', (
+            "1234 runs, but 226 does not — scoping the verdict to 1234 would "
+            "report a scenario clean that is not")
+
+    def test_the_shown_list_is_scoped_even_though_the_verdict_is_not(self):
+        scoped = _project_blocked_entities(self._one_clean_one_blocked(), [1234])
+        assert scoped['steps'][0]['zero_impact_attacks'] == []
+        assert scoped['steps'][0]['zero_impact_attacks_total'] == 1
+
+    def test_a_named_id_that_ran_is_answered_not_omitted(self):
+        scoped = _project_blocked_entities(self._one_clean_one_blocked(), [1234])
+        entry = scoped['dispositions'][0]
+        assert entry['disposition'] == 'ran'
+        assert entry['simulation_count'] == 40
+
+    def test_the_counts_map_is_never_filtered(self):
+        # This is what makes the verdict robust, and it is the thing that could
+        # actually regress: filtering zero_impact_attacks alone cannot change a
+        # verdict, because `attacks` is where blockedness is decided. A future
+        # change that narrowed this map too would silently scope the verdict.
+        scoped = _project_blocked_entities(self._one_clean_one_blocked(), [1234])
+        assert scoped['steps'][0]['attacks'] == {'1234': 40, '226': 0}
+
+    def test_scoping_does_not_mutate_the_report_it_was_given(self):
+        # The verdict reads the report's OWN steps, so filtering in place would
+        # scope it silently. Two independent sources back the verdict — the
+        # counts map and the zero-impact list — and neither may be narrowed
+        # where the verdict can see it.
+        report = self._one_clean_one_blocked()
+        _project_blocked_entities(report, [1234])
+        step = report['steps'][0]
+        assert [e['attack_id'] for e in step['zero_impact_attacks']] == ['226']
+        assert step['attacks'] == {'1234': 40, '226': 0}
+
+    def test_the_unfiltered_report_still_shows_everything(self):
+        whole = _project_blocked_entities(self._one_clean_one_blocked())
+        assert [e['attack_id'] for e in whole['steps'][0]['zero_impact_attacks']] == ['226']
+        assert whole['dispositions'] == []
+
+    def test_the_narration_says_which_scope_each_claim_belongs_to(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        text = _format_scenario_blocked_entities(
+            _project_blocked_entities(self._one_clean_one_blocked(), [1234]))
+        assert 'Scoped to' in text and '#1234' in text
+        assert 'the verdict above is not' in text
+
+
+class TestEntitiesCarryWhatTheyAreNotWhyTheyFailed:
+    """T-63 — declared platforms and simulator facts, adjacent to the codes.
+
+    The field case this answers: two opaque constraint codes were reported for a
+    Linux attack aimed at a Windows simulator, and nothing in the response said
+    either OS. Both are now shown. Neither is presented as the cause — the
+    console cited different codes, and MCP vendors no root causes.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+    FLEET = {'sim-a': {
+        'id': 'sim-a', 'name': 'win2022-a', 'isConnected': True, 'isEnabled': True,
+        'OS': {'type': 'WINDOWS', 'version': '2022Server'},
+        'roles': {'isInfiltration': True},
+    }}
+
+    @staticmethod
+    def _linux_attack_on_one_simulator():
+        return {"steps": [{
+            "simulationCount": 0,
+            "moves": {"10000": 0},
+            "simulators": {"sim-a": 0},
+            "targetSimulators": {"sim-a": 0},
+            "attackerSimulators": {},
+            "simulatorConstraints": {
+                "targetConstraints": {
+                    "sim-a": {"10000": [{"reason": "missing_required_advanced_actions"}]}},
+                "attackerConstraints": {},
+            },
+        }]}
+
+    def _report(self):
+        with _statistics_transport(self._linux_attack_on_one_simulator()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids',
+                       return_value={'10000': {'name': 'Akira_v2 (Linux)',
+                                               'target_platform': 'LINUX'}}):
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids',
+                           return_value=self.FLEET):
+                    return sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO)
+
+    def test_the_blocked_attack_carries_what_it_declares(self):
+        entry = self._report()['steps'][0]['zero_impact_attacks'][0]
+        assert entry['target_platform'] == 'LINUX'
+        assert entry['attack_name'] == 'Akira_v2 (Linux)'
+
+    def test_the_in_scope_simulator_is_described_even_though_it_is_not_blocked_alone(self):
+        # It IS zero here, but the point is the join covers the union map rather
+        # than the zero-impact list: the case that prompted this had a working
+        # simulator and no blocked one at all.
+        details = self._report()['steps'][0]['simulator_details']
+        assert details['sim-a']['name'] == 'win2022-a'
+        assert details['sim-a']['OS']['type'] == 'WINDOWS'
+        assert details['sim-a']['isConnected'] is True
+
+    def test_both_facts_reach_the_narration(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        text = _format_scenario_blocked_entities(self._report())
+        assert 'target platform: LINUX' in text
+        assert 'win2022-a' in text and 'WINDOWS' in text
+
+    def test_no_causal_claim_is_made(self):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        text = _format_scenario_blocked_entities(self._report()).lower()
+        for claim in ('because of the os', 'due to os', 'os mismatch',
+                      'incompatible operating system', 'upgrade the simulator'):
+            assert claim not in text, f"vendored a cause the console never reported: {claim}"
+
+    def test_a_fleet_lookup_failure_costs_the_names_not_the_report(self):
+        with _statistics_transport(self._linux_attack_on_one_simulator()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}):
+                with patch('safebreach_mcp_config.config_functions.'
+                           'get_simulator_details_by_ids',
+                           side_effect=Exception("config unavailable")):
+                    result = sb_get_scenario_blocked_entities(
+                        console="test-console", scenario=self.SCENARIO)
+        assert result['verdict']['state'] == 'blocked'
+        assert 'simulator_details' not in result['steps'][0]
+
+
+class TestTheMergedToolReplacesTwo:
+    """T-64 — one tool answers "what will not run, and why"."""
+
+    def test_the_retired_tool_is_gone_and_the_merged_one_is_registered(self):
+        tools = _studio_tools()
+        assert 'get_scenario_attack_blockers' not in tools
+        assert 'get_scenario_blocked_entities' in tools
+        assert len(tools) == 14
+
+    def test_the_retired_function_is_gone_from_the_module(self):
+        import safebreach_mcp_studio.studio_functions as functions
+        assert not hasattr(functions, 'sb_get_scenario_attack_blockers')
+        assert not hasattr(functions, '_project_attack_blockers')
 
 
 class TestScenarioInputIsExclusiveOnAllThreeTools:
@@ -13512,8 +13868,7 @@ class TestScenarioInputIsExclusiveOnAllThreeTools:
         _user_auth_artifacts.reset(token)
 
     TOOLS = (sb_get_scenario_simulation_counts,
-             sb_get_scenario_blocked_entities,
-             sb_get_scenario_attack_blockers)
+             sb_get_scenario_blocked_entities)
     SCENARIO = '{"steps": [{"n": 0}]}'
 
     @pytest.mark.parametrize("tool", TOOLS)
@@ -13582,14 +13937,14 @@ class TestInvalidAttackIdIsRejectedBeforeAnyCall:
     def test_a_non_integer_token_is_named_and_costs_no_call(self):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="invalid attack ID 'abc'"):
-                sb_get_scenario_attack_blockers(
+                sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO, attack_ids="9012,abc")
             post.assert_not_called()
 
     def test_an_entirely_non_numeric_value_is_rejected(self):
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="all IDs must be integers"):
-                sb_get_scenario_attack_blockers(
+                sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO, attack_ids="nope")
             post.assert_not_called()
 
@@ -13599,32 +13954,37 @@ class TestInvalidAttackIdIsRejectedBeforeAnyCall:
         # for the call.
         with _statistics_transport({}) as post:
             with pytest.raises(ValueError, match="names no attack id"):
-                sb_get_scenario_attack_blockers(
+                sb_get_scenario_blocked_entities(
                     console="test-console", scenario=self.SCENARIO, attack_ids=",,")
             post.assert_not_called()
 
     @pytest.mark.parametrize("omitted", (None, "", "   "))
-    def test_omitting_attack_ids_is_rejected_before_any_call(self, omitted):
-        # And the error names the tool that does answer "what is blocked?", so
-        # the caller is redirected rather than left to guess.
-        with _statistics_transport({}) as post:
-            with pytest.raises(ValueError, match="attack_ids is required"):
-                sb_get_scenario_attack_blockers(
-                    console="test-console", scenario=self.SCENARIO,
-                    attack_ids=omitted)
-            post.assert_not_called()
+    def test_omitting_attack_ids_asks_about_the_whole_scenario(
+        self, omitted, mock_statistics_response_all_good
+    ):
+        # Phase 12 made it optional again: with one tool there is no second
+        # question to be confused with, so omitting it widens the report rather
+        # than being an error.
+        with _statistics_transport(mock_statistics_response_all_good):
+            result = sb_get_scenario_blocked_entities(
+                console="test-console", scenario=self.SCENARIO, attack_ids=omitted)
+        assert result['asked_about'] == []
+        assert result['dispositions'] == []
 
-    def test_the_rejection_points_at_the_tool_that_answers_it(self):
-        with pytest.raises(ValueError) as excinfo:
-            sb_get_scenario_attack_blockers(
-                console="test-console", scenario=self.SCENARIO)
-        assert 'get_scenario_blocked_entities' in str(excinfo.value)
+    def test_a_separator_only_value_still_names_nothing_and_is_rejected(self):
+        # Distinct from omitting: the caller asked to narrow and named nothing,
+        # so silently widening would answer a question they did not ask.
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="names no attack id"):
+                sb_get_scenario_blocked_entities(
+                    console="test-console", scenario=self.SCENARIO, attack_ids=", ,")
+            post.assert_not_called()
 
     def test_empty_segments_are_skipped_not_rejected(
         self, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
-            sb_get_scenario_attack_blockers(
+            sb_get_scenario_blocked_entities(
                 console="test-console", scenario=self.SCENARIO, attack_ids="9012,,217")
         assert post.call_count == 1
 
@@ -13704,8 +14064,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         _user_auth_artifacts.reset(token)
 
     TOOLS = (sb_get_scenario_simulation_counts,
-             sb_get_scenario_blocked_entities,
-             sb_get_scenario_attack_blockers)
+             sb_get_scenario_blocked_entities)
     SCENARIO = '{"steps": [{"n": 0}]}'
     OVERRIDES = dict(include_disabled=True, get_all_constraints=False,
                      limit=7, use_cache=False)
@@ -13760,14 +14119,12 @@ class TestEachToolMakesExactlyOneStatisticsCall:
                 console="test-console", scenario=self.SCENARIO)
         assert _statistics_queries(post)[0]['getConstraints'] == ['false']
 
-    @pytest.mark.parametrize("tool", (sb_get_scenario_blocked_entities,
-                                      sb_get_scenario_attack_blockers))
-    def test_the_other_two_ask_for_constraints_by_default(
-        self, tool, mock_statistics_response_all_good
+    def test_the_blocked_entities_tool_asks_for_constraints_by_default(
+        self, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
-            tool(console="test-console", scenario=self.SCENARIO,
-                 **_required_kwargs(tool))
+            sb_get_scenario_blocked_entities(
+                console="test-console", scenario=self.SCENARIO)
         assert _statistics_queries(post)[0]['getConstraints'] == ['true']
 
 
@@ -13815,8 +14172,8 @@ class TestScenarioStatisticsToolsRegistration:
                      'set_studio_attack_status', 'run_scenario', 'quick_run',
                      'manage_test'):
             assert name in tools
-        # 12 pre-existing + 3 new - 1 retired.
-        assert len(tools) == 15
+        # 12 pre-existing + 3 new - 1 retired - 1 merged away.
+        assert len(tools) == 14
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_each_tool_carries_the_full_pass_through_surface(self, name):
@@ -13831,30 +14188,24 @@ class TestScenarioStatisticsToolsRegistration:
         assert 'scenario' in properties
         assert 'plan' not in properties
 
-    def test_only_the_blockers_tool_takes_attack_ids(self):
+    def test_only_the_blocked_entities_tool_takes_attack_ids(self):
         tools = _studio_tools()
-        assert 'attack_ids' in tools['get_scenario_attack_blockers'].inputSchema['properties']
+        assert 'attack_ids' in tools['get_scenario_blocked_entities'].inputSchema['properties']
         assert 'attack_ids' not in tools['get_scenario_simulation_counts'].inputSchema['properties']
-        assert 'attack_ids' not in tools['get_scenario_blocked_entities'].inputSchema['properties']
 
-    def test_attack_ids_is_required_by_the_schema_not_only_at_runtime(self):
-        # The schema is what reaches the calling agent. A runtime rejection
-        # costs a round trip; a required parameter is stated up front — which is
-        # the point of narrowing this tool to the ids the caller names.
-        schema = _studio_tools()['get_scenario_attack_blockers'].inputSchema
-        assert schema.get('required') == ['attack_ids']
-
-    @pytest.mark.parametrize("name", ('get_scenario_simulation_counts',
-                                      'get_scenario_blocked_entities'))
-    def test_the_other_two_require_nothing(self, name):
-        # Their scenario input is one-of-three, enforced at runtime with a
-        # message naming all three; a schema `required` could not express it.
+    @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
+    def test_neither_tool_requires_anything_in_its_schema(self, name):
+        # The scenario input is one-of-three, enforced at runtime with a message
+        # naming all three; a schema `required` could not express it. And after
+        # Phase 12 `attack_ids` narrows a report rather than selecting a
+        # question, so requiring it would refuse the whole-scenario ask.
         assert not _studio_tools()[name].inputSchema.get('required')
 
-    def test_the_blockers_tool_description_routes_the_unnamed_question_away(self):
-        # The overlap this removed: it used to answer "what is blocked?" too.
-        description = _studio_tools()['get_scenario_attack_blockers'].description
-        assert 'get_scenario_blocked_entities' in description
+    def test_the_merged_tool_says_the_verdict_is_not_scoped(self):
+        # The property R16 turns on: a caller must learn from the description
+        # alone that narrowing the lists does not narrow the verdict.
+        description = _studio_tools()['get_scenario_blocked_entities'].description
+        assert 'VERDICT' in description and 'scenario-wide' in description
 
 
 class TestEachNarrationCarriesOnlyItsOwnSections:
@@ -13874,10 +14225,10 @@ class TestEachNarrationCarriesOnlyItsOwnSections:
             self._projected(_project_blocked_entities))
 
     def _blockers(self, ids=(9012,)):
-        from safebreach_mcp_studio.studio_server import _format_scenario_attack_blockers
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
         report = _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
-        return _format_scenario_attack_blockers(
-            _project_attack_blockers(report, list(ids)))
+        return _format_scenario_blocked_entities(
+            _project_blocked_entities(report, list(ids)))
 
     def test_every_narrator_returns_a_string(self):
         for text in (self._counts(), self._blocked(), self._blockers()):
@@ -13929,9 +14280,9 @@ class TestEveryVerdictAndDispositionRendersDistinctly:
 
     @staticmethod
     def _render_blockers(report, ids):
-        from safebreach_mcp_studio.studio_server import _format_scenario_attack_blockers
-        return _format_scenario_attack_blockers(
-            _project_attack_blockers(report, list(ids)))
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        return _format_scenario_blocked_entities(
+            _project_blocked_entities(report, list(ids)))
 
     # --- the five verdict states -----------------------------------------
     def _verdict_reports(self):
@@ -14057,16 +14408,20 @@ class TestEveryVerdictAndDispositionRendersDistinctly:
             [_phase4_step(simulationCount=None, counts_computed=False,
                           isLimitReached=True, moves={'1234': None})],
             plan_step_count=3, returned_step_count=1, truncated=True)
-        text = self._render_blockers(report, [])
-        assert 'No fully-blocked attack was found' not in text
-        assert 'Nothing was evaluated' in text
+        # Unnamed: the verdict is the whole claim, and it must not read clean.
+        assert _project_blocked_entities(report)['verdict']['state'] == 'not_evaluated'
+        assert 'not evaluated' in self._render_blockers(report, [])
+        # Named: the per-id line says "not computed", and the report says once
+        # that nothing was scored at all — otherwise a page of per-id
+        # not-computed reads as bad luck with the ids chosen.
+        assert 'Nothing was evaluated' in self._render_blockers(report, [1234])
 
     def test_a_scored_report_says_plainly_that_a_named_attack_ran(self):
         report = _phase7_report([_phase4_step(
             simulationCount=240, moves={'1234': 240},
             simulators={'sim-a': 2}, targetSimulators={'sim-a': 2})])
         text = self._render_blockers(report, [1234])
-        assert 'Not blocked' in text and '240' in text
+        assert 'Attacks you asked about' in text and '240' in text
         assert 'Nothing was evaluated' not in text
 
     def test_no_optional_field_raises_when_absent(self):
@@ -14101,12 +14456,11 @@ class TestBothCountsRendersBothPasses:
         from safebreach_mcp_studio.studio_server import (
             _format_scenario_simulation_counts,
             _format_scenario_blocked_entities,
-            _format_scenario_attack_blockers,
+            _format_scenario_blocked_entities,
         )
         return (
             (sb_get_scenario_simulation_counts, _format_scenario_simulation_counts),
             (sb_get_scenario_blocked_entities, _format_scenario_blocked_entities),
-            (sb_get_scenario_attack_blockers, _format_scenario_attack_blockers),
         )
 
     def test_each_tool_renders_both_passes_without_raising(
@@ -14243,6 +14597,7 @@ class TestTheRegisteredToolsActuallyRun:
         self, mock_statistics_response_all_good
     ):
         with _statistics_transport(mock_statistics_response_all_good):
-            text = self._callable('get_scenario_attack_blockers')(
+            text = self._callable('get_scenario_blocked_entities')(
                 console="test-console", scenario=self.SCENARIO, attack_ids="9012")
-        assert "Asked about" in text and "9012" in text
+        assert "Scoped to" in text and "9012" in text
+        assert "Attacks you asked about" in text

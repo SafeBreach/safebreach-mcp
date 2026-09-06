@@ -17,6 +17,7 @@ from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from .playbook_types import (
+    _extract_platform_data,
     transform_reduced_playbook_attack,
     transform_full_playbook_attack,
     filter_attacks_by_criteria,
@@ -106,11 +107,31 @@ ATTACK_NAME_PER_ID_LIMIT = 100
 
 
 def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
-    """Resolve {id: name} for the attacks named, fetching only those attacks.
+    """Resolve {id: name} for the attacks named, fetching only those attacks."""
+    return {key: facts['name']
+            for key, facts in get_attack_facts_by_ids(console, attack_ids).items()
+            if facts.get('name')}
 
-    Names are cosmetic: an id that does not resolve is simply absent from the
-    result, and a transport failure yields an empty map rather than raising, so
-    a caller renders the bare id instead of losing its answer.
+
+def _attack_facts(attack: Dict[str, Any]) -> Dict[str, Any]:
+    """The fields that identify an attack or explain why it did not run.
+
+    Deliberately narrow. Description, MITRE data and parameters explain nothing
+    about a block, and fifty full records is a response-size problem — the same
+    trade the per-id fetch exists to make.
+    """
+    facts = {'name': attack.get('name', '')}
+    facts.update(_extract_platform_data(attack.get('content') or {}))
+    return facts
+
+
+def get_attack_facts_by_ids(console: str, attack_ids) -> Dict[str, Dict[str, Any]]:
+    """Resolve {id: {name, target_platform, attacker_platform}} for named attacks.
+
+    Fetches only the attacks named. These facts are cosmetic-to-explanatory: an
+    id that does not resolve is simply absent from the result, and a transport
+    failure yields an empty map rather than raising, so a caller renders the
+    bare id instead of losing its answer.
     """
     wanted, seen = [], set()
     for attack_id in attack_ids:
@@ -122,8 +143,8 @@ def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
         return {}
 
     def pick(attacks):
-        names = {str(a['id']): a.get('name', '') for a in attacks if 'id' in a}
-        return {key: names[key] for key in wanted if names.get(key)}
+        indexed = {str(a['id']): a for a in attacks if 'id' in a}
+        return {key: _attack_facts(indexed[key]) for key in wanted if key in indexed}
 
     # A warm bulk cache already holds every name. Asking the API again for ids
     # it can answer from memory would be the waste this function exists to end.
@@ -159,19 +180,20 @@ def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
                 headers=headers, timeout=60,
             )
             if response.status_code != 200:
-                logger.warning("Attack name lookup for %s returned %s",
+                logger.warning("Attack lookup for %s returned %s",
                                attack_id, response.status_code)
                 return attack_id, None
-            return attack_id, (response.json().get('data') or {}).get('name')
+            data = response.json().get('data')
+            return attack_id, _attack_facts(data) if isinstance(data, dict) else None
         except Exception as e:
-            logger.warning("Attack name lookup for %s failed: %s", attack_id, e)
+            logger.warning("Attack lookup for %s failed: %s", attack_id, e)
             return attack_id, None
 
-    logger.info("Resolving %d attack name(s) for console %s, one move each",
+    logger.info("Resolving %d attack record(s) for console %s, one move each",
                 len(wanted), console)
     with ThreadPoolExecutor(max_workers=min(ATTACK_NAME_WORKERS, len(wanted))) as pool:
-        return {attack_id: name
-                for attack_id, name in pool.map(fetch, wanted) if name}
+        return {attack_id: facts
+                for attack_id, facts in pool.map(fetch, wanted) if facts}
 
 
 def sb_get_playbook_attacks(

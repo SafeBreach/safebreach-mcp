@@ -26,7 +26,6 @@ import pytest
 from safebreach_mcp_studio.studio_functions import (
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
-    sb_get_scenario_attack_blockers,
     _fetch_all_scenarios,
     _fetch_all_plans,
 )
@@ -82,19 +81,11 @@ DISPOSITIONS = {'ran', 'blocked', 'blocked_where_measured', 'not_computed',
 SCENARIO_TOOLS = (
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
-    sb_get_scenario_attack_blockers,
 )
 
 
 def _required_kwargs(tool):
-    """The extra input the blockers tool cannot be called without.
-
-    It explains attacks the caller names; naming none is a different question
-    with its own tool. Without this a shared assertion would meet that error
-    instead of the one it is checking.
-    """
-    if tool is sb_get_scenario_attack_blockers:
-        return {'attack_ids': '9012'}
+    """Kept as a seam: no scenario tool requires a second input after Phase 12."""
     return {}
 
 
@@ -143,7 +134,7 @@ class TestScenarioStatisticsToolsE2E:
                 f"resolved no attacks, so there is no id to ask about."
             )
 
-        blockers = sb_get_scenario_attack_blockers(
+        blockers = sb_get_scenario_blocked_entities(
             console=E2E_CONSOLE, scenario=body, attack_ids=attack_ids[0])
 
         assert len(blockers['dispositions']) == 1
@@ -359,7 +350,7 @@ class TestScenarioStatisticsToolsE2E:
 
         counts = sb_get_scenario_simulation_counts(console=E2E_CONSOLE, scenario=body)
         blocked = sb_get_scenario_blocked_entities(console=E2E_CONSOLE, scenario=body)
-        blockers = sb_get_scenario_attack_blockers(
+        blockers = sb_get_scenario_blocked_entities(
             console=E2E_CONSOLE, scenario=body, attack_ids=str(blocked_attack))
 
         # The three answers describe one scoring; they must not disagree.

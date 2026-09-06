@@ -7,6 +7,7 @@ specifically for simulator operations and infrastructure management.
 
 import requests
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 from safebreach_mcp_core.cache_config import is_caching_enabled
 from safebreach_mcp_core.safebreach_cache import SafeBreachCache
@@ -290,6 +291,66 @@ def _apply_simulator_ordering(
             return sim.get('name', '').lower()  # Default to name
     
     return sorted(simulators, key=get_sort_key, reverse=reverse)
+
+
+# Measured on a live console: one node with `details=true` is ~125 KB, and the
+# fleet listing costs the same per node — 499 KB for four, which extrapolates to
+# ~61 MB on a 500-node console. Without `details=true` the payload drops to
+# 1.8 KB but carries neither OS nor connection state, so it cannot answer the
+# question these details exist for. Per-id it is, for the nodes actually shown.
+SIMULATOR_DETAIL_WORKERS = 8
+
+
+def get_simulator_details_by_ids(console: str, simulator_ids) -> Dict[str, Dict[str, Any]]:
+    """Resolve {id: minimal simulator} for the nodes named, fetching only those.
+
+    Identity is an aid to reading, not the answer: a node that does not resolve
+    is simply absent, and a transport failure yields an empty map rather than
+    raising, so a caller renders bare ids instead of losing its report.
+    """
+    wanted, seen = [], set()
+    for simulator_id in simulator_ids:
+        key = str(simulator_id)
+        if key and key not in seen:
+            seen.add(key)
+            wanted.append(key)
+    if not wanted:
+        return {}
+
+    base_url = get_api_base_url(console, 'config')
+    account_id = get_api_account_id(console)
+    # Resolved once, in this thread: auth lives in a ContextVar, which does not
+    # follow a worker into the pool below.
+    headers = {"Content-Type": "application/json",
+               **get_auth_headers_for_console(console)}
+    assets_map = {}
+    try:
+        assets_map = _get_assets_map_from_cache_or_api(console)
+    except Exception as e:
+        logger.warning("Asset names unavailable for console %s: %s", console, e)
+
+    def fetch(simulator_id):
+        try:
+            response = requests.get(
+                f"{base_url}/api/config/v1/accounts/{account_id}/nodes/{simulator_id}",
+                headers=headers, timeout=60)
+            if response.status_code != 200:
+                logger.warning("Simulator lookup for %s returned %s",
+                               simulator_id, response.status_code)
+                return simulator_id, None
+            data = (response.json() or {}).get('data')
+            if not isinstance(data, dict):
+                return simulator_id, None
+            return simulator_id, get_minimal_simulator_mapping(data, assets_map=assets_map)
+        except Exception as e:
+            logger.warning("Simulator lookup for %s failed: %s", simulator_id, e)
+            return simulator_id, None
+
+    logger.info("Resolving %d simulator(s) for console %s, one node each",
+                len(wanted), console)
+    with ThreadPoolExecutor(max_workers=min(SIMULATOR_DETAIL_WORKERS, len(wanted))) as pool:
+        return {simulator_id: details
+                for simulator_id, details in pool.map(fetch, wanted) if details}
 
 
 def sb_get_simulator_details(simulator_id: str, console: str = "default") -> Dict[str, Any]:

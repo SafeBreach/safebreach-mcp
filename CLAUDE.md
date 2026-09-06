@@ -485,9 +485,8 @@ Rate limiting environment variables:
 25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **how many
   simulations would this scenario produce?** Reports per-step counts and coverage **without running anything**.
   Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics` via the shared fetch core, then projects that
-  report down to the counts. For *why* a step produces nothing use `get_scenario_blocked_entities`; for why one
-  attack did not run use `get_scenario_attack_blockers` — the three are disjoint by construction, and each
-  tool's own hint routes to its siblings.
+  report down to the counts. For *why* a step produces nothing — or why one named attack did not run — use
+  `get_scenario_blocked_entities`. The two are disjoint by construction, and each tool's hint routes to the other.
   Scores exactly one of three inputs, a blank string counting as absent: an **ad-hoc scenario body that was
   never saved** (`scenario`, a JSON string), a **saved scenario / custom plan** (`scenario_id`), or **the
   scenario a past run executed** (`test_id`, a planRunId such as `1764165600525.2`).
@@ -504,10 +503,11 @@ Rate limiting environment variables:
   artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
   `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
   **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
-  **Costs no playbook request**: its projection renders no attack names, and the other two resolve names
-  only for the entries they actually show — one `moves/{id}` call each, never the 58 MB full KB listing.
-26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **will anything in this
-  scenario not run at all?** Reports every attack and simulator whose count is a genuine integer `0`, with the
+  **Costs no playbook and no config request**: its projection renders no attack or simulator name, and its
+  sibling resolves them only for the entries it actually shows — one `moves/{id}` and one `nodes/{id}` call
+  each, never the 58 MB full KB listing nor the fleet listing.
+26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **what in this scenario
+  will not run, and why?** Reports every attack and simulator whose count is a genuine integer `0`, with the
   constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.
   Attacks that ran on fewer simulators than were offered are **reductions, not blocks**, and are deliberately
   not listed (that is SAF-35484's scope). Same three inputs and same `include_disabled` semantics as entry 25;
@@ -520,30 +520,36 @@ Rate limiting environment variables:
   and a clean one look identical otherwise. Counts distinct entities, so one attack blocked in three steps is
   one attack. Renders a **constraint catalog narrowed to the codes its own reported blockers cite**, each
   `description` relayed verbatim from the console (`null` where it supplied none — MCP vendors no constraint
-  vocabulary). **Not rate-limited**; no MCP-side cache.
-27. `get_scenario_attack_blockers` ✨ **NEW** 📖 **Read-only** - Answers one question: **why did specific attacks
-  not run?** **`attack_ids` is required** (comma-separated, and required in the tool's JSON schema, not merely
-  rejected at runtime): this tool explains the attacks the caller *names*. Listing whatever happens to be blocked
-  is entry 26's question, and answering it here too let one scoring be narrated two ways — so the unnamed mode was
-  removed, and its rejection names `get_scenario_blocked_entities` rather than leaving the caller to guess.
-  **Only fully-blocked attacks (an integer `0`) are analysed** — a reduction is not a block and is not explained
-  here. Same three inputs, same `include_disabled` semantics, `get_constraints` defaults `True`.
-  **Every named id gets exactly one answer, so silence never stands in for one**: `ran` (with its count),
-  `blocked`, `blocked_where_measured` (a truncated attack list may be hiding a count in another step, so it is
-  not a claim it ran nowhere), `not_computed`, `count_map_truncated` (whether it ran is unknown — *not* the same
-  as absent), or `absent`. **"Ran" outranks "blocked"**: an attack scored `0` in one step and 240 in another
-  *ran*, and the answer must not depend on which step the scenario lists first. Blocked entries are filtered to
-  the named ids **before** the zero-impact cap applies, so a named attack is never dropped from the list that
-  exists to explain it. An empty blocker list distinguishes its three causes — truncated locally, never
-  requested, or genuinely none — because "the console found no reason" is a finding and the other two are not.
-  Hedged entries render under their own heading rather than under "did not run anywhere". A report where **no
-  step was scored** says so once as a fact about the report, because a page of per-id `not_computed` otherwise
-  reads as bad luck with the ids chosen. **Not rate-limited**; no MCP-side cache.
+  vocabulary).
+  **Optional `attack_ids` narrows the report to the attacks you name** (comma-separated) and answers each one
+  explicitly — `ran` (with its count), `blocked`, `blocked_where_measured`, `not_computed`,
+  `count_map_truncated`, or `absent` — so **silence never stands in for an answer**. **"Ran" outranks
+  "blocked"**: an attack scored `0` in one step and 240 in another *ran*, and the answer must not depend on
+  which step the scenario lists first. The named ids are **pinned ahead of the internal per-step caps**, so
+  naming an attack is enough to be answered about it however large the scenario — before Phase 12 the caps bit
+  first, and naming ONE attack could still answer `count_map_truncated` because a hundred attacks the caller
+  never asked about sorted ahead of it. **The verdict stays scenario-wide** when the lists are scoped: narrowing
+  what is *shown* must never narrow what is *claimed*, or "nothing is blocked" would be true of the query and
+  false of the scenario with nothing in the output to tell them apart.
+  **Blocked attacks carry the platforms they declare, and the step's in-scope simulators carry name, OS,
+  connection state and roles** — stated as facts *beside* the constraints the console cited, **never as the
+  cause of a block**. If an attack declares LINUX and the only in-scope simulator is WINDOWS, both are shown and
+  the reader draws the line; MCP vendors no root causes and implies no remedy. Simulators are described
+  blocked-first and capped at 10 per step (one node with `details=true` measured ~125 KB live, and the fleet
+  listing costs the same per node — ~61 MB extrapolated to a 500-node console), with the count of how many were
+  described. **Not rate-limited**; no MCP-side cache.
+
+  > **`get_scenario_attack_blockers` is retired** (SAF-35508 Phase 12). It answered "why did *these* attacks not
+  > run?" as a separate tool; that is the same question as "what will not run, and why", asked about named ids,
+  > so it is now `get_scenario_blocked_entities`' optional `attack_ids` rather than a second tool. Every
+  > guarantee it carried survives: one answer per named id, "ran" outranking "blocked", and a named attack never
+  > losing its explanation to a cap.
 
   > **`get_plan_statistics` is retired** (SAF-35508 Phase 8). It answered all three questions at once and left
-  > the caller to read past two of them. `get_scenario_simulation_counts`, `get_scenario_blocked_entities` and
-  > `get_scenario_attack_blockers` replace it. The private `sb_get_plan_statistics` function survives as the
-  > shared plumbing all three call, so `plan/statistics` still has exactly one call site in this repo.
+  > the caller to read past two of them. `get_scenario_simulation_counts` and `get_scenario_blocked_entities`
+  > replace it (a third, `get_scenario_attack_blockers`, was folded into the latter in Phase 12). The private
+  > `sb_get_plan_statistics` function survives as the shared plumbing both call, so `plan/statistics` still has
+  > exactly one call site in this repo.
 
 
 ## Filtering and Search Capabilities
