@@ -2272,19 +2272,25 @@ def _named_advanced_actions(blocker: dict, entry: dict) -> str:
     return f"requires advanced action {needs}; simulator has {has}"
 
 
+def _is_opaque_tag(tag: str) -> bool:
+    """A tag whose value is a bare number and so says nothing on its own.
+
+    "IoC Based:1" carries no meaning without the scale behind it, and an opaque
+    number invites a reader to supply one.
+    """
+    _, _, value = str(tag).partition(':')
+    return value.strip().lstrip('-').isdigit()
+
+
 def _render_attack_tags(entry: dict) -> str:
     """What the attack IS, in the console's own labels.
 
-    Numeric-valued tags are left out: "IoC Based: 1" carries no meaning without
-    the scale behind it, and an opaque number invites a reader to guess one.
+    Consumes the repo's shared tag shape — the `name:value` strings
+    get_playbook_attack_details already returns — rather than a second spelling
+    of the same data.
     """
-    tags = entry.get('tags') or {}
-    shown = [
-        f"{name}: {', '.join(values)}"
-        for name, values in tags.items()
-        if not all(str(value).strip().lstrip('-').isdigit() for value in values)
-    ]
-    return " · ".join(shown)
+    tags = entry.get('tags') or []
+    return " · ".join(tag for tag in tags if not _is_opaque_tag(tag))
 
 
 def _blocked_heading(entry: dict) -> str:

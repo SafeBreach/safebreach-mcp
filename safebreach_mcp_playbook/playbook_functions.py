@@ -18,6 +18,7 @@ from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from .playbook_types import (
     _extract_platform_data,
+    _transform_tags,
     transform_reduced_playbook_attack,
     transform_full_playbook_attack,
     filter_attacks_by_criteria,
@@ -116,27 +117,6 @@ def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
 ADVANCED_ACTIONS_TAG = 'advanced_actions'
 
 
-def _tag_values(tag: Dict[str, Any]) -> list:
-    """A tag's values as the console labels them, display name winning."""
-    return [
-        str(value.get('displayName') or value.get('value'))
-        for value in (tag.get('values') or [])
-        if isinstance(value, dict) and (value.get('displayName') or value.get('value'))
-    ]
-
-
-def _index_tags(tags) -> Dict[str, list]:
-    """{tag name: [values]} — the console's own labels, relayed unchanged."""
-    indexed = {}
-    for tag in tags or []:
-        if not isinstance(tag, dict) or not tag.get('name'):
-            continue
-        values = _tag_values(tag)
-        if values:
-            indexed[str(tag['name'])] = values
-    return indexed
-
-
 def _advanced_action_names(tags) -> Dict[str, str]:
     """{advanced action id: name} from the attack's own Advanced_Actions tag.
 
@@ -171,9 +151,13 @@ def _attack_facts(attack: Dict[str, Any]) -> Dict[str, Any]:
     facts = {'name': attack.get('name', '')}
     facts.update(_extract_platform_data(attack.get('content') or {}))
     tags = attack.get('tags')
-    indexed = _index_tags(tags)
-    if indexed:
-        facts['tags'] = indexed
+    # The repo's one tag shape, shared with get_playbook_attack_details rather
+    # than a second spelling of the same data. It drops the ids, which is why
+    # the advanced-action mapping below is a separate field: that id is the
+    # only join key a constraint reporting `required: [0]` can be read against.
+    transformed = _transform_tags(tags)
+    if transformed:
+        facts['tags'] = transformed
     advanced_actions = _advanced_action_names(tags)
     if advanced_actions:
         facts['advanced_actions'] = advanced_actions

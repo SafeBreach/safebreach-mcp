@@ -13754,10 +13754,11 @@ class TestAdvancedActionIdsAreNamed:
         'name': 'Pre-execution phase of Akira_v2 (be3f75) ransomware (Linux)',
         'target_platform': 'ANY',
         'advanced_actions': {'0': 'Loading of Malicious Entities'},
-        'tags': {'Attack Type': ['Malware Pre-Execution'],
-                 'Threat_Name': ['CISA Alert AA24-109A (Akira ransomware)'],
-                 'Malware_Category': ['Ransomware'],
-                 'IoC Based': ['1']},
+        # The repo's shared tag shape, as get_playbook_attack_details returns it.
+        'tags': ['Attack Type:Malware Pre-Execution',
+                 'Threat_Name:CISA Alert AA24-109A (Akira ransomware)',
+                 'Malware_Category:Ransomware',
+                 'IoC Based:1'],
     }}
 
     @staticmethod
@@ -13818,9 +13819,22 @@ class TestAdvancedActionIdsAreNamed:
 
     def test_the_attack_tags_reach_the_reader(self):
         text = self._rendered()[1]
-        assert 'Attack Type: Malware Pre-Execution' in text
-        assert 'Threat_Name: CISA Alert AA24-109A (Akira ransomware)' in text
-        assert 'Malware_Category: Ransomware' in text
+        assert 'Attack Type:Malware Pre-Execution' in text
+        assert 'Threat_Name:CISA Alert AA24-109A (Akira ransomware)' in text
+        assert 'Malware_Category:Ransomware' in text
+
+    def test_the_tag_shape_is_the_one_the_playbook_tool_already_returns(self):
+        # One representation of a move's tags in this repo, not two. The shipped
+        # get_playbook_attack_details returns "name:value" strings; a second
+        # shape here would be the same data spelled differently.
+        from safebreach_mcp_playbook.playbook_types import _transform_tags
+        raw = [{'id': 31, 'name': 'Advanced_Actions',
+                'values': [{'id': 0, 'value': 'Loading of Malicious Entities'}]}]
+        assert _transform_tags(raw) == ['Advanced_Actions:Loading of Malicious Entities']
+
+        entry = self._rendered()[0]['steps'][0]['zero_impact_attacks'][0]
+        assert isinstance(entry['tags'], list)
+        assert all(isinstance(tag, str) for tag in entry['tags'])
 
     def test_a_numeric_tag_is_left_out(self):
         # "IoC Based: 1" carries no meaning without the scale behind it, and an
@@ -13829,7 +13843,7 @@ class TestAdvancedActionIdsAreNamed:
 
     def test_the_tags_are_carried_in_the_data_even_when_not_rendered(self):
         entry = self._rendered()[0]['steps'][0]['zero_impact_attacks'][0]
-        assert entry['tags']['IoC Based'] == ['1']
+        assert 'IoC Based:1' in entry['tags']
         assert entry['advanced_actions'] == {'0': 'Loading of Malicious Entities'}
 
 

@@ -544,8 +544,10 @@ Rate limiting environment variables:
   capability ids is rendered with their names** — `required: [0]` becomes `#0 "Loading of Malicious Entities"`,
   resolved from the attack's own `Advanced_Actions` tag at no extra request; an id the attack does not list
   stays a bare id rather than being guessed. **The attack's tags are relayed** (Attack Type, Threat_Name,
-  Malware_Category, Security Controls); numeric-valued tags are kept in the data but not rendered, since an
-  opaque number invites a reader to supply a scale for it. Simulators are described
+  Malware_Category, Security Controls) in the same `"name:value"` shape `get_playbook_attack_details` returns;
+  numeric-valued tags are kept in the data but not rendered, since an opaque number invites a reader to supply
+  a scale for it. That shape carries no ids, which is why the advanced-action mapping is a separate field —
+  no other path in this repo exposes the id a constraint reports. Simulators are described
   blocked-first and capped at 10 per step (one node with `details=true` measured ~125 KB live, and the fleet
   listing costs the same per node — ~61 MB extrapolated to a 500-node console), with the count of how many were
   described. **Not rate-limited**; no MCP-side cache.
