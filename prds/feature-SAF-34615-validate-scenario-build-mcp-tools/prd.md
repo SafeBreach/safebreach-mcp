@@ -4,12 +4,11 @@
 
 - **Title**: MCP support for Validate scenario creation and update (Stage 1) — SAF-34615
 - **Task Type**: Feature
-- **Purpose**: Today, building a custom Validate scenario is a manual, multi-screen console flow (Studio, Add
-  Simulators Select/Checkout, Requirements Status). This story exposes the **persistence** half of that flow as a
-  single MCP tool — `create_plan` — so Helm can guide a user through building a scenario conversationally and
-  then commit the result. The conversation itself (proposing an attack plan grouped into themed steps, letting
-  the user pick simulators, surfacing only conflicts that actually matter) is orchestrated by a Helm **skill**,
-  not by a family of MCP tools. Running or scheduling the scenario is explicitly excluded.
+- **Purpose**: **Rescoped 2026-09-06b — this repo's remaining share of SAF-34615 is read-only search parity.**
+  The scenario-creation write path left this repo entirely: it is now a native Helm tool in `breach-genie`
+  (see the companion PRD). What remains here is closing FR2's discovery gap — `get_playbook_attacks` gains
+  attack-type, attack-phase and tag filters so the Helm skill can find the right attacks before assembling a
+  scenario. No new tool, no write surface, no state.
 - **Target Consumer**: Helm (SafeBreach's AI agent), and — through Helm — any SafeBreach customer or internal
   user who talks to Helm to build a scenario instead of using the console directly.
 - **Target Roles (RBAC)**: No new roles. Every tool call carries the caller's own console API credentials
@@ -26,6 +25,13 @@
   (SAF-35484 Stage 2 — filter-based simulator selection; SAF-35485 Stage 3 — editing; SAF-35051 Stage 4 — asset
   association).
 - **Originating Request**: [SAF-34615](https://safebreach.atlassian.net/browse/SAF-34615), reported by Tal Rotem.
+
+> **Scope banner (2026-09-06b)**: this PRD originally specified nine mutating tools, then one (`create_plan`).
+> On the owner's decision the write moved out of MCP altogether. Everything below about scenario creation is
+> retained as **superseded design history** — clearly marked — because the investigation behind it (the platform's
+> whole-body-only write API, the filter-key findings, the Propagate-exclusion reasoning) is what the
+> `breach-genie` tool is now built on. The **live scope of this PRD is Section 3's Component D and Section 8's
+> single phase.**
 
 **Companion PRD**: the Helm-side orchestration — search strategy, step-grouping procedure, confirmation cadence,
 conflict-to-plain-language translation, simulation-count presentation, and (new in this revision) **assembly of
@@ -52,8 +58,20 @@ Customer Flow) is omitted for that reason — the user-facing conversation is th
 
 ### Chosen Solution
 
-**One new mutating MCP tool, plus one enhanced read tool**, both consumed by a Helm skill that owns the entire
-conversational flow.
+**One enhanced read tool. No new tools, no write surface.**
+
+`get_playbook_attacks` gains `attack_type_filter`, `attack_phase_filter` and `tags_filter`, applied Python-side
+against the already-cached attack fetch. That closes FR2's CVE/named-threat-group discovery gap and gives the
+Helm skill a search vocabulary that matches the plan body's filter vocabulary exactly — the same axis names
+meaning the same thing on both sides of the flow.
+
+#### Superseded design history — the write path (moved to `breach-genie` 2026-09-06b)
+
+The material below described `create_plan`, which no longer ships from this repo. It is kept because the
+`breach-genie` tool inherits its every substantive finding: the whole-body-only write API, `attacksFilter.playbook`
+as the real explicit-id key (`methodIds` is unimplemented), the `Package` enum mapping, the `simulators` filter
+key, the DAG requirement, and the Propagate-exclusion argument. Read it as the rationale the companion PRD's
+Component H is built on, not as work planned here.
 
 `create_plan(name, steps, console)` is a thin wrapper over `POST config/v3/accounts/{accountId}/plans`. It holds
 no state, mints no draft id, and orchestrates nothing. It does exactly three things beyond the HTTP call:
@@ -325,44 +343,44 @@ down from nine in the original design.
 
 ## 7. Definition of Done
 
+**Rescoped 2026-09-06b** — the scenario-creation DoD items moved to the companion `breach-genie` PRD along
+with the tool. What this repo owns:
+
 **Core Functionality**
-- [ ] A user can, through conversation with Helm alone, build from scratch and save a fully configured,
-      ready-to-run Validate scenario (DoD1) — the conversation via the companion skill, the persistence via
-      `create_plan`.
-- [ ] No scenario is created with a `type='propagate'` plan or a `tags`-carried `'ALM'` marker through this
-      flow, and no ALM-tagged attack survives into a saved scenario, regardless of the account's Propagate
-      license (DoD3/FR1).
-- [ ] No association of data assets, proxies, or impersonated users is handled by this flow (DoD4 — explicitly
-      out of scope, covered by SAF-35051).
-- [ ] `create_plan` is registered, documented in `CLAUDE.md` (catalog entry + rate-limit gate row), and
-      versioned in `CHANGELOG.md`.
-- [ ] `get_playbook_attacks` supports `attack_type_filter`/`attack_phase_filter`/`tags_filter`.
+- [ ] `get_playbook_attacks` supports `attack_type_filter`, `attack_phase_filter` and `tags_filter`, with the
+      exact tag group names (`"CVE"`, `"Threat Actor"`) documented in the tool description.
+- [ ] The filter vocabulary matches the plan-body vocabulary the companion PRD's tool accepts — same axis names,
+      same attack-phase strings — so an attack found here can be selected there without translation.
+- [ ] `CLAUDE.md`'s `get_playbook_attacks` catalog entry and `CHANGELOG.md` are updated.
 
 **Quality Gates**
-- [ ] Every test in `test-plan.md` for this feature is green, with evidence in `test-results/`.
-- [ ] `create_plan`'s force-set of `type:'validate'`/`propagateDefinition:null` and the absence of any `tags`
-      input surface are covered by tests independent of SAF-35508's own test suite.
-- [ ] DAG assembly (`actions`/`edges` derived from step order) is covered, including the single-step and
-      many-step cases.
-- [ ] Per-step attack-selection mutual exclusivity is covered (both-modes rejection; each mode individually).
-- [ ] Themed-step-name enforcement is covered, including rejection of the console's own `"Step 1"` default.
-- [ ] Per-path validation errors name the offending element (`steps[N].<field>`), asserted rather than assumed.
+- [ ] Every test in `test-plan.md` for this repo's scope is green, with evidence in `test-results/`.
+- [ ] Each new filter is covered individually and in combination with the existing MITRE/platform filters.
+- [ ] A mistyped tag group name returns zero results rather than erroring — asserted, since that silent-failure
+      mode is what Risk R7 is about.
 
-**Deployment Readiness**
-- [ ] Rate-limiting gate table (`CLAUDE.md`) updated for `create_plan`.
-- [ ] Dependency on SAF-35508's `get_scenario_*` tools is either merged and verified, or the residual risk is
-      documented explicitly (Section 9, R1) rather than silently assumed.
+**Cross-repo (tracked, not owned here)**
+- [ ] The scenario-creation DoD (DoD1/DoD3/DoD4, Propagate exclusion, themed step names, DAG assembly) is
+      satisfied by the companion PRD's Phase 7 — this repo's DoD gate must reference it rather than restate it.
 
 ---
 
 ## 8. Implementation Phases
 
+**Rescoped 2026-09-06b.** The write phase left this repo with the tool. One phase remains.
+
 | Phase | Status | Completed | Commit SHA | Notes |
 |---|---|---|---|---|
-| Phase 1: `create_plan` — validation, DAG assembly, persistence | ⏳ Pending | - | - | The whole write surface, in one phase |
-| Phase 2: `get_playbook_attacks` filter parity | ⏳ Pending | - | - | Independent of Phase 1; sequenced after it so both share one filter vocabulary |
+| ~~Phase 1: `create_plan`~~ | ❌ Removed | - | - | Moved to `breach-genie` as the native `createValidateScenario` tool (companion PRD Phase 7) |
+| Phase 1: `get_playbook_attacks` filter parity | ⏳ Pending | - | - | The whole of this repo's remaining scope |
 
-### Phase 1: `create_plan` — validation, DAG assembly, persistence
+### ~~Phase 1: `create_plan`~~ — REMOVED (moved to `breach-genie`)
+
+Retained below as design history; the companion PRD's Phase 7 implements this content as a native Helm tool.
+Its substance is unchanged — validation, filter normalization, `Package` mapping, DAG assembly, forced
+`type:'validate'`, unique-constraint shaping — only the language and the repo differ.
+
+#### (superseded) `create_plan` — validation, DAG assembly, persistence
 
 **Semantic Change**: Introduce the story's single public entry point — a stateless tool that validates a
 caller-supplied scenario, assembles the wire body, and persists it as a real Validate plan.
@@ -410,7 +428,7 @@ misbehaves at run time (why step 3 reuses the proven helper rather than reimplem
 
 **Git Commit**: `feat(studio): add create_plan tool for Validate scenario persistence`
 
-### Phase 2: `get_playbook_attacks` filter parity
+### Phase 1: `get_playbook_attacks` filter parity — **the live phase**
 
 **Semantic Change**: Extend the existing playbook search tool so the skill's discovery vocabulary matches the
 plan body's filter vocabulary.
@@ -506,3 +524,4 @@ tool description, and name the exact group strings (`"CVE"`, `"Threat Actor"`) s
 | 2026-09-02 16:49 | PRD created — initial draft |
 | 2026-09-03 15:20 | Fetched latest SAF-35508 (PR #91, `de8afff`) at user request — the three `get_scenario_*` tools are now implemented (1932 tests passing), not "not yet implemented" as originally written. Corrected Component F, §6, and Risk R1: `attack_ids` on `get_scenario_attack_blockers` is required not optional; `get_scenario_blocked_entities`'s verdict is five states not three; `fix_lever` was removed (SAF-35568); AC-4 is partially verified; PR #91 has an open merge conflict against `main`. |
 | 2026-09-06 | **Architecture restructured on owner decision**: exactly one public entry point for scenario creation, with the Helm skill as the flow orchestrator. Nine mutating tools + in-process draft cache → one stateless `create_plan` tool; the granular composition logic becomes private Python; `list_simulators` dropped (`get_console_simulators` covers it); the pre-save gate moves from inside the tool to the skill's preview stage, using SAF-35508's ad-hoc-body statistics tools (owner verified the statistics endpoint does not require `actions`/`edges`). Phases 7→2. New risks R2 (confirmation now skill-enforced), R3 (FR13 divergence, **needs owner sign-off**), R6 (update/PUT not in Stage 1), R8 (skill owns body assembly); former R2 (draft-cache single-worker state) retired with the cache. |
+| 2026-09-06b | **Rescoped on owner decision: the write tool leaves this repo.** `create_plan` becomes `createValidateScenario`, a native Helm tool in `breach-genie` (companion PRD Component H / Phase 7), which gains a Zod-enforced body contract, `requireApproval: true` for a platform-enforced save confirmation, and an optional per-account `featureFlag` — none of which the MCP surface could offer. This repo's remaining scope is read-only search parity: `get_playbook_attacks` gains attack-type/phase/tag filters, one phase. Superseded write-path design is retained and clearly marked, because the companion tool inherits all of its findings. |

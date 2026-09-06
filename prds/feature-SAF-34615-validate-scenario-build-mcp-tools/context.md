@@ -1192,3 +1192,55 @@ Supporting findings that independently favored dropping the draft:
   Helm product feature.
 - **Update (PUT) is not in Stage 1** despite the ticket title saying "creation and update" — Risk R6, open for
   the owner.
+
+---
+
+## Architecture decision (2026-09-06b): the write tool leaves this repo
+
+**Decision (owner)**: `create_plan` should not be a `safebreach-mcp` tool at all. The scenario-creation write
+becomes a **native Helm tool in `breach-genie`**; this repo keeps only read-only search parity.
+
+### Feasibility, verified before the change
+
+`breach-genie` already talks to the configuration service directly — this is not new capability, just a new
+call site:
+
+- `@safebreach/sdks` is a dependency; `ConfigurationSDK` is instantiated at boot with the configuration
+  host/port/api version and placed on the service bag (`src/mastra/index.ts:74-77`).
+- `AccountManager.ts:109-110` already issues
+  `http://{configurationHostName}:{configurationPort}/api/config/v1/accounts/{accountId}/settings/{name}`.
+- Creating a plan is the same service one API version up: `POST /api/config/v3/accounts/{accountId}/plans`.
+
+**Unresolved, named rather than assumed**: whether `ConfigurationSDK` exposes a plan-create method, or the tool
+must issue the request directly the way `AccountManager` does. `node_modules` is not installed in the planning
+worktree, so the SDK surface could not be inspected. Companion PRD Risk R10.
+
+### What the move buys — the reason it is an improvement, not just a relocation
+
+`ToolConfig` in `src/tools/index.ts` carries three fields an MCP tool has no equivalent for:
+
+| Field | Effect | Precedent in repo |
+|---|---|---|
+| `inputSchema` (Zod) | The plan-body contract stops being prose in a reference file and becomes machine-enforced at the boundary, advertised to the model | every native tool |
+| **`requireApproval: true`** | Mastra **suspends** the call; the UI renders an approve/reject panel resumed next turn. The pre-save confirmation becomes platform-enforced instead of skill-text-enforced | `guardrail-tools.ts`, `pdf-tools.ts`, `workspace-tools.ts` |
+| `featureFlag` | The write path can ship dark / per-account | `AgentFactory.isFeatureFlagEnabled` |
+
+`requireApproval` is the significant one: it **closes** the risk (companion R9 / this PRD's former R2) that the
+one-tool MCP design could only mitigate — that nothing outside skill prose stopped a scenario being saved
+without the user reviewing a preview.
+
+### What it costs
+
+- **No MCP client can create a scenario any more** — not Claude Desktop, not any other agent. The capability is
+  Helm-exclusive by construction. A deliberate deepening of the departure from `safebreach-mcp`-as-generic-layer
+  that began with the 2026-09-06 one-entry-point decision.
+- **Rate limiting is lost.** `rate_limiter.py`'s per-caller sliding window covers every MCP write tool; this
+  repo has no native-tool equivalent. Substantially offset by `requireApproval` — a human click per write bounds
+  abuse more directly than a rate limit — but named as a gap (companion R11) rather than assumed covered.
+- **This PRD collapses to one phase.** With the write gone, the only remaining deliverable is
+  `get_playbook_attacks` filter parity. The superseded write-path design is retained and marked, because the
+  `breach-genie` tool inherits every substantive finding behind it: the whole-body-only write API,
+  `attacksFilter.playbook` as the real explicit-id key (`methodIds` unimplemented), the `Package` enum mapping,
+  the `simulators` key, the DAG requirement, and the Propagate-exclusion argument.
+- **FR13's divergence is now total** for the tool layer — the ticket enumerates nine MCP tools; this repo ships
+  none of them. Still requires the ticket owner's sign-off (Risk R3), now more so.
