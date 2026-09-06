@@ -482,8 +482,9 @@ Rate limiting environment variables:
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
-25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **how many
-  simulations would this scenario produce?** Reports per-step counts and coverage **without running anything**.
+25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **which attacks
+  would this scenario run, and how many simulations?** Reports per-step counts, coverage and a paged attack
+  listing **without running anything**.
   Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics` via the shared fetch core, then projects that
   report down to the counts. For *why* a step produces nothing — or why one named attack did not run — use
   `get_scenario_blocked_entities`. The two are disjoint by construction, and each tool's hint routes to the other.
@@ -503,9 +504,14 @@ Rate limiting environment variables:
   artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
   `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
   **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
-  **Costs no playbook and no config request**: its projection renders no attack or simulator name, and its
-  sibling resolves them only for the entries it actually shows — one `moves/{id}` and one `nodes/{id}` call
-  each, never the 58 MB full KB listing nor the fleet listing.
+  **`page` / `page_size`** (default 0 / 10, max 100) list the step's attacks with the simulations each
+  produces. **Names are resolved for the page only** — a step's map holds up to 9,659 ids, so naming them all
+  would mean the 58.6 MB playbook listing again; ten lookups cost ~0.08 MB. Where the response carries fewer
+  ids than the step holds, **both denominators are printed** ("1–10 of 100 of 400"), because reporting only
+  what can be paged through would present a truncation artifact as the scenario's size. **`page_size=0` lists
+  nothing and costs no playbook request at all** — the way back to this tool's pre-listing behaviour. Its
+  sibling likewise resolves names only for what it shows — one `moves/{id}` and one `nodes/{id}` call each,
+  never the full KB or fleet listings.
 26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **what in this scenario
   will not run, and why?** Reports every attack and simulator whose count is a genuine integer `0`, with the
   constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.

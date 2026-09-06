@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 36 | 14 | 0 | 6 | 56 |
+| Automatic | 39 | 14 | 0 | 6 | 59 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **36** | **14** | **0** | **9** | **59** |
+| **Total** | **39** | **14** | **0** | **9** | **62** |
 
 ## Environment Requirements (aggregated)
 
@@ -197,6 +197,9 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-61 | A scoped report narrows what is shown, never what is claimed | API-contract | Phase 12 | safebreach_mcp_studio |
 | T-62 | Blocked attacks and in-scope simulators carry what they are, never why they failed | API-contract | Phase 12 | safebreach_mcp_studio |
 | T-63 | One tool answers "what will not run, and why" | regression | Phase 12 | safebreach_mcp_studio |
+| T-64 | One page of "which attacks run, and how many", with both denominators | API-contract | Phase 13 | safebreach_mcp_studio |
+| T-65 | Attack names are resolved for the listed page and nothing else | performance | Phase 13 | safebreach_mcp_studio |
+| T-66 | `page_size=0` lists nothing, asks for nothing, and explains nothing | API-contract | Phase 13 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -1214,6 +1217,54 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
+### T-64 — One page of "which attacks run, and how many", with both denominators
+
+- Description: Proves the counts tool answers *which* attacks run, a page at a time, and never presents the response's truncation as the scenario's size.
+- Status: Active
+- Passes after: Phase 13
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: A step's attack map holds up to 9,659 ids on a live console and the response carries at most 100, so an unpaged listing would be a sample printed as a list. Reporting only what can be paged through would state 100 where the step holds 400 — a truncation artifact presented as a measurement, which is the same fault `_coverage`'s capped denominator was fixed for in Phase 8.
+- Risk source: PRD §8 (Phase 13), §9 (R1, R13)
+- Verify: Score a step holding 400 running attacks, whose response map is capped at 100. Read the first page, a later page, and a page past the end. Render it.
+- Expected: The first page lists exactly `page_size` attacks in deterministic id order, each with its simulation count; a later page advances; a page past the end is empty rather than an error. The step reports `attacks_total` 400 and `attacks_pageable` 100, and the narration prints both ("1–10 of 100 of 400") plus a hint that the scenario holds more attacks than one response can carry.
+- Evidence required: pytest run output naming the tests, with the page contents, both denominators and the rendered line.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-65 — Attack names are resolved for the listed page and nothing else
+
+- Description: Proves naming the attacks costs one lookup per printed row rather than the console's whole attack library.
+- Status: Active
+- Passes after: Phase 13
+- Level: unit
+- Execution: Automatic
+- Aspect: performance
+- Risk: This is the tool Phase 11 reduced to zero playbook requests. Giving it an attack listing reintroduces name resolution, and resolving names for an unbounded set would fall back to the 58.6 MB bulk listing above ~100 ids — undoing Phase 11 on the one tool that had cost nothing. A bad page request must also be rejected before the scoring call, not after paying for it.
+- Risk source: PRD §8 (Phase 11, Phase 13)
+- Verify: With the resolver patched and counted, take the default page of a 400-attack step. Then reject a negative page, a negative page size, a page size above the maximum, and non-integer values, with the transport counted.
+- Expected: Exactly `page_size` ids are resolved — never the bulk listing — and each listed attack carries its name. Every invalid page request raises before any statistics call is made.
+- Evidence required: pytest run output naming the tests, with the resolver arguments and the call count.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
+### T-66 — `page_size=0` lists nothing, asks for nothing, and explains nothing
+
+- Description: Proves the pre-listing behaviour is still available on request, and that the listing never turns this tool into the one that explains blocks.
+- Status: Active
+- Passes after: Phase 13
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: Two ways this tool drifts. It could lose the zero-request property Phase 11 won, with no way back for a caller who only wants totals. And a listing is one step from a listing *with reasons* — at which point it has become its sibling, which is the overlap the whole decomposition removed. A retired sibling's name left in a routing hint is the same failure in miniature: agent-facing text pointing at a tool that does not exist.
+- Risk source: PRD §8 (Phase 13), §9 (R15)
+- Verify: Call with `page_size=0` and count the resolver. Render a normal page and read it for constraint vocabulary. Extract every `get_scenario_*` name from both tools' narration and compare against the registered tool names.
+- Expected: `page_size=0` emits no attack listing and resolves no names. The rendered listing contains no "blocked by", no constraint catalog and no "contributing nothing". Every tool name either narration routes to is actually registered.
+- Evidence required: pytest run output naming the tests, with the resolver call count and the extracted tool names.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -1233,7 +1284,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 10 | T-58 | 51 |
 | Phase 11 | T-59 | 52 |
 | Phase 12 | T-60, T-61, T-62, T-63 | 56 |
-| Final | T-32, T-33, T-35 | all (59) |
+| Phase 13 | T-64, T-65, T-66 | 59 |
+| Final | T-32, T-33, T-35 | all (62) |
 
 ## Sign-off
 
@@ -1249,6 +1301,7 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 | Date | Change |
 |------|--------|
+| 2026-09-03 (f) | **T-64…T-66 added for Phase 13** (the spec sketched T-65…T-67; Phase 12 consumed through T-63, so they landed three lower). T-66 carries a clause the plan did not anticipate: a stale routing hint was found by **reading the live output**, not by the suite — the counts tool still pointed at `get_scenario_attack_blockers`, retired one phase earlier, so an agent following it would have called a tool that does not exist. The test now extracts every `get_scenario_*` name from both narrations and asserts it is registered, which makes the class of error checkable rather than the one instance. |
 | 2026-09-03 (e) | **T-60…T-63 added for Phase 12.** Two of them exist because the first test pass had two mutations survive. The count-map pin was covered only incidentally by the zero-impact pin — every fixture's named id sat in both lists — so T-60 gained a case where the named attack **ran**, putting it in the counts map and out of the zero-impact list, which is the only shape the count-map pin alone can carry. And the R16 verdict-ordering guard proved unfalsifiable: the verdict reads two independent unfiltered sources and the projection narrows only its own copy, so scoping either alone cannot change it. T-61 therefore pins the invariants that *could* regress — the counts map is never filtered, and the projection never mutates the report it was given — rather than an ordering that cannot currently break. |
 | 2026-09-03 (d) | **T-59 added for Phase 11.** Explaining the call flow surfaced that the statistics call is not the first network call: the whole playbook — measured live at 58.62 MB / 9,659 moves / ~3.0 s — was fetched ahead of it on every call of all three tools, and the counts tool renders no names at all. The tests deliberately assert on the **requests made** rather than on the rendered names, because the output was always correct; the defect was that it was correct expensively, which is precisely the class of bug a green output-assertion suite cannot see. The resolver's own edge cases (per-id limit, 404, transport failure, warm cache, repeats) are pinned in the playbook repo alongside it. |
 | 2026-09-03 (c) | **T-58 added for Phase 10; T-49's `Expected` corrected.** The owner asked whether the blockers tool is a subtype of the blocked-entities tool. It is not — one reports simulators the other never does, and the other answers per named id including "it ran" and "it is absent", which an existential list cannot express — but its unnamed mode genuinely duplicated the sibling's attacks half, from the same field by the same rule. Removing it makes `attack_ids` required, and T-58 pins all three halves of that: the rejection happens before any call and names the sibling, the requirement is in the **schema** rather than only at runtime (the schema is what reaches the calling agent), and the projection volunteers no other blocked attack. T-49's `Expected` asserted the ran-attack "appears in no blocked listing" — a listing that no longer exists — and now asserts the cross-tool agreement it was really there to protect. |

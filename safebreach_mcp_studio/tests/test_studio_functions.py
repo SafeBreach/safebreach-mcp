@@ -4,6 +4,7 @@ Tests for SafeBreach Studio Functions
 This module tests the core business logic functions for Studio operations.
 """
 
+import re
 import pytest
 import json
 import requests
@@ -12830,7 +12831,18 @@ class TestEachProjectionRendersOnlyItsSlice:
             'attacks', 'attacks_total',
             'target_simulators', 'target_simulators_total',
             'attacker_simulators', 'attacker_simulators_total',
+            # Phase 13: which attacks run, one page at a time.
+            'attacks_page', 'attacks_pageable', 'page', 'page_size',
         }
+
+    def test_the_counts_projection_still_explains_nothing(self):
+        # The listing is "which attacks and how many", never "why not". A step
+        # producing 0 is reported here and explained by the sibling tool.
+        step = _project_simulation_counts(self._report())['steps'][0]
+        for explanatory in ('conflicts', 'zero_impact_attacks',
+                            'zero_impact_simulators', 'simulator_details'):
+            assert explanatory not in step
+        assert 'constraint_catalog' not in _project_simulation_counts(self._report())
 
     def test_blocked_entities_carries_both_lists_a_catalog_and_a_verdict(self):
         projected = _project_blocked_entities(self._report())
@@ -13443,15 +13455,26 @@ class TestAttackNamesAreFetchedForWhatIsShown:
             },
         }]}
 
-    def test_the_counts_tool_resolves_no_names_at_all(self):
+    def test_the_counts_tool_resolves_names_for_the_page_only(self):
+        # Phase 13 gave this tool an attack listing, so it does resolve names
+        # now — but only for the page it prints. The property that matters is
+        # unchanged: it never asks for a name it will not show.
+        with _statistics_transport(self._blocked_response()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}) as resolve:
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO)
+        assert sorted(resolve.call_args.args[1]) == ['226', '281']
+
+    def test_page_size_zero_resolves_no_names_at_all(self):
+        # The way back to the behaviour Phase 11 won: no listing, no lookup.
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
                        'get_attack_facts_by_ids') as resolve:
-                sb_get_scenario_simulation_counts(
-                    console="test-console", scenario=self.SCENARIO)
-        # Its projection drops zero_impact_attacks and conflicts entirely, so a
-        # name it fetched could never reach the caller.
+                result = sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO, page_size=0)
         resolve.assert_not_called()
+        assert 'attacks_page' not in result['steps'][0]
 
     def test_the_counts_tool_resolves_no_simulator_details_either(self):
         with _statistics_transport(self._blocked_response()):
@@ -13558,6 +13581,133 @@ class TestAttackNamesAreFetchedForWhatIsShown:
                     console="test-console", scenario=self.SCENARIO,
                     conflict_detail='summary')
         assert list(resolve.call_args.args[1]) == ['226']
+
+
+class TestTheCountsToolNamesWhichAttacksRun:
+    """T-64, T-65, T-66 — which attacks run, one page at a time.
+
+    A step's attack map holds up to 9,659 ids on a real console and is capped at
+    100 in the response, so "which attacks will run" is not answerable in full
+    at any price. Paging makes it answerable honestly: a page, its position, and
+    both denominators — what can be paged through, and what the step holds.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @staticmethod
+    def _four_hundred_running():
+        return {"steps": [{
+            "simulationCount": 400,
+            "moves": {str(i): 1 for i in range(400)},
+            "simulators": {"sim-a": 400},
+            "targetSimulators": {"sim-a": 400},
+            "attackerSimulators": {},
+            "simulatorConstraints": {"targetConstraints": {}, "attackerConstraints": {}},
+        }]}
+
+    def _counts(self, **kwargs):
+        with _statistics_transport(self._four_hundred_running()):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids',
+                       side_effect=lambda console, ids: {
+                           str(i): {'name': f"attack {i}"} for i in ids}) as resolve:
+                result = sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO, **kwargs)
+        return result, resolve
+
+    def test_one_page_is_listed_not_the_whole_map(self):
+        step = self._counts()[0]['steps'][0]
+        assert len(step['attacks_page']) == 10
+        assert [e['attack_id'] for e in step['attacks_page']] == [
+            str(i) for i in range(10)]
+
+    def test_the_true_total_is_stated_beside_what_can_be_paged(self):
+        # 400 attacks in the step; the response carries 100. Reporting only the
+        # 100 would present a truncation artifact as the scenario's size.
+        step = self._counts()[0]['steps'][0]
+        assert step['attacks_total'] == 400
+        assert step['attacks_pageable'] == COUNT_MAP_CAP
+
+    def test_a_later_page_advances(self):
+        step = self._counts(page=2)[0]['steps'][0]
+        assert [e['attack_id'] for e in step['attacks_page']] == [
+            str(i) for i in range(20, 30)]
+
+    def test_a_page_past_the_end_is_empty_not_an_error(self):
+        step = self._counts(page=99)[0]['steps'][0]
+        assert step['attacks_page'] == []
+
+    def test_each_listed_attack_carries_its_count_and_name(self):
+        entry = self._counts()[0]['steps'][0]['attacks_page'][0]
+        assert entry['simulation_count'] == 1
+        assert entry['attack_name'] == 'attack 0'
+
+    def test_names_are_resolved_for_the_page_only(self):
+        # The whole reason this tool can name attacks: ten lookups, not the
+        # 58.6 MB listing that naming 9,659 of them would need.
+        resolve = self._counts()[1]
+        assert len(resolve.call_args.args[1]) == 10
+
+    def test_page_size_zero_lists_nothing_and_asks_for_nothing(self):
+        result, resolve = self._counts(page_size=0)
+        assert 'attacks_page' not in result['steps'][0]
+        resolve.assert_not_called()
+
+    def test_a_truncated_map_says_so_in_the_hint(self):
+        hint = self._counts()[0]['hint_to_agent']
+        assert 'more attacks than one response can carry' in hint
+
+    @pytest.mark.parametrize("bad", ({'page': -1}, {'page_size': -1},
+                                     {'page_size': 101}, {'page': 'two'},
+                                     {'page_size': True}))
+    def test_a_bad_page_request_is_rejected_before_any_call(self, bad):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError):
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.SCENARIO, **bad)
+            post.assert_not_called()
+
+    def test_the_listing_reaches_the_narration_with_both_denominators(self):
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts)
+        text = _format_scenario_simulation_counts(self._counts()[0])
+        assert '**Attacks** 1–10 of 100 of 400' in text
+        assert '#0 (attack 0)' in text
+
+    def test_no_hint_routes_to_a_tool_that_no_longer_exists(self):
+        # Found live: the routing hint still named get_scenario_attack_blockers
+        # after Phase 12 retired it, sending an agent to an unknown tool. The
+        # rendered text is agent-facing, so a stale name there is a broken link.
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts, _format_scenario_blocked_entities)
+        counts = _format_scenario_simulation_counts(self._counts()[0])
+        assert 'get_scenario_attack_blockers' not in counts
+        assert 'get_scenario_blocked_entities' in counts
+
+        registered = {tool.name for tool in _studio_tools().values()}
+        for text in (counts, _format_scenario_blocked_entities(
+                _project_blocked_entities(_phase7_report([_phase4_step(
+                    simulationCount=1, moves={'1': 1},
+                    simulators={'sim-a': 1}, targetSimulators={'sim-a': 1})])))):
+            for referenced in re.findall(r'\bget_scenario_[a-z_]+', text):
+                assert referenced in registered, (
+                    f"narration routes to {referenced}, which is not registered")
+
+    def test_the_listing_explains_nothing(self):
+        # It says what runs and how much. Why a step produces nothing is the
+        # sibling tool's question, and this output must not start answering it.
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts)
+        text = _format_scenario_simulation_counts(self._counts()[0]).lower()
+        for word in ('blocked by', 'constraint catalog', 'contributing nothing'):
+            assert word not in text
 
 
 class TestNamedIdsSurviveTheCaps:
