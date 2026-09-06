@@ -1245,6 +1245,25 @@ blocked-attack list and a blocked-simulator list, and when `attack_ids` is suppl
 disposition per named id and narrows what it displays. Nothing changes shape; something is added and the rest
 is scoped. The duplicated unnamed-listing mode Phase 10 deleted stays deleted.
 
+**Which layer filters — state this precisely, because "filter the report" can be implemented three ways and two
+of them are wrong:**
+
+| layer | filtered to the named ids? |
+|---|---|
+| the console's response | **No** — six id-filter spellings were probed live and none is honoured; it always returns everything |
+| shaping (`_shape_statistics_step`) | **No, deliberately.** This is where 12a *pins* the named ids ahead of the caps. Filtering here would leave the verdict with nothing to be computed over |
+| projection | **Yes.** This is the one layer that narrows the report to the named attacks |
+| narration → the caller | renders only what the projection kept |
+
+Filtering earlier breaks the verdict; filtering only at render leaves the caps biting the very attack the
+caller named. The catalog needs no special handling: it is already built from the codes cited by the entries
+actually rendered, so narrowing the entries narrows it automatically.
+
+**The one thing that stays unfiltered is the verdict** (R16). A report scoped to one attack still states the
+scenario-wide count — *"none of the 1 attack you named is blocked; 40 others in this scenario are"* — because
+"nothing is blocked" would otherwise be true of the query and false of the scenario, with nothing in the
+output to tell the two apart.
+
 **What Phase 10 established that must survive verbatim:**
 - **Every named id gets exactly one answer.** An id that **ran** is answered *"it ran, N times"* — absence
   from a filtered list is silence, not an answer.
