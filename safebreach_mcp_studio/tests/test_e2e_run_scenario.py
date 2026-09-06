@@ -258,15 +258,17 @@ class TestRunScenarioE2E:
                 step_overrides=overrides, evaluate=True)
             assert result3['status'] == 'evaluating'
             assert len(result3['predicted_per_step']) == len(
-                not_ready.get('steps', []))
+                not_ready.get('steps') or [])
 
     def test_augment_oob_scenario(self):
         """Slice 3: Augment a non-ready OOB scenario (5+ steps), verify it starts, cancel.
         Covers: diagnostic → augment → queue, large scenario, allow_partial_steps."""
         scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        # Real content-manager scenarios can carry `steps: null` (SAF-34228); `or []`
+        # guards the len() so a null-steps scenario is treated as 0-step, not a crash.
         large_not_ready = [s for s in scenarios
                            if not compute_scenario_readiness(s)
-                           and len(s.get('steps', [])) >= 5]
+                           and len(s.get('steps') or []) >= 5]
         assert len(large_not_ready) > 0, "No non-ready OOB with >=5 steps"
 
         scenario = large_not_ready[0]
@@ -296,7 +298,7 @@ class TestRunScenarioE2E:
             passed = True
         finally:
             _cleanup_test(test_id, E2E_CONSOLE, "test_augment_oob_scenario", passed,
-                          f"scenario={scenario['name']}, steps={len(scenario.get('steps', []))}")
+                          f"scenario={scenario['name']}, steps={len(scenario.get('steps') or [])}")
 
     def test_augment_custom_plan(self):
         """Slice 4: Augment a non-ready custom plan, verify it starts, cancel.

@@ -31,6 +31,58 @@ from .playbook_functions import (
 
 logger = logging.getLogger(__name__)
 
+def _truncate_description(description: object, limit: int = 200) -> str:
+    """
+    Render an attack description safely, tolerating a null value.
+
+    Args:
+        description: The description as the API supplied it, which may be None.
+        limit: Characters to keep before eliding.
+
+    Returns:
+        The truncated description, with an ellipsis when it was cut, or a placeholder when absent.
+    """
+    text = str(description or '')
+    if not text:
+        return 'No description available'
+    return f"{text[:limit]}..." if len(text) > limit else text
+
+
+DRAFT_ROW_MARKER = (
+    "**Status:** unpublished draft - not shown in the Playbook UI, which lists published content only"
+)
+
+PROPAGATE_ROW_MARKER = (
+    "**Test Type:** Propagate (ALM) - not reachable from the Playbook UI; "
+    "the customer cannot find, open or run this attack there"
+)
+
+
+def _render_total_line(total_attacks: int, result: dict, label: str = "matching filters") -> str:
+    """
+    Render the total line, splitting it per catalog when both catalogs are in scope.
+
+    Args:
+        total_attacks: The scoped total reported by the function layer.
+        result: The function-layer result, which carries validate_count / propagate_count
+            only when the scope was 'all'.
+        label: The qualifier describing what the total counts.
+
+    Returns:
+        The single-total line, or the split line when both per-catalog counts are usable.
+    """
+    validate_count = result.get('validate_count')
+    propagate_count = result.get('propagate_count')
+
+    if isinstance(validate_count, int) and isinstance(propagate_count, int):
+        return (
+            f"**Total attacks {label}: {total_attacks}** "
+            f"- {validate_count} in the Playbook (Validate), {propagate_count} Propagate (ALM)"
+        )
+
+    return f"**Total attacks {label}: {total_attacks}**"
+
+
 class SafeBreachPlaybookServer(SafeBreachMCPBase):
     """SafeBreach MCP Playbook Server for playbook attack operations."""
     
@@ -64,7 +116,19 @@ attacker_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - O
 target_platform_filter (comma-separated platform values e.g. WINDOWS,LINUX - OR logic, case-insensitive partial match.
   Strict: only attacks matching the specified platform(s) are returned.
   Add ANY to also include platform-agnostic attacks, e.g. WINDOWS,ANY).
-Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS"""
+Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPPLICATION, WINDOWS
+test_type (catalog scope, default 'validate'):
+  'validate' - Playbook (Validate/BAS) attacks only. THIS IS THE DEFAULT, and it is what the customer
+    sees in the Playbook UI. Use it for every general question about attacks, including totals.
+  'propagate' - only Propagate (aka ALM, Automated Lateral Movement) attacks. Use when the user asks
+    specifically about Propagate.
+  'all' - both catalogs. The response then reports a per-catalog split of the total.
+  Propagate attacks are NOT reachable from the Playbook UI - the customer cannot find, open or run
+  them there - so never present them as Playbook content. When a default-scoped answer excluded
+  Propagate attacks, the response says so; relay that rather than implying the total is everything.
+include_drafts (default False): unpublished Breach Studio drafts are hidden by default, because the
+  Playbook UI shows published content only. Leave this False so your totals match what the customer
+  sees in the Playbook. Pass True only when the user explicitly asks about drafts or work in progress."""
         )
         def get_playbook_attacks(
             console: str = "default",
@@ -81,7 +145,9 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
             mitre_technique_filter: Optional[str] = None,
             mitre_tactic_filter: Optional[str] = None,
             attacker_platform_filter: Optional[str] = None,
-            target_platform_filter: Optional[str] = None
+            target_platform_filter: Optional[str] = None,
+            test_type: Optional[str] = "validate",
+            include_drafts: bool = False
         ) -> str:
             """Get filtered and paginated playbook attacks."""
             try:
@@ -100,7 +166,9 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                     mitre_technique_filter=mitre_technique_filter,
                     mitre_tactic_filter=mitre_tactic_filter,
                     attacker_platform_filter=attacker_platform_filter,
-                    target_platform_filter=target_platform_filter
+                    target_platform_filter=target_platform_filter,
+                    test_type=test_type,
+                    include_drafts=include_drafts
                 )
                 
                 if 'error' in result:
@@ -115,7 +183,7 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                 # Format response
                 response_parts = [
                     f"## Playbook Attacks - Page {page_number + 1} of {total_pages}",
-                    f"**Total attacks matching filters: {total_attacks}**"
+                    _render_total_line(total_attacks, result)
                 ]
                 
                 if applied_filters:
@@ -129,7 +197,7 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                 for attack in attacks:
                     response_parts.extend([
                         f"### {attack.get('name', 'Unknown')} (ID: {attack.get('id', 'Unknown')})",
-                        f"**Description:** {attack.get('description', 'No description available')[:200]}{'...' if len(str(attack.get('description', ''))) > 200 else ''}",
+                        f"**Description:** {_truncate_description(attack.get('description'))}",
                         f"**Modified:** {attack.get('modifiedDate', 'Unknown')}",
                         f"**Published:** {attack.get('publishedDate', 'Unknown')}"
                     ])
@@ -156,6 +224,11 @@ Valid platform values: ANY, AWS, AZURE, DOCKER, GCP, LINUX, MAC, MAILBOX, WEBAPP
                         response_parts.append(f"**Attacker Platform:** {attacker_platform}")
                     if target_platform:
                         response_parts.append(f"**Target Platform:** {target_platform}")
+
+                    if attack.get('is_propagate'):
+                        response_parts.append(PROPAGATE_ROW_MARKER)
+                    if attack.get('is_draft'):
+                        response_parts.append(DRAFT_ROW_MARKER)
 
                     response_parts.append("")
                 
@@ -201,11 +274,16 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
                     f"## {result.get('name', 'Unknown Attack')} (ID: {result.get('id', 'Unknown')})",
                     "",
                     f"**Description:**",
-                    result.get('description', 'No description available'),
+                    result.get('description') or 'No description available',
                     "",
                     f"**Modified Date:** {result.get('modifiedDate', 'Unknown')}",
                     f"**Published Date:** {result.get('publishedDate', 'Unknown')}"
                 ]
+
+                if result.get('is_propagate'):
+                    response_parts.append(PROPAGATE_ROW_MARKER)
+                if result.get('is_draft'):
+                    response_parts.append(DRAFT_ROW_MARKER)
                 
                 # Add optional fields based on verbosity
                 if include_fix_suggestions and result.get('fix_suggestions'):
@@ -292,20 +370,28 @@ include_mitre_techniques (default False - include MITRE ATT&CK tactics, techniqu
             annotations=ToolAnnotations(readOnlyHint=True),
             description="""Returns a filtered and paginated list of SafeBreach playbook attacks that carry any of the given custom tags.
 Tag matching is case-insensitive and exact per tag token (a filter of "net" does NOT match a tag "network").
-Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0).
+Parameters: console (required), tags (required, comma-separated tag values, OR logic), page_number (default 0),
+test_type ('validate' | 'propagate' | 'all', default 'validate' - same catalog scope as get_playbook_attacks:
+  the default returns Playbook (Validate) attacks only; Propagate (ALM) attacks are NOT reachable from the
+  Playbook UI, so never present them as Playbook content),
+include_drafts (default False - unpublished drafts are hidden so totals match the Playbook UI).
 Results are paginated with 10 items per page; each attack includes its normalized tags list."""
         )
         def get_playbook_attacks_by_tags(
             console: str = "default",
             tags: Optional[str] = None,
-            page_number: int = 0
+            page_number: int = 0,
+            test_type: Optional[str] = "validate",
+            include_drafts: bool = False
         ) -> str:
             """Get playbook attacks filtered by one or more custom tags."""
             try:
                 result = sb_get_playbook_attacks_by_tags(
                     console=console,
                     tags=tags,
-                    page_number=page_number
+                    page_number=page_number,
+                    test_type=test_type,
+                    include_drafts=include_drafts
                 )
 
                 if 'error' in result:
@@ -319,7 +405,7 @@ Results are paginated with 10 items per page; each attack includes its normalize
 
                 response_parts = [
                     f"## Playbook Attacks by Tags - Page {page_number + 1} of {total_pages}",
-                    f"**Total attacks matching tags: {total_attacks}**"
+                    _render_total_line(total_attacks, result, label="matching tags")
                 ]
 
                 if applied_filters:
@@ -338,6 +424,10 @@ Results are paginated with 10 items per page; each attack includes its normalize
                         response_parts.append(
                             f"**Description:** {description[:200]}{'...' if len(description) > 200 else ''}"
                         )
+                    if attack.get('is_propagate'):
+                        response_parts.append(PROPAGATE_ROW_MARKER)
+                    if attack.get('is_draft'):
+                        response_parts.append(DRAFT_ROW_MARKER)
                     response_parts.append("")
 
                 if result.get('hint_to_agent'):

@@ -550,3 +550,308 @@ def get_scenario_detail_view(
         "steps": simplified_steps,
         "has_wait_steps": has_wait_steps,
     }
+
+
+# =============================================================================
+# Integration-discovery transforms & helpers (SAF-32798)
+# =============================================================================
+
+# Canonical integration-category taxonomy — the backend's own set (GET /config/categories).
+# Kept here so tool docstrings can advertise the real, filterable values.
+CATEGORY_TAXONOMY = [
+    "custom", "siem", "security_control", "ti", "workflow",
+    "file_provider", "deployment", "secret_provider", "vulnerability_management",
+]
+
+# Capability-flag → functional-category map. The raw `category` field is an *origin*
+# label (notably "custom" for user-created connectors), so it can hide a connector's real
+# function; the per-type capability flags are authoritative for that function. Mapping is
+# 1:1 in the live data — no type carries more than one core capability flag. This mirrors
+# how the console UI derives a connector's categories from capability probes.
+_CAPABILITY_CATEGORY = {
+    "isTi": "ti",
+    "isTiV2": "ti",
+    "isVm": "vulnerability_management",
+    "isPam": "secret_provider",
+    "isFileProvider": "file_provider",
+    "isSendSimResult": "workflow",
+    "isSecEvents": "security_control",
+}
+
+
+def derive_categories(raw_def: Dict[str, Any], catalog: Optional[Dict[str, Any]] = None,
+                      type_key: Optional[str] = None) -> List[str]:
+    """Derive a connector type's full category membership: the raw `category` label unioned
+    with every capability-flag-implied category. This resolves the `custom` bucket — e.g.
+    a `custom` connector that is `isTiV2` derives `["custom", "ti"]` — so category filtering
+    matches the connector's real function, not just its origin label.
+
+    One category pair — `siem` vs `security_control` — shares the same `isSecEvents` flag, so
+    a capability flag alone cannot recover `siem` for a `custom` SIEM variant. A custom
+    connector is a clone of a base type (`custom_<base>`), so when a `catalog` + `type_key`
+    are supplied we also inherit the base type's category (e.g. `custom_splunkrest` →
+    `splunkrest` → `siem`). Note `siem` connectors also carry `security_control` (siem is a
+    subset), matching the platform's own categorization.
+
+    Order follows CATEGORY_TAXONOMY for stable output; unknown raw labels are appended last."""
+    if not isinstance(raw_def, dict):
+        return []
+    cats = set()
+    raw = raw_def.get("category")
+    if raw:
+        cats.add(raw)
+    for flag, category in _CAPABILITY_CATEGORY.items():
+        if raw_def.get(flag):
+            cats.add(category)
+    # custom connectors are clones of a base type — inherit its category (recovers `siem`,
+    # which `isSecEvents` cannot distinguish from `security_control`).
+    if raw == "custom" and type_key and type_key.startswith("custom_") and isinstance(catalog, dict):
+        base = catalog.get(type_key[len("custom_"):])
+        base_cat = base.get("category") if isinstance(base, dict) else None
+        if base_cat and base_cat != "custom":
+            cats.add(base_cat)
+    ordered = [c for c in CATEGORY_TAXONOMY if c in cats]
+    ordered += sorted(c for c in cats if c not in CATEGORY_TAXONOMY)
+    return ordered
+
+
+def categories_for_type(catalog: Dict[str, Any], type_key: Optional[str]) -> List[str]:
+    """Derived category membership for an installed connector, joined from the catalog by
+    type. Empty when the type is absent from the catalog (conservative — never guesses)."""
+    type_def = catalog.get(type_key) if isinstance(catalog, dict) else None
+    return derive_categories(type_def, catalog, type_key) if isinstance(type_def, dict) else []
+
+
+def get_integration_catalog_entry(type_key: str, raw_def: Dict[str, Any],
+                                  catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Map a raw catalog type-def (from /config/integrations, keyed by type) to the
+    public catalog entry. Allow-list only — internal fields (fields[], featureFlag,
+    guideLink, raw is* flags) are never exposed.
+
+    `category` is the raw origin label; `categories` is the derived functional membership
+    (see derive_categories) and is what `category_filter` matches against. Passing `catalog`
+    lets a `custom_<base>` type inherit its base type's category."""
+    return {
+        "type": type_key,
+        "name": raw_def.get("displayName") or type_key,
+        "description": raw_def.get("description"),
+        "category": raw_def.get("category"),
+        "categories": derive_categories(raw_def, catalog, type_key),
+        "vendor": raw_def.get("vendor"),
+        "product": raw_def.get("product"),
+    }
+
+
+def _partial_ci_match(value: Optional[str], term: Optional[str]) -> bool:
+    """True when `term` is a case-insensitive substring of `value` (or term is falsy)."""
+    if not term:
+        return True
+    return term.lower() in (value or "").lower()
+
+
+def _partial_ci_match_any(values: Optional[List[str]], term: Optional[str]) -> bool:
+    """True when `term` is a case-insensitive substring of any value in `values`
+    (or term is falsy). Used for the derived `categories` list."""
+    if not term:
+        return True
+    return any(_partial_ci_match(v, term) for v in (values or []))
+
+
+def filter_integration_catalog(
+    entries: List[Dict[str, Any]],
+    name_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
+    vendor_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Filter catalog entries by partial/case-insensitive string filters. `category_filter`
+    matches against the derived `categories` membership (so e.g. 'ti' also matches a `custom`
+    connector that is TI-capable)."""
+    def keep(e: Dict[str, Any]) -> bool:
+        if not _partial_ci_match(e.get("name"), name_filter):
+            return False
+        if not _partial_ci_match_any(e.get("categories"), category_filter):
+            return False
+        if not _partial_ci_match(e.get("vendor"), vendor_filter):
+            return False
+        return True
+
+    return [e for e in entries if keep(e)]
+
+
+def apply_integration_ordering(
+    entries: List[Dict[str, Any]],
+    order_by: str = "name",
+    order_direction: str = "asc",
+) -> List[Dict[str, Any]]:
+    """Order integration entries by a field, case-insensitively for strings.
+
+    Works for catalog (name/type/category/vendor) and installed/TI (name/type/id/enabled)."""
+    reverse = order_direction == "desc"
+
+    def key(e: Dict[str, Any]):
+        v = e.get(order_by)
+        # (is-missing, normalized-value) keeps None values grouped and types homogeneous per field
+        if v is None:
+            return (1, "")
+        if isinstance(v, str):
+            return (0, v.lower())
+        return (0, v)
+
+    return sorted(entries, key=key, reverse=reverse)
+
+
+def paginate_integration_list(
+    items: List[Dict[str, Any]],
+    page_number: int,
+    page_size: int,
+    noun: str,
+) -> Dict[str, Any]:
+    """Generic pagination for the integration tools. `noun` sets the response keys:
+    `total_<noun>` and `<noun>_in_page` (e.g. noun='integrations')."""
+    total = len(items)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    result: Dict[str, Any] = {
+        "page_number": page_number,
+        "total_pages": total_pages,
+        f"total_{noun}": total,
+    }
+
+    if page_number < 0 or (total_pages > 0 and page_number >= total_pages):
+        result[f"{noun}_in_page"] = []
+        result["error"] = (
+            f"Invalid page_number {page_number}. "
+            f"Available pages range from 0 to {max(total_pages - 1, 0)} (total {total_pages} pages)"
+        )
+        return result
+
+    start = page_number * page_size
+    end = min(start + page_size, total)
+    result[f"{noun}_in_page"] = items[start:end]
+
+    if total == 0:
+        result["hint_to_agent"] = (
+            f"No {noun} matched. Try removing or broadening the filters."
+        )
+    elif page_number + 1 < total_pages:
+        result["hint_to_agent"] = (
+            f"You can scan the next page by calling with page_number={page_number + 1}"
+        )
+
+    return result
+
+
+def get_minimal_installed_integration(raw: Dict[str, Any], catalog: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Project a raw installed connector to the slim public shape — never secrets.
+
+    Allow-list `id/type/name/enabled`; `enabled` defaults to False when absent. When a
+    `catalog` is supplied, the connector is enriched with its `category` (raw origin label)
+    and derived `categories` membership, joined from the catalog by type — the installed
+    payload itself carries no category, so it must come from the catalog."""
+    type_key = raw.get("type")
+    entry = {
+        "id": raw.get("id"),
+        "type": type_key,
+        "name": raw.get("name"),
+        "enabled": bool(raw.get("enabled", False)),
+    }
+    if catalog is not None:
+        type_def = catalog.get(type_key) if isinstance(catalog, dict) else None
+        entry["category"] = type_def.get("category") if isinstance(type_def, dict) else None
+        entry["categories"] = categories_for_type(catalog, type_key)
+    return entry
+
+
+def filter_installed_integrations(
+    entries: List[Dict[str, Any]],
+    name_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    enabled_filter: Optional[bool] = None,
+    category_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Filter installed connectors by partial/case-insensitive name/type, boolean enabled,
+    and `category_filter` (matched against the derived `categories` membership)."""
+    def keep(e: Dict[str, Any]) -> bool:
+        if not _partial_ci_match(e.get("name"), name_filter):
+            return False
+        if not _partial_ci_match(e.get("type"), type_filter):
+            return False
+        if enabled_filter is not None and bool(e.get("enabled")) != enabled_filter:
+            return False
+        if not _partial_ci_match_any(e.get("categories"), category_filter):
+            return False
+        return True
+
+    return [e for e in entries if keep(e)]
+
+
+# Redaction constants 
+REDACTED_PLACEHOLDER = "@enc:SENSITIVE_FIELD"
+ALWAYS_REDACTED_FIELDS = ["proxyPass", "headers"]
+
+# Conservative fail-safe set for connector types absent from the catalog, so an unknown
+# type can never bypass schema-driven masking. Field names drawn from the live pentest01
+# connector schemas (SAF-32798 research).
+_DEFAULT_SENSITIVE_FIELDS = {
+    "password", "token", "secret", "apiToken", "apiSecret", "apiKey", "clientSecret",
+    "secretId", "privateKey", "keyPassword", "pfxPassword", "clientKeyPassword",
+    "uidTokenCurrent", "uidTokenNext", "proxyPass",
+}
+
+
+def _schema_sensitive_fields(catalog: Dict[str, Any], connector_type: Optional[str]):
+    """Return the set of schema-`sensitive` field keys for a type, or None when the type
+    is absent from the catalog (signals the caller to use the fail-safe default set)."""
+    type_def = catalog.get(connector_type) if isinstance(catalog, dict) else None
+    if not isinstance(type_def, dict):
+        return None
+    fields = type_def.get("fields") or []
+    return {f.get("key") for f in fields if isinstance(f, dict) and f.get("sensitive") and f.get("key")}
+
+
+def redact_sensitive_fields(connector: Dict[str, Any], catalog: Dict[str, Any]):
+    """Return `(redacted_copy, redacted_field_names)` for a connector config.
+
+    A single recursive pass masks, at EVERY dict depth:
+    1. any key whose name is in the unified sensitive set — the union of the type's
+       schema-`sensitive` fields, a conservative fail-safe default set, and the
+       always-redacted names (`headers`, `proxyPass`). Unioning (rather than either/or)
+       ensures a partially-flagged schema can never drop the default protections, and
+       recursing ensures a nested `headers`/secret is masked, not just a top-level one.
+    2. any `$PAM:`/`@enc:` vault-reference string value — defense-in-depth for a secret
+       the key-name set misses.
+    The input is not mutated.
+    """
+    sensitive = (_schema_sensitive_fields(catalog, connector.get("type")) or set()) \
+        | _DEFAULT_SENSITIVE_FIELDS | set(ALWAYS_REDACTED_FIELDS)
+
+    redacted_keys: set = set()
+
+    def _redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                if k in sensitive:
+                    out[k] = REDACTED_PLACEHOLDER
+                    redacted_keys.add(k)
+                else:
+                    masked = _redact(v)
+                    if isinstance(v, str) and masked == REDACTED_PLACEHOLDER and v != REDACTED_PLACEHOLDER:
+                        redacted_keys.add(k)
+                    out[k] = masked
+            return out
+        if isinstance(value, list):
+            return [_redact(v) for v in value]
+        if isinstance(value, str) and (value.startswith("$PAM:") or value.startswith("@enc:")):
+            return REDACTED_PLACEHOLDER
+        return value
+
+    return _redact(connector), sorted(redacted_keys)
+
+
+def get_installed_integration_detail_view(connector: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
+    """Full config of a single installed connector, with sensitive fields redacted, plus a
+    machine-readable `redacted_fields` list of the field names that were masked (so an agent
+    need not scan values for the placeholder)."""
+    redacted, redacted_fields = redact_sensitive_fields(connector, catalog)
+    return {"integration": redacted, "redacted_fields": redacted_fields}

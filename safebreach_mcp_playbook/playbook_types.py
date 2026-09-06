@@ -149,6 +149,69 @@ def _extract_custom_tag_values(tags_data: Any) -> List[str]:
     return values
 
 
+DRAFT_STATUS = 'draft'
+
+VALID_TEST_TYPES = ('validate', 'propagate', 'all')
+TEST_TYPE_VALIDATE = 'validate'
+TEST_TYPE_PROPAGATE = 'propagate'
+TEST_TYPE_ALL = 'all'
+
+PROPAGATE_TAG_ID = 44
+PROPAGATE_TAG_NAME = 'ALM'
+PROPAGATE_TAG_VALUE = '1'
+
+
+def _is_draft_attack(attack_data: Any) -> bool:
+    """
+    Decide whether a move is an unpublished draft.
+
+    The Playbook UI shows published content only, so a draft returned by the knowledge-base API is
+    content the customer cannot find there. Moves with no status field at all are out-of-the-box
+    content and are NOT drafts.
+
+    Args:
+        attack_data: Raw move as the API supplied it.
+
+    Returns:
+        True only when the move explicitly carries the draft status.
+    """
+    if not isinstance(attack_data, dict):
+        return False
+    return attack_data.get('status') == DRAFT_STATUS
+
+
+def _is_propagate_attack(tags_data: Any) -> bool:
+    """
+    Decide whether a move's tags mark it as a Propagate (ALM) attack.
+
+    Args:
+        tags_data: Raw tags list from the SafeBreach API — tag groups shaped
+            {id, name, values: [{value, displayName}]}.
+
+    Returns:
+        True only when a group matches the Propagate tag id AND name AND carries the truthy
+        value. False for every other input, including malformed or absent tag data. The value
+        check is deliberate: the ALM group is boolean-valued, so presence alone does not mean
+        an attack is Propagate.
+    """
+    if not isinstance(tags_data, list):
+        return False
+
+    for tag_item in tags_data:
+        if not isinstance(tag_item, dict):
+            continue
+        if tag_item.get('id') != PROPAGATE_TAG_ID or tag_item.get('name') != PROPAGATE_TAG_NAME:
+            continue
+        values = tag_item.get('values')
+        if not isinstance(values, list):
+            continue
+        for value_obj in values:
+            if isinstance(value_obj, dict) and str(value_obj.get('value')) == PROPAGATE_TAG_VALUE:
+                return True
+
+    return False
+
+
 def _extract_mitre_data(tags_data: Any) -> Dict[str, Any]:
     """
     Extract MITRE ATT&CK data from the tags array.
@@ -352,6 +415,9 @@ def transform_reduced_playbook_attack(attack_data: Dict[str, Any],
     platform_data = _extract_platform_data(attack_data.get('content', {}))
     result.update(platform_data)
 
+    result['is_propagate'] = _is_propagate_attack(attack_data.get('tags', []))
+    result['is_draft'] = _is_draft_attack(attack_data)
+
     if include_mitre_techniques:
         mitre_data = _extract_mitre_data(attack_data.get('tags', []))
         result.update(mitre_data)
@@ -416,7 +482,8 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
                                mitre_tactic_filter: Optional[str] = None,
                                attacker_platform_filter: Optional[str] = None,
                                target_platform_filter: Optional[str] = None,
-                               tag_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+                               tag_filter: Optional[str] = None,
+                               test_type: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Filter attacks based on various criteria.
 
@@ -436,11 +503,27 @@ def filter_attacks_by_criteria(attacks: List[Dict[str, Any]],
             Attacks with None attacker_platform pass through (are included).
         target_platform_filter: Comma-separated platform values (OR logic, case-insensitive partial match).
             Attacks with None target_platform pass through (are included).
+        test_type: Catalog scope — 'validate' keeps non-Propagate attacks, 'propagate' keeps only
+            Propagate attacks, 'all' or None filters nothing. Compared case-insensitively. Validation
+            of the value belongs to the calling function.
 
     Returns:
         Filtered list of attacks
     """
     filtered_attacks = attacks.copy()
+
+    if test_type:
+        test_type_lower = test_type.lower()
+        if test_type_lower == TEST_TYPE_VALIDATE:
+            filtered_attacks = [
+                attack for attack in filtered_attacks
+                if not attack.get('is_propagate')
+            ]
+        elif test_type_lower == TEST_TYPE_PROPAGATE:
+            filtered_attacks = [
+                attack for attack in filtered_attacks
+                if attack.get('is_propagate')
+            ]
     
     # Filter by name (partial, case-insensitive)
     if name_filter:

@@ -305,3 +305,119 @@ class TestGetPlaybookAttackTags:
         assert mock_sb.call_args.kwargs["attack_id"] == 1027
         assert isinstance(out, str)
         assert "network" in out
+
+
+def _tagged_raw_attack(attack_id, name, tag_value, is_alm):
+    """Raw move carrying a custom tag and, optionally, the ALM group."""
+    tags = [{"id": 7, "name": "Tags",
+             "values": [{"id": 1, "value": tag_value, "displayName": tag_value}]}]
+    if is_alm:
+        tags.append({"id": 44, "name": "ALM",
+                     "values": [{"id": 1, "value": "1", "displayName": "1"}]})
+    return {
+        "id": attack_id,
+        "name": name,
+        "description": f"description of {name}",
+        "modifiedDate": "2024-10-07T07:28:05.000Z",
+        "publishedDate": "2019-05-29T15:18:44.000Z",
+        "tags": tags,
+        "content": {},
+    }
+
+
+class TestTestTypeByTags:
+    """T-25 through T-27 — scope parity on the tag-search path."""
+
+    SHARED_TAG = 'shared-tag'
+
+    def _dataset(self):
+        return [
+            _tagged_raw_attack(101, 'validate tagged', self.SHARED_TAG, False),
+            _tagged_raw_attack(102, 'validate tagged two', self.SHARED_TAG, False),
+            _tagged_raw_attack(201, 'propagate tagged', self.SHARED_TAG, True),
+        ]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_defaults_to_validate(self, mock_get_all):
+        """T-25: the same defect is not reachable through the tag-search door."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks_by_tags('test-console', tags=self.SHARED_TAG)
+
+        assert sorted(a['id'] for a in result['attacks_in_page']) == [101, 102]
+        assert result['total_attacks'] == 2
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_propagate_scope_not_mixed(self, mock_get_all):
+        """T-26: an explicit Propagate tag search returns only Propagate."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks_by_tags(
+            'test-console', tags=self.SHARED_TAG, test_type='propagate'
+        )
+
+        assert [a['id'] for a in result['attacks_in_page']] == [201]
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_applied_filters_keeps_both(self, mock_get_all):
+        """T-27: the applied-filters map is ASSIGNED here, so scope must not evict the tags entry."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks_by_tags(
+            'test-console', tags=self.SHARED_TAG, test_type='all'
+        )
+
+        applied = result['applied_filters']
+        assert applied['tags'] == self.SHARED_TAG
+        assert applied['test_type'] == 'all'
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_invalid_scope_raises(self, mock_get_all):
+        """T-25 (cont.): validation parity with the main listing function."""
+        mock_get_all.return_value = self._dataset()
+
+        with pytest.raises(ValueError) as exc:
+            sb_get_playbook_attacks_by_tags('test-console', tags=self.SHARED_TAG, test_type='nope')
+
+        for valid in ('validate', 'propagate', 'all'):
+            assert valid in str(exc.value)
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_discloses_exclusion(self, mock_get_all):
+        """T-25 (cont.): the default scope discloses what it hid, as the main path does."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks_by_tags('test-console', tags=self.SHARED_TAG)
+
+        assert 'Propagate' in result['hint_to_agent']
+        assert "test_type='all'" in result['hint_to_agent']
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_all_scope_returns_counts(self, mock_get_all):
+        """T-27 (cont.): 'all' carries the split the renderer needs."""
+        mock_get_all.return_value = self._dataset()
+
+        result = sb_get_playbook_attacks_by_tags(
+            'test-console', tags=self.SHARED_TAG, test_type='all'
+        )
+
+        assert result['validate_count'] == 2
+        assert result['propagate_count'] == 1
+
+
+class TestDraftExclusionByTags:
+    """Parity: the tag-search door must not reintroduce unpublished drafts."""
+
+    @patch('safebreach_mcp_playbook.playbook_functions._get_all_attacks_from_cache_or_api')
+    def test_by_tags_excludes_drafts_by_default(self, mock_get_all):
+        """Parity: the tag-search door must not reintroduce drafts."""
+        tagged = []
+        for aid, status in ((201, 'published'), (202, 'draft')):
+            a = _tagged_raw_attack(aid, f'tagged {aid}', 'shared', False)
+            a['status'] = status
+            tagged.append(a)
+        mock_get_all.return_value = tagged
+
+        result = sb_get_playbook_attacks_by_tags('test-console', tags='shared')
+
+        assert [a['id'] for a in result['attacks_in_page']] == [201]
