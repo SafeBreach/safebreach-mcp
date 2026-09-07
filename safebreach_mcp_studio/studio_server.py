@@ -1569,6 +1569,10 @@ Parameters:
 - dry_run (bool): Only for delete. Defaults to True — preview what will be deleted
   and how much space will be freed. Set to False to execute the deletion.
 
+A paused test can be cancelled directly — do not resume it beforehand. Cancel works from
+PENDING, RUNNING and PAUSED alike; pause/resume/cancel on a state where the action is
+already satisfied return a success-shaped result rather than an error.
+
 Delete is IRREVERSIBLE — test data cannot be restored after deletion. Only tests in
 terminal states (completed, canceled, failed) can be deleted. Use the dry-run preview
 to confirm before executing.

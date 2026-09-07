@@ -79,6 +79,63 @@ class TestManageTestRateLimitingGate:
         "safebreach_mcp_studio.studio_functions.get_caller_identity",
         return_value="test-caller",
     )
+    @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="PAUSED")
+    @patch("safebreach_mcp_studio.studio_functions.requests.delete")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_account_id",
+        return_value="1234567890",
+    )
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_api_base_url",
+        return_value="https://test.safebreach.com",
+    )
+    def test_cancel_on_paused_consumes_a_rate_limit_slot(
+        self,
+        _mock_base_url,
+        _mock_account_id,
+        mock_delete,
+        _mock_state,
+        _mock_get_identity,
+        mock_rate_limiter,
+    ):
+        """Paused->cancel is a real mutation, so it must be metered — SAF-32305.
+
+        A quick-return skips the limiter (test_quick_return_does_not_trigger_rate_limiting).
+        Cancelling a paused test issues a DELETE, so it must not take that path.
+        """
+        call_order = []
+        mock_rate_limiter.check_limit.side_effect = (
+            lambda *a, **kw: call_order.append("check_limit")
+        )
+        mock_rate_limiter.record_action.side_effect = (
+            lambda *a, **kw: call_order.append("record_action")
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {}
+
+        def delete_side_effect(*args, **kwargs):
+            call_order.append("api_call")
+            return mock_response
+
+        mock_delete.side_effect = delete_side_effect
+
+        sb_manage_test(
+            test_id="1776488350786.15", action="cancel", console="test"
+        )
+
+        assert call_order == ["check_limit", "api_call", "record_action"]
+        mock_rate_limiter.check_limit.assert_called_once_with(
+            "test-caller", "manage_test"
+        )
+
+    @patch("safebreach_mcp_studio.studio_functions.rate_limiter")
+    @patch(
+        "safebreach_mcp_studio.studio_functions.get_caller_identity",
+        return_value="test-caller",
+    )
     @patch("safebreach_mcp_studio.studio_functions._get_test_state", return_value="RUNNING")
     @patch("safebreach_mcp_studio.studio_functions.requests.delete")
     @patch(
