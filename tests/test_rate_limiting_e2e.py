@@ -45,15 +45,7 @@ def _cancel_test_best_effort(test_id: str, console: str) -> None:
     try:
         sb_manage_test(test_id=test_id, action="cancel", console=console)
     except Exception:
-        # A PAUSED test cannot be cancelled directly — resume then cancel.
-        # (these tests can leave the run paused; clear the limit before each call.)
-        try:
-            _rate_limit_store.clear()
-            sb_manage_test(test_id=test_id, action="resume", console=console)
-            _rate_limit_store.clear()
-            sb_manage_test(test_id=test_id, action="cancel", console=console)
-        except Exception:
-            pass
+        pass
 
 
 def _find_ready_scenario(console: str) -> dict:

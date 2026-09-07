@@ -8259,6 +8259,28 @@ class TestManageTest:
         assert "resume" not in str(exc_info.value).lower()
         mock_delete.assert_called_once()
 
+    def test_manage_test_description_documents_the_real_contract(self):
+        """The manage_test tool description matches the tool — SAF-32305.
+
+        The description is the only contract an LLM caller reads, so a stale
+        rule there does the same damage the guard itself did.
+        """
+        from pathlib import Path
+        import safebreach_mcp_studio
+
+        source = (
+            Path(safebreach_mcp_studio.__file__).parent / "studio_server.py"
+        ).read_text()
+
+        start = source.index('name="manage_test"')
+        description = source[start:source.index('"""', source.index('description="""', start) + 15)]
+
+        for action in ("pause", "resume", "cancel", "delete"):
+            assert action in description, f"{action} missing from manage_test description"
+
+        assert "paused test can be cancelled directly" in description.lower()
+        assert "resume first" not in description.lower()
+
     # --- Phase 10: State transition matrix — Pause — SAF-31111 ---
 
     @patch('safebreach_mcp_studio.studio_functions._get_test_state')

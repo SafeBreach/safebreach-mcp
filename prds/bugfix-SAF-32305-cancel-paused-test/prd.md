@@ -175,8 +175,8 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 - [x] **DoD-3** `test_cancel_on_paused_raises_error` is inverted to assert the DELETE proceeds.
 - [ ] **DoD-4** A regression test covers cancel on a multi-step plan whose steps are partially paused (R2).
 - [x] **DoD-5** An orchestrator 500 propagates as an honest error — not retried, not re-described as a pause restriction (R1).
-- [ ] **DoD-6** The resume-then-cancel fallbacks in `conftest.py:147-159` and `tests/test_rate_limiting_e2e.py:45-56` are removed.
-- [ ] **DoD-7** `studio_server.py` tool description and `CLAUDE.md` state that `PAUSED` → cancel is legal and document all four actions including `delete`.
+- [x] **DoD-6** The resume-then-cancel fallbacks in `conftest.py:147-159` and `tests/test_rate_limiting_e2e.py:45-56` are removed.
+- [x] **DoD-7** `studio_server.py` tool description and `CLAUDE.md` state that `PAUSED` → cancel is legal and document all four actions including `delete`.
 - [ ] **DoD-8** Verified end-to-end against a live paused test on staging.
 
 ### Phase 2 — breach-genie
@@ -195,7 +195,7 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 | Phase | Name | Status | Completed | Commit |
 |-------|------|--------|-----------|--------|
 | 1a | The fix and its tests | ✅ Complete | 2026-09-07 | `287b361` |
-| 1b | Fixture and doc cleanup | ⏳ Pending | — | — |
+| 1b | Fixture and doc cleanup | ✅ Complete | 2026-09-07 | pending |
 | 1c | Live verification | ⏳ Pending | — | — |
 | 2 | HELM skills (breach-genie) | ⏳ Pending | — | — |
 
@@ -307,10 +307,11 @@ of the transition rules.
 
 ## 12. Current Implementation State
 
-**Phase 1a complete (2026-09-07).** The guard is deleted; four tests added/inverted. Unit suite:
-**1679 passed, 151 e2e deselected**, zero regressions (baseline was 1676 at `299c2df`).
+**Phases 1a and 1b complete (2026-09-07).** The guard is deleted; five tests added/inverted; the dead
+resume-then-cancel fixtures are gone and the docs match the tool. Unit suite: **1680 passed,
+151 e2e deselected**, zero regressions (baseline was 1676 at `299c2df`).
 
-Phases 1b, 1c and 2 remain pending. **DoD-4 is still open** — the multi-step assertion is not
+Phases 1c and 2 remain pending. **DoD-4 is still open** — the multi-step assertion is not
 assertable at unit level (the MCP has no step awareness) and rests entirely on T-7 in Phase 1c.
 
 ## 13. Change Log
