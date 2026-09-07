@@ -35,11 +35,9 @@ def _resp(json_value):
 
 
 @pytest.fixture(autouse=True)
-def _auth_ctx():
-    from safebreach_mcp_core.token_context import _user_auth_artifacts
-    token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-    yield
-    _user_auth_artifacts.reset(token)
+def _auth_ctx(mcp_request_auth):
+    with mcp_request_auth({"x-apitoken": "test-token"}):
+        yield
 
 
 @pytest.fixture(autouse=True)

@@ -135,7 +135,7 @@ If Claude or anyone accidentally creates content with real secrets:
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://server:port/sse",
+        "http://server:port/mcp",
         "--headers",
         "{\"Authorization\": \"Bearer ${SAFEBREACH_TOKEN}\"}"
       ]
