@@ -518,8 +518,10 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   report down to the counts. For *why* a step produces nothing — or why one named attack did not run — use
   `get_scenario_blocked_entities`. The two are disjoint by construction, and each tool's hint routes to the other.
   Scores exactly one of three inputs, a blank string counting as absent: an **ad-hoc scenario body that was
-  never saved** (`scenario`, a JSON string), a **saved scenario / custom plan** (`scenario_id`), or **the
-  scenario a past run executed** (`test_id`, a planRunId such as `1764165600525.2`).
+  never saved** (`scenario`), a **saved scenario / custom plan** (`scenario_id`), or **the scenario a past run
+  executed** (`test_id`, a planRunId such as `1764165600525.2`). The body is accepted as a **JSON string or an
+  already-parsed object** — some MCP clients deserialize a JSON-looking argument on the way out, and both
+  forms carry the same information.
   **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
   **runnable** counts — what would run right now — and `true` gives **expected** counts, as if every simulator
   were available. Neither is derivable from the other; `both_counts=True` issues two calls and labels both.

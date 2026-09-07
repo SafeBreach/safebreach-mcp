@@ -3018,6 +3018,13 @@ def _parse_plan_argument(plan, scenario_id, test_id=None, body_param='plan'):
         # look it up as a scenario and report it missing.
         return None, None, test_id
 
+    # A calling agent that has the body as an object routinely sends it as one,
+    # and several MCP clients parse a JSON-looking string on the way out. The
+    # value is the same either way, so refusing the object form would fail a
+    # caller for its serializer's choice rather than for anything it got wrong.
+    if isinstance(plan, dict):
+        return plan, None, None
+
     try:
         parsed = json.loads(plan)
     except (TypeError, ValueError) as e:
@@ -3222,7 +3229,8 @@ def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
     )
 
 
-def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
+def sb_get_plan_statistics(console: str = "default",
+                           plan: str | dict | None = None,
                            scenario_id: str | None = None,
                            test_id: str | None = None,
                            include_disabled: bool = DEFAULT_INCLUDE_DISABLED,
@@ -3239,7 +3247,8 @@ def sb_get_plan_statistics(console: str = "default", plan: str | None = None,
 
     Args:
         console: SafeBreach console identifier
-        plan: JSON string of an ad-hoc scenario body. Mutually exclusive with the ids.
+        plan: An ad-hoc scenario body, as a JSON string or an already-parsed
+            object. Mutually exclusive with the ids.
         scenario_id: A saved scenario UUID or custom plan id.
         test_id: The planRunId of a past run; scores the scenario that run executed.
         include_disabled: False = runnable counts, True = expected counts.
@@ -3932,7 +3941,7 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
 
 
 def sb_get_scenario_simulation_counts(
-    console: str = "default", scenario: str | None = None,
+    console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
     include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
     get_constraints: bool = False,
@@ -3970,7 +3979,7 @@ def sb_get_scenario_simulation_counts(
 
 
 def sb_get_scenario_blocked_entities(
-    console: str = "default", scenario: str | None = None,
+    console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
     attack_ids: str | None = None,
     include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,

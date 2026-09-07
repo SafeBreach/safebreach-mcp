@@ -13731,6 +13731,82 @@ class TestTheCountsToolNamesWhichAttacksRun:
             assert word not in text
 
 
+class TestTheScenarioBodyIsAcceptedAsStringOrObject:
+    """T-68 — a caller is not failed for its serializer's choice.
+
+    Reported from the field: an agent sent the body as a JSON string and the
+    call was rejected with a pydantic `string_type` error naming a dict. The
+    client had parsed the JSON-looking string on the way out, and the tool
+    signature accepted only `str`, so the request died at the MCP boundary
+    before any of this module ran. The two forms carry identical information.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    # The shape that failed in the field: several steps, each with a playbook
+    # filter and simulator filters on both sides.
+    BODY = {
+        "name": "Latest CISA",
+        "steps": [
+            {"name": "Initial Access and Phishing",
+             "attacksFilter": {"playbook": {"operator": "is", "name": "playbook",
+                                            "values": [9810, 9811, 10916]}},
+             "attackerFilter": {"simulators": {"operator": "is", "name": "simulators",
+                                               "values": ["56211658-2cc6-459f-98ea-d0e163ca9251"]}},
+             "targetFilter": {"simulators": {"operator": "is", "name": "simulators",
+                                             "values": ["4488a72d-469f-4ab9-934b-17ff98cdf045"]}}},
+            {"name": "C2 Communication",
+             "attacksFilter": {"playbook": {"operator": "is", "name": "playbook",
+                                            "values": [11754, 11752]}}},
+        ],
+    }
+
+    @pytest.mark.parametrize("tool", (sb_get_scenario_simulation_counts,
+                                      sb_get_scenario_blocked_entities))
+    def test_an_object_body_is_accepted(self, tool, mock_statistics_response_all_good):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.BODY)
+        assert post.call_count == 1
+
+    @pytest.mark.parametrize("tool", (sb_get_scenario_simulation_counts,
+                                      sb_get_scenario_blocked_entities))
+    def test_both_forms_send_the_same_request(
+        self, tool, mock_statistics_response_all_good
+    ):
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            tool(console="test-console", scenario=self.BODY)
+            tool(console="test-console", scenario=json.dumps(self.BODY))
+        as_object, as_string = (call.kwargs['json'] for call in post.call_args_list)
+        assert as_object == as_string
+        assert len(as_object['steps']) == 2
+
+    def test_the_registered_schema_admits_both(self):
+        for name in SCENARIO_TOOL_NAMES:
+            types = _studio_tools()[name].inputSchema['properties']['scenario']['anyOf']
+            assert {entry.get('type') for entry in types} == {'string', 'object', 'null'}
+
+    def test_exclusivity_still_holds_for_an_object_body(self):
+        with _statistics_transport({}) as post:
+            with pytest.raises(ValueError, match="exactly one"):
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario=self.BODY, scenario_id="1771")
+            post.assert_not_called()
+
+    def test_an_object_with_no_steps_gets_the_step_less_error(self):
+        # Not "Invalid scenario JSON": the body parsed fine, it simply has
+        # nothing to score, and the caller needs to be told which of those it is.
+        with _statistics_transport({}) as post:
+            with pytest.raises(Exception, match="no steps"):
+                sb_get_scenario_simulation_counts(
+                    console="test-console", scenario={"name": "empty", "steps": []})
+            post.assert_not_called()
+
+
 class TestAdvancedActionIdsAreNamed:
     """T-67 — `required: [0]` becomes a capability, not an integer.
 

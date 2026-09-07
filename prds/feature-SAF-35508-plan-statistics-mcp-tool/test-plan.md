@@ -113,9 +113,9 @@ Sources: JIRA acceptance criteria (AC-1…AC-12, reworded 2026-08-26) ∪ PRD §
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 40 | 14 | 0 | 6 | 60 |
+| Automatic | 41 | 14 | 0 | 6 | 61 |
 | Manual | 0 | 0 | 0 | 3 | 3 |
-| **Total** | **40** | **14** | **0** | **9** | **63** |
+| **Total** | **41** | **14** | **0** | **9** | **64** |
 
 ## Environment Requirements (aggregated)
 
@@ -201,6 +201,7 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 | T-65 | Attack names are resolved for the listed page and nothing else | performance | Phase 13 | safebreach_mcp_studio |
 | T-66 | `page_size=0` lists nothing, asks for nothing, and explains nothing | API-contract | Phase 13 | safebreach_mcp_studio |
 | T-67 | A constraint reporting capability ids reports capability names, and guesses none | API-contract | Phase 14 | safebreach_mcp_studio |
+| T-68 | The scenario body is accepted as a JSON string or an already-parsed object | regression | Phase 14 | safebreach_mcp_studio |
 
 **Integration** — all Automatic
 
@@ -1282,6 +1283,22 @@ Capability checklist — answered from the plan's e2e (real-env) tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
 - Environment needs: none
 
+### T-68 — The scenario body is accepted as a JSON string or an already-parsed object
+
+- Description: Proves a caller is not failed for how its client serialized an argument, when both forms carry the same information.
+- Status: Active
+- Passes after: Phase 14
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: Reported from the field. An agent sent the body as a JSON string; the MCP client parsed it on the way out, and because the signature accepted only `str`, pydantic rejected the call at the tool boundary — before any module code ran, which is why the error read `string_type ... input_type=dict` rather than the module's own "Invalid scenario JSON". A caller cannot act on that, and nothing was actually wrong with the request. The failure is silent to the tests because every test constructs the string form itself.
+- Risk source: PRD §13 (2026-09-03 (j))
+- Verify: Call both scenario tools with a multi-step body as a dict and as `json.dumps` of the same dict, capturing the posted payload. Read the registered input schema. Then send an object body together with `scenario_id`, and an object body with an empty `steps` list.
+- Expected: Both forms are accepted and post an identical request body. The registered schema admits `string`, `object` and `null` for `scenario`. Exclusivity still raises "exactly one" for an object body, and an object with no steps raises the step-less error rather than a JSON-parse error — the two are different problems and must not share a message.
+- Evidence required: pytest run output naming the tests, with the two posted payloads and the schema's `anyOf` types.
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py`
+- Environment needs: none
+
 
 ## Tests by Phase (readiness view — generated)
 
@@ -1302,8 +1319,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 11 | T-59 | 52 |
 | Phase 12 | T-60, T-61, T-62, T-63 | 56 |
 | Phase 13 | T-64, T-65, T-66 | 59 |
-| Phase 14 | T-67 | 60 |
-| Final | T-32, T-33, T-35 | all (63) |
+| Phase 14 | T-67, T-68 | 61 |
+| Final | T-32, T-33, T-35 | all (64) |
 
 ## Sign-off
 

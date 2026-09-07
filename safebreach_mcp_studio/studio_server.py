@@ -1701,7 +1701,7 @@ get_scenario_simulation_counts(console="demo", test_id="1764165600525.2", page=1
 get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_size=0)"""
         )
         def get_scenario_simulation_counts(
-            console: str = "default", scenario: str | None = None,
+            console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
             get_constraints: bool = False, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
@@ -1772,7 +1772,7 @@ get_scenario_blocked_entities(console="demo", scenario_id="3b8eade5-9285-43b8-b3
 get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
         )
         def get_scenario_blocked_entities(
-            console: str = "default", scenario: str | None = None,
+            console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
             attack_ids: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
