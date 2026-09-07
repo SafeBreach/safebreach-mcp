@@ -173,11 +173,11 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 - [x] **DoD-1** `manage_test(action="cancel")` on a `PAUSED` test issues the DELETE and succeeds; no resume is planned, attempted, or mentioned in any response field.
 - [x] **DoD-2** The guard at `studio_functions.py:3484-3488` is removed outright — not replaced by an internal resume-then-cancel.
 - [x] **DoD-3** `test_cancel_on_paused_raises_error` is inverted to assert the DELETE proceeds.
-- [ ] **DoD-4** A regression test covers cancel on a multi-step plan whose steps are partially paused (R2).
+- [x] **DoD-4** A regression test covers cancel on a multi-step plan whose steps are partially paused (R2). *Closed by the e2e `test_e2e_cancel_paused_multistep_test`, not at unit level — see test-plan T-2 reconciliation.*
 - [x] **DoD-5** An orchestrator 500 propagates as an honest error — not retried, not re-described as a pause restriction (R1).
 - [x] **DoD-6** The resume-then-cancel fallbacks in `conftest.py:147-159` and `tests/test_rate_limiting_e2e.py:45-56` are removed.
 - [x] **DoD-7** `studio_server.py` tool description and `CLAUDE.md` state that `PAUSED` → cancel is legal and document all four actions including `delete`.
-- [ ] **DoD-8** Verified end-to-end against a live paused test on staging.
+- [x] **DoD-8** Verified end-to-end against a live paused test on **pentest01** (the console QA filed against), 2026-09-07 — see `test-results/phase-1c.md`.
 
 ### Phase 2 — breach-genie
 
@@ -196,7 +196,7 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 |-------|------|--------|-----------|--------|
 | 1a | The fix and its tests | ✅ Complete | 2026-09-07 | `287b361` |
 | 1b | Fixture and doc cleanup | ✅ Complete | 2026-09-07 | `780eca3` |
-| 1c | Live verification | ⏳ Pending | — | — |
+| 1c | Live verification | 🔄 In Progress | — | T-6/T-7 pass; T-8 (manual HELM regression) outstanding |
 | 2 | HELM skills (breach-genie) | ⏳ Pending | — | — |
 
 ### Phase 1a — the fix and its tests (safebreach-mcp)
@@ -307,11 +307,12 @@ of the transition rules.
 
 ## 12. Current Implementation State
 
-**Phases 1a and 1b complete (2026-09-07).** The guard is deleted; five tests added/inverted; the dead
+**Phases 1a and 1b complete; 1c substantially done (2026-09-07).** The guard is deleted; five tests added/inverted; the dead
 resume-then-cancel fixtures are gone and the docs match the tool. Unit suite: **1680 passed,
 151 e2e deselected**, zero regressions (baseline was 1676 at `299c2df`).
 
-Phases 1c and 2 remain pending. **DoD-4 is still open** — the multi-step assertion is not
+T-6 and T-7 pass live on pentest01 (139s, `test-results/phase-1c.md`), closing DoD-4 and DoD-8.
+T-8 (manual HELM regression) and all of Phase 2 remain outstanding. **DoD-4 is still open** — the multi-step assertion is not
 assertable at unit level (the MCP has no step awareness) and rests entirely on T-7 in Phase 1c.
 
 ## 13. Change Log

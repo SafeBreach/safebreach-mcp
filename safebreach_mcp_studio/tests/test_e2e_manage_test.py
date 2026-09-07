@@ -25,6 +25,7 @@ from safebreach_mcp_studio.studio_functions import (
     sb_manage_test,
     sb_delete_test,
     _fetch_all_scenarios,
+    _get_test_state,
     compute_scenario_readiness,
 )
 from safebreach_mcp_core.secret_utils import get_secret_for_console
@@ -75,6 +76,17 @@ def _cancel_test(test_id, console):
 
 COMMENT_PROPAGATION_DELAY = 2  # seconds to wait for data API eventual consistency
 STATE_PROPAGATION_DELAY = 10  # seconds for orchestrator→data API state sync
+
+
+def _wait_for_terminal_state(test_id, console, attempts=15, interval=2):
+    """Poll until the test leaves the active queue. Returns the last state seen."""
+    state = None
+    for _ in range(attempts):
+        time.sleep(interval)
+        state = _get_test_state(test_id, console).upper()
+        if state in ("CANCELED", "COMPLETED"):
+            return state
+    return state
 
 
 def _get_test_comment(test_id, console):
@@ -228,6 +240,91 @@ class TestManageTestE2E:
             assert "Test pause:" in comment
             assert "Test resume:" in comment
             passed = True
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_e2e_cancel_paused_test(self):
+        """Queue, pause, then cancel directly without resuming — SAF-32305.
+
+        The lifecycle cell no e2e covered. Its absence is why a client-side
+        guard blocking this transition survived ~10 months.
+        """
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready = next(
+            (s for s in scenarios if compute_scenario_readiness(s)), None
+        )
+        assert ready is not None, f"No ready OOB scenario on {E2E_CONSOLE}"
+
+        test_id = None
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(ready['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_e2e_cancel_paused_test",
+            )
+            test_id = queue_result['test_id']
+            assert test_id
+
+            pause_result = sb_manage_test(
+                test_id=test_id, action="pause", console=E2E_CONSOLE,
+                reason="E2E pause before direct cancel",
+            )
+            assert pause_result['status'] == "success"
+            assert _get_test_state(test_id, E2E_CONSOLE).upper() == "PAUSED"
+
+            cancel_result = sb_manage_test(
+                test_id=test_id, action="cancel", console=E2E_CONSOLE,
+                reason="E2E cancelling a paused test directly",
+            )
+            assert cancel_result['status'] == "success"
+            assert cancel_result['action'] == "cancel"
+            assert "resume" not in str(cancel_result).lower()
+
+            _wait_for_terminal_state(test_id, E2E_CONSOLE)
+            assert _get_test_state(test_id, E2E_CONSOLE).upper() == "CANCELED"
+        finally:
+            if test_id:
+                _cancel_test(test_id, E2E_CONSOLE)
+
+    def test_e2e_cancel_paused_multistep_test(self):
+        """Cancel a paused multi-step plan directly — SAF-32305 DoD-4 / R2.
+
+        The MCP has no step awareness, so this is the only place the
+        merged-status semantics of a partially-paused plan are exercised.
+        """
+        scenarios = _fetch_all_scenarios(E2E_CONSOLE)
+        ready = next(
+            (s for s in scenarios
+             if compute_scenario_readiness(s) and len(s.get('steps') or []) > 1),
+            None
+        )
+        if ready is None:
+            pytest.skip(f"No ready multi-step OOB scenario on {E2E_CONSOLE}")
+
+        test_id = None
+        try:
+            queue_result = sb_run_scenario(
+                scenario_id=str(ready['id']),
+                console=E2E_CONSOLE,
+                test_name="E2E: test_e2e_cancel_paused_multistep_test",
+            )
+            test_id = queue_result['test_id']
+            assert test_id
+
+            pause_result = sb_manage_test(
+                test_id=test_id, action="pause", console=E2E_CONSOLE,
+            )
+            assert pause_result['status'] == "success"
+            assert _get_test_state(test_id, E2E_CONSOLE).upper() == "PAUSED"
+
+            cancel_result = sb_manage_test(
+                test_id=test_id, action="cancel", console=E2E_CONSOLE,
+            )
+            assert cancel_result['status'] == "success"
+
+            _wait_for_terminal_state(test_id, E2E_CONSOLE)
+            assert _get_test_state(test_id, E2E_CONSOLE).upper() == "CANCELED"
         finally:
             if test_id:
                 _cancel_test(test_id, E2E_CONSOLE)
