@@ -13,7 +13,7 @@
 
 | Req | Requirement (from SAF-32305 ∪ PRD §7) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1 | Cancel on `PAUSED` succeeds directly — no resume planned, attempted or mentioned | T-1, T-6, T-15, T-16 | Covered |
+| R1 | Cancel on `PAUSED` succeeds directly — no resume planned, attempted or mentioned | T-1, T-6, T-16 | Covered |
 | R2 | Guard removed outright, not replaced by an internal resume-then-cancel | T-1, T-3 | Covered |
 | R3 | Inverted unit test asserts the DELETE proceeds from `PAUSED` | T-1 | Covered |
 | R4 | Cancel works on a multi-step plan whose steps are partially paused | T-2, T-7 | Covered |
@@ -42,13 +42,12 @@
 | `breach-genie content/skills/safebreach-managing-tests/SKILL.md` | T-9..T-14 | — |
 | `breach-genie content/skills/safebreach-managing-tests/references/valid-transitions.md` | T-10, T-13 | — |
 | `breach-genie content/skills/safebreach-managing-tests/references/examples.md` | T-11 | — |
-| `automation tests/.../helm_long_session_lib/test_cases/scenario_lifecycle_test_cases.py` | T-15 | — |
 
 ## Risk Landscape
 
 - **Known risk areas** (PRD §9): R1 the publisher retry race (`slot.js:319`) still fires independently of pause; R2 merged multi-step status vs slot-level `isPaused`; R3 global pause must not gate cancel; R4 `resume` has a documented orchestrator crash (SAF-32835); R5 the data-API fallback can report a stale `PAUSED` (SAF-31138); R6 Phase 2 changes HELM behaviour beyond the reported bug.
 - **Existing coverage (investigated)**: the cancel/pause/resume/delete transition matrix is already unit-tested in `test_studio_functions.py` class `TestManageTest:7580` — cancel×RUNNING `:8111`, ×CANCELED `:8132`, ×COMPLETED `:8152`, ×PAUSED `:8169` (asserts the raise — T-1 **inverts** it, does not duplicate it); pause matrix `:8186-8248`; resume matrix `:8255-8317`; delete matrix `:8407-8442`. Rate-limit gating in `test_rate_limiting.py` class `TestManageTestRateLimitingGate:24`. This plan targets only the gaps.
-- **The gap that let the bug ship**: no e2e anywhere covers pause→cancel. `test_e2e_manage_test.py` has cancel `:107`, pause `:151`, pause+resume `:187`, cancel-already-canceled `:235`, delete `:283` — not this cell. The `automation` HELM suite stops at `tc13_cancel_single_test`, which cancels a **RUNNING** test only. T-6 and T-15 close both.
+- **The gap that let the bug ship**: no e2e anywhere covers pause→cancel. `test_e2e_manage_test.py` has cancel `:107`, pause `:151`, pause+resume `:187`, cancel-already-canceled `:235`, delete `:283` — not this cell. The `automation` HELM suite stops at `tc13_cancel_single_test`, which cancels a **RUNNING** test only. **T-6 closes the safebreach-mcp gap.** The automation-side gap is deliberately left to SAF-33034 (Track B), which owns per-action backend parity for that suite — see the T-15 tombstone.
 - **A third, silent confirmation**: `test_e2e_manage_test.py:57-73` `_cancel_test()` bypasses `sb_manage_test` and issues `requests.delete` at the queue URL directly — so every e2e run has been cancelling paused leftovers successfully while the tool refused to make the same call. The suite routed around its own subject.
 - **What we protect**: the untouched lifecycle actions (pause / resume / delete) and their idempotent quick-returns; the rate limiter's accounting; RBAC on the DELETE.
 - **Intentionally out of scope**: (a) root-causing the `no plan was stopped` retry race — the orchestrator's bug, its own ticket; T-3 only asserts we surface it honestly. (b) The `mcp-proxy` image bake + `dpull` needed to prove HELM's behaviour in-console — T-16 covers the same requirement from an existing console at no provisioning cost. (c) No markdown link-integrity test is added for the skill tree; breach-genie has none today and this ticket is not the place to introduce one.
@@ -57,12 +56,12 @@
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 11   | 0           | 1      | 2   | 14    |
+| Automatic | 11   | 0           | 0      | 2   | 13    |
 | Manual    | 0    | 0           | 1      | 1   | 2     |
 
 ## Environment Requirements (aggregated)
 
-- Environment classes: `none` (T-1..T-5, T-9..T-14); **console environment (Validate)** (T-6, T-7, T-8, T-15, T-16)
+- Environment classes: `none` (T-1..T-5, T-9..T-14); **console environment (Validate)** (T-6, T-7, T-8, T-16)
 
 Capability checklist — answered from the system/e2e tests only:
 
@@ -72,12 +71,15 @@ Capability checklist — answered from the system/e2e tests only:
 - [x] **Console-specific configuration required?** — Yes, three cheap items: an API token whose role permits test management (`check_rbac_response` still wraps the DELETE, so a viewer token turns T-6 into a false negative); at least one ready OOB scenario; one multi-step scenario for T-7.
 - [x] **Lateral-movement topology required?** — No. No patient-zero→victim producer is involved; a Propagate lab adds cost and zero coverage.
 - Required additions (beyond class defaults): none — an existing shared console (`E2E_CONSOLE` default `pentest01`, or `staging`) satisfies every line. Decided at the authoring gate: no new provisioning.
-- Artifacts under test: none for T-6/T-7/T-15 (the fixed `safebreach-mcp` runs locally against a real orchestrator). T-16 uses the console's already-deployed HELM.
+- Artifacts under test: none for T-6/T-7 (the fixed `safebreach-mcp` runs locally against a real orchestrator). T-16 uses the console's already-deployed HELM.
 
 ## Regression
 
 - **CI that must pass**: safebreach-mcp repo CI (the full pytest suite, `-m "not e2e"`); breach-genie CI (vitest, `npm test`) for the Phase 2 skill edits; **`Automation-Helm-Tests`** for the HELM surface. Note: the `Automation-Pen-Testing-*` family does **not** cover this surface — `automation/pytest.ini:62` states the `helm` marker runs only in `Automation-Helm-Tests` and is excluded from `Automation-PenTest-UI`.
 - **Regression tests in this plan**: T-4, T-8 (the mandatory Manual one).
+
+> The `Automation-Helm-Tests` suite must still pass, but this ticket adds no test to it — see the
+> T-15 tombstone; that coverage is SAF-33034's.
 
 ## Tests
 
@@ -101,7 +103,6 @@ Capability checklist — answered from the system/e2e tests only:
 
 | Test | Description | Exec | Aspect | Passes after | Repo | Environment |
 |------|-------------|------|--------|--------------|------|-------------|
-| T-15 | HELM cancels a paused test in the suite that should have caught this | Automatic | regression | Phase 2 | automation | console environment |
 | T-8 | The three untouched lifecycle actions still behave as before | Manual | regression | Phase 1c | — | console environment |
 
 **E2E**
@@ -347,19 +348,17 @@ Capability checklist — answered from the system/e2e tests only:
 
 ### T-15 — HELM cancels a paused test in the automation HELM suite
 
-- Description: Closes the same missing cell in the suite that owns this surface — the one that would have caught the bug had it existed.
-- Status: Active
-- Passes after: Phase 2
-- Level: system
-- Execution: Automatic
-- Aspect: regression
-- Risk: `tc13_cancel_single_test` cancels a RUNNING test only. Without a paused case, the HELM suite stays blind to exactly this regression.
-- Risk source: Branch 1b (automation-repo coverage sweep)
-- Verify: New test case alongside `tc09`–`tc14`, using the suite's existing backend seed — `_make_pausable_test` / `seed_running_tests` (`helm_custom_moves.py:84-129`) then `orch_actions.v4.pause_test(run_id)` — then drive HELM via `helm_utils/helpers.py:188` `manage_test(..., action="cancel")`.
-- Expected: HELM cancels the paused test in one action; the run reaches `CANCELED`; no resume is issued and none is narrated.
-- Evidence required: `Automation-Helm-Tests` build # and the test-case log.
-- Automation lives in: `planned: automation tests/automation_team/pen_test/ui/ai/helm/helm_long_session_lib/test_cases/scenario_lifecycle_test_cases.py`
-- Environment needs: console environment
+- Description: Would have closed the same missing cell in the automation HELM suite.
+- **Status: Removed** (2026-09-07)
+- Reason: out of scope for this ticket, and against the target file's stated contract.
+  `scenario_lifecycle_test_cases.py`'s module docstring says TC-09–14 "EXERCISE HELM's manage_test
+  tool surface (breadth for the survival signal) and assert only 'HELM invents no data'", and that
+  **"per-action backend parity (did the pause/cancel/delete actually take effect) is Track B's job
+  (SAF-33034)"**. The proposed test asserted exactly that parity, so it belongs to SAF-33034, not
+  here. It also could not exercise the fix until a patched safebreach-mcp is baked into an
+  `mcp-proxy` image and deployed, and could not be verified from the authoring environment.
+  The coverage gap is real and is handed to SAF-33034; `test_e2e_cancel_paused_test` (T-6) is what
+  locks this fix.
 
 ### T-16 — The ticket's own repro no longer reproduces
 
@@ -384,7 +383,7 @@ Capability checklist — answered from the system/e2e tests only:
 | Phase 1a | T-1, T-2, T-3, T-4 | T-1..T-4 |
 | Phase 1b | T-5 | T-1..T-5 |
 | Phase 1c | T-6, T-7, T-8 | T-1..T-8 |
-| Phase 2 | T-9, T-10, T-11, T-12, T-13, T-14, T-15, T-16 | all |
+| Phase 2 | T-9, T-10, T-11, T-12, T-13, T-14, T-16 | all |
 
 ## Sign-off
 
@@ -401,3 +400,4 @@ Capability checklist — answered from the system/e2e tests only:
 | Date | Change |
 |------|--------|
 | 2026-09-07 12:20 | Test plan created from PRD v1 |
+| 2026-09-07 | T-2 rescoped (no unit-level surface for multi-step); T-15 tombstoned as out of scope — belongs to SAF-33034. Status reset to Draft: the test set changed materially. |

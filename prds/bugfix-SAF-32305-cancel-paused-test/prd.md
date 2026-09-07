@@ -181,12 +181,12 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 
 ### Phase 2 — breach-genie
 
-- [ ] **DoD-9** `safebreach-managing-tests` documents `delete`: terminal-states-only, irreversible, `dry_run=True` default with a preview step, `reason` mandatory.
-- [ ] **DoD-10** The synonyms table stops routing *"remove from queue"* / *"kill"* to `cancel` where the user means `delete`; the skill title drops "(pause / resume / cancel)".
-- [ ] **DoD-11** The skill stops pre-refusing `pause` on `PAUSED` and `resume` on `RUNNING`; it calls the tool and reports the `was_already` response.
-- [ ] **DoD-12** `reason` is documented as an argument HELM should pass, and rate-limited responses have defined handling.
-- [ ] **DoD-13** The action-legality table, global-pause gate and `N/A`-means-no-permission note each exist in exactly one place.
-- [ ] **DoD-14** The two skills are **not** merged; the ticket records why.
+- [x] **DoD-9** `safebreach-managing-tests` documents `delete`: terminal-states-only, irreversible, `dry_run=True` default with a preview step, `reason` mandatory.
+- [x] **DoD-10** The synonyms table stops routing *"remove from queue"* / *"kill"* to `cancel` where the user means `delete`; the skill title drops "(pause / resume / cancel)".
+- [x] **DoD-11** The skill stops pre-refusing `pause` on `PAUSED` and `resume` on `RUNNING`; it calls the tool and reports the `was_already` response.
+- [x] **DoD-12** `reason` is documented as an argument HELM should pass, and rate-limited responses have defined handling.
+- [x] **DoD-13** The action-legality table, global-pause gate and `N/A`-means-no-permission note each exist in exactly one place.
+- [x] **DoD-14** The two skills are **not** merged; the ticket records why.
 
 ## 8. Implementation Phases
 
@@ -197,7 +197,7 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 | 1a | The fix and its tests | ✅ Complete | 2026-09-07 | `287b361` |
 | 1b | Fixture and doc cleanup | ✅ Complete | 2026-09-07 | `780eca3` |
 | 1c | Live verification | 🔄 In Progress | — | T-6/T-7 pass; T-8 (manual HELM regression) outstanding |
-| 2 | HELM skills (breach-genie) | ⏳ Pending | — | — |
+| 2 | HELM skills (breach-genie) | ✅ Complete | 2026-09-07 | breach-genie `82c0935` |
 
 ### Phase 1a — the fix and its tests (safebreach-mcp)
 
