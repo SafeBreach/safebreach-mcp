@@ -194,7 +194,7 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 
 | Phase | Name | Status | Completed | Commit |
 |-------|------|--------|-----------|--------|
-| 1a | The fix and its tests | ✅ Complete | 2026-09-07 | (see below) |
+| 1a | The fix and its tests | ✅ Complete | 2026-09-07 | `287b361` |
 | 1b | Fixture and doc cleanup | ⏳ Pending | — | — |
 | 1c | Live verification | ⏳ Pending | — | — |
 | 2 | HELM skills (breach-genie) | ⏳ Pending | — | — |
