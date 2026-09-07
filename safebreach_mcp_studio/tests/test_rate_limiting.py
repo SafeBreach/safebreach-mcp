@@ -11,14 +11,12 @@ from safebreach_mcp_studio.studio_functions import (
     sb_run_studio_attack,
     sb_set_studio_attack_status,
 )
-from safebreach_mcp_core.token_context import _user_auth_artifacts
 
 
 @pytest.fixture(autouse=True)
-def set_auth_context():
-    token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-    yield
-    _user_auth_artifacts.reset(token)
+def set_auth_context(mcp_request_auth):
+    with mcp_request_auth({"x-apitoken": "test-token"}):
+        yield
 
 
 class TestManageTestRateLimitingGate:

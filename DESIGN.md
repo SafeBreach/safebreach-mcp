@@ -774,7 +774,7 @@ uv run start_all_servers.py --external --host 0.0.0.0
   "mcpServers": {
     "safebreach-data": {
       "command": "npx",
-      "args": ["mcp-remote", "http://127.0.0.1:8001/sse", "--transport", "http-first"]
+      "args": ["mcp-remote", "http://127.0.0.1:8001/mcp", "--transport", "http-first"]
     }
   }
 }
@@ -788,7 +788,7 @@ uv run start_all_servers.py --external --host 0.0.0.0
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server:8001/sse", 
+        "http://your-server:8001/mcp", 
         "--transport", "http-first",
         "--headers", "{\"Authorization\": \"Bearer your-secure-token\"}"
       ]
@@ -801,12 +801,12 @@ uv run start_all_servers.py --external --host 0.0.0.0
 
 **Local Connection (No Authentication):**
 ```bash
-curl "http://localhost:8001/sse"
+curl "http://localhost:8001/mcp"
 ```
 
 **External Connection (With Authentication):**
 ```bash
-curl -H "Authorization: Bearer your-secure-token" "http://your-server:8001/sse"
+curl -H "Authorization: Bearer your-secure-token" "http://your-server:8001/mcp"
 ```
 
 ## Risk Mitigation

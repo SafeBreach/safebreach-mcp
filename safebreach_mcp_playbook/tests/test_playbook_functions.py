@@ -80,11 +80,9 @@ class TestGetAllAttacksFromCacheOrApi:
     """Test the _get_all_attacks_from_cache_or_api function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
     
     def setup_method(self):
         """Clear cache before each test."""

@@ -1,16 +1,15 @@
 """
 Tests for concurrency-safe auth bundle resolution (SAF-29974 Slice 6).
 
-Verifies that _last_user_auth_bundle (global variable) has been removed and
-replaced by per-request auth extraction from the MCP SDK's request_ctx.
+Verifies that auth is resolved only from the MCP SDK's request_ctx (the live
+request) — the process-global bundle, the per-request ContextVar and the SSE
+session store are all gone (SAF-29974 / SAF-32359 / SAF-32387).
 """
 
 import pytest
 from unittest.mock import MagicMock, patch
 
 from safebreach_mcp_core.token_context import (
-    _user_auth_artifacts,
-    _session_auth_artifacts,
     _get_auth_from_mcp_request_ctx,
     _get_session_id_from_mcp_ctx,
     get_cache_user_suffix,
@@ -23,17 +22,6 @@ from safebreach_mcp_core.secret_utils import (
 # Patch target: the SDK module where request_ctx lives.
 # The helper functions import it via `from mcp.server.lowlevel.server import request_ctx`.
 _REQUEST_CTX_PATCH = 'mcp.server.lowlevel.server.request_ctx'
-
-
-@pytest.fixture(autouse=True)
-def cleanup_auth_state():
-    """Reset ContextVar and session store between tests."""
-    token = _user_auth_artifacts.set(None)
-    _session_auth_artifacts.clear()
-    yield
-    _user_auth_artifacts.set(None)
-    _session_auth_artifacts.clear()
-    _user_auth_artifacts.reset(token)
 
 
 def _mock_request(headers=None, query_params=None):
@@ -133,15 +121,6 @@ class TestGetSessionIdFromMcpCtx:
         result = _get_session_id_from_mcp_ctx()
         assert result is None
 
-    def test_extracts_session_id_from_query_params_sse(self):
-        """SSE: session_id is in query_params."""
-        req = _mock_request(query_params={'session_id': 'abc123hex'})
-        ctx = _mock_request_ctx(req)
-        with patch(_REQUEST_CTX_PATCH) as mock_rc:
-            mock_rc.get.return_value = ctx
-            result = _get_session_id_from_mcp_ctx()
-        assert result == 'abc123hex'
-
     def test_extracts_session_id_from_header_streamable_http(self):
         """Streamable-HTTP: session_id is in mcp-session-id header."""
         req = _mock_request(
@@ -154,17 +133,14 @@ class TestGetSessionIdFromMcpCtx:
             result = _get_session_id_from_mcp_ctx()
         assert result == 'stream-sess-xyz'
 
-    def test_prefers_query_param_over_header(self):
-        """When both are present, query_params (SSE) takes precedence."""
-        req = _mock_request(
-            headers={'mcp-session-id': 'from-header'},
-            query_params={'session_id': 'from-query'},
-        )
+    def test_ignores_legacy_sse_query_param(self):
+        """The legacy SSE session_id query param is no longer consulted (SAF-32387)."""
+        req = _mock_request(headers={}, query_params={'session_id': 'from-query'})
         ctx = _mock_request_ctx(req)
         with patch(_REQUEST_CTX_PATCH) as mock_rc:
             mock_rc.get.return_value = ctx
             result = _get_session_id_from_mcp_ctx()
-        assert result == 'from-query'
+        assert result is None
 
 
 class TestConcurrentSessionIsolation:
@@ -197,8 +173,8 @@ class TestConcurrentSessionIsolation:
 
 class TestGetCacheUserSuffix:
 
-    def test_uses_mcp_request_ctx_when_contextvar_empty(self):
-        """get_cache_user_suffix falls back to MCP request_ctx when ContextVar is None."""
+    def test_uses_mcp_request_ctx(self):
+        """get_cache_user_suffix derives the suffix from the live MCP request."""
         req = _mock_request(headers={'x-apitoken': 'stable-token-123'})
         ctx = _mock_request_ctx(req)
 
@@ -210,27 +186,32 @@ class TestGetCacheUserSuffix:
         assert len(suffix) == 9  # '_' + 8 hex chars
 
     def test_returns_empty_when_no_context(self):
-        """Returns empty string when neither ContextVar nor request_ctx has auth."""
+        """Returns empty string when request_ctx has no auth."""
         suffix = get_cache_user_suffix()
         assert suffix == ''
 
-    def test_contextvar_takes_priority_over_request_ctx(self):
-        """When ContextVar has a value, request_ctx is not consulted."""
-        _user_auth_artifacts.set({'x-apitoken': 'from-contextvar'})
-
+    def test_suffix_is_stable_hash_of_request_token(self, mcp_request_auth):
+        """The suffix is a stable hash of the request's token."""
         import hashlib
-        expected = '_' + hashlib.sha256('from-contextvar'.encode()).hexdigest()[:8]
-        suffix = get_cache_user_suffix()
+        expected = '_' + hashlib.sha256('from-request'.encode()).hexdigest()[:8]
+        with mcp_request_auth({'x-apitoken': 'from-request'}):
+            suffix = get_cache_user_suffix()
         assert suffix == expected
 
 
-class TestLastUserAuthBundleRemoved:
+class TestLegacyAuthStateRemoved:
 
-    def test_module_no_longer_exports_last_user_auth_bundle(self):
-        """_last_user_auth_bundle must not exist in token_context module."""
+    @pytest.mark.parametrize('name', [
+        '_last_user_auth_bundle',      # SAF-29974 Slice 6
+        '_user_auth_artifacts',        # SAF-32387
+        '_session_auth_artifacts',     # SAF-32387
+        '_SESSION_ARTIFACTS_TTL',      # SAF-32387
+        'cleanup_stale_artifacts',     # SAF-32387
+    ])
+    def test_module_no_longer_exports_legacy_auth_state(self, name):
+        """token_context must expose no auth source other than the live request."""
         import safebreach_mcp_core.token_context as tc
-        assert not hasattr(tc, '_last_user_auth_bundle'), \
-            '_last_user_auth_bundle should have been removed (Slice 6 concurrency fix)'
+        assert not hasattr(tc, name), f'{name} should have been removed'
 
 
 class TestGetAuthHeadersForConsole:
@@ -253,15 +234,16 @@ class TestGetAuthHeadersForConsole:
                 assert result == {'x-apitoken': 'standalone-api-key'}
                 mock_secret.assert_called_once_with('staging')
 
-    def test_contextvar_primary_path(self):
-        """ContextVar is the primary source when available."""
-        _user_auth_artifacts.set({'x-token': 'ctx-jwt', 'cookie': 'X-Token=ctx'})
-        result = get_auth_headers_for_console('default')
+    def test_request_ctx_is_the_source(self, mcp_request_auth):
+        """The live request's headers are the auth source."""
+        with mcp_request_auth({'x-token': 'ctx-jwt', 'cookie': 'X-Token=ctx'}):
+            result = get_auth_headers_for_console('default')
         assert result['x-token'] == 'ctx-jwt'
 
-    def test_returns_copy_not_original(self):
-        """Returns a copy of the bundle so callers can mutate it safely."""
-        _user_auth_artifacts.set({'x-token': 'jwt1'})
-        result = get_auth_headers_for_console('default')
-        result['x-token'] = 'mutated'
-        assert _user_auth_artifacts.get()['x-token'] == 'jwt1'
+    def test_returns_copy_not_original(self, mcp_request_auth):
+        """Returns a fresh dict per call so callers can mutate it safely."""
+        with mcp_request_auth({'x-token': 'jwt1'}):
+            result = get_auth_headers_for_console('default')
+            result['x-token'] = 'mutated'
+            again = get_auth_headers_for_console('default')
+        assert again['x-token'] == 'jwt1'

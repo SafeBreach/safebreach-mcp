@@ -50,12 +50,10 @@ class TestGetSuggestionsForCollection:
     """Tests for the shared suggestions helper."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
+    def set_auth_context(self, mcp_request_auth):
         """Set up auth context for all tests (SAF-29974)."""
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def setup_method(self):
         """Clear the suggestions cache before each test."""

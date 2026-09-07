@@ -4,15 +4,13 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from safebreach_mcp_core.user_lookup import get_user_name, _fetch_users_map, users_cache
-from safebreach_mcp_core.token_context import _user_auth_artifacts
 
 
 @pytest.fixture(autouse=True)
-def set_auth_and_clear_cache():
-    token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+def set_auth_and_clear_cache(mcp_request_auth):
     users_cache.clear()
-    yield
-    _user_auth_artifacts.reset(token)
+    with mcp_request_auth({"x-apitoken": "test-token"}):
+        yield
     users_cache.clear()
 
 
