@@ -3483,11 +3483,6 @@ def sb_manage_test(
                     "Use get_test_details to view results."
                 ),
             }
-        if current_state == "PAUSED":
-            raise ValueError(
-                "Cannot cancel a paused test. Use manage_test with "
-                "action='resume' first, then cancel."
-            )
     elif action == "pause":
         if current_state == "PAUSED":
             return {

@@ -128,21 +128,30 @@ Capability checklist — answered from the system/e2e tests only:
 - Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py` — invert the existing `test_cancel_on_paused_raises_error:8169` into `test_cancel_on_paused_proceeds`, keeping it in the `# --- Phase 9: State transition matrix — Cancel ---` section.
 - Environment needs: none
 
-### T-2 — Cancel on a partially-paused multi-step plan
+### T-2 — Cancel a paused test resolved from the live queue payload
 
-- Description: Guards the gap between how the MCP reads pause state and how the orchestrator applies it, so a plan that is paused at one step but not another is still cancellable.
+- Description: Exercises the real state-resolution path — queue payload → `get_orchestrator_test_state` → cancel — which the `_get_test_state`-mocked tests bypass entirely.
 - Status: Active
 - Passes after: Phase 1a
 - Level: unit
 - Execution: Automatic
 - Aspect: regression
-- Risk: `_get_test_state` reads slot-level `isPaused` (`queue_state.py:53-54`) while `deletePlan` iterates per-step `pausedDate`. A merged-status mismatch could reintroduce a refusal for multi-step plans only — invisible to a single-step test.
+- Risk: T-1 mocks `_get_test_state`, so it would pass even if the queue parsing that produces `"PAUSED"` were broken. Without this test the only unmocked coverage of that path is the e2e suite.
 - Risk source: PRD §9 R2
-- Verify: Mock the orchestrator queue payload so the plan reports `PAUSED` via the slot while carrying multiple steps with mixed `pausedDate` values; call cancel.
-- Expected: The DELETE is issued once; `status == "success"`. No branch distinguishes step count.
+- Verify: Patch the queue HTTP GET (not `_get_test_state`) to return a `slotState` array containing the target `planRunId` with `isPaused: true` alongside a second, unpaused slot; call cancel.
+- Expected: The DELETE is issued once; `requests.put` is never called; `status == "success"`.
 - Evidence required: CI run (safebreach-mcp pytest job + build #).
-- Automation lives in: `planned: safebreach_mcp_studio/tests/test_studio_functions.py` (class `TestManageTest`, Phase 9 section)
+- Automation lives in: `safebreach_mcp_studio/tests/test_studio_functions.py` — `test_cancel_on_paused_resolved_from_live_queue_proceeds` (class `TestManageTest`, Phase 9 section)
 - Environment needs: none
+
+> **Scope reconciliation (2026-09-07, Phase 1a).** This test was authored as "cancel a partially-paused
+> multi-step plan". That is not assertable at unit level: `get_orchestrator_test_state`
+> (`queue_state.py:51-56`) reads slot-level `isPaused` only and has **no step awareness at all**, so the
+> MCP never sees per-step `pausedDate` — a multi-step plan is indistinguishable from a single-step one at
+> this boundary. The multi-step semantics live entirely in the orchestrator's `deletePlan`, so **T-7 is
+> the only test that can prove them**, and PRD §9 R2 rests on T-7 alone. T-2 was rescoped to cover the
+> unmocked state-resolution path instead, which is real coverage T-1 does not provide. **DoD-4 therefore
+> remains open until Phase 1c.**
 
 ### T-3 — An orchestrator 500 propagates untouched
 

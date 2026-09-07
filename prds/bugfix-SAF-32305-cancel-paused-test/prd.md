@@ -107,8 +107,9 @@ Only the bolded cell changes.
 | File | Line(s) | Change |
 |---|---|---|
 | `safebreach_mcp_studio/tests/test_studio_functions.py` | 8169-8179 | `test_cancel_on_paused_raises_error` → `test_cancel_on_paused_proceeds`; assert `requests.delete` called, not `pytest.raises` |
-| same | new | `test_cancel_on_partially_paused_multistep_plan` — R2 regression |
-| same | new | `test_cancel_propagates_orchestrator_500` — R1: a 500 surfaces as an error, no retry, message does not mention resume |
+| same | new | `test_cancel_on_paused_resolved_from_live_queue_proceeds` — exercises the unmocked queue→state path (rescoped; see test-plan T-2) |
+| same | new | `test_cancel_on_paused_propagates_orchestrator_error` — R1: a 500 surfaces as an error, no retry, message does not mention resume |
+| `safebreach_mcp_studio/tests/test_rate_limiting.py` | new | `test_cancel_on_paused_consumes_a_rate_limit_slot` — the unblocked path is metered |
 | `conftest.py` | 147-159 | drop the resume-then-cancel `except` fallback |
 | `tests/test_rate_limiting_e2e.py` | 45-56 | same, incl. the two extra `_rate_limit_store.clear()` calls |
 
@@ -169,11 +170,11 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 
 ### Phase 1 — safebreach-mcp
 
-- [ ] **DoD-1** `manage_test(action="cancel")` on a `PAUSED` test issues the DELETE and succeeds; no resume is planned, attempted, or mentioned in any response field.
-- [ ] **DoD-2** The guard at `studio_functions.py:3484-3488` is removed outright — not replaced by an internal resume-then-cancel.
-- [ ] **DoD-3** `test_cancel_on_paused_raises_error` is inverted to assert the DELETE proceeds.
+- [x] **DoD-1** `manage_test(action="cancel")` on a `PAUSED` test issues the DELETE and succeeds; no resume is planned, attempted, or mentioned in any response field.
+- [x] **DoD-2** The guard at `studio_functions.py:3484-3488` is removed outright — not replaced by an internal resume-then-cancel.
+- [x] **DoD-3** `test_cancel_on_paused_raises_error` is inverted to assert the DELETE proceeds.
 - [ ] **DoD-4** A regression test covers cancel on a multi-step plan whose steps are partially paused (R2).
-- [ ] **DoD-5** An orchestrator 500 propagates as an honest error — not retried, not re-described as a pause restriction (R1).
+- [x] **DoD-5** An orchestrator 500 propagates as an honest error — not retried, not re-described as a pause restriction (R1).
 - [ ] **DoD-6** The resume-then-cancel fallbacks in `conftest.py:147-159` and `tests/test_rate_limiting_e2e.py:45-56` are removed.
 - [ ] **DoD-7** `studio_server.py` tool description and `CLAUDE.md` state that `PAUSED` → cancel is legal and document all four actions including `delete`.
 - [ ] **DoD-8** Verified end-to-end against a live paused test on staging.
@@ -188,6 +189,15 @@ One mutation, one rate-limit slot, matching what the UI's "Remove test" already 
 - [ ] **DoD-14** The two skills are **not** merged; the ticket records why.
 
 ## 8. Implementation Phases
+
+### Phase Status Tracking
+
+| Phase | Name | Status | Completed | Commit |
+|-------|------|--------|-----------|--------|
+| 1a | The fix and its tests | ✅ Complete | 2026-09-07 | (see below) |
+| 1b | Fixture and doc cleanup | ⏳ Pending | — | — |
+| 1c | Live verification | ⏳ Pending | — | — |
+| 2 | HELM skills (breach-genie) | ⏳ Pending | — | — |
 
 ### Phase 1a — the fix and its tests (safebreach-mcp)
 
@@ -297,8 +307,11 @@ of the transition rules.
 
 ## 12. Current Implementation State
 
-Nothing implemented. Branch carries `context.md`, `summary.md` and this PRD only. Baseline at
-`299c2df`: 1676 unit tests passing, 151 e2e deselected.
+**Phase 1a complete (2026-09-07).** The guard is deleted; four tests added/inverted. Unit suite:
+**1679 passed, 151 e2e deselected**, zero regressions (baseline was 1676 at `299c2df`).
+
+Phases 1b, 1c and 2 remain pending. **DoD-4 is still open** — the multi-step assertion is not
+assertable at unit level (the MCP has no step awareness) and rests entirely on T-7 in Phase 1c.
 
 ## 13. Change Log
 
