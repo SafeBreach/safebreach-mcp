@@ -5,7 +5,7 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.14.0 — 2026-09-07
 
 ### Removed
 
@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused across users.
 - Test suite: the `conftest.py` ContextVar-to-request bridge from SAF-32359 is removed; tests inject
   auth through the MCP SDK request context (`mcp_request_auth` fixture).
+
+### Fixed
+
+- `manage_test(action="cancel")` no longer refuses to cancel a **PAUSED** test (SAF-32305). A
+  client-side guard added in SAF-31111 raised `ValueError("Cannot cancel a paused test...")` before
+  any API call, so agents were told to resume the test first — a step that is unnecessary, and that
+  routes through `resume`, which has a documented orchestrator crash (SAF-32835). The transition was
+  always supported: the orchestrator's `deletePlan()` has a dedicated branch for deleting a plan
+  while paused, and the UI's "Remove test" has always used the same `DELETE .../queue/{planRunId}`
+  endpoint. The guard came from misreading an intermittent 500 (`no plan was stopped`, a
+  matrix-publisher retry race) as a state rule. Cancelling a paused test now issues that DELETE
+  directly; a backend error propagates untouched rather than being re-described as a pause
+  restriction.
+- The `manage_test` tool description now states that a paused test can be cancelled directly, and
+  `CLAUDE.md` documents all four actions including `delete`, live since SAF-29972 but never listed
+  there.
 
 ## 1.13.0 — 2026-08-31
 

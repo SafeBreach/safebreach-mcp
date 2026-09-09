@@ -462,14 +462,17 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   and isProxySupported for informed filter planning.
   **Error handling**: Statistics API, scenario fetch, and plan fetch errors now propagate the
   full API response body in error messages (not just generic HTTP status codes).
-21. `manage_test` ✨ **NEW** 🔒 **Rate-limited** - Manage a running test's lifecycle (pause, resume, cancel).
-  Single tool with `action` parameter for all three operations. Accepts `test_id` (planRunId
-  from `run_scenario`), `action` (required: "pause", "resume", or "cancel"), `console`,
+21. `manage_test` ✨ **NEW** 🔒 **Rate-limited** - Manage a test's lifecycle (pause, resume, cancel, delete).
+  Single tool with `action` parameter for all four operations. Accepts `test_id` (planRunId
+  from `run_scenario`), `action` (required: "pause", "resume", "cancel", or "delete"), `console`,
   and optional `reason`. When `reason` is provided, appends a timestamped UTC note to the
   test's comment field via read-then-append pattern (data API testsummaries endpoint).
   Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
   best-effort — failure does not block the lifecycle operation. Response includes
   `hint_to_agent` with contextual next-step guidance per action.
+  A **paused test is cancelled directly** — no resume step (SAF-32305); the earlier "resume first"
+  restriction was a client-side guard, not an orchestrator rule. `delete` (SAF-29972) is irreversible,
+  terminal-states-only, defaults to `dry_run=True`, and requires `reason`.
 22. `quick_run` ✨ **NEW** 🔒 **Rate-limited** - Quick Run — execute a test from explicit
   playbook attack IDs without a pre-existing scenario. Constructs one step per attack with default
   all-connected simulator filters. Supports `simulator_overrides` (JSON string mapping attack IDs

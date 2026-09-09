@@ -8090,18 +8090,122 @@ class TestManageTest:
         assert result['current_state'] == "COMPLETED"
 
     @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_cancel_on_paused_raises_error(
-        self, mock_base_url, mock_account_id, mock_state
+    def test_cancel_on_paused_proceeds(
+        self, mock_base_url, mock_account_id, mock_delete, mock_put, mock_state
     ):
-        """Cancel on PAUSED test raises ValueError with resume guidance."""
+        """Cancel on PAUSED test proceeds straight to DELETE — SAF-32305."""
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
         mock_state.return_value = "PAUSED"
 
-        with pytest.raises(ValueError, match="resume"):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "success"
+        assert result['action'] == "cancel"
+        mock_delete.assert_called_once()
+        mock_put.assert_not_called()
+        assert "resume" not in str(result).lower()
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_core.queue_state.requests.get')
+    @patch('safebreach_mcp_core.queue_state.get_api_account_id')
+    @patch('safebreach_mcp_core.queue_state.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_paused_resolved_from_live_queue_proceeds(
+        self, mock_base_url, mock_account_id, mock_queue_base_url,
+        mock_queue_account_id, mock_queue_get, mock_delete, mock_put
+    ):
+        """A paused slot read from the real queue payload still cancels — SAF-32305.
+
+        Exercises the unmocked orchestrator state-resolution path
+        (queue payload -> get_orchestrator_test_state -> cancel), which the
+        _get_test_state-mocked tests above bypass.
+        """
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_queue_base_url.return_value = "https://test.safebreach.com"
+        mock_queue_account_id.return_value = "1234567890"
+
+        queue_response = MagicMock()
+        queue_response.status_code = 200
+        queue_response.json.return_value = {
+            "data": {
+                "slotState": [
+                    {"planRunId": "other456", "isPaused": False},
+                    {"planRunId": "test123", "isPaused": True},
+                ]
+            }
+        }
+        mock_queue_get.return_value = queue_response
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "success"
+        mock_delete.assert_called_once()
+        mock_put.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_paused_propagates_orchestrator_error(
+        self, mock_base_url, mock_account_id, mock_delete, mock_state
+    ):
+        """An orchestrator failure propagates untouched and is not retried — SAF-32305.
+
+        SAF-31111 mistook this error for proof that a paused test cannot be
+        cancelled. It must surface as itself, with no retry and no resume story.
+        """
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "PAUSED"
+
+        mock_delete.side_effect = requests.exceptions.HTTPError(
+            "500 Server Error: no plan was stopped"
+        )
+
+        with pytest.raises(requests.exceptions.HTTPError) as exc_info:
             sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert "no plan was stopped" in str(exc_info.value)
+        assert "resume" not in str(exc_info.value).lower()
+        mock_delete.assert_called_once()
+
+    def test_manage_test_description_documents_the_real_contract(self):
+        """The manage_test tool description matches the tool — SAF-32305.
+
+        The description is the only contract an LLM caller reads, so a stale
+        rule there does the same damage the guard itself did.
+        """
+        from pathlib import Path
+        import safebreach_mcp_studio
+
+        source = (
+            Path(safebreach_mcp_studio.__file__).parent / "studio_server.py"
+        ).read_text()
+
+        start = source.index('name="manage_test"')
+        description = source[start:source.index('"""', source.index('description="""', start) + 15)]
+
+        for action in ("pause", "resume", "cancel", "delete"):
+            assert action in description, f"{action} missing from manage_test description"
+
+        assert "paused test can be cancelled directly" in description.lower()
+        assert "resume first" not in description.lower()
 
     # --- Phase 10: State transition matrix — Pause — SAF-31111 ---
 
