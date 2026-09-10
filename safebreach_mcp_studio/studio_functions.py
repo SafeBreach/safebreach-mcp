@@ -2855,6 +2855,48 @@ def _cap_count_map(shaped, key, mapping, uncapped, pinned=()):
     shaped[f'{key}_total'] = len(mapping)
 
 
+def _cap_contributing_map(shaped, key, mapping, uncapped):
+    """Split a simulator map into the ones that contribute and the ones unmeasured.
+
+    "Which simulators should I use?" needs identities, and the ``N of M`` clause
+    the narrator prints from the full map answers only "how many". On a real
+    console the answer is a small minority — 13 of 54 on the estate this was
+    written for — so the ids that matter are exactly the ones a coverage figure
+    discards.
+
+    Filtering runs on the RAW map, before the cap: capping first would take a
+    deterministic prefix that is mostly zeros on a large estate and then filter
+    it down to nothing, reporting no contributors while contributors exist past
+    the cap.
+
+    Measured zeros are dropped; ``None`` is not. A count that was never computed
+    is not a count of nothing, and a simulator that is merely unmeasured must not
+    vanish from the caller's options — so it is listed separately rather than
+    silently binned with the zeros. ``is_computed_count`` is the single arbiter
+    of that distinction.
+    """
+    contributing, not_computed = {}, []
+    for simulator_id, count in mapping.items():
+        if not is_computed_count(count):
+            not_computed.append(simulator_id)
+        elif count > 0:
+            contributing[simulator_id] = count
+    # Highest contribution first: a caller reading a capped list should see the
+    # simulators that carry the most work, not an arbitrary id-sorted prefix.
+    ordered = dict(sorted(contributing.items(), key=lambda kv: (-kv[1], str(kv[0]))))
+    shaped[f'{key}_contributing'] = (
+        ordered if uncapped else dict(list(ordered.items())[:COUNT_MAP_CAP])
+    )
+    shaped[f'{key}_contributing_total'] = len(ordered)
+    # No count to rank these by, so id order is the only stable one — and a cap
+    # over an unordered list would hand back a different prefix per response.
+    unmeasured = sorted(not_computed, key=str)
+    shaped[f'{key}_not_computed'] = (
+        unmeasured if uncapped else unmeasured[:COUNT_MAP_CAP]
+    )
+    shaped[f'{key}_not_computed_total'] = len(unmeasured)
+
+
 def _shape_statistics_step(step, attack_names=None, simulator_names=None,
                            conflict_detail='summary', pinned_attack_ids=()):
     """One caller-facing step, with all reporting suppressed when nothing was computed."""
@@ -2870,6 +2912,13 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
     _cap_count_map(shaped, 'simulators', step['simulators'], uncapped)
     _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
     _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
+    # Additive: the full maps above are untouched, because blocked entities
+    # renders every simulator in scope whether or not it ran anything, and the
+    # `N of M` denominators are taken from their totals.
+    _cap_contributing_map(shaped, 'attacker_simulators',
+                          step['attackerSimulators'], uncapped)
+    _cap_contributing_map(shaped, 'target_simulators',
+                          step['targetSimulators'], uncapped)
 
     # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
@@ -3508,6 +3557,13 @@ def _project_simulation_counts(report, page=0, page_size=DEFAULT_ATTACK_PAGE_SIZ
                 'is_limit_reached': step['is_limit_reached'],
             }
             _carry_coverage(step, step_view)
+            # Deliberately not in _carry_coverage: that feeds both projections,
+            # and blocked entities answers this with _render_simulators_in_scope.
+            for role in ('attacker_simulators', 'target_simulators'):
+                step_view[f'{role}_contributing'] = dict(step[f'{role}_contributing'])
+                step_view[f'{role}_contributing_total'] = step[f'{role}_contributing_total']
+                step_view[f'{role}_not_computed'] = list(step[f'{role}_not_computed'])
+                step_view[f'{role}_not_computed_total'] = step[f'{role}_not_computed_total']
             if page_size:
                 step_view['attacks_page'] = _attacks_page(step, page, page_size)
                 # Two denominators, because they answer different questions:

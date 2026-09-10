@@ -1929,6 +1929,36 @@ def _step_coverage(step: dict) -> str:
     )
 
 
+def _render_contributing_simulators(step: dict) -> list:
+    """Which simulators actually produce simulations, by id and count.
+
+    The coverage clause says how many; a caller choosing simulators needs which.
+    Ids rather than names: this tool resolves no details (`resolve_details=False`),
+    and the caller already holds the id-to-name mapping from the simulator listing.
+    """
+    lines = []
+    for role, label in (('attacker_simulators', 'attackers'),
+                        ('target_simulators', 'targets')):
+        contributing = step.get(f'{role}_contributing') or {}
+        total = step.get(f'{role}_contributing_total', len(contributing))
+        if contributing:
+            shown = ", ".join(
+                f"{simulator_id} ({count:,})"
+                for simulator_id, count in contributing.items()
+            )
+            scope = ("" if len(contributing) == total
+                     else f" ({len(contributing):,} of {total:,})")
+            lines.append(f"- Contributing {label}{scope}: {shown}")
+        unmeasured_total = step.get(f'{role}_not_computed_total', 0)
+        if unmeasured_total:
+            unmeasured = step.get(f'{role}_not_computed') or []
+            shown = ", ".join(str(simulator_id) for simulator_id in unmeasured)
+            scope = ("" if len(unmeasured) == unmeasured_total
+                     else f" ({len(unmeasured):,} of {unmeasured_total:,})")
+            lines.append(f"- Not computed as {label}{scope}: {shown}")
+    return lines
+
+
 def _catalog_description(entry: dict) -> str:
     """A relayed description, or the reason there isn't one.
 
@@ -2011,6 +2041,7 @@ def _render_scenario_counts(one: dict) -> list:
             f"{_format_simulation_count(step['simulation_count'])} simulations. "
             f"Coverage: {_step_coverage(step)} produce simulations."
         )
+        parts.extend(f"  {line}" for line in _render_contributing_simulators(step))
         parts.extend(f"  {line}" for line in _render_attacks_page(step))
 
     parts.append("")

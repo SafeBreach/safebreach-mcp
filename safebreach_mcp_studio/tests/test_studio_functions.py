@@ -34,6 +34,8 @@ from safebreach_mcp_studio.studio_functions import (
     VERDICT_CLEAN,
     CONSTRAINTS_NOT_REQUESTED,
     _parse_attack_ids,
+    _cap_contributing_map,
+    _cap_count_map,
     _project_simulation_counts,
     _project_blocked_entities,
     sb_get_scenario_simulation_counts,
@@ -9692,7 +9694,19 @@ class TestPlanStatisticsIsNarratedLikeEverySiblingTool:
             'hint_to_agent': 'These are runnable counts.',
         }
         report.update(overrides)
+        for step in report['steps']:
+            self._add_contributing_keys(step)
         return report
+
+    @staticmethod
+    def _add_contributing_keys(step):
+        """Mirror _shape_statistics_step's contributing split on a literal step.
+
+        Derived rather than transcribed: the variants below override the
+        simulator maps, and a hard-coded second answer would stop matching them.
+        """
+        for role in ('attacker_simulators', 'target_simulators'):
+            _cap_contributing_map(step, role, step[role], uncapped=False)
 
     def _render(self, **overrides):
         """Render through the counts + blocked-entities narrators.
@@ -12854,6 +12868,11 @@ class TestEachProjectionRendersOnlyItsSlice:
             'attacker_simulators', 'attacker_simulators_total',
             # Phase 13: which attacks run, one page at a time.
             'attacks_page', 'attacks_pageable', 'page', 'page_size',
+            # Which simulators produce simulations, additive to the maps above.
+            'attacker_simulators_contributing', 'attacker_simulators_contributing_total',
+            'attacker_simulators_not_computed', 'attacker_simulators_not_computed_total',
+            'target_simulators_contributing', 'target_simulators_contributing_total',
+            'target_simulators_not_computed', 'target_simulators_not_computed_total',
         }
 
     def test_the_counts_projection_still_explains_nothing(self):
@@ -13729,6 +13748,151 @@ class TestTheCountsToolNamesWhichAttacksRun:
         text = _format_scenario_simulation_counts(self._counts()[0]).lower()
         for word in ('blocked by', 'constraint catalog', 'contributing nothing'):
             assert word not in text
+
+
+class TestContributingSimulatorsAreNamedNotJustCounted:
+    """Which simulators produce simulations, not only how many.
+
+    `_coverage` reduces each simulator map to a positive count and discards the
+    ids, so the caller was told "5 of 20 target simulators produce simulations"
+    with no way to name the five. Observed on a 54-simulator console with 13
+    contributors: the agent selected all 54, because that was the only option
+    the response left open.
+    """
+
+    @staticmethod
+    def _split(mapping, uncapped=False, key='target_simulators'):
+        shaped = {}
+        _cap_contributing_map(shaped, key, mapping, uncapped)
+        return shaped
+
+    def test_measured_zeros_are_dropped(self):
+        shaped = self._split({'a': 3, 'b': 0, 'c': 5})
+        assert shaped['target_simulators_contributing'] == {'c': 5, 'a': 3}
+        assert shaped['target_simulators_contributing_total'] == 2
+
+    def test_a_null_is_kept_separately_not_binned_with_the_zeros(self):
+        # A count that was never computed is not a count of nothing, and a
+        # simulator that is merely unmeasured must not vanish from the caller's
+        # options.
+        shaped = self._split({'a': 3, 'b': None})
+        assert shaped['target_simulators_contributing'] == {'a': 3}
+        assert shaped['target_simulators_not_computed'] == ['b']
+        assert shaped['target_simulators_not_computed_total'] == 1
+
+    def test_a_false_is_not_read_as_a_zero(self):
+        # is_computed_count excludes bools deliberately; a truthiness filter
+        # would bin this with the measured zeros and lose it entirely.
+        shaped = self._split({'a': 3, 'b': False})
+        assert shaped['target_simulators_not_computed'] == ['b']
+
+    def test_the_filter_precedes_the_cap(self):
+        # THE regression this helper exists for. Every id sorting before the
+        # 100th is a measured zero and the 20 contributors sort after it, so an
+        # implementation that caps first filters a prefix of zeros down to
+        # nothing and reports no contributors while contributors exist.
+        mapping = {f"sim-{i:03d}": 0 for i in range(130)}
+        mapping.update({f"sim-{i:03d}": i for i in range(130, 150)})
+        shaped = self._split(mapping)
+
+        contributing = shaped['target_simulators_contributing']
+        assert len(contributing) == 20, "capping before filtering returns {}"
+        assert shaped['target_simulators_contributing_total'] == 20
+        assert set(contributing) == {f"sim-{i:03d}" for i in range(130, 150)}
+
+    def test_ordered_by_contribution_with_the_id_as_tiebreak(self):
+        shaped = self._split({'b': 5, 'a': 5, 'c': 9})
+        assert list(shaped['target_simulators_contributing']) == ['c', 'a', 'b']
+
+    def test_uncapped_returns_every_contributor(self):
+        mapping = {f"sim-{i:03d}": i + 1 for i in range(150)}
+        capped = self._split(mapping)['target_simulators_contributing']
+        whole = self._split(mapping, uncapped=True)['target_simulators_contributing']
+        assert len(capped) == COUNT_MAP_CAP
+        assert len(whole) == 150
+
+    def test_the_totals_are_pre_cap_not_the_capped_slice(self):
+        # Same discipline as every other total in this tool: the denominator is
+        # what exists, never what fit in the response.
+        mapping = {f"sim-{i:03d}": i + 1 for i in range(150)}
+        mapping.update({f"un-{i}": None for i in range(120)})
+        shaped = self._split(mapping)
+        assert len(shaped['target_simulators_contributing']) == COUNT_MAP_CAP
+        assert shaped['target_simulators_contributing_total'] == 150
+        assert len(shaped['target_simulators_not_computed']) == COUNT_MAP_CAP
+        assert shaped['target_simulators_not_computed_total'] == 120
+
+    def test_the_existing_maps_are_left_alone(self):
+        # Blocked entities renders every simulator in scope whether or not it
+        # ran anything, and the `N of M` denominators come from the full maps.
+        raw = {'a': 3, 'b': 0, 'c': None}
+        shaped = {}
+        _cap_count_map(shaped, 'target_simulators', raw, False)
+        _cap_contributing_map(shaped, 'target_simulators', raw, False)
+        assert shaped['target_simulators'] == raw
+        assert shaped['target_simulators_total'] == 3
+
+
+class TestTheCountsNarrationNamesTheContributors:
+    """The rendered line a caller reads when choosing simulators."""
+
+    @staticmethod
+    def _rendered(response):
+        from safebreach_mcp_studio.studio_server import (
+            _format_scenario_simulation_counts)
+        with _statistics_transport(response):
+            with patch('safebreach_mcp_playbook.playbook_functions.'
+                       'get_attack_facts_by_ids', return_value={}):
+                return _format_scenario_simulation_counts(
+                    sb_get_scenario_simulation_counts(
+                        console="test-console", scenario='{"steps":[{"n":0}]}'))
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self):
+        from safebreach_mcp_core.token_context import _user_auth_artifacts
+        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
+        yield
+        _user_auth_artifacts.reset(token)
+
+    def test_a_scored_step_names_its_contributors_with_their_counts(self):
+        text = self._rendered({"steps": [{
+            "simulationCount": 55,
+            "moves": {"9012": 55},
+            "simulators": {"sim-a": 30, "sim-b": 25, "sim-c": 0},
+            "targetSimulators": {"sim-a": 30, "sim-c": 0},
+            "attackerSimulators": {"sim-b": 25, "sim-c": 0},
+            "simulatorConstraints": {"targetConstraints": {}, "attackerConstraints": {}},
+        }]})
+        assert "Contributing targets: sim-a (30)" in text
+        assert "Contributing attackers: sim-b (25)" in text
+        # The measured zero is countable from the coverage clause, not listed.
+        assert "sim-c" not in text
+
+    def test_an_unmeasured_simulator_is_listed_rather_than_dropped(self):
+        text = self._rendered({"steps": [{
+            "simulationCount": 30,
+            "moves": {"9012": 30},
+            "simulators": {"sim-a": 30, "sim-z": None},
+            "targetSimulators": {"sim-a": 30, "sim-z": None},
+            "attackerSimulators": {},
+            "simulatorConstraints": {"targetConstraints": {}, "attackerConstraints": {}},
+        }]})
+        assert "Contributing targets: sim-a (30)" in text
+        assert "Not computed as targets: sim-z" in text
+
+    def test_an_unscored_step_gets_no_contributing_line(self):
+        text = self._rendered({"steps": [{
+            "simulationCount": None,
+            "isLimitReached": True,
+            "moves": {},
+            "simulators": {},
+            "targetSimulators": {"sim-a": None},
+            "attackerSimulators": {},
+            "simulatorConstraints": {"targetConstraints": {}, "attackerConstraints": {}},
+        }]})
+        assert "simulation count not computed" in text
+        assert "Contributing" not in text
+        assert "Not computed as" not in text
 
 
 class TestTheScenarioBodyIsAcceptedAsStringOrObject:
