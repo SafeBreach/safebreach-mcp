@@ -341,3 +341,120 @@ def get_execution_result_mapping(execution: Dict[str, Any]) -> Dict[str, Any]:
         "logs": execution.get('logs', ''),
         "output": execution.get('output', ''),
     }
+
+
+_TRUNCATION_HINT = (
+    "SafeBreach hit its evaluation limit and stopped early: {returned} of {plan} steps "
+    "returned, no counts computed for the steps it did not reach. null means "
+    "not-computed, NOT zero — nothing here indicates any attack or simulator is "
+    "inapplicable."
+)
+
+_TRUNCATION_HINT_UNKNOWN_PLAN = (
+    "SafeBreach hit its evaluation limit and stopped early: {returned} step(s) returned, "
+    "and the plan's step count is not knowable client-side on the scenario_id path. "
+    "No counts were computed for the steps it did not reach. null means "
+    "not-computed, NOT zero — nothing here indicates any attack or simulator is "
+    "inapplicable."
+)
+
+_RUNNABLE_COUNTS_HINT = (
+    "These are runnable counts (includeDisabled=false): offline, disabled and "
+    "unapproved simulators are excluded from the numbers, though they are still "
+    "reported with their reason. The expected figure — what would run if every "
+    "simulator were available — cannot be derived from this response; request it "
+    "with include_disabled=true."
+)
+
+_EXPECTED_COUNTS_HINT = (
+    "These are expected counts (includeDisabled=true): every simulator is scored "
+    "whether or not it could run now, so simulator_is_offline is never reported. "
+    "The runnable figure — what would actually run right now — cannot be derived "
+    "from this response; request it with include_disabled=false."
+)
+
+
+_RUNNABLE_COUNTS_HINT_BOTH = (
+    "These are runnable counts (includeDisabled=false): offline, disabled and "
+    "unapproved simulators are excluded from the numbers, though they are still "
+    "reported with their reason. The expected figure cannot be derived from this "
+    "response — it was fetched by a second call and is under this response's "
+    "'expected' key."
+)
+
+_EXPECTED_COUNTS_HINT_BOTH = (
+    "These are expected counts (includeDisabled=true): every simulator is scored "
+    "whether or not it could run now, so simulator_is_offline is never reported. "
+    "The runnable figure cannot be derived from this response — it was fetched by a "
+    "second call and is under this response's 'runnable' key."
+)
+
+
+def _plan_statistics_hint(truncated, plan_step_count, returned_step_count, counts_mode,
+                          both_present=False):
+    """Assemble the caller-facing hints. A counts-mode note is always emitted.
+
+    `both_present` says the sibling figure is already in the same payload, so the
+    note points at it rather than advising a second call that was already made.
+    """
+    hints = []
+    if truncated:
+        if plan_step_count is None:
+            # The scenario_id path resolves the plan server-side.
+            hints.append(_TRUNCATION_HINT_UNKNOWN_PLAN.format(
+                returned=returned_step_count,
+            ))
+        else:
+            hints.append(_TRUNCATION_HINT.format(
+                returned=returned_step_count, plan=plan_step_count,
+            ))
+
+    if counts_mode == 'expected':
+        hints.append(_EXPECTED_COUNTS_HINT_BOTH if both_present else _EXPECTED_COUNTS_HINT)
+    else:
+        hints.append(_RUNNABLE_COUNTS_HINT_BOTH if both_present else _RUNNABLE_COUNTS_HINT)
+
+    return " ".join(hints)
+
+
+def get_plan_statistics_response_mapping(
+    statistics: Dict[str, Any],
+    steps: List[Dict[str, Any]],
+    constraint_catalog: Dict[str, Any],
+    both_present: bool = False,
+) -> Dict[str, Any]:
+    """Assemble the caller-facing plan statistics report.
+
+    Emits:
+        counts_mode          'runnable' or 'expected' — which question was asked
+        plan_step_count      steps in the plan; None on the scenario_id path
+        returned_step_count  steps the orchestrator actually returned
+        truncated            the orchestrator stopped early, so the two counts differ
+        params_used          the query parameters actually sent
+        constraint_catalog   {code: {description}} — one entry per code present
+                             in this response, description relayed verbatim or
+                             null where the API supplied none
+        steps                per-step reports (see _shape_statistics_step)
+        hint_to_agent        truncation and counts-mode guidance
+    """
+    # Derived, never passed in: the mode is a restatement of the parameter that
+    # was actually sent, so accepting it separately would let the response
+    # describe itself as runnable over numbers fetched as expected.
+    include_disabled = statistics['params_used'].get('includeDisabled')
+    counts_mode = 'expected' if include_disabled else 'runnable'
+    return {
+        'counts_mode': counts_mode,
+        'plan_step_count': statistics['plan_step_count'],
+        'returned_step_count': statistics['returned_step_count'],
+        'truncated': statistics['truncated'],
+        'params_used': statistics['params_used'],
+        'constraint_catalog': constraint_catalog,
+        'steps': steps,
+        'hint_to_agent': _plan_statistics_hint(
+            statistics['truncated'],
+            statistics['plan_step_count'],
+            statistics['returned_step_count'],
+            counts_mode,
+            both_present=both_present,
+        ),
+    }

@@ -6,6 +6,7 @@ specifically for accessing playbook attack data and details.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 
 import requests
@@ -16,6 +17,8 @@ from safebreach_mcp_core.token_context import get_cache_user_suffix
 from safebreach_mcp_core.environments_metadata import get_api_base_url, get_api_account_id
 from safebreach_mcp_core.rate_limiter import rate_limiter, get_caller_identity
 from .playbook_types import (
+    _extract_platform_data,
+    _transform_tags,
     transform_reduced_playbook_attack,
     transform_full_playbook_attack,
     filter_attacks_by_criteria,
@@ -101,6 +104,140 @@ def _get_all_attacks_from_cache_or_api(console: str) -> List[Dict[str, Any]]:
         raise ValueError(f"Failed to fetch playbook attacks: {str(e)}") from e
 
 
+# Measured on a live console holding 9,659 moves: the bulk KB listing is 58.6 MB
+# and ~3.0 s, while a single move is ~10 KB and ~0.6 s. Sixteen at a time,
+# per-id resolution beats the bulk call up to ~100 ids and moves roughly 80x
+# less data; past that the one big call is faster and is used instead.
+ATTACK_NAME_WORKERS = 16
+ATTACK_NAME_PER_ID_LIMIT = 100
+
+
+def get_attack_names_by_ids(console: str, attack_ids) -> Dict[str, str]:
+    """Resolve {id: name} for the attacks named, fetching only those attacks."""
+    return {key: facts['name']
+            for key, facts in get_attack_facts_by_ids(console, attack_ids).items()
+            if facts.get('name')}
+
+
+ADVANCED_ACTIONS_TAG = 'advanced_actions'
+
+
+def _advanced_action_names(tags) -> Dict[str, str]:
+    """{advanced action id: name} from the attack's own Advanced_Actions tag.
+
+    The constraint `missing_required_advanced_actions` reports ids — `required:
+    [0]` — and an id alone tells a reader nothing. The attack record already
+    carries the mapping, so no catalog request is needed to name them.
+    """
+    for tag in tags or []:
+        if not isinstance(tag, dict):
+            continue
+        if str(tag.get('name', '')).strip().lower() != ADVANCED_ACTIONS_TAG:
+            continue
+        return {
+            str(value['id']): str(value.get('displayName') or value.get('value'))
+            for value in (tag.get('values') or [])
+            if isinstance(value, dict) and value.get('id') is not None
+            and (value.get('displayName') or value.get('value'))
+        }
+    return {}
+
+
+def _attack_facts(attack: Dict[str, Any]) -> Dict[str, Any]:
+    """The fields that identify an attack or explain why it did not run.
+
+    Deliberately narrow — description, MITRE data and parameters explain nothing
+    about a block, and fifty full records is a response-size problem. Tags are
+    the exception: they are ~900 bytes of the record we already fetch, they name
+    what the attack IS (attack type, threat, malware category), and one of them
+    is the only thing that can turn `required: [0]` into a capability a reader
+    can act on.
+    """
+    facts = {'name': attack.get('name', '')}
+    facts.update(_extract_platform_data(attack.get('content') or {}))
+    tags = attack.get('tags')
+    # The repo's one tag shape, shared with get_playbook_attack_details rather
+    # than a second spelling of the same data. It drops the ids, which is why
+    # the advanced-action mapping below is a separate field: that id is the
+    # only join key a constraint reporting `required: [0]` can be read against.
+    transformed = _transform_tags(tags)
+    if transformed:
+        facts['tags'] = transformed
+    advanced_actions = _advanced_action_names(tags)
+    if advanced_actions:
+        facts['advanced_actions'] = advanced_actions
+    return facts
+
+
+def get_attack_facts_by_ids(console: str, attack_ids) -> Dict[str, Dict[str, Any]]:
+    """Resolve {id: {name, target_platform, attacker_platform}} for named attacks.
+
+    Fetches only the attacks named. These facts are cosmetic-to-explanatory: an
+    id that does not resolve is simply absent from the result, and a transport
+    failure yields an empty map rather than raising, so a caller renders the
+    bare id instead of losing its answer.
+    """
+    wanted, seen = [], set()
+    for attack_id in attack_ids:
+        key = str(attack_id)
+        if key and key not in seen:
+            seen.add(key)
+            wanted.append(key)
+    if not wanted:
+        return {}
+
+    def pick(attacks):
+        indexed = {str(a['id']): a for a in attacks if 'id' in a}
+        return {key: _attack_facts(indexed[key]) for key in wanted if key in indexed}
+
+    # A warm bulk cache already holds every name. Asking the API again for ids
+    # it can answer from memory would be the waste this function exists to end.
+    if is_caching_enabled("playbook"):
+        cached = playbook_cache.get(f"attacks_{console}{get_cache_user_suffix()}")
+        if cached is not None:
+            logger.info("Resolved %d attack name(s) for console %s from the warm cache",
+                        len(wanted), console)
+            return pick(cached)
+
+    if len(wanted) > ATTACK_NAME_PER_ID_LIMIT:
+        logger.info("Resolving %d attack name(s) for console %s via the bulk listing "
+                    "(above the %d-id per-id limit)",
+                    len(wanted), console, ATTACK_NAME_PER_ID_LIMIT)
+        try:
+            return pick(_get_all_attacks_from_cache_or_api(console))
+        except Exception as e:
+            logger.warning("Bulk attack-name lookup failed for console %s: %s", console, e)
+            return {}
+
+    base_url = get_api_base_url(console, 'playbook')
+    # Resolved once, in this thread: auth lives in a ContextVar, which does not
+    # follow a worker into the pool below.
+    headers = {
+        "Content-Type": "application/json",
+        **get_auth_headers_for_console(console)
+    }
+
+    def fetch(attack_id):
+        try:
+            response = requests.get(
+                f"{base_url}/api/kb/vLatest/moves/{attack_id}",
+                headers=headers, timeout=60,
+            )
+            if response.status_code != 200:
+                logger.warning("Attack lookup for %s returned %s",
+                               attack_id, response.status_code)
+                return attack_id, None
+            data = response.json().get('data')
+            return attack_id, _attack_facts(data) if isinstance(data, dict) else None
+        except Exception as e:
+            logger.warning("Attack lookup for %s failed: %s", attack_id, e)
+            return attack_id, None
+
+    logger.info("Resolving %d attack record(s) for console %s, one move each",
+                len(wanted), console)
+    with ThreadPoolExecutor(max_workers=min(ATTACK_NAME_WORKERS, len(wanted))) as pool:
+        return {attack_id: facts
+                for attack_id, facts in pool.map(fetch, wanted) if facts}
 def _normalize_test_type(test_type: Optional[str]) -> str:
     """
     Resolve and validate the catalog scope, defaulting to Validate.
