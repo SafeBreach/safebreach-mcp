@@ -91,8 +91,9 @@ Both tools score **exactly one** of three inputs, a blank string counting as abs
 | `scenario_id` | A saved scenario (OOB UUID) or a custom plan (integer-as-string). |
 | `test_id` | A planRunId such as `1764165600525.2`; scores the scenario that run executed. |
 
-Shared parameters and their **actual** defaults: `console="default"`, `both_counts=False`,
-`conflict_detail="summary"`.
+Shared parameter and its default: `console="default"` — and on a single-console deployment it resolves
+itself, so it can be omitted there. **Every other endpoint setting is internal** (D10/D12). The counts tool
+takes **4** parameters and blocked-entities **5**.
 
 **Every other endpoint setting is internal and deliberately not exposed** (owner decision D10,
 2026-09-14). The counts tool takes 8 parameters and blocked-entities 7; these five are not among them:
@@ -104,6 +105,8 @@ Shared parameters and their **actual** defaults: `console="default"`, `both_coun
 | `include_disabled` | false | A single pass is always **runnable**. See below. |
 | `get_constraints` | per tool — false for counts, true for blocked-entities | Each tool already asks for exactly what its own answer needs. Turning it on for counts buys data that tool discards, at 38,531 conflicts / 11.8 MB for one measured step. |
 | `get_all_constraints` | true | Shapes constraint completeness only. |
+| `both_counts` | false | Counts are always **runnable**. Unlike the rest, this one **does cost an answer** — see below. |
+| `conflict_detail` | `"summary"` | `per_attack` changed no output on these tools while still costing playbook lookups; `full` only uncapped the coverage maps. |
 
 **`include_disabled` is removed without losing an answer**, which is the only reason removing it is safe.
 `both_counts=True` scores **both** modes itself — it hardcodes one runnable and one expected pass and never
@@ -140,13 +143,22 @@ ids at all, so there is nothing whose name would need resolving — the property
 58.6 MB, previously reachable only by passing `page_size=0`. The `_name_counts_pages` resolver, `_attacks_page`
 and `_validate_paging` are deleted outright rather than left unreferenced.
 
-#### `both_counts` is the only input that changes the question
+#### Counts are always runnable; the expected figure is not offered (D12, 2026-09-14)
 
-`False` (default) gives **runnable** counts — what would run right now, with offline, disabled and
-unapproved simulators excluded from the numbers though still reported with their reason. `True` returns
-that **and** the **expected** figure — what would run if every simulator were available — labelled, from two
-calls. Neither is derivable from the other, because `includeDisabled=false` filters disabled simulators out
-of the counts entirely; that is why the second figure costs a second call rather than a subtraction.
+These tools report **runnable** counts only — what would run right now, with offline, disabled and
+unapproved simulators excluded from the numbers though still reported with their reason.
+
+**This one removal did cost an answer, and that is recorded rather than glossed.** Every other internalised
+setting left the reachable answers untouched; withdrawing `both_counts` removes the **expected** figure from
+the tool surface outright. It is not derivable from the runnable response — `includeDisabled=false` filters
+disabled simulators out of the counts entirely — so no caller can reconstruct it. The capability survives on
+the private `sb_get_plan_statistics`, which the run tools' preview path still uses, and the e2e ordering
+invariant (runnable ≤ expected) is now asserted there rather than through a tool.
+
+`conflict_detail` went with it. On these two tools it was effectively a two-state switch: `per_attack` named
+attacks inside the **conflicts list**, which both projections drop, so it changed no output while still
+triggering playbook lookups; only `full` had a visible effect, uncapping the coverage maps. A parameter whose
+middle value is pure cost and whose other values are a boolean is not a parameter worth exposing.
 
 #### Guarantees that hold across both tools
 
@@ -1948,6 +1960,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-09-14 (f) | **D12 — `both_counts` and `conflict_detail` are internal; the surface is 4 params and 5.** `both_counts` goes because counts are always runnable (`includeDisabled` is already fixed false). **Unlike every other internalised setting, this one costs a reachable answer**: the **expected** figure leaves the tool surface entirely and cannot be reconstructed, since `includeDisabled=false` filters disabled simulators out of the counts. Recorded as a decision, and asserted by a test named for it, so it cannot later read as an oversight. The capability survives on the private `sb_get_plan_statistics` for the run tools' preview path. `conflict_detail` goes because on these two tools it was **already** a two-state switch: `per_attack` names attacks inside the conflicts list, which both projections drop, so it changed no output while still triggering playbook lookups; only `full` was visible, uncapping the coverage maps. **Invariants were retargeted, not deleted** — the two-labelled-passes rule, the both-mode projection branch, the shared name memo across passes, and T-56's narrator guard all still hold on the plumbing and are asserted there; the e2e runnable ≤ expected ordering likewise. Coverage of the tool surface gains the inverse assertion: neither schema offers either name. The runnable hint no longer advertises a way to reach the expected figure, because there is none. **A self-inflicted slip worth recording**: my first edit cut a block that also contained the module-level `_studio_tools` helper and both param constants, turning 16 failures into 31; restored from HEAD rather than rewritten. 2173 offline passed; **e2e 12 passed live**. |
 | 2026-09-14 (e) | **D11 — the counts answer relays three data fields; `page`/`page_size` are gone.** Owner decision: the counts tool sends the LLM only `simulationCount`, `attackerSimulators` and `targetSimulators`. Phase 13's paginated attack listing is removed with the parameters that drove it, and `_name_counts_pages`, `_attacks_page` and `_validate_paging` are **deleted** rather than left unreferenced. **Stated plainly because it is a real reduction**: "which attacks would run" as an *enumeration* is now answerable by neither tool. The per-attack question survives — name an id to `get_scenario_blocked_entities` and it answers `ran` with its count. **What it bought**: the counts tool now makes **zero playbook requests unconditionally**, carrying no attack id whose name could need resolving — Phase 11's 58.6 MB property, previously reachable only via `page_size=0`. `_step_coverage` split: the counts answer uses a simulator-only clause, because reusing the shared one would raise `KeyError` on a field now deliberately **absent** rather than empty. **A live defect was caught by reading the rendered output, not by the suite**: the runnable hint still read *"request it with include_disabled=true"* — advice an agent cannot follow, naming a parameter removed one commit earlier. Same class as the Phase 13 routing hint that outlived the tool it named. Fixed to `both_counts=true`, and a new test asserts no narration names any removed parameter, which makes the class checkable rather than the instance. T-64/T-65/T-66 and their test class removed; T-57's coverage invariant retargeted to the simulator maps, with the attacks-denominator half preserved on the sibling tool so it is not silently lost. Schemas: **6 params on counts, 7 on blocked-entities**. 2175 offline passed; **e2e 12 passed live**. |
 | 2026-09-14 (d) | **D10 extended — `include_disabled`, `get_constraints` and `get_all_constraints` join them.** Owner review continued down the input list. `get_constraints` and `get_all_constraints` were never real choices: each tool already requests exactly the constraint data its own answer needs, and the counts tool turning constraints *on* would pay 38,531 conflicts / 11.8 MB for data it discards. `get_constraints` survives as a parameter of the internal `_score_scenario` — it is the one setting that genuinely differs between the two tools — but each supplies it as a constant, so it is not a caller's choice either. **`include_disabled` needed checking before removal, not after**: it is the flag §2.0 itself called "selects WHICH QUESTION is asked". Verified in the code first — `both_counts=True` hardcodes one runnable and one expected pass and **never reads the argument** — so the expected figure is still one call away. What is lost is *expected-only*, a question nobody asks; AC-3's "expected available" holds via `both_counts`, which is now the only input that changes the question. Schemas: **8 params on counts, 7 on blocked-entities** (from 13 and 12 before D10). A test pins that `both_counts` stays exposed, so "include_disabled is internal" can never be read as "expected counts are gone". T-27's `test_include_disabled_issues_one_expected_call` asserted an unreachable path and is replaced by one asserting a single pass is **always** runnable — the mode drifting back to expected would silently answer a question the caller did not ask. The three e2e cases that compared two calls now use one `both_counts` call. 2190 offline passed; **e2e 12 passed live against `zircon-piculet`**. |
 | 2026-09-14 (c) | **D10 — `limit` and `use_cache` are internal, not tool parameters.** Owner review of the input surface: both are transport settings rather than questions. `limit` is the orchestrator's circuit-breaker on how many simulations it evaluates before stopping early, and `use_cache` is its server-side cache flag; neither changes *which* question is asked, and a calling agent has no basis on which to pick a value for either. Worse than useless: a guessed `limit` can stop the scoring early and silently truncate the very report the caller is reading, which is the failure mode this whole feature exists to prevent. Removed from both tool wrappers, from both public `sb_get_scenario_*` functions and from `_score_scenario`; the fetch core's defaults now apply unconditionally on this path. **Kept on the private `sb_get_plan_statistics`**, which the run tools' preview path still parameterises — the point is to stop offering the choice to an agent, not to delete the capability. Schemas verified after the change: 13 → 11 params on the counts tool, 12 → 10 on blocked-entities. **T-46's assertion is inverted rather than deleted** — it now pins that the wire carries the *internal* value for each, because asserting only that the parameters vanished would stay green if the request stopped sending them altogether, handing the orchestrator its own defaults instead of ours. A new test asserts neither schema offers them back. This narrows R15 by exactly two names and leaves its principle intact: neither setting asks anything, so no question became unaskable. 1049 passed. |

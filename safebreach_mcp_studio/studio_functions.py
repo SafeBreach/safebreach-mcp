@@ -3896,8 +3896,8 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
     return entry
 
 
-def _score_scenario(console, scenario, scenario_id, test_id, both_counts,
-                    get_constraints, conflict_detail, resolve_details=True,
+def _score_scenario(console, scenario, scenario_id, test_id,
+                    get_constraints, resolve_details=True,
                     pinned_attack_ids=()):
     """Validate in the caller's vocabulary, then score exactly once.
 
@@ -3905,12 +3905,11 @@ def _score_scenario(console, scenario, scenario_id, test_id, both_counts,
     routing through it keeps this repo's single `plan/statistics` call site
     single. What this call buys is the error wording: 'scenario', not 'plan'.
 
-    Everything the endpoint accepts beyond ``both_counts`` and ``conflict_detail``
-    is settled here rather than by a caller. The evaluation cap, the cache flag
-    and ``get_all_constraints`` take ``sb_get_plan_statistics``' own defaults;
-    ``include_disabled`` does too, which is why runnable is what a single pass
-    returns — ``both_counts`` is the one input that changes the question, and it
-    scores both modes itself rather than reading this argument.
+    Everything the endpoint accepts is settled here rather than by a caller. The
+    evaluation cap, the cache flag, ``get_all_constraints``, ``conflict_detail``
+    and ``include_disabled`` all take ``sb_get_plan_statistics``' own defaults,
+    which is why these tools always answer with RUNNABLE counts and never offer
+    the expected figure.
 
     ``get_constraints`` stays a parameter because it is the one setting that
     genuinely differs between the two tools — the counts answer renders no
@@ -3924,9 +3923,7 @@ def _score_scenario(console, scenario, scenario_id, test_id, both_counts,
         plan=scenario,
         scenario_id=scenario_id,
         test_id=test_id,
-        both_counts=both_counts,
         get_constraints=get_constraints,
-        conflict_detail=conflict_detail,
         resolve_details=resolve_details,
         pinned_attack_ids=pinned_attack_ids,
     )
@@ -3935,8 +3932,6 @@ def _score_scenario(console, scenario, scenario_id, test_id, both_counts,
 def sb_get_scenario_simulation_counts(
     console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
-    both_counts: bool = False,
-    conflict_detail: str = "summary",
 ):
     """How many simulations a scenario would produce, and which simulators produce them.
 
@@ -3957,8 +3952,7 @@ def sb_get_scenario_simulation_counts(
     logger.info(f"Scenario simulation counts for console '{console}'")
     return _project_simulation_counts(
         _score_scenario(
-            console, scenario, scenario_id, test_id, both_counts,
-            False, conflict_detail,
+            console, scenario, scenario_id, test_id, False,
             resolve_details=False,
         )
     )
@@ -3968,8 +3962,6 @@ def sb_get_scenario_blocked_entities(
     console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
     attack_ids: str | None = None,
-    both_counts: bool = False,
-    conflict_detail: str = "summary",
 ):
     """What in a scenario would not run, and why.
 
@@ -3992,8 +3984,7 @@ def sb_get_scenario_blocked_entities(
                 f"{len(parsed_ids) or 'all'} attack(s) in scope")
     pinned = tuple(str(attack_id) for attack_id in parsed_ids)
     return _project_blocked_entities(_score_scenario(
-        console, scenario, scenario_id, test_id, both_counts,
-        True, conflict_detail,
+        console, scenario, scenario_id, test_id, True,
         pinned_attack_ids=pinned,
     ), parsed_ids)
 

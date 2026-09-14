@@ -525,14 +525,13 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   `ran` with its count. Consequently this tool makes **zero playbook requests**: it carries no attack id whose
   name would need resolving. Its sibling still resolves names only for what it shows — one `moves/{id}` and one
   `nodes/{id}` call each, never the full KB or fleet listings.
-  **`both_counts` is the only input that changes the question**: `false` (default) gives **runnable** counts —
-  what would run right now — and `true` issues two calls returning runnable **and** **expected** (as if every
-  simulator were available), labelled. Neither is derivable from the other. The endpoint's other settings —
-  `limit`, `use_cache`, `include_disabled`, `get_constraints`, `get_all_constraints` — are **set internally and
-  are not parameters** (D10): none of them changes which question is asked. This tool never evaluates
-  constraints (a single default step measured 38,531 conflicts and an 11.8 MB response on a real console);
-  `conflict_detail="full"` still sharpens it, lifting the coverage-map caps so a figure otherwise reported as
-  "at least N of M" becomes exact.
+  **Counts are always RUNNABLE** — what would run right now, with offline, disabled and unapproved
+  simulators excluded from the numbers though still reported with their reason. The **expected** figure
+  (as if every simulator were available) is **not offered by these tools** and is not derivable from the
+  response; it survives only on the private plumbing the run tools use. Every endpoint setting —
+  `limit`, `use_cache`, `include_disabled`, `get_constraints`, `get_all_constraints`, `both_counts`,
+  `conflict_detail` — is **internal and not a parameter** (D10/D12). The surface is 4 params here and 5 on
+  the sibling; `console` resolves itself on a single-console deployment.
   **`null` means not computed, never zero.** A step the orchestrator never scored says so rather than
   reporting 0, and the total says how many steps it covers. **Coverage denominators are the step's true totals**,
   never the capped map's length, so a capped figure reads "at least N of M" rather than presenting a truncation

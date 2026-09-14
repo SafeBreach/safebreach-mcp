@@ -9148,7 +9148,7 @@ class TestCountsModeIsDerivedFromTheParametersSent:
         hint = _build_plan_statistics_report(
             self._with_include_disabled(False)
         )['hint_to_agent']
-        assert 'cannot be derived' in hint
+        assert 'neither derivable' in hint
 
     def test_expected_states_that_runnable_is_not_derivable(self):
         hint = _build_plan_statistics_report(
@@ -13575,29 +13575,33 @@ class TestAttackNamesAreFetchedForWhatIsShown:
         assert 'attack_name' not in entry
         assert result['verdict']['state'] == 'blocked'
 
-    def test_both_counts_resolves_each_id_once_across_the_two_passes(self):
+    def test_a_both_mode_report_resolves_each_id_once_across_the_two_passes(self):
+        # both_counts left the tool surface, so this is asserted on the
+        # plumbing plus the projection — the shared memo is what keeps a
+        # two-pass report from paying for the same name twice, and it would
+        # otherwise go uncovered now that no tool can request two passes.
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
                        'get_attack_facts_by_ids',
                        return_value={'226': {'name': 'Write EICAR to disk'}}) as resolve:
-                result = sb_get_scenario_blocked_entities(
-                    console="test-console", scenario=self.SCENARIO, both_counts=True)
-        # Two scoring passes, one name lookup: the second pass reads the shared
-        # memo rather than asking again for an id already resolved.
+                report = sb_get_plan_statistics(
+                    console="test-console", plan=self.SCENARIO, both_counts=True)
         assert resolve.call_count == 1
+        result = _project_blocked_entities(report)
         for mode in ('runnable', 'expected'):
             assert result[mode]['steps'][0]['zero_impact_attacks'][0][
                 'attack_name'] == 'Write EICAR to disk'
 
-    def test_summary_mode_resolves_nothing_for_conflicts(self):
-        # Conflicts carry a name only in the verbose modes, so in 'summary'
-        # the only ids worth resolving are the zero-impact ones.
+    def test_the_tool_resolves_only_the_zero_impact_ids(self):
+        # conflict_detail is internal and fixed at 'summary', so conflicts
+        # never carry a name and the only ids worth resolving are the
+        # zero-impact ones. Previously this was one mode of three; it is now
+        # the tool's only behaviour.
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
                        'get_attack_facts_by_ids', return_value={}) as resolve:
                 sb_get_scenario_blocked_entities(
-                    console="test-console", scenario=self.SCENARIO,
-                    conflict_detail='summary')
+                    console="test-console", scenario=self.SCENARIO)
         assert list(resolve.call_args.args[1]) == ['226']
 
 
@@ -14385,38 +14389,50 @@ class TestScenarioCountsModeSelectsOneCallOrTwo:
         assert len(queries) == 1 and queries[0]['includeDisabled'] == ['false']
         assert result['counts_mode'] == 'runnable'
 
-    def test_both_counts_issues_exactly_two_calls_one_of_each(
+    def test_the_expected_figure_is_unreachable_through_the_tool(
         self, mock_statistics_response_all_good
     ):
+        # `both_counts` is internal now, so expected counts left the tool
+        # surface with it. The invariant below moved to the plumbing, where the
+        # capability still lives; here the point is that the tool cannot be
+        # talked into a second pass.
         with _statistics_transport(mock_statistics_response_all_good) as post:
-            sb_get_scenario_simulation_counts(
-                console="test-console", scenario=self.SCENARIO, both_counts=True)
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO)
+        assert len(_statistics_queries(post)) == 1
+        assert result['counts_mode'] == 'runnable'
+        assert 'expected' not in result
+
+    def test_both_counts_still_issues_two_labelled_passes_on_the_plumbing(
+        self, mock_statistics_response_all_good
+    ):
+        # The capability was withdrawn from the tools, not deleted: the run
+        # tools' preview path still uses it, so the two-calls-one-of-each
+        # invariant is asserted where it still applies.
+        with _statistics_transport(mock_statistics_response_all_good) as post:
+            report = sb_get_plan_statistics(
+                console="test-console", plan=self.SCENARIO, both_counts=True)
         queries = _statistics_queries(post)
         assert len(queries) == 2
         assert {q['includeDisabled'][0] for q in queries} == {'false', 'true'}
+        assert report['counts_mode'] == 'both'
+        assert report['runnable']['counts_mode'] == 'runnable'
+        assert report['expected']['counts_mode'] == 'expected'
 
-    def test_both_counts_labels_and_shapes_the_result(
+    def test_a_both_mode_report_still_projects_each_side(
         self, mock_statistics_response_all_good
     ):
+        # _project_both_aware is unreachable from the tools now, but it is the
+        # guard that keeps a both-mode report from being passed through raw.
+        # Asserted directly so removing the tool parameter did not quietly
+        # retire the branch.
         with _statistics_transport(mock_statistics_response_all_good):
-            result = sb_get_scenario_simulation_counts(
-                console="test-console", scenario=self.SCENARIO, both_counts=True)
-        assert set(result) == {'counts_mode', 'runnable', 'expected', 'hint_to_agent'}
-        assert result['counts_mode'] == 'both'
-        assert result['runnable']['counts_mode'] == 'runnable'
-        assert result['expected']['counts_mode'] == 'expected'
-        assert 'cannot be derived' in result['hint_to_agent']
-
-    def test_both_counts_projects_each_side_rather_than_passing_the_report_through(
-        self, mock_statistics_response_all_good
-    ):
-        # Proves the both-branch runs the projection: a raw report would still
-        # carry the catalog the counts tool drops.
-        with _statistics_transport(mock_statistics_response_all_good):
-            result = sb_get_scenario_simulation_counts(
-                console="test-console", scenario=self.SCENARIO, both_counts=True)
-        assert 'constraint_catalog' not in result['runnable']
-        assert 'constraint_catalog' not in result['expected']
+            report = sb_get_plan_statistics(
+                console="test-console", plan=self.SCENARIO, both_counts=True)
+        projected = _project_simulation_counts(report)
+        assert set(projected) == {'counts_mode', 'runnable', 'expected', 'hint_to_agent'}
+        assert 'constraint_catalog' not in projected['runnable']
+        assert 'constraint_catalog' not in projected['expected']
 
 
 class TestEachToolMakesExactlyOneStatisticsCall:
@@ -14430,7 +14446,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     TOOLS = (sb_get_scenario_simulation_counts,
              sb_get_scenario_blocked_entities)
     SCENARIO = '{"steps": [{"n": 0}]}'
-    OVERRIDES = dict(conflict_detail='per_attack')
+    OVERRIDES = {}
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_a_single_pass_call_issues_exactly_one_request(
@@ -14438,7 +14454,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
-                 both_counts=False, **self.OVERRIDES, **_required_kwargs(tool))
+                 **self.OVERRIDES, **_required_kwargs(tool))
         assert post.call_count == 1
 
     @pytest.mark.parametrize("tool", TOOLS)
@@ -14447,7 +14463,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     ):
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
-                 both_counts=False, **self.OVERRIDES, **_required_kwargs(tool))
+                 **self.OVERRIDES, **_required_kwargs(tool))
         # Every endpoint setting is now internal, so what the wire must carry is
         # the internal value rather than an echoed argument. Asserting the value
         # sent — not merely that the parameters vanished from the schema — is
@@ -14460,59 +14476,47 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         assert query['useCache'] == ['true' if DEFAULT_USE_CACHE else 'false']
 
     @pytest.mark.parametrize("tool", TOOLS)
-    def test_both_counts_issues_exactly_two_never_three(
+    def test_neither_tool_can_be_made_to_issue_a_second_pass(
         self, tool, mock_statistics_response_all_good
     ):
+        # One scoring per call, with no parameter left that could ask for two.
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
-                 both_counts=True, **_required_kwargs(tool))
-        assert post.call_count == 2
+                 **_required_kwargs(tool))
+        assert post.call_count == 1
 
     @pytest.mark.parametrize("tool", TOOLS)
-    def test_each_tool_delegates_once_passing_conflict_detail_through(self, tool):
+    def test_each_tool_delegates_once_with_the_internal_settings(self, tool):
+        # conflict_detail is no longer a parameter, so what this pins is that
+        # each tool delegates exactly once and hands the plumbing its own
+        # settled values — including the get_constraints that differs between
+        # them, which is the one internal setting that is not shared.
         report = _phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG)
         with patch('safebreach_mcp_studio.studio_functions.sb_get_plan_statistics',
                    return_value=report) as delegate:
             tool(console="test-console", scenario=self.SCENARIO,
-                 conflict_detail='per_attack', **_required_kwargs(tool))
+                 **_required_kwargs(tool))
         assert delegate.call_count == 1
-        assert delegate.call_args.kwargs['conflict_detail'] == 'per_attack'
-        assert delegate.call_args.kwargs['plan'] == self.SCENARIO
-
-    def test_the_counts_tool_asks_for_no_constraints_by_default(
-        self, mock_statistics_response_all_good
-    ):
-        with _statistics_transport(mock_statistics_response_all_good) as post:
-            sb_get_scenario_simulation_counts(
-                console="test-console", scenario=self.SCENARIO)
-        assert _statistics_queries(post)[0]['getConstraints'] == ['false']
-
-    def test_the_blocked_entities_tool_asks_for_constraints_by_default(
-        self, mock_statistics_response_all_good
-    ):
-        with _statistics_transport(mock_statistics_response_all_good) as post:
-            sb_get_scenario_blocked_entities(
-                console="test-console", scenario=self.SCENARIO)
-        assert _statistics_queries(post)[0]['getConstraints'] == ['true']
+        kwargs = delegate.call_args.kwargs
+        assert kwargs['plan'] == self.SCENARIO
+        assert 'conflict_detail' not in kwargs
+        assert 'both_counts' not in kwargs
+        expected_constraints = tool is sb_get_scenario_blocked_entities
+        assert kwargs['get_constraints'] is expected_constraints
 
 
-# ---------------------------------------------------------------------------
-# three scenario-statistics tools — SAF-35508 Phase 8
-# ---------------------------------------------------------------------------
-
-PASS_THROUGH_PARAMS = (
-    'console', 'scenario', 'scenario_id', 'test_id', 'both_counts',
-    'conflict_detail',
-)
+PASS_THROUGH_PARAMS = ('console', 'scenario', 'scenario_id', 'test_id')
 
 # Set internally, so a caller is never invited to pick a value. None of these
-# changes WHICH question is asked: the evaluation cap and cache flag are
-# transport, and each tool already asks for exactly the constraint data its own
-# answer needs. `both_counts` is the one input that does change the question and
-# stays exposed — it scores runnable and expected itself, so dropping
-# `include_disabled` costs no reachable answer.
+# changes the answer these tools give: the evaluation cap and cache flag are
+# transport, each tool already asks for exactly the constraint data its own
+# answer needs, and counts are always runnable. `both_counts` and
+# `conflict_detail` joined them last — unlike the others, dropping `both_counts`
+# DID cost an answer (the expected figure), which is a recorded decision rather
+# than an oversight.
 INTERNAL_ONLY_PARAMS = ('limit', 'use_cache', 'include_disabled',
-                        'get_constraints', 'get_all_constraints')
+                        'get_constraints', 'get_all_constraints',
+                        'both_counts', 'conflict_detail')
 
 
 def _studio_tools():
@@ -14571,13 +14575,16 @@ class TestScenarioStatisticsToolsRegistration:
         for param in INTERNAL_ONLY_PARAMS:
             assert param not in properties, f"{name} exposes {param}"
 
-    def test_dropping_include_disabled_costs_no_reachable_answer(self):
-        # The one input that changes the question is `both_counts`, and it is
-        # still exposed. Without this, "include_disabled is internal" could be
-        # read as "expected counts are gone" — they are not, they are one call
-        # away, which is the whole reason removing the flag is safe.
+    def test_the_expected_figure_is_no_longer_reachable_from_either_tool(self):
+        # `both_counts` went internal too, so unlike the include_disabled
+        # removal this one DOES cost an answer: expected counts are gone from
+        # the tool surface entirely. Asserted rather than assumed, so the loss
+        # is a decision on record instead of a surprise — the figure survives
+        # only on the private sb_get_plan_statistics, which the run tools use.
         for name in SCENARIO_TOOL_NAMES:
-            assert 'both_counts' in _studio_tools()[name].inputSchema['properties']
+            props = _studio_tools()[name].inputSchema['properties']
+            assert 'both_counts' not in props
+            assert 'conflict_detail' not in props
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_the_body_parameter_is_scenario_not_plan(self, name):
@@ -14619,7 +14626,8 @@ class TestEachNarrationCarriesOnlyItsOwnSections:
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         tools = SafeBreachStudioServer().mcp._tool_manager._tools
         removed = {'limit', 'use_cache', 'include_disabled',
-                   'get_constraints', 'get_all_constraints', 'page', 'page_size'}
+                   'get_constraints', 'get_all_constraints', 'page', 'page_size',
+                   'both_counts', 'conflict_detail'}
         for name in SCENARIO_TOOL_NAMES:
             exposed = set(tools[name].parameters['properties'])
             assert not (removed & exposed), f"{name} re-exposed {removed & exposed}"
@@ -14863,29 +14871,33 @@ class TestBothCountsRendersBothPasses:
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
-    def _rendered(self, tool_fn, narrator, payload, **kwargs):
+    def _rendered(self, projection, narrator, payload, **kwargs):
+        # No tool can request two passes any more, so the report is built on
+        # the plumbing and handed to the projection directly. The narrator is
+        # what this test is really about: a both-mode result has no top-level
+        # `steps` key, so one that indexes steps before checking the mode
+        # raises immediately — which is what the retired tool once hit.
         with _statistics_transport(payload):
-            projected = tool_fn(console="test-console", scenario=self.SCENARIO,
-                                **_required_kwargs(tool_fn), **kwargs)
-        return narrator(projected)
+            report = sb_get_plan_statistics(
+                console="test-console", plan=self.SCENARIO, both_counts=True, **kwargs)
+        return narrator(projection(report))
 
     def _cases(self):
         from safebreach_mcp_studio.studio_server import (
             _format_scenario_simulation_counts,
             _format_scenario_blocked_entities,
-            _format_scenario_blocked_entities,
         )
         return (
-            (sb_get_scenario_simulation_counts, _format_scenario_simulation_counts),
-            (sb_get_scenario_blocked_entities, _format_scenario_blocked_entities),
+            (_project_simulation_counts, _format_scenario_simulation_counts),
+            (_project_blocked_entities, _format_scenario_blocked_entities),
         )
 
     def test_each_tool_renders_both_passes_without_raising(
         self, mock_statistics_response_all_good
     ):
-        for tool_fn, narrator in self._cases():
-            text = self._rendered(tool_fn, narrator,
-                                  mock_statistics_response_all_good, both_counts=True)
+        for projection, narrator in self._cases():
+            text = self._rendered(projection, narrator,
+                                  mock_statistics_response_all_good)
             assert isinstance(text, str)
             assert 'Runnable' in text and 'Expected' in text
 
@@ -14899,9 +14911,9 @@ class TestBothCountsRendersBothPasses:
     def test_the_both_mode_hint_survives_to_the_rendering(
         self, mock_statistics_response_all_good
     ):
-        for tool_fn, narrator in self._cases():
-            text = self._rendered(tool_fn, narrator,
-                                  mock_statistics_response_all_good, both_counts=True)
+        for projection, narrator in self._cases():
+            text = self._rendered(projection, narrator,
+                                  mock_statistics_response_all_good)
             assert 'cannot be derived' in text
 
 

@@ -361,9 +361,9 @@ _TRUNCATION_HINT_UNKNOWN_PLAN = (
 _RUNNABLE_COUNTS_HINT = (
     "These are runnable counts (includeDisabled=false): offline, disabled and "
     "unapproved simulators are excluded from the numbers, though they are still "
-    "reported with their reason. The expected figure — what would run if every "
-    "simulator were available — cannot be derived from this response; request it "
-    "with both_counts=true, which returns both figures labelled."
+    "reported with their reason. This is the only figure these tools report — the "
+    "expected count, what would run if every simulator were available, is neither "
+    "derivable from this response nor offered as an option."
 )
 
 _EXPECTED_COUNTS_HINT = (

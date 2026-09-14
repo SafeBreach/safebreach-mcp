@@ -26,6 +26,8 @@ import pytest
 from safebreach_mcp_studio.studio_functions import (
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
+    sb_get_plan_statistics,
+    _project_blocked_entities,
     _fetch_all_scenarios,
     _fetch_all_plans,
 )
@@ -181,13 +183,17 @@ class TestScenarioStatisticsToolsE2E:
     def test_runnable_never_exceeds_expected(self):
         """T-30 — the ordering relation, asserted unconditionally.
 
-        Both figures now arrive from one `both_counts` call rather than two
-        calls differing by `include_disabled`, which is no longer a parameter.
+        Neither tool exposes the expected figure any more, so the ordering is
+        asserted on the shared plumbing — `sb_get_plan_statistics` — where the
+        capability still lives for the run tools' preview path. The invariant is
+        a property of the endpoint, not of the tool surface, so it survives the
+        surface being narrowed.
         """
         scenario = _first_scenario_with_steps()
 
-        both = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        both = sb_get_plan_statistics(
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True,
+            resolve_details=False)
         runnable, expected = both['runnable'], both['expected']
 
         pairs = list(zip(runnable['steps'], expected['steps']))
@@ -200,8 +206,9 @@ class TestScenarioStatisticsToolsE2E:
         """T-30 — the conditional half, skipped explicitly when the console cannot show it."""
         scenario = _first_scenario_with_steps()
 
-        both = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        both = sb_get_plan_statistics(
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True,
+            resolve_details=False)
         runnable, expected = both['runnable'], both['expected']
 
         # The unconditional claim is asserted before any skip, so a skip can
@@ -238,8 +245,9 @@ class TestScenarioStatisticsToolsE2E:
             "an offline simulator was reported as fully blocking, so a step must differ"
         )
         assert offline, "a positive delta must be explained by the offline reason"
-        expected_blocked = sb_get_scenario_blocked_entities(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        expected_blocked = _project_blocked_entities(sb_get_plan_statistics(
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True,
+            resolve_details=False))
         assert 'simulator_is_offline' not in _blocker_codes(expected_blocked['expected']), (
             "expected counts score every simulator, so offline is never reported there"
         )

@@ -1651,19 +1651,18 @@ limit it stops early; a null there is not evidence that anything is inapplicable
 integer 0 is. Where an answer cannot be confirmed it says so rather than guessing.
 
 Shared parameters:
-- console (required, str): SafeBreach console name.
-- both_counts (optional, bool, default False): False returns RUNNABLE counts — what would run
-  right now, with offline, disabled and unapproved simulators excluded from the numbers though
-  still reported with their reason. True issues two calls and returns both figures labelled:
-  runnable, and EXPECTED — what would run if every simulator were available. Neither figure is
-  derivable from the other, which is why asking for both costs a second call.
-- conflict_detail (optional, str, default "summary"): "summary", "per_attack" or "full".
+- console (required, str): SafeBreach console name. On a single-console deployment it resolves
+  itself, so it can be omitted there.
 
-Everything else the endpoint accepts is set internally and is not caller-tunable — the
-evaluation cap, the server-side cache flag, whether constraints are computed, and whether
-every elimination reason is reported. None of them changes which question is asked; each tool
-already asks for exactly what its own answer needs, and a calling agent has no basis on which
-to choose differently. Use both_counts for the one choice that does change the question.
+Counts are always RUNNABLE: what would run right now, with offline, disabled and unapproved
+simulators excluded from the numbers though still reported with their reason. The "expected"
+figure — what would run if every simulator were available — is not offered by these tools.
+
+Everything else the endpoint accepts is set internally and is not caller-tunable: the
+evaluation cap, the server-side cache flag, whether constraints are computed, whether every
+elimination reason is reported, and how much detail each conflict carries. None of them
+changes the answer these tools give, and a calling agent has no basis on which to choose a
+value for any of them.
 
 Read-only and safe to call repeatedly; nothing is cached MCP-side, so re-call after every
 configuration change."""
@@ -1684,9 +1683,7 @@ For WHY a step produces nothing — or why one named attack did not run — call
 """ + _SCENARIO_INPUTS + """
 
 This tool renders no conflicts, so it does not pay SafeBreach to evaluate them — that is set
-internally and is not a parameter. conflict_detail="full" DOES change the answer here: it lifts
-the caps on the coverage maps, so a coverage figure otherwise reported as "at least N of M"
-becomes exact. Use get_scenario_blocked_entities for the constraint data itself.
+internally. Use get_scenario_blocked_entities for the constraint data itself.
 
 Three per-step data fields are relayed and no others: the simulation count, and the attacker and
 target simulator maps.
@@ -1698,21 +1695,18 @@ a simulator SafeBreach never scored is listed apart from the ones it measured at
 
 Examples:
 get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
-get_scenario_simulation_counts(console="demo", test_id="1764165600525.2", both_counts=True)"""
+get_scenario_simulation_counts(console="demo", test_id="1764165600525.2")"""
         )
         def get_scenario_simulation_counts(
             console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
-            both_counts: bool = False,
-            conflict_detail: str = "summary",
         ) -> str:
             """How many simulations a scenario produces, and which simulators produce them."""
             try:
                 console = _resolve_single_tenant_console(console)
                 return _format_scenario_simulation_counts(sb_get_scenario_simulation_counts(
                     console=console, scenario=scenario, scenario_id=scenario_id,
-                    test_id=test_id, both_counts=both_counts,
-                    conflict_detail=conflict_detail,
+                    test_id=test_id,
                 ))
             except PermissionError as e:
                 logger.error(f"Scenario simulation counts permission error: {e}")
@@ -1769,8 +1763,6 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
             console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
             attack_ids: str | None = None,
-            both_counts: bool = False,
-            conflict_detail: str = "summary",
         ) -> str:
             """Whether anything in a scenario would contribute nothing."""
             try:
@@ -1778,8 +1770,6 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
                 return _format_scenario_blocked_entities(sb_get_scenario_blocked_entities(
                     console=console, scenario=scenario, scenario_id=scenario_id,
                     test_id=test_id, attack_ids=attack_ids,
-                    both_counts=both_counts,
-                    conflict_detail=conflict_detail,
                 ))
             except PermissionError as e:
                 logger.error(f"Scenario blocked entities permission error: {e}")
