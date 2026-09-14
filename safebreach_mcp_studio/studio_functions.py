@@ -3969,14 +3969,19 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
 
 
 def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
-                    both_counts, get_constraints, get_all_constraints, limit,
-                    use_cache, conflict_detail, resolve_details=True,
+                    both_counts, get_constraints, get_all_constraints,
+                    conflict_detail, resolve_details=True,
                     pinned_attack_ids=()):
     """Validate in the caller's vocabulary, then score exactly once.
 
     The parse result is discarded — ``sb_get_plan_statistics`` does its own, and
     routing through it keeps this repo's single `plan/statistics` call site
     single. What this call buys is the error wording: 'scenario', not 'plan'.
+
+    The orchestrator's evaluation cap and its server-side cache flag are left to
+    ``sb_get_plan_statistics``' own defaults rather than threaded through: they
+    are transport settings, not part of the question a scenario tool asks, and
+    nothing above this layer is in a position to choose a value for either.
     """
     _parse_plan_argument(scenario, scenario_id, test_id, body_param='scenario')
     return sb_get_plan_statistics(
@@ -3988,8 +3993,6 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
         both_counts=both_counts,
         get_constraints=get_constraints,
         get_all_constraints=get_all_constraints,
-        limit=limit,
-        use_cache=use_cache,
         conflict_detail=conflict_detail,
         resolve_details=resolve_details,
         pinned_attack_ids=pinned_attack_ids,
@@ -4002,7 +4005,6 @@ def sb_get_scenario_simulation_counts(
     include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
     get_constraints: bool = False,
     get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
     conflict_detail: str = "summary",
     page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
 ):
@@ -4024,7 +4026,7 @@ def sb_get_scenario_simulation_counts(
     projected = _project_simulation_counts(
         _score_scenario(
             console, scenario, scenario_id, test_id, include_disabled, both_counts,
-            get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+            get_constraints, get_all_constraints, conflict_detail,
             resolve_details=False,
         ),
         page=page, page_size=page_size,
@@ -4041,7 +4043,6 @@ def sb_get_scenario_blocked_entities(
     include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
     get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
     get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-    limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
     conflict_detail: str = "summary",
 ):
     """What in a scenario would not run, and why.
@@ -4066,7 +4067,7 @@ def sb_get_scenario_blocked_entities(
     pinned = tuple(str(attack_id) for attack_id in parsed_ids)
     return _project_blocked_entities(_score_scenario(
         console, scenario, scenario_id, test_id, include_disabled, both_counts,
-        get_constraints, get_all_constraints, limit, use_cache, conflict_detail,
+        get_constraints, get_all_constraints, conflict_detail,
         pinned_attack_ids=pinned,
     ), parsed_ids)
 

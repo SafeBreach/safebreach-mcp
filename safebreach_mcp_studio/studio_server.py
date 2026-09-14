@@ -1662,10 +1662,11 @@ Shared parameters:
   labelled.
 - get_all_constraints (optional, bool, default True): Report every reason a pairing was
   eliminated, not just the first.
-- limit (optional, int, default 500000): Circuit-breaker cap on simulations SafeBreach
-  evaluates before stopping early.
-- use_cache (optional, bool, default True): Whether SafeBreach may answer from its own cache.
 - conflict_detail (optional, str, default "summary"): "summary", "per_attack" or "full".
+
+The orchestrator's evaluation cap and its server-side cache flag are set internally and are
+not caller-tunable: neither changes what question is asked, and a caller has no basis on
+which to pick a value for either.
 
 Read-only and safe to call repeatedly; nothing is cached MCP-side, so re-call after every
 configuration change."""
@@ -1709,7 +1710,6 @@ get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_
             scenario_id: str | None = None, test_id: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
             get_constraints: bool = False, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-            limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
             conflict_detail: str = "summary",
             page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
         ) -> str:
@@ -1720,8 +1720,8 @@ get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_
                     console=console, scenario=scenario, scenario_id=scenario_id,
                     test_id=test_id, include_disabled=include_disabled,
                     both_counts=both_counts, get_constraints=get_constraints,
-                    get_all_constraints=get_all_constraints, limit=limit,
-                    use_cache=use_cache, conflict_detail=conflict_detail,
+                    get_all_constraints=get_all_constraints,
+                    conflict_detail=conflict_detail,
                     page=page, page_size=page_size,
                 ))
             except PermissionError as e:
@@ -1781,7 +1781,6 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
             attack_ids: str | None = None,
             include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
             get_constraints: bool = DEFAULT_GET_CONSTRAINTS, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
-            limit: int = DEFAULT_LIMIT, use_cache: bool = DEFAULT_USE_CACHE,
             conflict_detail: str = "summary",
         ) -> str:
             """Whether anything in a scenario would contribute nothing."""
@@ -1792,8 +1791,8 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
                     test_id=test_id, attack_ids=attack_ids,
                     include_disabled=include_disabled,
                     both_counts=both_counts, get_constraints=get_constraints,
-                    get_all_constraints=get_all_constraints, limit=limit,
-                    use_cache=use_cache, conflict_detail=conflict_detail,
+                    get_all_constraints=get_all_constraints,
+                    conflict_detail=conflict_detail,
                 ))
             except PermissionError as e:
                 logger.error(f"Scenario blocked entities permission error: {e}")
