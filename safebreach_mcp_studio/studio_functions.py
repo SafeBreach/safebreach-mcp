@@ -3304,6 +3304,7 @@ def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
         get_all_constraints=get_all_constraints,
         limit=limit,
         use_cache=use_cache,
+        keep_moves=not counts_only,
     )
     return _build_plan_statistics_report(
         statistics,

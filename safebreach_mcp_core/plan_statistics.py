@@ -153,13 +153,20 @@ def _wire_params(params: dict) -> dict:
     }
 
 
-def _normalize_step(raw: dict, index: int) -> dict:
+def _normalize_step(raw: dict, index: int, keep_moves: bool = True) -> dict:
     """Project one response step, preserving every count exactly as it arrived.
 
     Counts keep their exact value, including None. The map fields themselves are
     normalized to {} when absent — an absent map means "no entries", which is not
     the null-versus-zero distinction; that distinction lives in the map's values,
     which are passed through untouched.
+
+    ``keep_moves=False`` drops the per-attack map at the earliest point this code
+    controls. The endpoint always sends it — there is no parameter to suppress it
+    — but a caller that reports no attacks has no reader for it, and on a real
+    step it is the largest field by far: 2,000 ids against 44 simulators on the
+    response this was measured from. It is dropped rather than carried because
+    holding a field nobody reads is how it ends up read by accident.
     """
     simulation_count = raw.get('simulationCount')
     is_limit_reached = bool(raw.get('isLimitReached'))
@@ -176,6 +183,8 @@ def _normalize_step(raw: dict, index: int) -> dict:
         'isLimitReached': is_limit_reached,
     }
     for field in _STEP_MAP_FIELDS:
+        if field == 'moves' and not keep_moves:
+            continue
         value = raw.get(field)
         step[field] = value if isinstance(value, dict) else {}
     return step
@@ -192,6 +201,7 @@ def fetch_plan_statistics(
     get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
     limit: int = DEFAULT_LIMIT,
     use_cache: bool = DEFAULT_USE_CACHE,
+    keep_moves: bool = True,
 ) -> dict:
     """
     Score a plan against a console and return the response unreduced.
@@ -212,6 +222,9 @@ def fetch_plan_statistics(
         get_all_constraints: Report every reason per pairing, not just the first.
         limit: Upper bound on simulations the orchestrator will evaluate before stopping.
         use_cache: Whether the orchestrator may answer from its own cache.
+        keep_moves: Retain the per-attack ``moves`` map. False for a caller that
+            reports no attacks — the endpoint always sends it, but on a real step
+            it is the largest field by far and nothing downstream reads it.
 
     Returns:
         A dict with ``steps`` (each carrying the six response fields unmodified,
@@ -290,7 +303,7 @@ def fetch_plan_statistics(
         raw_steps = []
     # Enumerate the filtered list so response_step_index has no gaps.
     steps = [
-        _normalize_step(raw, i)
+        _normalize_step(raw, i, keep_moves=keep_moves)
         for i, raw in enumerate(raw for raw in raw_steps if isinstance(raw, dict))
     ]
 

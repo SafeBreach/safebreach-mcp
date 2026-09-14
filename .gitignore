@@ -236,3 +236,5 @@ mcp-create-release-workspace/
 
 # Claude local settings
 .claude/settings.local.json
+# Local explainer page, not part of the package
+scenario-counts-playground.html

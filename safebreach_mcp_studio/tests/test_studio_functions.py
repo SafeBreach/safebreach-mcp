@@ -14963,6 +14963,19 @@ class TestTheCountsPathBuildsNothingItWillNotReport:
         # The answer itself is unaffected.
         assert step['simulation_count'] == 400
 
+    def test_moves_is_dropped_at_the_fetch_not_merely_left_unread(self):
+        # The endpoint always sends `moves` — there is no parameter to suppress
+        # it — so the earliest point this code controls is the normalized step.
+        # Carrying a field nobody reads is how it ends up read by accident.
+        from safebreach_mcp_core.plan_statistics import _normalize_step
+        raw = self._big_moves_response()['steps'][0]
+        assert 'moves' in _normalize_step(raw, 0)
+        assert 'moves' not in _normalize_step(raw, 0, keep_moves=False)
+        # And the simulator maps it shares the loop with are untouched.
+        lean = _normalize_step(raw, 0, keep_moves=False)
+        for kept in ('simulators', 'attackerSimulators', 'targetSimulators'):
+            assert kept in lean
+
     def test_the_sibling_still_gets_every_zero_from_the_same_response(self):
         # The flag must not become a deletion: 1,000 of these 2,000 moves are
         # genuine zeros, and they are the other tool's whole answer.
