@@ -2898,8 +2898,19 @@ def _cap_contributing_map(shaped, key, mapping, uncapped):
 
 
 def _shape_statistics_step(step, attack_names=None, simulator_names=None,
-                           conflict_detail='summary', pinned_attack_ids=()):
-    """One caller-facing step, with all reporting suppressed when nothing was computed."""
+                           conflict_detail='summary', pinned_attack_ids=(),
+                           counts_only=False):
+    """One caller-facing step, with all reporting suppressed when nothing was computed.
+
+    ``counts_only=True`` skips everything derived from ``moves``: the attack
+    map and the zero-impact list built by walking it. The counts answer relays
+    neither, and on a real step ``moves`` carries thousands of ids — capping a map
+    and deriving a list from it, only to drop both, is work done for nothing.
+
+    It is a per-call flag rather than a deletion because ``moves`` is the *other*
+    tool's entire answer: a blocked attack IS ``moves[id] == 0``, and
+    ``_conflict_severity`` reads the same map to tell blocking from reducing.
+    """
     uncapped = conflict_detail == 'full'
     shaped = {
         'step_index': step['response_step_index'],
@@ -2907,8 +2918,9 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
         'counts_computed': step['counts_computed'],
         'is_limit_reached': step['isLimitReached'],
     }
-    _cap_count_map(shaped, 'attacks', step['moves'], uncapped,
-                   pinned=pinned_attack_ids)
+    if not counts_only:
+        _cap_count_map(shaped, 'attacks', step['moves'], uncapped,
+                       pinned=pinned_attack_ids)
     # The simulator maps are NEVER capped. The cap exists for `moves`, which a
     # real console returns thousands of ids in; a simulator map is bounded by
     # the fleet — 44 entries on the estate this was measured against, and
@@ -2925,6 +2937,15 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
                           step['attackerSimulators'], True)
     _cap_contributing_map(shaped, 'target_simulators',
                           step['targetSimulators'], True)
+
+    # `counts_only` emits no constraint-derived keys AT ALL — not even empty
+    # ones. The counts answer relays none of them, so an empty list here would
+    # be a field carried across three layers to be dropped at the fourth. Its
+    # absence is also the stronger signal: a reader cannot mistake "this report
+    # never looked" for "this report looked and found nothing", which is the
+    # same null-versus-zero distinction the counts themselves keep.
+    if counts_only:
+        return shaped
 
     # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
@@ -2955,7 +2976,8 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
 
 def _build_plan_statistics_report(statistics, conflict_detail='summary',
                                   attack_names=None, simulator_names=None,
-                                  both_present=False, pinned_attack_ids=()):
+                                  both_present=False, pinned_attack_ids=(),
+                                  counts_only=False):
     """Turn a fetch_plan_statistics result into the caller-facing report.
 
     Static facts live once in `constraint_catalog`; each conflict references it
@@ -2970,6 +2992,7 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
         _shape_statistics_step(
             step, attack_names=attack_names, simulator_names=simulator_names,
             conflict_detail=conflict_detail, pinned_attack_ids=pinned_attack_ids,
+            counts_only=counts_only,
         )
         for step in statistics['steps']
     ]
@@ -2980,16 +3003,23 @@ def _build_plan_statistics_report(statistics, conflict_detail='summary',
     # conflict sorted past the cap would otherwise resolve to description null
     # — reporting "this console supplied no description" for a code it did
     # describe, which is the one thing the relay must never say.
-    emitted_codes = {
-        conflict['code'] for step in steps for conflict in step['conflicts']
-    } | {
-        blocker['code'] for step in steps
-        for entry in (step['zero_impact_attacks'] + step['zero_impact_simulators'])
-        for blocker in entry['blockers']
-    }
-    constraint_catalog = _build_constraint_catalog(
-        statistics['constraint_catalog'], emitted_codes
-    )
+    #
+    # Under `counts_only` there is no code to describe: the steps carry no
+    # conflicts and no blockers, so the catalog is empty by construction rather
+    # than by lookup, and building one would walk keys that are not there.
+    if counts_only:
+        constraint_catalog = {}
+    else:
+        emitted_codes = {
+            conflict['code'] for step in steps for conflict in step['conflicts']
+        } | {
+            blocker['code'] for step in steps
+            for entry in (step['zero_impact_attacks'] + step['zero_impact_simulators'])
+            for blocker in entry['blockers']
+        }
+        constraint_catalog = _build_constraint_catalog(
+            statistics['constraint_catalog'], emitted_codes
+        )
 
     return get_plan_statistics_response_mapping(
         statistics, steps, constraint_catalog, both_present=both_present
@@ -3262,7 +3292,7 @@ def _fill_attack_details(report, console, conflict_detail, resolved,
 def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
                      get_constraints, get_all_constraints, limit, use_cache,
                      attack_names, conflict_detail, both_present,
-                     pinned_attack_ids=()):
+                     pinned_attack_ids=(), counts_only=False):
     """One scoring pass: fetch, then shape into the caller-facing report."""
     statistics = fetch_plan_statistics(
         console,
@@ -3281,6 +3311,7 @@ def _fetch_and_shape(console, plan, scenario_id, test_id, include_disabled,
         attack_names=attack_names,
         both_present=both_present,
         pinned_attack_ids=pinned_attack_ids,
+        counts_only=counts_only,
     )
 
 
@@ -3296,7 +3327,8 @@ def sb_get_plan_statistics(console: str = "default",
                            use_cache: bool = DEFAULT_USE_CACHE,
                            conflict_detail: str = "summary",
                            resolve_details: bool = True,
-                           pinned_attack_ids=()):
+                           pinned_attack_ids=(),
+                           counts_only: bool = False):
     """
     Report what a plan would do on a console, without running anything.
 
@@ -3357,6 +3389,7 @@ def sb_get_plan_statistics(console: str = "default",
             conflict_detail=conflict_detail,
             both_present=both_present,
             pinned_attack_ids=pinned_attack_ids,
+            counts_only=counts_only,
         )
         if resolve_details:
             _fill_attack_details(report, console, conflict_detail, resolved_names,
@@ -3904,7 +3937,7 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
 
 def _score_scenario(console, scenario, scenario_id, test_id,
                     get_constraints, resolve_details=True,
-                    pinned_attack_ids=()):
+                    pinned_attack_ids=(), counts_only=False):
     """Validate in the caller's vocabulary, then score exactly once.
 
     The parse result is discarded — ``sb_get_plan_statistics`` does its own, and
@@ -3932,6 +3965,7 @@ def _score_scenario(console, scenario, scenario_id, test_id,
         get_constraints=get_constraints,
         resolve_details=resolve_details,
         pinned_attack_ids=pinned_attack_ids,
+        counts_only=counts_only,
     )
 
 
@@ -3959,7 +3993,7 @@ def sb_get_scenario_simulation_counts(
     return _project_simulation_counts(
         _score_scenario(
             console, scenario, scenario_id, test_id, False,
-            resolve_details=False,
+            resolve_details=False, counts_only=True,
         )
     )
 

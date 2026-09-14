@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>get_scenario_simulation_counts — what it answers, and how</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2430; --line:#2b3440;
+    --ink:#e6edf3; --dim:#9aa7b4; --faint:#6b7885;
+    --accent:#58a6ff; --good:#3fb950; --warn:#d29922; --drop:#f85149;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  h1{font-size:17px;margin:0;font-weight:600}
+  h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+    margin:0 0 10px;font-weight:600}
+  code,.mono{font-family:var(--mono)}
+
+  header{padding:18px 22px;border-bottom:1px solid var(--line);
+    display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header .sub{color:var(--dim);font-size:13px}
+
+  /* ---- the question ---- */
+  .question{margin:18px 22px;padding:16px 18px;background:var(--panel);
+    border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px}
+  .question .q{font-size:16px;font-weight:600;margin-bottom:10px}
+  .question .nots{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .not{flex:1 1 260px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:10px 12px}
+  .not b{color:var(--drop);font-weight:600}
+  .not .to{color:var(--dim);font-size:12.5px;margin-top:4px}
+
+  /* ---- pipeline ---- */
+  .wrap{display:grid;grid-template-columns:1fr 330px;gap:18px;padding:0 22px 22px;
+    align-items:start}
+  .stages{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  .stage{flex:1 1 130px;min-width:120px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:11px 12px;cursor:pointer;text-align:left;color:inherit;
+    font:inherit;transition:border-color .12s,background .12s;position:relative}
+  .stage:hover{border-color:#3d4b5c}
+  .stage[aria-selected="true"]{border-color:var(--accent);background:#132032}
+  .stage.skipped{opacity:.4}
+  .stage .n{font-family:var(--mono);color:var(--faint);font-size:11px}
+  .stage .t{font-weight:600;margin:3px 0 6px;font-size:13px}
+  .stage .b{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .stage .net{font-family:var(--mono);font-size:11px;margin-top:3px}
+  .up{color:var(--warn)} .down{color:var(--good)}
+
+  .detail{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+  .detail h3{margin:0 0 4px;font-size:15px}
+  .detail .role{color:var(--faint);font-size:12px;font-family:var(--mono);margin-bottom:12px}
+  .detail p{margin:0 0 12px;color:var(--dim)}
+  .detail p strong{color:var(--ink);font-weight:600}
+
+  .io{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+  .io > div{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+  .io h4{margin:0 0 7px;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+  .io ul{margin:0;padding-left:16px}
+  .io li{font-family:var(--mono);font-size:12px;margin-bottom:3px}
+  li.kept{color:var(--good)} li.gone{color:var(--drop);text-decoration:line-through;opacity:.75}
+  li.note{color:var(--dim);font-family:inherit;font-size:12.5px;list-style:none;margin-left:-16px}
+
+  .callout{margin-top:12px;padding:10px 12px;border-radius:6px;font-size:12.5px;
+    background:#1a1710;border:1px solid #3d3016;color:#e3c884}
+  .callout b{color:#f0d89b}
+
+  /* ---- sidebar ---- */
+  aside{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;
+    position:sticky;top:16px}
+  .grp{margin-bottom:18px}
+  .seg{display:flex;flex-direction:column;gap:5px}
+  .seg button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+    padding:7px 10px;border-radius:6px;cursor:pointer;font:inherit;font-size:12.5px;text-align:left}
+  .seg button[aria-pressed="true"]{background:#132032;border-color:var(--accent);color:var(--ink)}
+  .seg button small{display:block;color:var(--faint);font-size:11px;margin-top:2px}
+  label.chk{display:flex;gap:9px;align-items:flex-start;padding:7px 0;cursor:pointer;
+    color:var(--dim);font-size:12.5px}
+  label.chk input{margin-top:2px;accent-color:var(--accent)}
+  .presets{display:flex;gap:6px;flex-wrap:wrap}
+  .presets button{flex:1 1 auto;background:var(--panel2);border:1px solid var(--line);
+    color:var(--dim);padding:6px 9px;border-radius:999px;cursor:pointer;font:inherit;font-size:11.5px}
+  .presets button:hover{border-color:var(--accent);color:var(--ink)}
+
+  /* ---- output ---- */
+  .out{margin:0 22px 22px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+  .out .hd{display:flex;justify-content:space-between;align-items:center;
+    padding:11px 16px;border-bottom:1px solid var(--line)}
+  .out pre{margin:0;padding:14px 16px;white-space:pre-wrap;word-break:break-word;
+    font-family:var(--mono);font-size:12.5px;color:var(--dim);max-height:280px;overflow:auto}
+  #copy{background:var(--accent);border:0;color:#07121f;font-weight:600;padding:6px 14px;
+    border-radius:6px;cursor:pointer;font:inherit;font-weight:600;font-size:12.5px}
+  #copy.ok{background:var(--good)}
+  .tabs{display:flex;gap:4px}
+  .tabs button{background:transparent;border:1px solid var(--line);color:var(--faint);
+    padding:5px 11px;border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
+  .tabs button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent);background:#132032}
+
+  @media (max-width:900px){ .wrap{grid-template-columns:1fr} aside{position:static} .io{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><code>get_scenario_simulation_counts</code></h1>
+  <span class="sub">SafeBreach MCP · Studio server · read-only · SAF-35508</span>
+</header>
+
+<section class="question">
+  <div class="q">“How many simulations would this scenario produce, and which simulators produce them?”</div>
+  <div style="color:var(--dim)">One question, answered without running anything. It scores a scenario against
+    the fleet <em>as it stands right now</em> and reports three numbers per step: the simulation count, and
+    the counts contributed by each attacker and each target simulator.</div>
+  <div class="nots">
+    <div class="not"><b>Does not answer:</b> “which attacks would run?”
+      <div class="to">It enumerates no attacks. Name an id to <code>get_scenario_blocked_entities</code> →
+        answers <code>ran</code> with its count.</div></div>
+    <div class="not"><b>Does not answer:</b> “why did nothing run?”
+      <div class="to">Constraints are never evaluated here. That is
+        <code>get_scenario_blocked_entities</code>, and the hint routes there.</div></div>
+    <div class="not"><b>Does not answer:</b> “what if every simulator were available?”
+      <div class="to">Counts are always <em>runnable</em>. The expected figure is not offered and cannot
+        be derived from this response.</div></div>
+  </div>
+</section>
+
+<div class="wrap">
+  <main>
+    <h2>Flow — API to LLM</h2>
+    <div class="stages" id="stages" role="tablist"></div>
+    <div class="detail" id="detail"></div>
+  </main>
+
+  <aside>
+    <div class="grp">
+      <h2>Presets</h2>
+      <div class="presets">
+        <button data-preset="today">What ships today</button>
+        <button data-preset="before">Before the trim</button>
+        <button data-preset="field">Field-scale step</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>Input given</h2>
+      <div class="seg" id="inputSeg">
+        <button data-input="body" aria-pressed="false">scenario (ad-hoc body)
+          <small>Never saved. JSON string or object.</small></button>
+        <button data-input="uuid" aria-pressed="true">scenario_id — OOB UUID
+          <small>Costs one extra call to resolve.</small></button>
+        <button data-input="plan" aria-pressed="false">scenario_id — custom plan
+          <small>Integer id; orchestrator resolves it.</small></button>
+        <button data-input="test" aria-pressed="false">test_id — a past run
+          <small>Scores the scenario that run executed.</small></button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>Scenario scale</h2>
+      <div class="seg" id="scaleSeg">
+        <button data-scale="measured" aria-pressed="true">Measured — zircon-piculet
+          <small>3 steps · 5–8 attacks · 7 simulators</small></button>
+        <button data-scale="field" aria-pressed="false">Field example
+          <small>466,111 sims · 44 simulators · huge moves map</small></button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>Compare against older behaviour</h2>
+      <label class="chk"><input type="checkbox" id="optMoves">
+        <span>Relay the <code>moves</code> map<br>
+        <span style="color:var(--faint)">Per-attack counts, paged 10 at a time (pre-D11)</span></span></label>
+      <label class="chk"><input type="checkbox" id="optCapSims">
+        <span>Cap simulator maps at 100<br>
+        <span style="color:var(--faint)">Forced “at least N of M” hedging (pre-D13)</span></span></label>
+      <label class="chk"><input type="checkbox" id="optParams">
+        <span>Expose the tuning parameters<br>
+        <span style="color:var(--faint)">limit, use_cache, include_disabled, both_counts… (pre-D10)</span></span></label>
+    </div>
+  </aside>
+</div>
+
+<section class="out">
+  <div class="hd">
+    <div class="tabs">
+      <button data-tab="prompt" aria-pressed="true">Prompt</button>
+      <button data-tab="output" aria-pressed="false">What the LLM receives</button>
+    </div>
+    <button id="copy">Copy</button>
+  </div>
+  <pre id="outText"></pre>
+</section>
+
+<script>
+const DEFAULTS = { input:'uuid', scale:'measured', moves:false, capSims:false, params:false };
+const state = { ...DEFAULTS, stage:0 };
+
+/* Byte counts measured live against zircon-piculet, scenario
+   b383c249-b38a-4bca-aaea-c0a020fd8181 (3 steps). Field column is the shape of a
+   real customer step: simulationCount 466,111, 44 simulators per role, and a
+   moves map that dominates the payload. */
+const SIZES = {
+  measured: { fetch:3789, shape:7906, project:4732, narrate:1684,
+              steps:3, attacks:'5–8', sims:7, contributing:2, total:55 },
+  field:    { fetch:181000, shape:214000, project:9800, narrate:2100,
+              steps:1, attacks:'~2,000', sims:44, contributing:'~30', total:466111 }
+};
+
+const STAGES = [
+  { n:'①', t:'Input', role:'validation · no network',
+    body:()=>`<p>Exactly <strong>one</strong> of <code>scenario</code>, <code>scenario_id</code> or
+      <code>test_id</code>. A blank string counts as absent; supplying none or two is an error that
+      names all three.</p>
+      <p>A scenario with <strong>no steps is rejected here</strong> — before any call is made, so a
+      mid-construction scenario costs nothing and reads as guidance rather than a tool failure.</p>`,
+    io:()=>({ left:['console', inputParam(), state.params ? 'limit, use_cache,' : null,
+                    state.params ? 'include_disabled, both_counts,' : null,
+                    state.params ? 'get_constraints, conflict_detail' : null].filter(Boolean),
+              leftCls:()=> state.params ? 'gone' : 'kept',
+              right:['exactly-one check','step-less → typed error'] }),
+    note:()=> state.params
+      ? {b:'Pre-D10:', t:'seven tuning knobs were exposed. None changed which question was asked, and a guessed <code>limit</code> could silently truncate the very report being read.'} : null },
+
+  { n:'②', t:'Resolve', role:'0–1 HTTP call',
+    body:()=>state.input==='uuid'
+      ? `<p>An OOB scenario’s <strong>UUID has no field on the statistics endpoint</strong>, so it is
+         fetched from the content-manager API and converted into a plan body first.</p>
+         <p>This is the one extra network call, and it happens on this path only.</p>`
+      : `<p><strong>Skipped.</strong> ${state.input==='body'
+            ? 'An ad-hoc body is already a body.'
+            : state.input==='plan'
+              ? 'An integer plan id is left for the orchestrator to resolve natively.'
+              : 'A planRunId is passed through as <code>testId</code>; the endpoint resolves which scenario that run executed.'}</p>`,
+    io:()=>({ left:[inputParam()], leftCls:()=>'kept',
+              right:[state.input==='uuid' ? 'plan body (resolved)' : 'unchanged'] }) },
+
+  { n:'③', t:'Fetch', role:'the scoring call',
+    body:()=>`<p><code>POST /orch/v1/accounts/{account}/plan/statistics</code> — the one and only call
+      site for this endpoint in the repo.</p>
+      <p>Sent with <strong>internal settings</strong>: <code>includeDisabled=false</code> (runnable),
+      <code>getConstraints=false</code> (this answer renders none), <code>limit=500000</code>,
+      <code>useCache=true</code>. The response comes back <strong>unreduced</strong>.</p>`,
+    io:()=>({ left:['plan body / id'], leftCls:()=>'kept',
+              right:['simulationCount','moves','targetSimulators','attackerSimulators','simulators','isLimitReached'] }),
+    note:()=>({b:'Cost:',t:`constraints are <em>not</em> requested here. One default step measured
+      <strong>38,531 conflicts and 11.8 MB</strong> — data this answer would discard.`}) },
+
+  { n:'④', t:'Shape', role:'grows before it shrinks',
+    body:()=>`<p>The shared shaping layer builds the <strong>full</strong> report — the one both tools
+      sit on. It normalises steps, derives zero-impact attacks and simulators, builds conflicts and the
+      constraint catalog, and marks <code>counts_computed</code>.</p>
+      <p>Note the payload <strong>grows</strong> here (${fmt(size().fetch)} → ${fmt(size().shape)} bytes).
+      Most of what it adds, this tool then throws away — deliberately, so both tools share one rule about
+      zeros and caps and cannot contradict each other about one scoring.</p>`,
+    io:()=>({ left:['raw response'], leftCls:()=>'kept',
+              right:[ state.capSims ? 'attacks — capped at 100' : 'attacks — capped at 100',
+                      state.capSims ? 'simulator maps — capped at 100' : 'simulator maps — never capped',
+                      'zero_impact_*, conflicts, catalog'] }),
+    note:()=> state.capSims
+      ? {b:'Pre-D13:',t:`the 100-entry cap applied to simulator maps too. A fleet of ${size().sims === 44 ? '150' : '150'} would report
+         “at least 100 of 150” — hedging over a number known exactly. The cap exists for <code>moves</code>
+         (${size().attacks} ids), not for a fleet-bounded map.`}
+      : {b:'Aimed, not removed:',t:`<code>moves</code> is still capped at 100 — a real step carries
+         ${size().attacks} ids. Simulator maps never are, so coverage is exact.`} },
+
+  { n:'⑤', t:'Project', role:'the narrowing',
+    body:()=>`<p>A pure function over the report dict — no I/O. It keeps <strong>three data fields</strong>
+      and drops everything else.</p>
+      <p>Because nothing kept here carries an attack id, the tool resolves <strong>no names at all</strong>
+      — zero playbook requests. That listing measured 58.6 MB.</p>`,
+    io:()=>({ left:['the full shaped report'], leftCls:()=>'kept',
+              right:null, custom:true }),
+    note:()=> state.moves
+      ? {b:'Pre-D11:',t:'the <code>moves</code> map was kept and paged 10 attacks at a time, with names resolved per page. That made “which attacks run” answerable — and cost a playbook request on every call.'} : null },
+
+  { n:'⑥', t:'Narrate', role:'markdown → LLM',
+    body:()=>`<p>Rendered as markdown: counts mode, steps scored, total simulations, then per step its
+      count, simulator coverage, and the contributing simulators by id with their counts.</p>
+      <p>Two refusals worth knowing: the <strong>total refuses to sum unscored steps</strong> (summing
+      nothing would claim the scenario runs nothing), and an unscored step distinguishes
+      <em>“hit the evaluation limit here”</em> from <em>“stopped before reaching this step”</em>.</p>`,
+    io:()=>({ left:['projected dict'], leftCls:()=>'kept',
+              right:[`${fmt(size().narrate)} bytes of markdown`,'+ routing hint to the sibling tool'] }),
+    note:()=>({b:'End to end:',t:`${fmt(size().fetch)} → ${fmt(size().narrate)} bytes
+      (${Math.round(100-(size().narrate/size().fetch*100))}% reduction) on this scenario.`}) },
+];
+
+function size(){ return SIZES[state.scale]; }
+function fmt(n){ return n.toLocaleString(); }
+function inputParam(){
+  return {body:'scenario', uuid:'scenario_id (UUID)', plan:'scenario_id (int)', test:'test_id'}[state.input];
+}
+function stageSkipped(i){ return i===1 && state.input!=='uuid'; }
+function stageBytes(i){
+  const s=size();
+  const raw = [null,null,s.fetch,s.shape, state.moves? Math.round(s.project*1.9):s.project,
+               state.moves? Math.round(s.narrate*2.4):s.narrate];
+  return raw[i];
+}
+
+function renderStages(){
+  const el=document.getElementById('stages'); el.innerHTML='';
+  STAGES.forEach((st,i)=>{
+    const b=document.createElement('button');
+    b.className='stage'+(stageSkipped(i)?' skipped':'');
+    b.setAttribute('role','tab');
+    b.setAttribute('aria-selected', state.stage===i);
+    const bytes=stageBytes(i), prev=stageBytes(i-1);
+    let net='';
+    if(bytes && prev){
+      const d=bytes-prev;
+      net=`<div class="net ${d>0?'up':'down'}">${d>0?'▲':'▼'} ${fmt(Math.abs(d))}</div>`;
+    }
+    b.innerHTML=`<div class="n">${st.n}</div><div class="t">${st.t}</div>
+      <div class="b">${bytes?fmt(bytes)+' B':(stageSkipped(i)?'skipped':'—')}</div>${net}`;
+    b.onclick=()=>{ state.stage=i; updateAll(); };
+    el.appendChild(b);
+  });
+}
+
+function renderDetail(){
+  const st=STAGES[state.stage], io=st.io(), el=document.getElementById('detail');
+  let rightHtml;
+  if(io.custom){
+    const kept=['simulation_count','attacker_simulators','target_simulators',
+      '· + contributing / not_computed','· + true totals',
+      'step_index','counts_computed','is_limit_reached'];
+    const gone=['attacks (moves)','simulators (union)','conflicts','constraint_catalog',
+      'zero_impact_attacks','zero_impact_simulators'];
+    const keptL = state.moves ? ['attacks (moves) — paged', ...kept] : kept;
+    const goneL = state.moves ? gone.slice(1) : gone;
+    rightHtml = keptL.map(k=>`<li class="kept">${k}</li>`).join('')
+              + goneL.map(k=>`<li class="gone">${k}</li>`).join('');
+  } else {
+    rightHtml = (io.right||[]).map(r=>`<li class="kept">${r}</li>`).join('');
+  }
+  const note=st.note && st.note();
+  el.innerHTML=`<h3>${st.n} ${st.t}</h3><div class="role">${st.role}</div>${st.body()}
+    <div class="io">
+      <div><h4>In</h4><ul>${(io.left||[]).map(l=>`<li class="${io.leftCls?io.leftCls():'kept'}">${l}</li>`).join('')}</ul></div>
+      <div><h4>Out</h4><ul>${rightHtml}</ul></div>
+    </div>
+    ${note?`<div class="callout"><b>${note.b}</b> ${note.t}</div>`:''}`;
+}
+
+const SAMPLE = () => {
+  const s=size();
+  const head = `## Scenario Simulation Counts\n\n**Counts mode:** runnable (\`includeDisabled=false\`)\n**Steps scored:** ${s.steps} of ${s.steps}\n**Total simulations:** ${fmt(s.total)}\n`;
+  const cap = state.capSims ? 'at least 2 of 7' : '2 of 7';
+  let step = `\n- **Step 0** — 17 simulations. Coverage: ${cap} target simulators, ${cap} attacker simulators produce simulations.\n`
+    + `  - Contributing attackers: 4488a72d-…045 (10), 56211658-…251 (7)\n`
+    + `  - Contributing targets: 4488a72d-…045 (10), 56211658-…251 (7)\n`;
+  if(state.moves) step += `  - **Attacks** 1–5 of 5:\n    - #954 (Write Locky ransomware to disk) — 1 simulation(s)\n    - #10944 (Transfer of SharePoint webshell over HTTP/S) — 0 simulation(s)\n`;
+  const hint = `\n**Hint:** These are runnable counts — offline, disabled and unapproved simulators are excluded, though still reported with their reason. For WHY a step produces nothing, call get_scenario_blocked_entities.`;
+  return head + step + hint;
+};
+
+function buildPrompt(){
+  const p=[];
+  p.push(`Explain the SafeBreach MCP tool \`get_scenario_simulation_counts\`.`);
+  p.push(`It answers one question — how many simulations a scenario would produce, and which simulators produce them — by scoring the scenario against the live fleet without running anything.`);
+  p.push(`\nWalk me through the flow from API to LLM, focusing on stage ${STAGES[state.stage].n} (${STAGES[state.stage].t}).`);
+
+  const inputs={body:'an ad-hoc scenario body that was never saved',
+    uuid:'a saved OOB scenario UUID (which needs an extra resolve call first)',
+    plan:'a custom plan id the orchestrator resolves natively',
+    test:'the planRunId of a past run'};
+  p.push(`\nAssume the caller passes ${inputs[state.input]}.`);
+
+  if(state.scale==='field')
+    p.push(`Use field-scale numbers: a step with 466,111 simulations, 44 simulators per role, and a moves map that dominates the payload.`);
+
+  const legacy=[];
+  if(state.moves) legacy.push('the `moves` map is relayed and attacks are paged 10 at a time');
+  if(state.capSims) legacy.push('simulator maps are capped at 100 entries, forcing "at least N of M" coverage');
+  if(state.params) legacy.push('the tuning parameters (limit, use_cache, include_disabled, both_counts, conflict_detail) are exposed to the caller');
+  if(legacy.length){
+    p.push(`\nCompare against the older behaviour where ${legacy.join('; ')}. Explain what each of those cost and why it was withdrawn.`);
+  } else {
+    p.push(`\nThe tool takes only four parameters: console, and exactly one of scenario / scenario_id / test_id. Explain why everything else is set internally.`);
+  }
+  p.push(`\nBe concrete about what is dropped at the projection stage and why the payload grows during shaping before it shrinks.`);
+  return p.join('\n');
+}
+
+let tab='prompt';
+function updateAll(){
+  renderStages(); renderDetail();
+  document.querySelectorAll('#inputSeg button').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.input===state.input));
+  document.querySelectorAll('#scaleSeg button').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.scale===state.scale));
+  document.getElementById('optMoves').checked=state.moves;
+  document.getElementById('optCapSims').checked=state.capSims;
+  document.getElementById('optParams').checked=state.params;
+  document.querySelectorAll('.tabs button').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.tab===tab));
+  document.getElementById('outText').textContent = tab==='prompt'? buildPrompt() : SAMPLE();
+}
+
+document.getElementById('inputSeg').onclick=e=>{
+  const b=e.target.closest('button'); if(!b)return; state.input=b.dataset.input; updateAll(); };
+document.getElementById('scaleSeg').onclick=e=>{
+  const b=e.target.closest('button'); if(!b)return; state.scale=b.dataset.scale; updateAll(); };
+['optMoves','optCapSims','optParams'].forEach(id=>{
+  document.getElementById(id).onchange=e=>{
+    state[{optMoves:'moves',optCapSims:'capSims',optParams:'params'}[id]]=e.target.checked; updateAll(); };
+});
+document.querySelectorAll('.tabs button').forEach(b=>
+  b.onclick=()=>{ tab=b.dataset.tab; updateAll(); });
+document.querySelectorAll('.presets button').forEach(b=> b.onclick=()=>{
+  const p=b.dataset.preset;
+  if(p==='today') Object.assign(state,{...DEFAULTS});
+  if(p==='before') Object.assign(state,{...DEFAULTS,moves:true,capSims:true,params:true,stage:4});
+  if(p==='field') Object.assign(state,{...DEFAULTS,scale:'field',stage:3});
+  updateAll();
+});
+document.getElementById('copy').onclick=async()=>{
+  const btn=document.getElementById('copy');
+  try{ await navigator.clipboard.writeText(document.getElementById('outText').textContent);
+    btn.textContent='Copied!'; btn.classList.add('ok');
+    setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('ok');},1200);
+  }catch(e){ btn.textContent='Press ⌘C'; setTimeout(()=>btn.textContent='Copy',1600); }
+};
+
+updateAll();
+</script>
+</body>
+</html>

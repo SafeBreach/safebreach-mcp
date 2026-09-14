@@ -14921,6 +14921,70 @@ class TestBothCountsRendersBothPasses:
             assert 'cannot be derived' in text
 
 
+class TestTheCountsPathBuildsNothingItWillNotReport:
+    """Counts-only shaping derives no constraint data at all.
+
+    The counts answer relays no attack map, no zero-impact list, no conflicts
+    and no catalog, so building any of them is work done to be discarded three
+    layers later. The keys are ABSENT rather than empty: absence cannot be
+    misread as "looked and found nothing", which is the same null-versus-zero
+    distinction the counts themselves keep.
+
+    It is a per-call flag rather than a deletion because `moves` is the SIBLING
+    tool's entire answer — a blocked attack IS `moves[id] == 0`.
+    """
+
+    @pytest.fixture(autouse=True)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
+
+    SCENARIO = '{"steps": [{"n": 0}]}'
+
+    @staticmethod
+    def _big_moves_response():
+        return {"steps": [{
+            "simulationCount": 400,
+            "moves": {str(i): (0 if i % 2 else 4) for i in range(2000)},
+            "simulators": {"sim-a": 400},
+            "targetSimulators": {"sim-a": 400},
+            "attackerSimulators": {"sim-a": 400},
+            "simulatorConstraints": {},
+        }]}
+
+    def test_the_counts_path_emits_no_constraint_derived_key(self):
+        with _statistics_transport(self._big_moves_response()):
+            result = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO)
+        step = result['steps'][0]
+        for absent in ('attacks', 'attacks_total', 'zero_impact_attacks',
+                       'zero_impact_simulators', 'conflicts'):
+            assert absent not in step, f"{absent} was built and then discarded"
+        # The answer itself is unaffected.
+        assert step['simulation_count'] == 400
+
+    def test_the_sibling_still_gets_every_zero_from_the_same_response(self):
+        # The flag must not become a deletion: 1,000 of these 2,000 moves are
+        # genuine zeros, and they are the other tool's whole answer.
+        with _statistics_transport(self._big_moves_response()):
+            blocked = sb_get_scenario_blocked_entities(
+                console="test-console", scenario=self.SCENARIO)
+        step = blocked['steps'][0]
+        assert step['attacks_total'] == 2000
+        assert step['zero_impact_attacks_total'] == 1000
+
+    def test_the_counts_path_is_measurably_lighter(self):
+        import json
+        with _statistics_transport(self._big_moves_response()):
+            counts = sb_get_scenario_simulation_counts(
+                console="test-console", scenario=self.SCENARIO)
+        with _statistics_transport(self._big_moves_response()):
+            blocked = sb_get_scenario_blocked_entities(
+                console="test-console", scenario=self.SCENARIO)
+        assert (len(json.dumps(counts, default=str))
+                < len(json.dumps(blocked, default=str)) / 2)
+
+
 class TestSimulatorMapsAreNeverCapped:
     """T-57 — the counts answer reports true simulator counts, not a capped prefix.
 
