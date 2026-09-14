@@ -363,14 +363,15 @@ _RUNNABLE_COUNTS_HINT = (
     "unapproved simulators are excluded from the numbers, though they are still "
     "reported with their reason. The expected figure — what would run if every "
     "simulator were available — cannot be derived from this response; request it "
-    "with include_disabled=true."
+    "with both_counts=true, which returns both figures labelled."
 )
 
 _EXPECTED_COUNTS_HINT = (
     "These are expected counts (includeDisabled=true): every simulator is scored "
     "whether or not it could run now, so simulator_is_offline is never reported. "
     "The runnable figure — what would actually run right now — cannot be derived "
-    "from this response; request it with include_disabled=false."
+    "from this response; request it with both_counts=true, which returns both "
+    "figures labelled."
 )
 
 

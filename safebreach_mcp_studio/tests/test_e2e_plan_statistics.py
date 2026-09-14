@@ -103,9 +103,12 @@ class TestScenarioStatisticsToolsE2E:
         assert counts['steps'], "a scored scenario must return at least one step"
         step = counts['steps'][0]
         assert isinstance(step['simulation_count'], int)
-        for field in ('attacks', 'attacker_simulators', 'target_simulators'):
+        # Three data fields, and only these three: the count above and the two
+        # simulator maps. The attack map is absent by design on this answer.
+        for field in ('attacker_simulators', 'target_simulators'):
             assert isinstance(step[field], dict)
             assert all(v is None or isinstance(v, int) for v in step[field].values())
+        assert 'attacks' not in step
 
     def test_the_blocked_entities_tool_returns_a_shipped_verdict_state(self):
         """T-28 — the verdict is one of the five shipped states, whatever the console holds."""
@@ -126,8 +129,11 @@ class TestScenarioStatisticsToolsE2E:
         scenario = _first_scenario_with_steps()
         body = json.dumps({"name": "", "steps": scenario['steps'][:1]})
 
-        counts = sb_get_scenario_simulation_counts(console=E2E_CONSOLE, scenario=body)
-        attack_ids = list(counts['steps'][0]['attacks'])
+        # The attack map comes from the blocked-entities answer: the counts
+        # answer relays the simulation count and the two simulator maps only,
+        # and enumerates no attacks.
+        scored = sb_get_scenario_blocked_entities(console=E2E_CONSOLE, scenario=body)
+        attack_ids = list(scored['steps'][0]['attacks'])
         if not attack_ids:
             pytest.skip(
                 f"The first step of scenario '{scenario['id']}' on '{E2E_CONSOLE}' "
@@ -368,7 +374,7 @@ class TestScenarioStatisticsToolsE2E:
             #   - map is empty of the id   -> no move was ever generated for it
             # Only the first is what AC-9 calls inapplicable. Asserting
             # "blocked" for both would demand a claim the data cannot support.
-            if str(blocked_attack) in step['attacks']:
+            if str(blocked_attack) in blocked['steps'][0]['attacks']:
                 assert disposition in ('blocked', 'blocked_where_measured'), (
                     f"the attack is in the counts map at 0, so the blockers tool "
                     f"must not say {disposition!r}"

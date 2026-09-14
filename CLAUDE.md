@@ -508,9 +508,9 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
-25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **which attacks
-  would this scenario run, and how many simulations?** Reports per-step counts, coverage and a paged attack
-  listing **without running anything**.
+25. `get_scenario_simulation_counts` ✨ **NEW** 📖 **Read-only** - Answers one question: **how many
+  simulations would this scenario produce, and which simulators produce them?** Reports per-step counts and
+  simulator coverage **without running anything**.
   Wraps `POST /orch/v1/accounts/{account_id}/plan/statistics` via the shared fetch core, then projects that
   report down to the counts. For *why* a step produces nothing — or why one named attack did not run — use
   `get_scenario_blocked_entities`. The two are disjoint by construction, and each tool's hint routes to the other.
@@ -519,27 +519,27 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   executed** (`test_id`, a planRunId such as `1764165600525.2`). The body is accepted as a **JSON string or an
   already-parsed object** — some MCP clients deserialize a JSON-looking argument on the way out, and both
   forms carry the same information.
-  **`include_disabled` selects which question is asked, it does not widen a set**: `false` (default) gives
-  **runnable** counts — what would run right now — and `true` gives **expected** counts, as if every simulator
-  were available. Neither is derivable from the other; `both_counts=True` issues two calls and labels both.
-  **`get_constraints` defaults to `False` here alone** — this tool renders no conflicts, and evaluating them is
-  not free: a single default step measured 38,531 conflicts and an 11.8 MB response on a real console. Its
-  siblings default `True`. `get_all_constraints` cannot change this tool's answer; `conflict_detail="full"`
-  can — it lifts the coverage-map caps, so a figure otherwise reported as "at least N of M" becomes exact.
+  **Relays three per-step data fields and no others** (D11): the simulation count, and the attacker and target
+  simulator maps. **It enumerates no attacks** — `page`/`page_size` and the paged attack listing are gone. Ask
+  about a specific attack by naming it to `get_scenario_blocked_entities` via `attack_ids`, which answers
+  `ran` with its count. Consequently this tool makes **zero playbook requests**: it carries no attack id whose
+  name would need resolving. Its sibling still resolves names only for what it shows — one `moves/{id}` and one
+  `nodes/{id}` call each, never the full KB or fleet listings.
+  **`both_counts` is the only input that changes the question**: `false` (default) gives **runnable** counts —
+  what would run right now — and `true` issues two calls returning runnable **and** **expected** (as if every
+  simulator were available), labelled. Neither is derivable from the other. The endpoint's other settings —
+  `limit`, `use_cache`, `include_disabled`, `get_constraints`, `get_all_constraints` — are **set internally and
+  are not parameters** (D10): none of them changes which question is asked. This tool never evaluates
+  constraints (a single default step measured 38,531 conflicts and an 11.8 MB response on a real console);
+  `conflict_detail="full"` still sharpens it, lifting the coverage-map caps so a figure otherwise reported as
+  "at least N of M" becomes exact.
   **`null` means not computed, never zero.** A step the orchestrator never scored says so rather than
   reporting 0, and the total says how many steps it covers. **Coverage denominators are the step's true totals**,
   never the capped map's length, so a capped figure reads "at least N of M" rather than presenting a truncation
-  artifact as a measurement. Steps are numbered from 0, matching the data's `step_index` (the
+  artifact as a measurement. A simulator SafeBreach never scored is listed apart from the ones it measured at
+  zero. Steps are numbered from 0, matching the data's `step_index` (the
   `run_scenario`/`quick_run` previews remain 1-based). **Not rate-limited** — read-only, so it takes neither gate.
   **No MCP-side cache**: a re-check after a changed decision is never answered from a stale local copy.
-  **`page` / `page_size`** (default 0 / 10, max 100) list the step's attacks with the simulations each
-  produces. **Names are resolved for the page only** — a step's map holds up to 9,659 ids, so naming them all
-  would mean the 58.6 MB playbook listing again; ten lookups cost ~0.08 MB. Where the response carries fewer
-  ids than the step holds, **both denominators are printed** ("1–10 of 100 of 400"), because reporting only
-  what can be paged through would present a truncation artifact as the scenario's size. **`page_size=0` lists
-  nothing and costs no playbook request at all** — the way back to this tool's pre-listing behaviour. Its
-  sibling likewise resolves names only for what it shows — one `moves/{id}` and one `nodes/{id}` call each,
-  never the full KB or fleet listings.
 26. `get_scenario_blocked_entities` ✨ **NEW** 📖 **Read-only** - Answers one question: **what in this scenario
   will not run, and why?** Reports every attack and simulator whose count is a genuine integer `0`, with the
   constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.

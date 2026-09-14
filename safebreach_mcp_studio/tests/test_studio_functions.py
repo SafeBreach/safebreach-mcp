@@ -12847,18 +12847,19 @@ class TestEachProjectionRendersOnlyItsSlice:
     def test_counts_projection_step_carries_no_conflicts_or_zero_impact(self):
         step = _project_simulation_counts(self._report())['steps'][0]
         assert set(step) == {
+            # Structural, not data: what makes the three numbers below honest.
             'step_index', 'simulation_count', 'counts_computed', 'is_limit_reached',
-            'attacks', 'attacks_total',
+            # The only data fields relayed — the count above, and these two maps.
+            # The attack map is deliberately absent, not merely empty.
             'target_simulators', 'target_simulators_total',
             'attacker_simulators', 'attacker_simulators_total',
-            # Phase 13: which attacks run, one page at a time.
-            'attacks_page', 'attacks_pageable', 'page', 'page_size',
             # Which simulators produce simulations, additive to the maps above.
             'attacker_simulators_contributing', 'attacker_simulators_contributing_total',
             'attacker_simulators_not_computed', 'attacker_simulators_not_computed_total',
             'target_simulators_contributing', 'target_simulators_contributing_total',
             'target_simulators_not_computed', 'target_simulators_not_computed_total',
         }
+        assert 'attacks' not in step, "the counts answer enumerates no attacks"
 
     def test_the_counts_projection_still_explains_nothing(self):
         # The listing is "which attacks and how many", never "why not". A step
@@ -13478,25 +13479,19 @@ class TestAttackNamesAreFetchedForWhatIsShown:
             },
         }]}
 
-    def test_the_counts_tool_resolves_names_for_the_page_only(self):
-        # Phase 13 gave this tool an attack listing, so it does resolve names
-        # now — but only for the page it prints. The property that matters is
-        # unchanged: it never asks for a name it will not show.
-        with _statistics_transport(self._blocked_response()):
-            with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_facts_by_ids', return_value={}) as resolve:
-                sb_get_scenario_simulation_counts(
-                    console="test-console", scenario=self.SCENARIO)
-        assert sorted(resolve.call_args.args[1]) == ['226', '281']
-
-    def test_page_size_zero_resolves_no_names_at_all(self):
-        # The way back to the behaviour Phase 11 won: no listing, no lookup.
+    def test_the_counts_tool_resolves_no_attack_names_at_all(self):
+        # The counts tool carries no attack ids any more — it relays the
+        # simulation count and the two simulator maps and nothing else — so
+        # there is nothing here whose name could need resolving. This is the
+        # property Phase 11 fought for, now unconditional rather than reachable
+        # only at page_size=0.
         with _statistics_transport(self._blocked_response()):
             with patch('safebreach_mcp_playbook.playbook_functions.'
                        'get_attack_facts_by_ids') as resolve:
                 result = sb_get_scenario_simulation_counts(
-                    console="test-console", scenario=self.SCENARIO, page_size=0)
+                    console="test-console", scenario=self.SCENARIO)
         resolve.assert_not_called()
+        assert 'attacks' not in result['steps'][0]
         assert 'attacks_page' not in result['steps'][0]
 
     def test_the_counts_tool_resolves_no_simulator_details_either(self):
@@ -13604,131 +13599,6 @@ class TestAttackNamesAreFetchedForWhatIsShown:
                     console="test-console", scenario=self.SCENARIO,
                     conflict_detail='summary')
         assert list(resolve.call_args.args[1]) == ['226']
-
-
-class TestTheCountsToolNamesWhichAttacksRun:
-    """T-64, T-65, T-66 — which attacks run, one page at a time.
-
-    A step's attack map holds up to 9,659 ids on a real console and is capped at
-    100 in the response, so "which attacks will run" is not answerable in full
-    at any price. Paging makes it answerable honestly: a page, its position, and
-    both denominators — what can be paged through, and what the step holds.
-    """
-
-    @pytest.fixture(autouse=True)
-    def set_auth_context(self, mcp_request_auth):
-        with mcp_request_auth({"x-apitoken": "test-token"}):
-            yield
-
-    SCENARIO = '{"steps": [{"n": 0}]}'
-
-    @staticmethod
-    def _four_hundred_running():
-        return {"steps": [{
-            "simulationCount": 400,
-            "moves": {str(i): 1 for i in range(400)},
-            "simulators": {"sim-a": 400},
-            "targetSimulators": {"sim-a": 400},
-            "attackerSimulators": {},
-            "simulatorConstraints": {"targetConstraints": {}, "attackerConstraints": {}},
-        }]}
-
-    def _counts(self, **kwargs):
-        with _statistics_transport(self._four_hundred_running()):
-            with patch('safebreach_mcp_playbook.playbook_functions.'
-                       'get_attack_facts_by_ids',
-                       side_effect=lambda console, ids: {
-                           str(i): {'name': f"attack {i}"} for i in ids}) as resolve:
-                result = sb_get_scenario_simulation_counts(
-                    console="test-console", scenario=self.SCENARIO, **kwargs)
-        return result, resolve
-
-    def test_one_page_is_listed_not_the_whole_map(self):
-        step = self._counts()[0]['steps'][0]
-        assert len(step['attacks_page']) == 10
-        assert [e['attack_id'] for e in step['attacks_page']] == [
-            str(i) for i in range(10)]
-
-    def test_the_true_total_is_stated_beside_what_can_be_paged(self):
-        # 400 attacks in the step; the response carries 100. Reporting only the
-        # 100 would present a truncation artifact as the scenario's size.
-        step = self._counts()[0]['steps'][0]
-        assert step['attacks_total'] == 400
-        assert step['attacks_pageable'] == COUNT_MAP_CAP
-
-    def test_a_later_page_advances(self):
-        step = self._counts(page=2)[0]['steps'][0]
-        assert [e['attack_id'] for e in step['attacks_page']] == [
-            str(i) for i in range(20, 30)]
-
-    def test_a_page_past_the_end_is_empty_not_an_error(self):
-        step = self._counts(page=99)[0]['steps'][0]
-        assert step['attacks_page'] == []
-
-    def test_each_listed_attack_carries_its_count_and_name(self):
-        entry = self._counts()[0]['steps'][0]['attacks_page'][0]
-        assert entry['simulation_count'] == 1
-        assert entry['attack_name'] == 'attack 0'
-
-    def test_names_are_resolved_for_the_page_only(self):
-        # The whole reason this tool can name attacks: ten lookups, not the
-        # 58.6 MB listing that naming 9,659 of them would need.
-        resolve = self._counts()[1]
-        assert len(resolve.call_args.args[1]) == 10
-
-    def test_page_size_zero_lists_nothing_and_asks_for_nothing(self):
-        result, resolve = self._counts(page_size=0)
-        assert 'attacks_page' not in result['steps'][0]
-        resolve.assert_not_called()
-
-    def test_a_truncated_map_says_so_in_the_hint(self):
-        hint = self._counts()[0]['hint_to_agent']
-        assert 'more attacks than one response can carry' in hint
-
-    @pytest.mark.parametrize("bad", ({'page': -1}, {'page_size': -1},
-                                     {'page_size': 101}, {'page': 'two'},
-                                     {'page_size': True}))
-    def test_a_bad_page_request_is_rejected_before_any_call(self, bad):
-        with _statistics_transport({}) as post:
-            with pytest.raises(ValueError):
-                sb_get_scenario_simulation_counts(
-                    console="test-console", scenario=self.SCENARIO, **bad)
-            post.assert_not_called()
-
-    def test_the_listing_reaches_the_narration_with_both_denominators(self):
-        from safebreach_mcp_studio.studio_server import (
-            _format_scenario_simulation_counts)
-        text = _format_scenario_simulation_counts(self._counts()[0])
-        assert '**Attacks** 1–10 of 100 of 400' in text
-        assert '#0 (attack 0)' in text
-
-    def test_no_hint_routes_to_a_tool_that_no_longer_exists(self):
-        # Found live: the routing hint still named get_scenario_attack_blockers
-        # after Phase 12 retired it, sending an agent to an unknown tool. The
-        # rendered text is agent-facing, so a stale name there is a broken link.
-        from safebreach_mcp_studio.studio_server import (
-            _format_scenario_simulation_counts, _format_scenario_blocked_entities)
-        counts = _format_scenario_simulation_counts(self._counts()[0])
-        assert 'get_scenario_attack_blockers' not in counts
-        assert 'get_scenario_blocked_entities' in counts
-
-        registered = {tool.name for tool in _studio_tools().values()}
-        for text in (counts, _format_scenario_blocked_entities(
-                _project_blocked_entities(_phase7_report([_phase4_step(
-                    simulationCount=1, moves={'1': 1},
-                    simulators={'sim-a': 1}, targetSimulators={'sim-a': 1})])))):
-            for referenced in re.findall(r'\bget_scenario_[a-z_]+', text):
-                assert referenced in registered, (
-                    f"narration routes to {referenced}, which is not registered")
-
-    def test_the_listing_explains_nothing(self):
-        # It says what runs and how much. Why a step produces nothing is the
-        # sibling tool's question, and this output must not start answering it.
-        from safebreach_mcp_studio.studio_server import (
-            _format_scenario_simulation_counts)
-        text = _format_scenario_simulation_counts(self._counts()[0]).lower()
-        for word in ('blocked by', 'constraint catalog', 'contributing nothing'):
-            assert word not in text
 
 
 class TestContributingSimulatorsAreNamedNotJustCounted:
@@ -14678,7 +14548,9 @@ class TestScenarioStatisticsToolsRegistration:
                      'set_studio_attack_status', 'run_scenario', 'quick_run',
                      'manage_test'):
             assert name in tools
-        # 12 pre-existing + 3 new - 1 retired - 1 merged away.
+        # 12 on main + the 2 this ticket ships. The intermediate arithmetic
+        # (three registered, one retired, one merged into a parameter) all
+        # happened inside this branch and nets to two against `main`.
         assert len(tools) == 14
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
@@ -14736,6 +14608,27 @@ class TestScenarioStatisticsToolsRegistration:
 
 class TestEachNarrationCarriesOnlyItsOwnSections:
     """T-47 — each narration renders only its own sections and routes to its siblings."""
+
+    def test_no_narration_directs_a_caller_to_a_parameter_that_was_removed(self):
+        # Found live: after include_disabled became internal, the runnable hint
+        # still read "request it with include_disabled=true" — advice an agent
+        # cannot follow, on a parameter the schema no longer offers. Same class
+        # as the stale routing hint that once named a retired tool: the text
+        # outlived the thing it points at, and every test stayed green because
+        # none of them read the hint against the schema.
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        tools = SafeBreachStudioServer().mcp._tool_manager._tools
+        removed = {'limit', 'use_cache', 'include_disabled',
+                   'get_constraints', 'get_all_constraints', 'page', 'page_size'}
+        for name in SCENARIO_TOOL_NAMES:
+            exposed = set(tools[name].parameters['properties'])
+            assert not (removed & exposed), f"{name} re-exposed {removed & exposed}"
+        for text in (self._counts(), self._blocked()):
+            for gone in removed:
+                assert f"{gone}=" not in text, (
+                    f"the narration tells a caller to set {gone!r}, which no "
+                    f"scenario tool accepts"
+                )
 
     def _projected(self, project):
         return project(_phase7_report([PHASE7_MIXED_STEP], catalog=PHASE7_CATALOG))
@@ -15020,19 +14913,28 @@ class TestCoverageUsesTheTrueTotal:
         from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
         return _format_scenario_simulation_counts(_project_simulation_counts(report))
 
+    @staticmethod
+    def _render_blocked(report):
+        from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+        return _format_scenario_blocked_entities(_project_blocked_entities(report))
+
     def _capped_report(self):
+        # Capped on the SIMULATOR map, because that is what the counts answer
+        # now renders — it carries no attack map to be capped.
         return _phase7_report([_phase4_step(
-            simulationCount=40, moves={str(i): 4 for i in range(400)},
-            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+            simulationCount=40, moves={'281': 40},
+            simulators={f'sim-{i}': 4 for i in range(400)},
+            targetSimulators={f'sim-{i}': 4 for i in range(400)})])
 
     def test_the_fixture_is_genuinely_capped(self):
         step = self._capped_report()['steps'][0]
-        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total'] == 400
+        assert (len(step['target_simulators']) == COUNT_MAP_CAP
+                < step['target_simulators_total'] == 400)
 
     def test_the_denominator_is_the_true_total_not_the_capped_length(self):
         text = self._render_counts(self._capped_report())
         assert '400' in text
-        assert 'of 100 attacks' not in text
+        assert 'of 100 target simulators' not in text
 
     def test_a_capped_numerator_is_presented_as_a_lower_bound(self):
         text = self._render_counts(self._capped_report())
@@ -15041,10 +14943,23 @@ class TestCoverageUsesTheTrueTotal:
     def test_an_uncapped_step_states_its_coverage_exactly(self):
         report = _phase7_report([_phase4_step(
             simulationCount=40, moves={'226': 0, '281': 40},
-            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+            simulators={'sim-a': 4, 'sim-b': 0},
+            targetSimulators={'sim-a': 4, 'sim-b': 0})])
         text = self._render_counts(report)
         assert '1 of 2' in text
         assert 'at least' not in text
+
+    def test_the_attacks_denominator_is_still_guarded_on_the_sibling_tool(self):
+        # The counts answer no longer renders an attacks coverage clause, so
+        # this invariant would go untested for attacks if it were only asserted
+        # there. Blocked-entities still carries the attack map, and the same
+        # `_coverage` helper produces its clause.
+        report = _phase7_report([_phase4_step(
+            simulationCount=40, moves={str(i): 4 for i in range(400)},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+        assert len(report['steps'][0]['attacks']) == COUNT_MAP_CAP
+        text = self._render_blocked(report)
+        assert '400' in text and 'of 100 attacks' not in text
 
 
 class TestStepsAreNumberedFromZero:

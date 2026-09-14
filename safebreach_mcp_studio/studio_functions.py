@@ -3505,46 +3505,23 @@ def _project_both_aware(report, project):
     return project(report)
 
 
-DEFAULT_ATTACK_PAGE_SIZE = 10
-MAX_ATTACK_PAGE_SIZE = COUNT_MAP_CAP
+def _project_simulation_counts(report):
+    """"How many simulations, and which simulators produce them?" — nothing else.
 
+    Relays three per-step data fields and no others: the simulation count, and
+    the attacker and target simulator maps. The attack map is deliberately NOT
+    carried — enumerating attacks is not this tool's question, and dropping it
+    restores the zero-playbook-request property outright, since there is no
+    longer any id here whose name would have to be resolved.
 
-def _validate_paging(page, page_size):
-    """Reject a page request before anything is scored."""
-    if not isinstance(page, int) or isinstance(page, bool) or page < 0:
-        raise ValueError(f"page must be a non-negative integer, got {page!r}")
-    if (not isinstance(page_size, int) or isinstance(page_size, bool)
-            or page_size < 0 or page_size > MAX_ATTACK_PAGE_SIZE):
-        raise ValueError(
-            f"page_size must be between 0 and {MAX_ATTACK_PAGE_SIZE}, got {page_size!r}. "
-            f"0 lists no attacks at all, which costs no playbook request."
-        )
+    Conflicts, both zero-impact lists and the catalog are dropped as before. A
+    step producing 0 is reported, but not explained: that is the blocked-entities
+    question, and the hint routes there rather than this tool answering it badly.
 
-
-def _attacks_page(step, page, page_size):
-    """One page of "which attacks run, and how many", ordered deterministically.
-
-    Paged over the map the response actually returned, which is itself capped —
-    so the page is a window on a window, and both figures are reported: how many
-    ids can be paged through at all, and how many the step really holds.
-    """
-    ordered = sorted(step['attacks'].items(), key=lambda kv: _attack_sort_key(kv[0]))
-    start = page * page_size
-    return [
-        {'attack_id': attack_id, 'simulation_count': count}
-        for attack_id, count in ordered[start:start + page_size]
-    ]
-
-
-def _project_simulation_counts(report, page=0, page_size=DEFAULT_ATTACK_PAGE_SIZE):
-    """"Which attacks will run, and how many simulations?" — and nothing else.
-
-    Drops conflicts, both zero-impact lists and the catalog. A step producing 0
-    is reported, but not explained: that is the blocked-entities question, and
-    the hint routes there rather than this tool answering it badly.
-
-    ``page_size=0`` lists no attacks, which is the only way back to the
-    zero-playbook-request behaviour Phase 11 won for this tool.
+    The remaining keys are structural rather than data — `step_index` to address
+    a step, `counts_computed` and `is_limit_reached` to keep a missing count
+    distinguishable from a zero. They are what makes the three numbers honest,
+    so they stay.
     """
     def project(one):
         shaped = _projection_header(one)
@@ -3556,68 +3533,19 @@ def _project_simulation_counts(report, page=0, page_size=DEFAULT_ATTACK_PAGE_SIZ
                 'counts_computed': step['counts_computed'],
                 'is_limit_reached': step['is_limit_reached'],
             }
-            _carry_coverage(step, step_view)
-            # Deliberately not in _carry_coverage: that feeds both projections,
-            # and blocked entities answers this with _render_simulators_in_scope.
             for role in ('attacker_simulators', 'target_simulators'):
+                step_view[role] = dict(step[role])
+                step_view[f'{role}_total'] = step[f'{role}_total']
                 step_view[f'{role}_contributing'] = dict(step[f'{role}_contributing'])
                 step_view[f'{role}_contributing_total'] = step[f'{role}_contributing_total']
                 step_view[f'{role}_not_computed'] = list(step[f'{role}_not_computed'])
                 step_view[f'{role}_not_computed_total'] = step[f'{role}_not_computed_total']
-            if page_size:
-                step_view['attacks_page'] = _attacks_page(step, page, page_size)
-                # Two denominators, because they answer different questions:
-                # how many ids this response lets you page through, and how many
-                # the step actually holds. Reporting only the first would present
-                # a truncation artifact as the scenario's size.
-                step_view['attacks_pageable'] = len(step['attacks'])
-                step_view['page'] = page
-                step_view['page_size'] = page_size
             steps.append(step_view)
         shaped['steps'] = steps
         shaped['hint_to_agent'] = f"{one['hint_to_agent']} {COUNTS_ROUTING_HINT}"
-        if page_size and any(
-            step['attacks_pageable'] < step['attacks_total'] for step in steps
-        ):
-            shaped['hint_to_agent'] = (
-                f"{shaped['hint_to_agent']} This scenario holds more attacks than "
-                f"one response can carry, so the pages cover a prefix of them; each "
-                f"step states how many it holds in total. Use conflict_detail='full' "
-                f"to page through all of them."
-            )
         return shaped
 
     return _project_both_aware(report, project)
-
-
-def _name_counts_pages(projected, console, resolved):
-    """Name the attacks on the page, and only those.
-
-    Kept out of the projection, which is a pure function of the report by
-    design. One page is ten ids — the whole reason this tool can name attacks
-    at all without going back to the 58.6 MB listing.
-    """
-    passes = ([projected['runnable'], projected['expected']]
-              if projected.get('counts_mode') == 'both' else [projected])
-    entries = [entry for one in passes for step in one['steps']
-               for entry in step.get('attacks_page', [])]
-    if not entries:
-        return projected
-
-    wanted = {str(entry['attack_id']) for entry in entries} - resolved.keys()
-    if wanted:
-        from safebreach_mcp_playbook.playbook_functions import get_attack_facts_by_ids
-        try:
-            resolved.update(get_attack_facts_by_ids(console, sorted(wanted)))
-        except Exception as e:
-            logger.warning(f"Failed to resolve attack names for the page: {e}")
-            return projected
-
-    for entry in entries:
-        facts = resolved.get(str(entry['attack_id'])) or {}
-        if facts.get('name'):
-            entry['attack_name'] = facts['name']
-    return projected
 
 
 def _cited_codes(entries):
@@ -4009,35 +3937,31 @@ def sb_get_scenario_simulation_counts(
     scenario_id: str | None = None, test_id: str | None = None,
     both_counts: bool = False,
     conflict_detail: str = "summary",
-    page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
 ):
-    """Which attacks a scenario would run, and how many simulations.
+    """How many simulations a scenario would produce, and which simulators produce them.
+
+    Relays three per-step data fields — the simulation count and the attacker and
+    target simulator maps — and no others.
 
     Constraints are never evaluated for this answer: it renders no conflicts,
     and computing them is not free — a single default step measured 38,531
     conflicts and 11.8 MB on a real console. That is fixed here rather than
     offered, since a caller turning it on would pay for data this tool discards.
 
-    Names are resolved for the listed page only. That is the whole reason this
-    tool can name attacks at all: a step's map holds up to 9,659 ids, and naming
-    them without paging would mean the 58.6 MB playbook listing again.
-    ``page_size=0`` lists none and costs no playbook request, which is the
-    behaviour this tool had before it named anything.
+    This tool makes **no** playbook request at all. It carries no attack ids, so
+    there is nothing here whose name would have to be resolved — the property
+    Phase 11 fought for, now true unconditionally rather than at ``page_size=0``.
+    To ask about a specific attack, name it to ``get_scenario_blocked_entities``
+    via ``attack_ids``, which answers "ran" with its count.
     """
-    _validate_paging(page, page_size)
-    logger.info(f"Scenario simulation counts for console '{console}': "
-                f"page {page} x {page_size}")
-    projected = _project_simulation_counts(
+    logger.info(f"Scenario simulation counts for console '{console}'")
+    return _project_simulation_counts(
         _score_scenario(
             console, scenario, scenario_id, test_id, both_counts,
             False, conflict_detail,
             resolve_details=False,
-        ),
-        page=page, page_size=page_size,
+        )
     )
-    # After the projection, not inside it: the projections are pure functions of
-    # the report by design, and one page of names is the only I/O this tool does.
-    return _name_counts_pages(projected, console, {})
 
 
 def sb_get_scenario_blocked_entities(

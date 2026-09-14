@@ -16,7 +16,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mcp.types import ToolAnnotations
 from safebreach_mcp_core import SafeBreachMCPBase
-from safebreach_mcp_studio.studio_functions import DEFAULT_ATTACK_PAGE_SIZE  # noqa: E402
 from safebreach_mcp_core.plan_statistics import (
     is_computed_count,
     DEFAULT_LIMIT,
@@ -1672,50 +1671,48 @@ configuration change."""
         @self.mcp.tool(
             name="get_scenario_simulation_counts",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
-            description="""Answers ONE question: which attacks would this scenario run, and how many
-simulations?
+            description="""Answers ONE question: how many simulations would this scenario produce, and
+which simulators produce them?
+
+It does NOT answer "which attacks would run" — it enumerates no attacks at all. To ask about a
+specific attack, name it to `get_scenario_blocked_entities` via attack_ids, which answers "ran"
+with its count, or "blocked" with the constraint that stopped it.
 
 For WHY a step produces nothing — or why one named attack did not run — call
 `get_scenario_blocked_entities`. This tool reports what runs and how much; it explains nothing.
 
 """ + _SCENARIO_INPUTS + """
 
-- page (optional, int, default 0) / page_size (optional, int, default 10, max 100): One page of
-  the step's attacks, each with the simulations it produces and its name. Attack names are
-  resolved for the PAGE ONLY — a step's map can hold thousands of ids, and naming them all
-  would mean downloading the console's entire attack library. page_size=0 lists no attacks and
-  costs no playbook request at all.
 This tool renders no conflicts, so it does not pay SafeBreach to evaluate them — that is set
 internally and is not a parameter. conflict_detail="full" DOES change the answer here: it lifts
-the caps on the coverage maps and on what can be paged through, so a coverage figure otherwise
-reported as "at least N of M" becomes exact. Use get_scenario_blocked_entities for the
-constraint data itself.
+the caps on the coverage maps, so a coverage figure otherwise reported as "at least N of M"
+becomes exact. Use get_scenario_blocked_entities for the constraint data itself.
 
-Returns markdown: the counts mode, how many steps were scored, the total simulations, then
-per step its count, its coverage — how many of the scenario's attacks and simulators actually
-produce simulations — and a page of those attacks with their counts. A capped coverage figure
-is stated as a lower bound, and a step holding more attacks than one response can carry says so.
+Three per-step data fields are relayed and no others: the simulation count, and the attacker and
+target simulator maps.
+
+Returns markdown: the counts mode, how many steps were scored, the total simulations, then per
+step its count, how many of its attacker and target simulators actually produce simulations,
+and which ones by id with their counts. A capped coverage figure is stated as a lower bound, and
+a simulator SafeBreach never scored is listed apart from the ones it measured at zero.
 
 Examples:
 get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
-get_scenario_simulation_counts(console="demo", test_id="1764165600525.2", page=1)
-get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_size=0)"""
+get_scenario_simulation_counts(console="demo", test_id="1764165600525.2", both_counts=True)"""
         )
         def get_scenario_simulation_counts(
             console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
             both_counts: bool = False,
             conflict_detail: str = "summary",
-            page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
         ) -> str:
-            """Which attacks a scenario would run, and how many simulations."""
+            """How many simulations a scenario produces, and which simulators produce them."""
             try:
                 console = _resolve_single_tenant_console(console)
                 return _format_scenario_simulation_counts(sb_get_scenario_simulation_counts(
                     console=console, scenario=scenario, scenario_id=scenario_id,
                     test_id=test_id, both_counts=both_counts,
                     conflict_detail=conflict_detail,
-                    page=page, page_size=page_size,
                 ))
             except PermissionError as e:
                 logger.error(f"Scenario simulation counts permission error: {e}")
@@ -1911,14 +1908,30 @@ def _statistics_header(one: dict, inline: bool = False) -> list:
     return parts
 
 
-def _step_coverage(step: dict) -> str:
-    """One step's "N of M" clause, denominators taken from the real totals."""
+def _simulator_coverage(step: dict) -> str:
+    """The simulator half of the "N of M" clause, for the counts answer.
+
+    Separate from `_step_coverage` because the counts projection no longer
+    carries the attack map at all: it relays the simulation count and the two
+    simulator maps, and nothing else. Reusing the shared clause would raise a
+    KeyError on a field that is deliberately absent rather than merely empty.
+    """
     return (
-        f"{_coverage(step['attacks'], step['attacks_total'])} attacks, "
         f"{_coverage(step['target_simulators'], step['target_simulators_total'])} "
         f"target simulators, "
         f"{_coverage(step['attacker_simulators'], step['attacker_simulators_total'])} "
         f"attacker simulators"
+    )
+
+
+def _step_coverage(step: dict) -> str:
+    """One step's "N of M" clause, denominators taken from the real totals.
+
+    Used by the blocked-entities answer, which does carry the attack map.
+    """
+    return (
+        f"{_coverage(step['attacks'], step['attacks_total'])} attacks, "
+        f"{_simulator_coverage(step)}"
     )
 
 
@@ -2032,41 +2045,13 @@ def _render_scenario_counts(one: dict) -> list:
         parts.append(
             f"- **Step {step['step_index']}** — "
             f"{_format_simulation_count(step['simulation_count'])} simulations. "
-            f"Coverage: {_step_coverage(step)} produce simulations."
+            f"Coverage: {_simulator_coverage(step)} produce simulations."
         )
         parts.extend(f"  {line}" for line in _render_contributing_simulators(step))
-        parts.extend(f"  {line}" for line in _render_attacks_page(step))
 
     parts.append("")
     parts.append(f"**Hint:** {one['hint_to_agent']}")
     return parts
-
-
-def _render_attacks_page(step: dict) -> list:
-    """One page of "which attacks run, and how many".
-
-    Two denominators are printed when they differ, because they answer different
-    questions: how many ids this response lets you page through, and how many the
-    step actually holds. Collapsing them would present a truncation artifact as
-    the scenario's size.
-    """
-    page = step.get('attacks_page')
-    if page is None:
-        return []
-    pageable, total = step['attacks_pageable'], step['attacks_total']
-    scope = f"{pageable:,}" if pageable == total else f"{pageable:,} of {total:,}"
-    first = step['page'] * step['page_size']
-    if not page:
-        return [f"- **Attacks**: page {step['page']} is empty ({scope} available)"]
-    lines = [f"- **Attacks** {first + 1}–{first + len(page)} of {scope}:"]
-    for entry in page:
-        label = f"#{entry['attack_id']}"
-        if entry.get('attack_name'):
-            label += f" ({entry['attack_name']})"
-        count = entry['simulation_count']
-        rendered = f"{count:,}" if is_computed_count(count) else "not computed"
-        lines.append(f"  - {label} — {rendered} simulation(s)")
-    return lines
 
 
 def _format_scenario_simulation_counts(projected: dict) -> str:
