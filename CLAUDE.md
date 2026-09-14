@@ -525,7 +525,7 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   `ran` with its count. Consequently this tool makes **zero playbook requests**: it carries no attack id whose
   name would need resolving. Its sibling still resolves names only for what it shows — one `moves/{id}` and one
   `nodes/{id}` call each, never the full KB or fleet listings.
-  **Counts are always RUNNABLE** — what would run right now, with offline, disabled and unapproved
+  **Counts are always runnable** (`includeDisabled=false`) — what would run right now, with offline, disabled and unapproved
   simulators excluded from the numbers though still reported with their reason. The **expected** figure
   (as if every simulator were available) is **not offered by these tools** and is not derivable from the
   response; it survives only on the private plumbing the run tools use. Every endpoint setting —
@@ -543,8 +543,10 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   will not run, and why?** Reports every attack and simulator whose count is a genuine integer `0`, with the
   constraint that eliminated it. It **reports and removes nothing** — the entities stay in the scenario.
   Attacks that ran on fewer simulators than were offered are **reductions, not blocks**, and are deliberately
-  not listed (that is SAF-35484's scope). Same three inputs and same `include_disabled` semantics as entry 25;
-  `get_constraints` defaults `True`, and with `False` the answer says so rather than reporting "no reason found".
+  not listed (that is SAF-35484's scope). Same three inputs as entry 25, and the same **runnable**-only
+  semantics: `includeDisabled=false` is internal here too, so offline, disabled and unapproved simulators are
+  excluded from the counts though still reported with their reason. Constraints are always evaluated for this
+  answer — they are its answer — and `get_constraints` is internal rather than a parameter.
   **Opens with a verdict in one of five states, none of which can be read as another**: entities are blocked;
   nothing is blocked; nothing is blocked *among the steps that could be measured* (`clean_where_measured` — a
   truncated map may be hiding a count); only some steps were scored (`partially_evaluated` — findings cover

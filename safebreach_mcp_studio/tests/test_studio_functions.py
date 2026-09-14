@@ -9252,7 +9252,11 @@ class TestToolCatalogDocumentsTheScenarioTools:
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_each_entry_names_the_runnable_default(self, name):
         """The includeDisabled inversion is the thing a reader most needs."""
-        entry = self._claude_md().split(f"`{name}`", 1)[1][:2500]
+        # Anchored on the numbered entry, like its siblings. Splitting on the
+        # first mention of the name lands inside whichever entry cross-
+        # references it first, which is how this asserted against the wrong
+        # paragraph once already.
+        entry = self._catalog_entry(self._claude_md(), name)
 
         assert "runnable" in entry
         assert "include_disabled" in entry or "includeDisabled" in entry
@@ -14917,13 +14921,64 @@ class TestBothCountsRendersBothPasses:
             assert 'cannot be derived' in text
 
 
-class TestCoverageUsesTheTrueTotal:
-    """T-57 — coverage reads its denominator from the true total, never the capped map."""
+class TestSimulatorMapsAreNeverCapped:
+    """T-57 — the counts answer reports true simulator counts, not a capped prefix.
+
+    The cap was written for `moves`, which a real console returns thousands of
+    ids in. A simulator map is bounded by the fleet — 44 entries on the estate
+    this was measured against — so capping it buys nothing and costs the truth:
+    every coverage figure would hedge to "at least N of M" over a number that
+    is exactly known.
+    """
 
     @staticmethod
     def _render_counts(report):
         from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
         return _format_scenario_simulation_counts(_project_simulation_counts(report))
+
+    def _big_fleet_report(self):
+        # Deliberately past COUNT_MAP_CAP, which is where the old behaviour
+        # would have truncated and started hedging.
+        fleet = {f'sim-{i:03d}': (4 if i < 130 else 0) for i in range(150)}
+        return _phase7_report([_phase4_step(
+            simulationCount=520, moves={'281': 520},
+            simulators=dict(fleet), targetSimulators=dict(fleet),
+            attackerSimulators=dict(fleet))])
+
+    def test_every_simulator_survives_a_fleet_larger_than_the_old_cap(self):
+        step = _project_simulation_counts(self._big_fleet_report())['steps'][0]
+        for role in ('target_simulators', 'attacker_simulators'):
+            assert len(step[role]) == 150 > COUNT_MAP_CAP
+            assert step[f'{role}_total'] == 150
+
+    def test_the_coverage_figure_is_exact_not_a_lower_bound(self):
+        text = self._render_counts(self._big_fleet_report())
+        assert '130 of 150' in text
+        assert 'at least' not in text, "a fleet-sized map is known exactly"
+
+    def test_every_contributor_is_named_not_just_the_first_hundred(self):
+        step = _project_simulation_counts(self._big_fleet_report())['steps'][0]
+        for role in ('target_simulators', 'attacker_simulators'):
+            assert len(step[f'{role}_contributing']) == 130
+            assert step[f'{role}_contributing_total'] == 130
+
+    def test_the_attack_map_is_still_capped(self):
+        # The cap is not removed, only aimed: `moves` is the map that needs it.
+        report = _phase7_report([_phase4_step(
+            simulationCount=40, moves={str(i): 4 for i in range(400)},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
+        step = report['steps'][0]
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total'] == 400
+
+
+class TestCoverageUsesTheTrueTotal:
+    """T-57 — coverage reads its denominator from the true total, never the capped map.
+
+    Asserted on blocked-entities, the only answer that still carries a capped
+    map: the counts answer renders simulator maps only, and those are never
+    capped, so it has no truncation left to misreport. The invariant is kept
+    alive here rather than retired with the tool that used to exercise it.
+    """
 
     @staticmethod
     def _render_blocked(report):
@@ -14931,25 +14986,21 @@ class TestCoverageUsesTheTrueTotal:
         return _format_scenario_blocked_entities(_project_blocked_entities(report))
 
     def _capped_report(self):
-        # Capped on the SIMULATOR map, because that is what the counts answer
-        # now renders — it carries no attack map to be capped.
         return _phase7_report([_phase4_step(
-            simulationCount=40, moves={'281': 40},
-            simulators={f'sim-{i}': 4 for i in range(400)},
-            targetSimulators={f'sim-{i}': 4 for i in range(400)})])
+            simulationCount=40, moves={str(i): 4 for i in range(400)},
+            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
 
     def test_the_fixture_is_genuinely_capped(self):
         step = self._capped_report()['steps'][0]
-        assert (len(step['target_simulators']) == COUNT_MAP_CAP
-                < step['target_simulators_total'] == 400)
+        assert len(step['attacks']) == COUNT_MAP_CAP < step['attacks_total'] == 400
 
     def test_the_denominator_is_the_true_total_not_the_capped_length(self):
-        text = self._render_counts(self._capped_report())
+        text = self._render_blocked(self._capped_report())
         assert '400' in text
-        assert 'of 100 target simulators' not in text
+        assert 'of 100 attacks' not in text
 
     def test_a_capped_numerator_is_presented_as_a_lower_bound(self):
-        text = self._render_counts(self._capped_report())
+        text = self._render_blocked(self._capped_report())
         assert 'at least' in text
 
     def test_an_uncapped_step_states_its_coverage_exactly(self):
@@ -14957,21 +15008,9 @@ class TestCoverageUsesTheTrueTotal:
             simulationCount=40, moves={'226': 0, '281': 40},
             simulators={'sim-a': 4, 'sim-b': 0},
             targetSimulators={'sim-a': 4, 'sim-b': 0})])
-        text = self._render_counts(report)
+        text = self._render_blocked(report)
         assert '1 of 2' in text
         assert 'at least' not in text
-
-    def test_the_attacks_denominator_is_still_guarded_on_the_sibling_tool(self):
-        # The counts answer no longer renders an attacks coverage clause, so
-        # this invariant would go untested for attacks if it were only asserted
-        # there. Blocked-entities still carries the attack map, and the same
-        # `_coverage` helper produces its clause.
-        report = _phase7_report([_phase4_step(
-            simulationCount=40, moves={str(i): 4 for i in range(400)},
-            simulators={'sim-a': 4}, targetSimulators={'sim-a': 4})])
-        assert len(report['steps'][0]['attacks']) == COUNT_MAP_CAP
-        text = self._render_blocked(report)
-        assert '400' in text and 'of 100 attacks' not in text
 
 
 class TestStepsAreNumberedFromZero:

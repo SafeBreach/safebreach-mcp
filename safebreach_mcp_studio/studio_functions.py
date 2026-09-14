@@ -2909,16 +2909,22 @@ def _shape_statistics_step(step, attack_names=None, simulator_names=None,
     }
     _cap_count_map(shaped, 'attacks', step['moves'], uncapped,
                    pinned=pinned_attack_ids)
-    _cap_count_map(shaped, 'simulators', step['simulators'], uncapped)
-    _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], uncapped)
-    _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], uncapped)
+    # The simulator maps are NEVER capped. The cap exists for `moves`, which a
+    # real console returns thousands of ids in; a simulator map is bounded by
+    # the fleet — 44 entries on the estate this was measured against, and
+    # hundreds on the largest. Capping a map that small buys nothing and costs
+    # the truth: it would force every coverage figure into "at least N of M"
+    # hedging over a number that is exactly known.
+    _cap_count_map(shaped, 'simulators', step['simulators'], True)
+    _cap_count_map(shaped, 'attacker_simulators', step['attackerSimulators'], True)
+    _cap_count_map(shaped, 'target_simulators', step['targetSimulators'], True)
     # Additive: the full maps above are untouched, because blocked entities
     # renders every simulator in scope whether or not it ran anything, and the
     # `N of M` denominators are taken from their totals.
     _cap_contributing_map(shaped, 'attacker_simulators',
-                          step['attackerSimulators'], uncapped)
+                          step['attackerSimulators'], True)
     _cap_contributing_map(shaped, 'target_simulators',
-                          step['targetSimulators'], uncapped)
+                          step['targetSimulators'], True)
 
     # The R1 guard: when the orchestrator did not compute the numbers, draw no conclusions
     # from them. Emptiness here is by construction, not by filtering.
