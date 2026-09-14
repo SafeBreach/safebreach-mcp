@@ -7781,11 +7781,9 @@ class TestConstraintDescriptionsRelayedVerbatim:
     """T-38 — A relayed description reaches the caller byte-for-byte, never re-worded."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_awkward_descriptions_relayed_byte_for_byte(
         self, sample_constraint_catalog_response
@@ -7890,11 +7888,9 @@ class TestAbsentConstraintCatalog:
     """T-39 — A response with no catalog degrades to null descriptions, never an error."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_absent_catalog_does_not_raise_and_nulls_every_description(
         self, sample_simulator_constraints_mixed_codes
@@ -8200,11 +8196,9 @@ class TestScenarioStatisticsContractUnchanged:
     """T-13 — the refactored helper's observable contract is byte-for-byte unchanged."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_contract_is_unchanged_without_constraints(
         self, mock_oob_scenario, mock_statistics_response_all_good
@@ -8269,11 +8263,9 @@ class TestStatisticsRequestParameters:
     """T-14 — the helper still asks for expected counts, preserving today's numbers."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_request_asks_for_expected_counts_not_runnable(
         self, mock_oob_scenario, mock_statistics_response_all_good
@@ -8361,11 +8353,9 @@ class TestCallerPreviewsUnchangedByRefactor:
     """T-17 — both existing callers' evaluate previews are unchanged by the refactor."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_run_scenario_evaluate_preview_matches_fixture(
         self, mock_oob_scenario, mock_statistics_response_all_good
@@ -8407,11 +8397,9 @@ class TestLimitReachedNoLongerCrashesTheHelper:
     """T-15 — the helper no longer crashes on a limit-reached response."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_limit_reached_does_not_raise_without_constraints(
         self, mock_oob_scenario, limit_reached_statistics_response
@@ -9362,11 +9350,9 @@ class TestTruncatedResponsesRenderHonestly:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @staticmethod
     def _run_scenario_tool():
@@ -9458,11 +9444,9 @@ class TestPartiallyScoredRunIsRefusedNotSilentlyTrimmed:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _quick_run(self, step_stats, **kwargs):
         with patch('safebreach_mcp_studio.studio_functions.rate_limiter'), \
@@ -9714,11 +9698,9 @@ class TestPlanInputIsExclusiveAndParsed:
     """T-26 — ambiguous input (both or neither of plan/scenario_id) is rejected with a clear error."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_both_plan_and_scenario_id_is_rejected(self):
         with _statistics_transport({}) as post:
@@ -9813,11 +9795,9 @@ class TestOobScenarioIdIsResolvedClientSide:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     UUID = "3b8eade5-9285-43b8-b3e7-6350420983a5"
 
@@ -9902,11 +9882,9 @@ class TestPastRunIsScoredByTestId:
     PLAN_RUN_ID = "1764165600525.2"
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_the_body_carries_test_id_and_a_name(self):
         with _statistics_transport({"data": {"steps": []}}) as post:
@@ -9964,11 +9942,9 @@ class TestCountsModeSelectsOneCallOrTwo:
     """T-27 — counts mode selects one call or two, and labels what it returns."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     PLAN = '{"steps": [{"n": 0}]}'
 
@@ -13480,11 +13456,9 @@ class TestAttackNamesAreFetchedForWhatIsShown:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -13641,11 +13615,9 @@ class TestTheCountsToolNamesWhichAttacksRun:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -13856,11 +13828,9 @@ class TestTheCountsNarrationNamesTheContributors:
                         console="test-console", scenario='{"steps":[{"n":0}]}'))
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_a_scored_step_names_its_contributors_with_their_counts(self):
         text = self._rendered({"steps": [{
@@ -13914,11 +13884,9 @@ class TestTheScenarioBodyIsAcceptedAsStringOrObject:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     # The shape that failed in the field: several steps, each with a playbook
     # filter and simulator filters on both sides.
@@ -13991,11 +13959,9 @@ class TestAdvancedActionIdsAreNamed:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
     FACTS = {'10000': {
@@ -14106,11 +14072,9 @@ class TestNamedIdsSurviveTheCaps:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -14221,11 +14185,9 @@ class TestFilteringNarrowsWhatIsShownNotWhatIsClaimed:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @staticmethod
     def _one_clean_one_blocked():
@@ -14297,11 +14259,9 @@ class TestEntitiesCarryWhatTheyAreNotWhyTheyFailed:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
     FLEET = {'sim-a': {
@@ -14396,11 +14356,9 @@ class TestScenarioInputIsExclusiveOnAllThreeTools:
     """T-26 — ambiguous input is rejected with a clear error, on all three tools."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     TOOLS = (sb_get_scenario_simulation_counts,
              sb_get_scenario_blocked_entities)
@@ -14461,11 +14419,9 @@ class TestInvalidAttackIdIsRejectedBeforeAnyCall:
     """T-50 — an invalid attack id is rejected before any statistics call is made."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -14528,11 +14484,9 @@ class TestScenarioCountsModeSelectsOneCallOrTwo:
     """T-27 — counts mode selects one call or two, and labels what it returns."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -14592,11 +14546,9 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     """T-46 — one fetch per scoring pass; the projection adds none."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     TOOLS = (sb_get_scenario_simulation_counts,
              sb_get_scenario_blocked_entities)
@@ -14973,11 +14925,9 @@ class TestBothCountsRendersBothPasses:
     """T-56 — a both-counts result renders both passes, on every tool."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
@@ -15084,11 +15034,9 @@ class TestTheRegisteredToolsActuallyRun:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     SCENARIO = '{"steps": [{"n": 0}]}'
 
