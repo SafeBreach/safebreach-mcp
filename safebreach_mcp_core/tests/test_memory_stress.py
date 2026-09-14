@@ -5,7 +5,7 @@ Covers:
 1. Cache wrapper stress (rapid insertion, memory returns to baseline, concurrent agents)
 2. Data server cache stress (pagination storms, multiplicative keys, large payloads)
 3. Cross-server stress (all caches under load, mixed operations)
-4. SSE semaphore stress (mass orphan cleanup, leak-over-time simulation)
+4. Concurrency semaphore stress (mass orphan cleanup, leak-over-time simulation)
 """
 
 import asyncio
@@ -234,11 +234,11 @@ class TestCrossServerStress:
 
 
 # ---------------------------------------------------------------------------
-# 4. SSE Semaphore Stress Tests
+# 4. Concurrency Semaphore Stress Tests
 # ---------------------------------------------------------------------------
 
 class TestSemaphoreStress:
-    """Prove SSE semaphore dict stays bounded with cleanup."""
+    """Prove the concurrency semaphore dict stays bounded with cleanup."""
 
     def setup_method(self):
         _session_semaphores.clear()

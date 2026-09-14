@@ -301,11 +301,9 @@ class TestValidateStudioCode:
     """Test the sb_validate_studio_code function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -445,11 +443,9 @@ class TestSaveStudioAttackDraft:
     """Test the sb_save_studio_attack_draft function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -693,11 +689,9 @@ class TestGetAllStudioAttacks:
     """Test the sb_get_all_studio_attacks function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -984,11 +978,9 @@ class TestUpdateStudioAttackDraft:
     """Test the sb_update_studio_attack_draft function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1305,11 +1297,9 @@ class TestGetStudioAttackSource:
     """Test the sb_get_studio_attack_source function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -1437,11 +1427,9 @@ class TestRunStudioAttack:
     """Test the sb_run_studio_attack function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _status_resp(self, attack_id=10000298, name="Test Attack", status="published"):
         """Build a mock customMethods list response for the status pre-check (SAF-31468)."""
@@ -1946,11 +1934,9 @@ class TestGetStudioAttackLatestResult:
     """Test suite for sb_get_studio_attack_latest_result function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -2419,11 +2405,9 @@ class TestParameterValidationAndBuilding:
     """Test suite for parameter validation and building functionality."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_validate_and_build_parameters_empty_list(self):
         """Test building with empty parameters list."""
@@ -2523,11 +2507,9 @@ class TestProtocolParameterValidation:
     """Test suite for PROTOCOL parameter type validation."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_validate_protocol_parameter_valid_tcp(self):
         """Test valid TCP protocol parameter."""
@@ -2662,11 +2644,9 @@ class TestMultiValueParameters:
     """Test suite for parameters with multiple values."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_single_value_parameter(self):
         """Test parameter with single value (backward compatibility)."""
@@ -2849,11 +2829,9 @@ class TestValidateAttackType:
     """Test attack type validation in sb_validate_studio_code."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -2967,11 +2945,9 @@ class TestDualScriptValidation:
     """Test dual-script validation in sb_validate_studio_code."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3184,11 +3160,9 @@ class TestOSConstraintValidation:
     """Test OS constraint validation in sb_validate_studio_code."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3255,11 +3229,9 @@ class TestValidationWithLintIntegration:
     """Test SB011/SB012 lint checks integrated into sb_validate_studio_code."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3333,11 +3305,9 @@ class TestDualScriptSave:
     """Test dual-script support in sb_save_studio_attack_draft."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3537,11 +3507,9 @@ class TestDualScriptUpdate:
     """Test dual-script support in sb_update_studio_attack_draft."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.put')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3670,11 +3638,9 @@ class TestDualScriptSource:
     """Test dual-script support in sb_get_studio_attack_source."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3890,11 +3856,9 @@ class TestGetAllStudioAttacksPagination:
     """Test pagination integration in sb_get_all_studio_attacks."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -3983,11 +3947,9 @@ class TestExplicitSimulatorSelection:
     """Test explicit simulator selection in sb_run_studio_attack (Phase 5)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @pytest.fixture(autouse=True)
     def stub_status_lookup(self):
@@ -4270,11 +4232,9 @@ class TestEnhancedResults:
     """Test enhanced results with simulation_steps, logs, and output (Phase 6)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_result_with_simulation_events_populates_steps(self):
         """Result with simulation events produces populated simulation_steps."""
@@ -4853,11 +4813,9 @@ class TestAttackTypeNormalization:
     """Test _normalize_attack_type() function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_canonical_lowercase_passthrough(self):
         """Canonical lowercase keys pass through unchanged."""
@@ -4951,11 +4909,9 @@ class TestOSConstraintNormalization:
     """Test _validate_os_constraint() case-insensitive normalization."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_canonical_values_passthrough(self):
         """Canonical values pass through unchanged."""
@@ -5111,11 +5067,9 @@ class TestTestIdFilter:
     """Test test_id filter in sb_get_studio_attack_latest_result."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5191,11 +5145,9 @@ class TestSetStudioAttackStatus:
     """Test the sb_set_studio_attack_status function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _mock_list_response(self, attack_id=10000298, name="Test Attack",
                             status="draft", method_type=5):
@@ -5432,11 +5384,9 @@ class TestGetAttackStatusById:
     """Test the _get_attack_status_by_id helper (SAF-31468)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -5832,11 +5782,9 @@ class TestFetchAllScenarios:
     """Test the _fetch_all_scenarios function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
@@ -5911,11 +5859,9 @@ class TestRunScenario:
     """
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics', return_value=[{'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}, {'simulationCount': 100, 'matchedTargetSimulators': 3, 'matchedAttackerSimulators': 2, 'matchedAttacks': 5, 'totalTargetSimulators': 10, 'totalAttackerSimulators': 5, 'totalAttacks': 8}])
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
@@ -6251,11 +6197,9 @@ class TestGetScenarioStatistics:
     """Test the _get_scenario_statistics function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def test_returns_per_step_counts(
         self, mock_oob_scenario, mock_statistics_response_all_good
@@ -6305,11 +6249,9 @@ class TestRunScenarioWithStatistics:
     """Test sb_run_scenario statistics pre-flight and allow_partial_steps."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @pytest.fixture(autouse=True)
     def resolve_core_console(self):
@@ -6538,11 +6480,9 @@ class TestFetchAllPlans:
     """Test the _fetch_all_plans function."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -6607,11 +6547,9 @@ class TestRunScenarioCustomPlan:
     """Test sb_run_scenario with custom plans (Slice 2)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
@@ -7010,11 +6948,9 @@ class TestRunScenarioWithOverrides:
     """Test sb_run_scenario two-turn workflow with step_overrides (Slice 3)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.get')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
@@ -7135,11 +7071,9 @@ class TestCustomPlanAugmentation:
     """Test that augmented custom plans use full payload, not planId."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _setup_mocks(self, mock_base_url, mock_account_id):
         mock_base_url.return_value = "https://test.safebreach.com"
@@ -7259,11 +7193,9 @@ class TestEvaluate:
     """Test evaluate parameter — returns predictions without queuing."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics',
            return_value=[{'simulationCount': 1676, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 12, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 12}, {'simulationCount': 2198, 'matchedTargetSimulators': 11, 'matchedAttackerSimulators': 2, 'matchedAttacks': 22, 'totalTargetSimulators': 13, 'totalAttackerSimulators': 2, 'totalAttacks': 22}])
@@ -7379,11 +7311,9 @@ class TestResolvedAttacks:
     """Test that evaluate includes resolved attacks per step."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
            return_value={'281': 'Transfer malware via HTTPS', '226': 'Hidden malware drop'})
@@ -7483,11 +7413,9 @@ class TestVerboseFailures:
     """Test verbose_failures flag for per-attack detail on partial steps."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._build_attack_name_map',
            return_value={'281': 'Attack A', '226': 'Attack B'})
@@ -10144,11 +10072,9 @@ class TestManageTest:
     """Tests for sb_manage_test — test lifecycle management (pause/resume/cancel)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_test_state')
     @patch('safebreach_mcp_studio.studio_functions.requests.delete')
@@ -10727,18 +10653,122 @@ class TestManageTest:
         assert result['current_state'] == "COMPLETED"
 
     @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
     @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
-    def test_cancel_on_paused_raises_error(
-        self, mock_base_url, mock_account_id, mock_state
+    def test_cancel_on_paused_proceeds(
+        self, mock_base_url, mock_account_id, mock_delete, mock_put, mock_state
     ):
-        """Cancel on PAUSED test raises ValueError with resume guidance."""
+        """Cancel on PAUSED test proceeds straight to DELETE — SAF-32305."""
         mock_base_url.return_value = "https://test.safebreach.com"
         mock_account_id.return_value = "1234567890"
         mock_state.return_value = "PAUSED"
 
-        with pytest.raises(ValueError, match="resume"):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "success"
+        assert result['action'] == "cancel"
+        mock_delete.assert_called_once()
+        mock_put.assert_not_called()
+        assert "resume" not in str(result).lower()
+
+    @patch('safebreach_mcp_studio.studio_functions.requests.put')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_core.queue_state.requests.get')
+    @patch('safebreach_mcp_core.queue_state.get_api_account_id')
+    @patch('safebreach_mcp_core.queue_state.get_api_base_url')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_paused_resolved_from_live_queue_proceeds(
+        self, mock_base_url, mock_account_id, mock_queue_base_url,
+        mock_queue_account_id, mock_queue_get, mock_delete, mock_put
+    ):
+        """A paused slot read from the real queue payload still cancels — SAF-32305.
+
+        Exercises the unmocked orchestrator state-resolution path
+        (queue payload -> get_orchestrator_test_state -> cancel), which the
+        _get_test_state-mocked tests above bypass.
+        """
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_queue_base_url.return_value = "https://test.safebreach.com"
+        mock_queue_account_id.return_value = "1234567890"
+
+        queue_response = MagicMock()
+        queue_response.status_code = 200
+        queue_response.json.return_value = {
+            "data": {
+                "slotState": [
+                    {"planRunId": "other456", "isPaused": False},
+                    {"planRunId": "test123", "isPaused": True},
+                ]
+            }
+        }
+        mock_queue_get.return_value = queue_response
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_delete.return_value = mock_response
+
+        result = sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert result['status'] == "success"
+        mock_delete.assert_called_once()
+        mock_put.assert_not_called()
+
+    @patch('safebreach_mcp_studio.studio_functions._get_test_state')
+    @patch('safebreach_mcp_studio.studio_functions.requests.delete')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
+    @patch('safebreach_mcp_studio.studio_functions.get_api_base_url')
+    def test_cancel_on_paused_propagates_orchestrator_error(
+        self, mock_base_url, mock_account_id, mock_delete, mock_state
+    ):
+        """An orchestrator failure propagates untouched and is not retried — SAF-32305.
+
+        SAF-31111 mistook this error for proof that a paused test cannot be
+        cancelled. It must surface as itself, with no retry and no resume story.
+        """
+        mock_base_url.return_value = "https://test.safebreach.com"
+        mock_account_id.return_value = "1234567890"
+        mock_state.return_value = "PAUSED"
+
+        mock_delete.side_effect = requests.exceptions.HTTPError(
+            "500 Server Error: no plan was stopped"
+        )
+
+        with pytest.raises(requests.exceptions.HTTPError) as exc_info:
             sb_manage_test(test_id="test123", action="cancel", console="test")
+
+        assert "no plan was stopped" in str(exc_info.value)
+        assert "resume" not in str(exc_info.value).lower()
+        mock_delete.assert_called_once()
+
+    def test_manage_test_description_documents_the_real_contract(self):
+        """The manage_test tool description matches the tool — SAF-32305.
+
+        The description is the only contract an LLM caller reads, so a stale
+        rule there does the same damage the guard itself did.
+        """
+        from pathlib import Path
+        import safebreach_mcp_studio
+
+        source = (
+            Path(safebreach_mcp_studio.__file__).parent / "studio_server.py"
+        ).read_text()
+
+        start = source.index('name="manage_test"')
+        description = source[start:source.index('"""', source.index('description="""', start) + 15)]
+
+        for action in ("pause", "resume", "cancel", "delete"):
+            assert action in description, f"{action} missing from manage_test description"
+
+        assert "paused test can be cancelled directly" in description.lower()
+        assert "resume first" not in description.lower()
 
     # --- Phase 10: State transition matrix — Pause — SAF-31111 ---
 
@@ -11577,11 +11607,9 @@ class TestSubmitToQueue:
     """Tests for _submit_to_queue — mocked HTTP calls."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.requests.post')
     @patch('safebreach_mcp_studio.studio_functions.get_api_account_id')
@@ -11737,11 +11765,9 @@ class TestQuickRunInputParsing:
     """Test input parsing for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch(
@@ -11816,11 +11842,9 @@ class TestQuickRunAttackValidation:
     """Test attack ID validation against playbook cache."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch(
@@ -11879,11 +11903,9 @@ class TestQuickRunStepConstruction:
     """Test one-step-per-attack construction."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch(
@@ -12023,11 +12045,9 @@ class TestQuickRunSimulatorOverrides:
     """Test simulator_overrides for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch(
@@ -12188,11 +12208,9 @@ class TestQuickRunAllConnected:
     """Test all_connected override for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
     @patch(
@@ -12275,11 +12293,9 @@ class TestQuickRunEvaluate:
     """Test evaluate=True (default) behavior."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
     @patch('safebreach_mcp_studio.studio_functions._get_scenario_statistics')
@@ -12350,11 +12366,9 @@ class TestQuickRunExecution:
     """Test evaluate=False (execution) behavior."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -12500,11 +12514,9 @@ class TestQuickRunRateLimiting:
     """Test rate limiting gates for sb_quick_run."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -12572,11 +12584,9 @@ class TestQuickRunTestName:
     """Test test_name parameter handling."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     @patch('safebreach_mcp_studio.studio_functions.rate_limiter')
     @patch('safebreach_mcp_studio.studio_functions._submit_to_queue')
@@ -12652,11 +12662,9 @@ class TestQuickRunMCPWrapper:
     """Test the quick_run MCP tool wrapper (Markdown formatting)."""
 
     @pytest.fixture(autouse=True)
-    def set_auth_context(self):
-        from safebreach_mcp_core.token_context import _user_auth_artifacts
-        token = _user_auth_artifacts.set({"x-apitoken": "test-token"})
-        yield
-        _user_auth_artifacts.reset(token)
+    def set_auth_context(self, mcp_request_auth):
+        with mcp_request_auth({"x-apitoken": "test-token"}):
+            yield
 
     def _get_wrapper(self):
         """Get the quick_run wrapper function from the server."""

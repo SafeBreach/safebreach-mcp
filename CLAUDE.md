@@ -41,17 +41,11 @@ SAFEBREACH_MCP_AUTH_TOKEN="your-token" uv run start_all_servers.py --external-da
 # Get help with all external connection options
 uv run start_all_servers.py --help
 
-# Custom base URL for reverse proxy deployment
+# Custom base URL for reverse proxy deployment (the streamable-http endpoint becomes /api/mcp instead of /mcp)
 SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
 
 # Combined configuration with external access and custom base URL
 SAFEBREACH_MCP_AUTH_TOKEN="your-token" SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py --external
-
-# Streamable HTTP transport (default is SSE)
-SAFEBREACH_MCP_TRANSPORT=streamable-http uv run start_all_servers.py
-
-# Streamable HTTP with custom base URL (endpoint becomes /api/mcp instead of /mcp)
-SAFEBREACH_MCP_TRANSPORT=streamable-http SAFEBREACH_MCP_BASE_URL="/api/mcp" uv run start_all_servers.py
 
 # Single-tenant deployment (SafeBreach internal use)
 export DATA_URL="http://localhost:3400"
@@ -471,14 +465,17 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   and isProxySupported for informed filter planning.
   **Error handling**: Statistics API, scenario fetch, and plan fetch errors now propagate the
   full API response body in error messages (not just generic HTTP status codes).
-21. `manage_test` ✨ **NEW** 🔒 **Rate-limited** - Manage a running test's lifecycle (pause, resume, cancel).
-  Single tool with `action` parameter for all three operations. Accepts `test_id` (planRunId
-  from `run_scenario`), `action` (required: "pause", "resume", or "cancel"), `console`,
+21. `manage_test` ✨ **NEW** 🔒 **Rate-limited** - Manage a test's lifecycle (pause, resume, cancel, delete).
+  Single tool with `action` parameter for all four operations. Accepts `test_id` (planRunId
+  from `run_scenario`), `action` (required: "pause", "resume", "cancel", or "delete"), `console`,
   and optional `reason`. When `reason` is provided, appends a timestamped UTC note to the
   test's comment field via read-then-append pattern (data API testsummaries endpoint).
   Note format: `[YYYY-MM-DD HH:MM:SS UTC] Test {action}: {reason}`. Note append is
   best-effort — failure does not block the lifecycle operation. Response includes
   `hint_to_agent` with contextual next-step guidance per action.
+  A **paused test is cancelled directly** — no resume step (SAF-32305); the earlier "resume first"
+  restriction was a client-side guard, not an orchestrator rule. `delete` (SAF-29972) is irreversible,
+  terminal-states-only, defaults to `dry_run=True`, and requires `reason`.
 22. `quick_run` ✨ **NEW** 🔒 **Rate-limited** - Quick Run — execute a test from explicit
   playbook attack IDs without a pre-existing scenario. Constructs one step per attack with default
   all-connected simulator filters. Supports `simulator_overrides` (JSON string mapping attack IDs
@@ -717,10 +714,6 @@ export SAFEBREACH_MCP_BIND_HOST=0.0.0.0
 # Per-agent concurrency limit (default: 2)
 export SAFEBREACH_MCP_CONCURRENCY_LIMIT=3
 
-# Transport mode (default: sse)
-export SAFEBREACH_MCP_TRANSPORT=sse            # Server-Sent Events (default) — endpoints: /sse + /messages/
-export SAFEBREACH_MCP_TRANSPORT=streamable-http # Streamable HTTP — single endpoint: /mcp (or $SAFEBREACH_MCP_BASE_URL)
-
 # Rate limiting (applies to all write tools)
 export SAFEBREACH_MCP_RATE_LIMIT_ENABLED=true              # Enable/disable (default: false)
 export SAFEBREACH_MCP_ACTION_LIMIT=10                      # Total actions per caller per window (default: 10)
@@ -843,7 +836,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8000/sse",
+        "http://127.0.0.1:8000/mcp",
         "--transport",
         "http-first"
       ]
@@ -852,7 +845,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8001/sse",
+        "http://127.0.0.1:8001/mcp",
         "--transport",
         "http-first"
       ]
@@ -861,7 +854,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8002/sse",
+        "http://127.0.0.1:8002/mcp",
         "--transport",
         "http-first"
       ]
@@ -870,7 +863,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://127.0.0.1:8003/sse",
+        "http://127.0.0.1:8003/mcp",
         "--transport",
         "http-first"
       ]
@@ -887,7 +880,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8000/sse",
+        "http://your-server-ip:8000/mcp",
         "--transport",
         "http-first",
         "--headers",
@@ -898,7 +891,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8001/sse",
+        "http://your-server-ip:8001/mcp",
         "--transport",
         "http-first",
         "--headers",
@@ -909,7 +902,7 @@ Register the servers in Claude Desktop config at `/Library/Application Support/C
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://your-server-ip:8003/sse",
+        "http://your-server-ip:8003/mcp",
         "--transport",
         "http-first",
         "--headers",

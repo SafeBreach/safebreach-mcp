@@ -71,7 +71,7 @@ API_TOKEN = "2OJBRQBdICUDLNg8pVYlOG_-8SlBlzNvCYoh8kGEQso"
       "command": "npx",
       "args": [
         "mcp-remote", 
-        "http://server:port/sse",
+        "http://server:port/mcp",
         "--headers",
         "{\"Authorization\": \"Bearer ${SAFEBREACH_TOKEN}\"}"
       ]

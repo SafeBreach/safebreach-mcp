@@ -258,13 +258,13 @@ class MultiServerLauncher:
             
             if allow_external:
                 # Show both local and external access options
-                logger.info(f"  {config['name']}: http://localhost:{config['port']}/sse (local)")
+                logger.info(f"  {config['name']}: http://localhost:{config['port']}/mcp (local)")
                 if bind_host != '127.0.0.1':
-                    logger.info(f"  {config['name']}: http://{bind_host}:{config['port']}/sse (external)")
+                    logger.info(f"  {config['name']}: http://{bind_host}:{config['port']}/mcp (external)")
                 else:
-                    logger.info(f"  {config['name']}: http://0.0.0.0:{config['port']}/sse (external - all interfaces)")
+                    logger.info(f"  {config['name']}: http://0.0.0.0:{config['port']}/mcp (external - all interfaces)")
             else:
-                logger.info(f"  {config['name']}: http://localhost:{config['port']}/sse")
+                logger.info(f"  {config['name']}: http://localhost:{config['port']}/mcp")
         
         logger.info("Press Ctrl+C to stop all servers")
         
