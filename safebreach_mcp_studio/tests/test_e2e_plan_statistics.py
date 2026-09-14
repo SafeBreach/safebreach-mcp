@@ -173,13 +173,16 @@ class TestScenarioStatisticsToolsE2E:
         assert 'steps' in result
 
     def test_runnable_never_exceeds_expected(self):
-        """T-30 — the ordering relation, asserted unconditionally."""
+        """T-30 — the ordering relation, asserted unconditionally.
+
+        Both figures now arrive from one `both_counts` call rather than two
+        calls differing by `include_disabled`, which is no longer a parameter.
+        """
         scenario = _first_scenario_with_steps()
 
-        runnable = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'])
-        expected = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], include_disabled=True)
+        both = sb_get_scenario_simulation_counts(
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        runnable, expected = both['runnable'], both['expected']
 
         pairs = list(zip(runnable['steps'], expected['steps']))
         assert pairs, "both calls must return steps to be comparable"
@@ -191,10 +194,9 @@ class TestScenarioStatisticsToolsE2E:
         """T-30 — the conditional half, skipped explicitly when the console cannot show it."""
         scenario = _first_scenario_with_steps()
 
-        runnable = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'])
-        expected = sb_get_scenario_simulation_counts(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], include_disabled=True)
+        both = sb_get_scenario_simulation_counts(
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        runnable, expected = both['runnable'], both['expected']
 
         # The unconditional claim is asserted before any skip, so a skip can
         # never stand in for a passing assertion.
@@ -231,8 +233,8 @@ class TestScenarioStatisticsToolsE2E:
         )
         assert offline, "a positive delta must be explained by the offline reason"
         expected_blocked = sb_get_scenario_blocked_entities(
-            console=E2E_CONSOLE, scenario_id=scenario['id'], include_disabled=True)
-        assert 'simulator_is_offline' not in _blocker_codes(expected_blocked), (
+            console=E2E_CONSOLE, scenario_id=scenario['id'], both_counts=True)
+        assert 'simulator_is_offline' not in _blocker_codes(expected_blocked['expected']), (
             "expected counts score every simulator, so offline is never reported there"
         )
 

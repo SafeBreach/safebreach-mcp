@@ -91,33 +91,46 @@ Both tools score **exactly one** of three inputs, a blank string counting as abs
 | `scenario_id` | A saved scenario (OOB UUID) or a custom plan (integer-as-string). |
 | `test_id` | A planRunId such as `1764165600525.2`; scores the scenario that run executed. |
 
-Shared parameters and their **actual** defaults: `console="default"`, `include_disabled=False`,
-`both_counts=False`, `get_all_constraints=True`, `conflict_detail="summary"`.
+Shared parameters and their **actual** defaults: `console="default"`, `both_counts=False`,
+`conflict_detail="summary"`.
 
-**Two settings are internal and deliberately not exposed** (owner decision D10, 2026-09-14): the
-orchestrator's evaluation cap (`limit`, 500000) and its server-side cache flag (`useCache`, true) are set
-by the fetch core and are not tool parameters. Neither changes *which question is asked*, and a calling
-agent has no basis on which to choose a value — offering them invites a guess that can silently truncate
-the very report the caller is reading. They remain arguments of the private `sb_get_plan_statistics`, where
-the run tools' preview path still sets them. This narrows R15's "full parameter pass-through" by exactly
-two names; the principle R15 protects — that a *question* must not become unaskable — is untouched, because
-neither of these asks anything.
+**Every other endpoint setting is internal and deliberately not exposed** (owner decision D10,
+2026-09-14). The counts tool takes 8 parameters and blocked-entities 7; these five are not among them:
+
+| Setting | Fixed at | Why it is not a caller's choice |
+|---|---|---|
+| `limit` | 500000 | The orchestrator's evaluation cap. A guessed value stops the scoring early and silently truncates the very report the caller is reading — the exact failure this feature exists to prevent. |
+| `use_cache` | true | Server-side cache flag. Pure transport. |
+| `include_disabled` | false | A single pass is always **runnable**. See below. |
+| `get_constraints` | per tool — false for counts, true for blocked-entities | Each tool already asks for exactly what its own answer needs. Turning it on for counts buys data that tool discards, at 38,531 conflicts / 11.8 MB for one measured step. |
+| `get_all_constraints` | true | Shapes constraint completeness only. |
+
+**`include_disabled` is removed without losing an answer**, which is the only reason removing it is safe.
+`both_counts=True` scores **both** modes itself — it hardcodes one runnable and one expected pass and never
+read the flag — so the expected figure is still one call away, labelled beside the runnable one. What
+becomes unreachable is *expected-only*, a question nobody asks: knowing what would run if every simulator
+were available is useful next to what will actually run, not instead of it. AC-3's "expected available" is
+therefore still satisfied. `both_counts` is now the **only** input that changes the question asked, which is
+why it stays exposed while the rest do not.
+
+This narrows R15's "full parameter pass-through" by five names. The principle R15 protects — that a
+*question* must not become unaskable — survives intact: none of the five asks anything.
 
 Per-tool parameters:
 
-- `get_scenario_simulation_counts` — `get_constraints=False`, `page=0`, `page_size=10` (max 100).
-- `get_scenario_blocked_entities` — `get_constraints=True`, `attack_ids=None` (optional, comma-separated).
+- `get_scenario_simulation_counts` — `page=0`, `page_size=10` (max 100).
+- `get_scenario_blocked_entities` — `attack_ids=None` (optional, comma-separated).
 
-**`get_constraints` differs between the two on purpose.** The counts tool renders no conflicts, and evaluating
-them is not free: a single default step measured **38,531 conflicts and an 11.8 MB response** on a real
-console. `get_all_constraints` cannot change the counts tool's answer; `conflict_detail="full"` can, because
-it lifts the coverage-map caps, turning an "at least N of M" into an exact figure.
+`conflict_detail="full"` is the one remaining setting that can sharpen the counts answer: it lifts the
+coverage-map caps, turning an "at least N of M" into an exact figure.
 
-#### `include_disabled` selects the question, it does not widen a set
+#### `both_counts` is the only input that changes the question
 
-`False` (default) gives **runnable** counts — what would run right now. `True` gives **expected** counts — what
-would run if every simulator were available. Neither is derivable from the other, because `includeDisabled=false`
-filters disabled simulators out of the counts entirely. `both_counts=True` issues two calls and labels both.
+`False` (default) gives **runnable** counts — what would run right now, with offline, disabled and
+unapproved simulators excluded from the numbers though still reported with their reason. `True` returns
+that **and** the **expected** figure — what would run if every simulator were available — labelled, from two
+calls. Neither is derivable from the other, because `includeDisabled=false` filters disabled simulators out
+of the counts entirely; that is why the second figure costs a second call rather than a subtraction.
 
 #### Guarantees that hold across both tools
 
@@ -528,9 +541,12 @@ so the answer arrives filtered and concrete. Replaces Component D's single regis
   `scenario_id`, `test_id`, `include_disabled`, `both_counts`, `get_constraints`, `get_all_constraints`,
   `limit`, `use_cache` and `conflict_detail`. The split is in what each tool *renders*, not in what a caller
   may *ask for* — a narrowed surface would make a question unaskable rather than merely unasked.
-  > **Narrowed by D10 (2026-09-14).** `limit` and `use_cache` are no longer exposed on either tool — see
-  > §2.0. They are transport settings rather than questions, so removing them takes nothing away from what
-  > a caller can ask. The other nine still pass through exactly as written here.
+  > **Narrowed by D10 (2026-09-14).** Five of these are no longer exposed on either tool — `limit`,
+  > `use_cache`, `include_disabled`, `get_constraints` and `get_all_constraints` — see §2.0. None of them
+  > asks a question, so removing them takes nothing away from what a caller can ask: `both_counts` still
+  > reaches the expected figure, and each tool already requests exactly the constraint data its own answer
+  > needs. What passes through is `console`, `scenario`/`scenario_id`/`test_id`, `both_counts` and
+  > `conflict_detail`, plus each tool's own `page`/`page_size` or `attack_ids`.
 - **Defaults differ where the question differs.** `get_scenario_simulation_counts` defaults
   `get_constraints=False`: it renders no conflicts, so evaluating them is pure cost, and the cost is not
   hypothetical — a single default step measured live returned 38 531 conflicts and an 11.8 MB result. The
@@ -1907,6 +1923,7 @@ above.
 
 | Date | Change Description |
 |------|-------------------|
+| 2026-09-14 (d) | **D10 extended — `include_disabled`, `get_constraints` and `get_all_constraints` join them.** Owner review continued down the input list. `get_constraints` and `get_all_constraints` were never real choices: each tool already requests exactly the constraint data its own answer needs, and the counts tool turning constraints *on* would pay 38,531 conflicts / 11.8 MB for data it discards. `get_constraints` survives as a parameter of the internal `_score_scenario` — it is the one setting that genuinely differs between the two tools — but each supplies it as a constant, so it is not a caller's choice either. **`include_disabled` needed checking before removal, not after**: it is the flag §2.0 itself called "selects WHICH QUESTION is asked". Verified in the code first — `both_counts=True` hardcodes one runnable and one expected pass and **never reads the argument** — so the expected figure is still one call away. What is lost is *expected-only*, a question nobody asks; AC-3's "expected available" holds via `both_counts`, which is now the only input that changes the question. Schemas: **8 params on counts, 7 on blocked-entities** (from 13 and 12 before D10). A test pins that `both_counts` stays exposed, so "include_disabled is internal" can never be read as "expected counts are gone". T-27's `test_include_disabled_issues_one_expected_call` asserted an unreachable path and is replaced by one asserting a single pass is **always** runnable — the mode drifting back to expected would silently answer a question the caller did not ask. The three e2e cases that compared two calls now use one `both_counts` call. 2190 offline passed; **e2e 12 passed live against `zircon-piculet`**. |
 | 2026-09-14 (c) | **D10 — `limit` and `use_cache` are internal, not tool parameters.** Owner review of the input surface: both are transport settings rather than questions. `limit` is the orchestrator's circuit-breaker on how many simulations it evaluates before stopping early, and `use_cache` is its server-side cache flag; neither changes *which* question is asked, and a calling agent has no basis on which to pick a value for either. Worse than useless: a guessed `limit` can stop the scoring early and silently truncate the very report the caller is reading, which is the failure mode this whole feature exists to prevent. Removed from both tool wrappers, from both public `sb_get_scenario_*` functions and from `_score_scenario`; the fetch core's defaults now apply unconditionally on this path. **Kept on the private `sb_get_plan_statistics`**, which the run tools' preview path still parameterises — the point is to stop offering the choice to an agent, not to delete the capability. Schemas verified after the change: 13 → 11 params on the counts tool, 12 → 10 on blocked-entities. **T-46's assertion is inverted rather than deleted** — it now pins that the wire carries the *internal* value for each, because asserting only that the parameters vanished would stay green if the request stopped sending them altogether, handing the orchestrator its own defaults instead of ours. A new test asserts neither schema offers them back. This narrows R15 by exactly two names and leaves its principle intact: neither setting asks anything, so no question became unaskable. 1049 passed. |
 | 2026-09-14 (b) | **The PRD now states its delivered surface up front — two tools.** Owner asked for the document to represent the two tools reliably. It did not: the **title named `get_plan_statistics`**, a tool that does not ship; that retired name appeared **46 times** against 16 and 21 for the two that do; the §3 Component E spec and the §5 output examples both described **three** tools including one retired in Phase 12; §11 said the deliverable was a single tool; and **Phase 15 was missing entirely** (`788348a`, committed 2026-09-10, three days after the PRD's previous edit). Added **§2.0 Delivered surface**, declared authoritative over the rest of the document and verified against the code — both tools with their registration and function line numbers, real parameter defaults (not constant names), the guarantees that hold across both, what each deliberately does *not* do, and an explicit note that **both retired names lived only inside this branch, so the PR shows no deletion** and a reviewer following the phase history will hunt for removals that are not in the diff. Retitled; §1 Purpose and Key Benefits reframed around the two questions; §1.5 gains a *Delivered surface* row and the corrected 1–15 phase line. Added the **D8 two-tools revision** to §2, which previously stopped at D4's three and so never recorded the convergence. §3 Component E and §5's examples corrected in place under a superseded banner rather than deleted, because the rest of both describes the shipped design accurately. §5's examples are now **real captured output** from `zircon-piculet`, replacing mock-ups that had drifted from what the code renders. Tool-count arithmetic fixed: 15 was true at the end of Phase 8; **as shipped it is 14**, and against `main` the change is **12 → 14**. Phase 15 written up from its commit message and tests, including its three traps (filter before the cap; `None` is not `0`; an unmeasured simulator is listed, never binned with the zeros). No source files touched. |
 | 2026-09-14 (a) | **E2E executed against a live console; T-35 closed; one defect found.** The feature's own env `saf-35508` had terminated (2026-09-12), so the suite was pointed at `zircon-piculet` with a freshly minted token. **12 passed, 0 skipped** (the previous best was 11 passed / 2 skipped — the custom-plan and offline-reason cases both ran here), plus 2187 offline. **AC-4 / T-35 verified on non-trivial data**: driving the endpoint with the console Checkout view's own parameter set on *Warlock (Ransomware)* gave `[141, 316, 112]` expected and `[4, 1, 0]` runnable, and `get_scenario_simulation_counts` matched both exactly with correct mode labels. Per-id dispositions confirmed live through the **registered** tools — `ran` outranking `blocked`, `absent` for an unknown id, and the verdict explicitly disclaiming its scoping. **Defect found**: `_resolve_disposition` copies `blockers` and `attack_name` from the source entry but not `advanced_actions`, so the per-id disposition block renders `requires advanced action #0` where the per-step listing renders `#0 "Loading of Malicious Entities"` — Phase 14's naming is half-delivered, on precisely the `attack_ids` path a caller uses to ask "why didn't attack X run?". Recorded in §1.5; not yet fixed. |

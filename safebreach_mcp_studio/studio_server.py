@@ -1653,20 +1653,18 @@ integer 0 is. Where an answer cannot be confirmed it says so rather than guessin
 
 Shared parameters:
 - console (required, str): SafeBreach console name.
-- include_disabled (optional, bool, default False): Selects WHICH QUESTION is asked, not
-  merely how wide a set is. False = runnable (what would run right now; offline, disabled
-  and unapproved simulators are excluded but still reported with their reason). True =
-  expected (what would run if every simulator were available). Neither is derivable from
-  the other.
-- both_counts (optional, bool, default False): Issue two calls and return both figures,
-  labelled.
-- get_all_constraints (optional, bool, default True): Report every reason a pairing was
-  eliminated, not just the first.
+- both_counts (optional, bool, default False): False returns RUNNABLE counts — what would run
+  right now, with offline, disabled and unapproved simulators excluded from the numbers though
+  still reported with their reason. True issues two calls and returns both figures labelled:
+  runnable, and EXPECTED — what would run if every simulator were available. Neither figure is
+  derivable from the other, which is why asking for both costs a second call.
 - conflict_detail (optional, str, default "summary"): "summary", "per_attack" or "full".
 
-The orchestrator's evaluation cap and its server-side cache flag are set internally and are
-not caller-tunable: neither changes what question is asked, and a caller has no basis on
-which to pick a value for either.
+Everything else the endpoint accepts is set internally and is not caller-tunable — the
+evaluation cap, the server-side cache flag, whether constraints are computed, and whether
+every elimination reason is reported. None of them changes which question is asked; each tool
+already asks for exactly what its own answer needs, and a calling agent has no basis on which
+to choose differently. Use both_counts for the one choice that does change the question.
 
 Read-only and safe to call repeatedly; nothing is cached MCP-side, so re-call after every
 configuration change."""
@@ -1687,13 +1685,11 @@ For WHY a step produces nothing — or why one named attack did not run — call
   resolved for the PAGE ONLY — a step's map can hold thousands of ids, and naming them all
   would mean downloading the console's entire attack library. page_size=0 lists no attacks and
   costs no playbook request at all.
-- get_constraints (optional, bool, default False): This tool renders no conflicts, so it
-  does not pay to evaluate them. Set True only if you want SafeBreach to compute them anyway.
-  get_all_constraints shapes constraint data this tool does not render, so it cannot change
-  the answer here. conflict_detail="full" DOES change it: it lifts the caps on the coverage
-  maps and on what can be paged through, so a coverage figure this tool would otherwise report
-  as "at least N of M" becomes exact. Use get_scenario_blocked_entities for the constraint
-  data itself.
+This tool renders no conflicts, so it does not pay SafeBreach to evaluate them — that is set
+internally and is not a parameter. conflict_detail="full" DOES change the answer here: it lifts
+the caps on the coverage maps and on what can be paged through, so a coverage figure otherwise
+reported as "at least N of M" becomes exact. Use get_scenario_blocked_entities for the
+constraint data itself.
 
 Returns markdown: the counts mode, how many steps were scored, the total simulations, then
 per step its count, its coverage — how many of the scenario's attacks and simulators actually
@@ -1708,8 +1704,7 @@ get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_
         def get_scenario_simulation_counts(
             console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
-            include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-            get_constraints: bool = False, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+            both_counts: bool = False,
             conflict_detail: str = "summary",
             page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
         ) -> str:
@@ -1718,9 +1713,7 @@ get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-...", page_
                 console = _resolve_single_tenant_console(console)
                 return _format_scenario_simulation_counts(sb_get_scenario_simulation_counts(
                     console=console, scenario=scenario, scenario_id=scenario_id,
-                    test_id=test_id, include_disabled=include_disabled,
-                    both_counts=both_counts, get_constraints=get_constraints,
-                    get_all_constraints=get_all_constraints,
+                    test_id=test_id, both_counts=both_counts,
                     conflict_detail=conflict_detail,
                     page=page, page_size=page_size,
                 ))
@@ -1762,8 +1755,8 @@ and no remedy is implied.
   enough to be answered about it however large the scenario. The VERDICT stays scenario-wide:
   it can report other blocked attacks you did not ask about, which is deliberate — otherwise
   "nothing is blocked" would be true of your query and false of your scenario.
-- get_constraints (optional, bool, default True): Populate the blockers and the catalog that
-  describes them. With False the answer says so rather than reporting "no reason found".
+The blockers and the catalog that describes them are always computed for this tool — they are
+its answer, so whether to evaluate them is not a caller's choice and is set internally.
 
 Returns markdown opening with a VERDICT in one of five states, which are never
 interchangeable: entities are blocked; nothing is blocked; nothing is blocked among the
@@ -1779,8 +1772,7 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
             console: str = "default", scenario: str | dict | None = None,
             scenario_id: str | None = None, test_id: str | None = None,
             attack_ids: str | None = None,
-            include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-            get_constraints: bool = DEFAULT_GET_CONSTRAINTS, get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+            both_counts: bool = False,
             conflict_detail: str = "summary",
         ) -> str:
             """Whether anything in a scenario would contribute nothing."""
@@ -1789,9 +1781,7 @@ get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")"""
                 return _format_scenario_blocked_entities(sb_get_scenario_blocked_entities(
                     console=console, scenario=scenario, scenario_id=scenario_id,
                     test_id=test_id, attack_ids=attack_ids,
-                    include_disabled=include_disabled,
-                    both_counts=both_counts, get_constraints=get_constraints,
-                    get_all_constraints=get_all_constraints,
+                    both_counts=both_counts,
                     conflict_detail=conflict_detail,
                 ))
             except PermissionError as e:

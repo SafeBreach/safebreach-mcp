@@ -3968,9 +3968,8 @@ def _resolve_disposition(attack_id, occurrences, blockers_by_id, count_map_cappe
     return entry
 
 
-def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
-                    both_counts, get_constraints, get_all_constraints,
-                    conflict_detail, resolve_details=True,
+def _score_scenario(console, scenario, scenario_id, test_id, both_counts,
+                    get_constraints, conflict_detail, resolve_details=True,
                     pinned_attack_ids=()):
     """Validate in the caller's vocabulary, then score exactly once.
 
@@ -3978,10 +3977,18 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
     routing through it keeps this repo's single `plan/statistics` call site
     single. What this call buys is the error wording: 'scenario', not 'plan'.
 
-    The orchestrator's evaluation cap and its server-side cache flag are left to
-    ``sb_get_plan_statistics``' own defaults rather than threaded through: they
-    are transport settings, not part of the question a scenario tool asks, and
-    nothing above this layer is in a position to choose a value for either.
+    Everything the endpoint accepts beyond ``both_counts`` and ``conflict_detail``
+    is settled here rather than by a caller. The evaluation cap, the cache flag
+    and ``get_all_constraints`` take ``sb_get_plan_statistics``' own defaults;
+    ``include_disabled`` does too, which is why runnable is what a single pass
+    returns — ``both_counts`` is the one input that changes the question, and it
+    scores both modes itself rather than reading this argument.
+
+    ``get_constraints`` stays a parameter because it is the one setting that
+    genuinely differs between the two tools — the counts answer renders no
+    conflicts and will not pay to compute them, the blocked-entities answer *is*
+    them — but each tool supplies it as a constant, so it is never a caller's
+    choice either.
     """
     _parse_plan_argument(scenario, scenario_id, test_id, body_param='scenario')
     return sb_get_plan_statistics(
@@ -3989,10 +3996,8 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
         plan=scenario,
         scenario_id=scenario_id,
         test_id=test_id,
-        include_disabled=include_disabled,
         both_counts=both_counts,
         get_constraints=get_constraints,
-        get_all_constraints=get_all_constraints,
         conflict_detail=conflict_detail,
         resolve_details=resolve_details,
         pinned_attack_ids=pinned_attack_ids,
@@ -4002,17 +4007,16 @@ def _score_scenario(console, scenario, scenario_id, test_id, include_disabled,
 def sb_get_scenario_simulation_counts(
     console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
-    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-    get_constraints: bool = False,
-    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+    both_counts: bool = False,
     conflict_detail: str = "summary",
     page: int = 0, page_size: int = DEFAULT_ATTACK_PAGE_SIZE,
 ):
     """Which attacks a scenario would run, and how many simulations.
 
-    ``get_constraints`` defaults to False here alone: this answer renders no
-    conflicts, and evaluating them is not free — a single default step measured
-    38,531 conflicts and 11.8 MB on a real console.
+    Constraints are never evaluated for this answer: it renders no conflicts,
+    and computing them is not free — a single default step measured 38,531
+    conflicts and 11.8 MB on a real console. That is fixed here rather than
+    offered, since a caller turning it on would pay for data this tool discards.
 
     Names are resolved for the listed page only. That is the whole reason this
     tool can name attacks at all: a step's map holds up to 9,659 ids, and naming
@@ -4025,8 +4029,8 @@ def sb_get_scenario_simulation_counts(
                 f"page {page} x {page_size}")
     projected = _project_simulation_counts(
         _score_scenario(
-            console, scenario, scenario_id, test_id, include_disabled, both_counts,
-            get_constraints, get_all_constraints, conflict_detail,
+            console, scenario, scenario_id, test_id, both_counts,
+            False, conflict_detail,
             resolve_details=False,
         ),
         page=page, page_size=page_size,
@@ -4040,9 +4044,7 @@ def sb_get_scenario_blocked_entities(
     console: str = "default", scenario: str | dict | None = None,
     scenario_id: str | None = None, test_id: str | None = None,
     attack_ids: str | None = None,
-    include_disabled: bool = DEFAULT_INCLUDE_DISABLED, both_counts: bool = False,
-    get_constraints: bool = DEFAULT_GET_CONSTRAINTS,
-    get_all_constraints: bool = DEFAULT_GET_ALL_CONSTRAINTS,
+    both_counts: bool = False,
     conflict_detail: str = "summary",
 ):
     """What in a scenario would not run, and why.
@@ -4066,8 +4068,8 @@ def sb_get_scenario_blocked_entities(
                 f"{len(parsed_ids) or 'all'} attack(s) in scope")
     pinned = tuple(str(attack_id) for attack_id in parsed_ids)
     return _project_blocked_entities(_score_scenario(
-        console, scenario, scenario_id, test_id, include_disabled, both_counts,
-        get_constraints, get_all_constraints, conflict_detail,
+        console, scenario, scenario_id, test_id, both_counts,
+        True, conflict_detail,
         pinned_attack_ids=pinned,
     ), parsed_ids)
 

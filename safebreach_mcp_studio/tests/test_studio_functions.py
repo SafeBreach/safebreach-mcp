@@ -14499,15 +14499,21 @@ class TestScenarioCountsModeSelectsOneCallOrTwo:
         assert len(queries) == 1 and queries[0]['includeDisabled'] == ['false']
         assert result['counts_mode'] == 'runnable'
 
-    def test_include_disabled_issues_one_expected_call(
+    def test_a_single_pass_is_always_runnable_never_expected(
         self, mock_statistics_response_all_good
     ):
+        # `include_disabled` is internal now, so expected-ONLY is unreachable —
+        # deliberately. A single pass answers "what runs right now"; the expected
+        # figure arrives beside it through both_counts, which is the only input
+        # that changes the question. This asserts the mode cannot drift back to
+        # expected on a single pass, which would silently answer a question the
+        # caller did not ask and cannot tell apart from the one they did.
         with _statistics_transport(mock_statistics_response_all_good) as post:
             result = sb_get_scenario_simulation_counts(
-                console="test-console", scenario=self.SCENARIO, include_disabled=True)
+                console="test-console", scenario=self.SCENARIO)
         queries = _statistics_queries(post)
-        assert len(queries) == 1 and queries[0]['includeDisabled'] == ['true']
-        assert result['counts_mode'] == 'expected'
+        assert len(queries) == 1 and queries[0]['includeDisabled'] == ['false']
+        assert result['counts_mode'] == 'runnable'
 
     def test_both_counts_issues_exactly_two_calls_one_of_each(
         self, mock_statistics_response_all_good
@@ -14554,7 +14560,7 @@ class TestEachToolMakesExactlyOneStatisticsCall:
     TOOLS = (sb_get_scenario_simulation_counts,
              sb_get_scenario_blocked_entities)
     SCENARIO = '{"steps": [{"n": 0}]}'
-    OVERRIDES = dict(include_disabled=True, get_all_constraints=False)
+    OVERRIDES = dict(conflict_detail='per_attack')
 
     @pytest.mark.parametrize("tool", TOOLS)
     def test_a_single_pass_call_issues_exactly_one_request(
@@ -14572,14 +14578,14 @@ class TestEachToolMakesExactlyOneStatisticsCall:
         with _statistics_transport(mock_statistics_response_all_good) as post:
             tool(console="test-console", scenario=self.SCENARIO,
                  both_counts=False, **self.OVERRIDES, **_required_kwargs(tool))
+        # Every endpoint setting is now internal, so what the wire must carry is
+        # the internal value rather than an echoed argument. Asserting the value
+        # sent — not merely that the parameters vanished from the schema — is
+        # what catches dropping them from the request altogether, which would
+        # hand the orchestrator its own defaults in place of ours.
         query = _statistics_queries(post)[0]
-        assert query['includeDisabled'] == ['true']
-        assert query['getAllConstraints'] == ['false']
-        # `limit` and `useCache` are no longer caller-tunable, so what the wire
-        # must carry is the internal setting rather than an echoed argument.
-        # Asserting the sent value — not merely that the parameters vanished —
-        # is what would catch dropping them from the request altogether, which
-        # would hand the orchestrator its own defaults instead of ours.
+        assert query['includeDisabled'] == ['false'], "a single pass is runnable"
+        assert query['getAllConstraints'] == ['true']
         assert query['limit'] == [str(DEFAULT_LIMIT)]
         assert query['useCache'] == ['true' if DEFAULT_USE_CACHE else 'false']
 
@@ -14625,13 +14631,18 @@ class TestEachToolMakesExactlyOneStatisticsCall:
 # ---------------------------------------------------------------------------
 
 PASS_THROUGH_PARAMS = (
-    'console', 'scenario', 'scenario_id', 'test_id', 'include_disabled',
-    'both_counts', 'get_constraints', 'get_all_constraints', 'conflict_detail',
+    'console', 'scenario', 'scenario_id', 'test_id', 'both_counts',
+    'conflict_detail',
 )
 
-# Transport settings, not part of the question a scenario tool asks. They are
-# set internally so a caller is never invited to pick a value for either.
-INTERNAL_ONLY_PARAMS = ('limit', 'use_cache')
+# Set internally, so a caller is never invited to pick a value. None of these
+# changes WHICH question is asked: the evaluation cap and cache flag are
+# transport, and each tool already asks for exactly the constraint data its own
+# answer needs. `both_counts` is the one input that does change the question and
+# stays exposed — it scores runnable and expected itself, so dropping
+# `include_disabled` costs no reachable answer.
+INTERNAL_ONLY_PARAMS = ('limit', 'use_cache', 'include_disabled',
+                        'get_constraints', 'get_all_constraints')
 
 
 def _studio_tools():
@@ -14677,16 +14688,24 @@ class TestScenarioStatisticsToolsRegistration:
             assert param in properties, f"{name} is missing {param}"
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
-    def test_the_transport_settings_are_internal_not_caller_tunable(self, name):
-        # `limit` is the orchestrator's evaluation cap and `use_cache` its
-        # server-side cache flag. Neither changes which question is asked, and a
-        # calling agent has no basis on which to choose a value — exposing them
-        # only invites a guess that can silently truncate the very report the
-        # caller is reading. They are set internally, and the schema must not
-        # offer them back.
+    def test_the_endpoint_settings_are_internal_not_caller_tunable(self, name):
+        # None of these changes WHICH question is asked, and a calling agent has
+        # no basis on which to choose a value. `limit` is the worst of them to
+        # expose: a guess stops the scoring early and silently truncates the very
+        # report the caller is reading. Each tool already requests exactly the
+        # constraint data its own answer needs. The schema must not offer any of
+        # them back.
         properties = _studio_tools()[name].inputSchema['properties']
         for param in INTERNAL_ONLY_PARAMS:
             assert param not in properties, f"{name} exposes {param}"
+
+    def test_dropping_include_disabled_costs_no_reachable_answer(self):
+        # The one input that changes the question is `both_counts`, and it is
+        # still exposed. Without this, "include_disabled is internal" could be
+        # read as "expected counts are gone" — they are not, they are one call
+        # away, which is the whole reason removing the flag is safe.
+        for name in SCENARIO_TOOL_NAMES:
+            assert 'both_counts' in _studio_tools()[name].inputSchema['properties']
 
     @pytest.mark.parametrize("name", SCENARIO_TOOL_NAMES)
     def test_the_body_parameter_is_scenario_not_plan(self, name):
