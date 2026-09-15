@@ -2497,6 +2497,358 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     return result
 
 
+
+
+# ---------------------------------------------------------------------------
+# plan/statistics — how many simulations a scenario would produce
+# ---------------------------------------------------------------------------
+
+STATISTICS_TIMEOUT_SECONDS = 120
+STATISTICS_LIMIT = 500000
+SIMULATOR_LISTING_CAP = 20
+
+COUNTS_HINT = (
+    "These are runnable counts: offline, disabled and unapproved simulators are "
+    "excluded. This tool reports what runs and how much; it does not explain why "
+    "a step produces nothing. Nothing is cached here, so re-call after any change "
+    "to the scenario."
+)
+
+
+def is_computed_count(value):
+    """True when the console actually measured this count.
+
+    ``None`` is what the orchestrator writes when it stops evaluating early, and
+    it is not a zero — a count that was never taken says nothing about whether
+    the entity runs. Bools are excluded deliberately: ``True`` is an ``int`` in
+    Python, and a stray flag must never be read as the number 1.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_blank_input(value):
+    """A blank string names nothing, so it counts as absent rather than as a choice."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, dict):
+        return not value
+    return False
+
+
+def _sole_scenario_input(scenario, scenario_id, test_id):
+    """The one input that names what to score, or an error naming all three."""
+    given = [name for name, value in (('scenario', scenario),
+                                      ('scenario_id', scenario_id),
+                                      ('test_id', test_id))
+             if not _is_blank_input(value)]
+    if len(given) == 1:
+        return given[0]
+    detail = "none was given" if not given else f"these were given: {', '.join(given)}"
+    raise ValueError(
+        "Name exactly one of scenario, scenario_id or test_id — "
+        f"{detail}."
+    )
+
+
+def _parse_scenario_argument(scenario):
+    """An ad-hoc scenario, accepted either as JSON text or already parsed."""
+    if isinstance(scenario, dict):
+        return dict(scenario)
+    try:
+        parsed = json.loads(scenario)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError(f"Invalid scenario JSON: {e}")
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "scenario must be a JSON object with a 'steps' list, "
+            f"not {type(parsed).__name__}"
+        )
+    return parsed
+
+
+def _saved_scenario_steps(console, scenario_id):
+    """The steps of a saved scenario the endpoint cannot resolve for itself.
+
+    Only non-numeric ids reach here. A custom plan's integer id is sent as
+    ``id`` and resolved server-side; there is no body field that accepts an OOB
+    scenario's UUID, so its steps have to be fetched and posted.
+    """
+    for scenario in _fetch_all_scenarios(console):
+        if str(scenario.get('id')) == scenario_id:
+            return scenario.get('steps')
+    for plan in _fetch_all_plans(console):
+        if str(plan.get('id')) == scenario_id:
+            return plan.get('steps')
+    raise ValueError(f"Scenario '{scenario_id}' not found")
+
+
+def _statistics_plan_body(console, scenario, scenario_id, test_id):
+    """The body to score, and how many steps it holds when that is knowable.
+
+    The step count is returned alongside because the orchestrator truncates its
+    reply when it stops evaluating early, and a reply shorter than the plan is
+    only detectable against a step list this side holds. The two passthrough
+    forms resolve server-side, so nothing here knows their length.
+    """
+    named = _sole_scenario_input(scenario, scenario_id, test_id)
+
+    if named == 'test_id':
+        return {'name': '', 'testId': str(test_id).strip()}, None
+
+    if named == 'scenario_id':
+        resolved = str(scenario_id).strip()
+        if resolved.isdigit():
+            return {'name': '', 'id': int(resolved)}, None
+        steps = _saved_scenario_steps(console, resolved)
+        _require_steps(steps, f"Scenario '{resolved}'")
+        return {'name': '', 'steps': steps}, len(steps)
+
+    body = _parse_scenario_argument(scenario)
+    steps = body.get('steps')
+    _require_steps(steps, "The scenario given")
+    body.setdefault('name', '')
+    return body, len(steps)
+
+
+def _require_steps(steps, subject):
+    """Refuse a step-less scenario here rather than spending a request on a 400."""
+    if not steps:
+        raise ValueError(
+            f"{subject} has no steps, so there is nothing to score. "
+            "A scenario needs at least one step."
+        )
+
+
+def _fetch_plan_statistics(console, body):
+    """Score one plan body against the fleet as it stands.
+
+    Every query parameter is fixed. ``getConstraints`` stays off because this
+    answer renders no conflicts and they are not free — a single ordinary step
+    measured 38,531 of them. Booleans are sent as their JSON spelling; the
+    endpoint reads them as strings, and ``"True"`` would quietly ask a different
+    question.
+    """
+    base_url = get_api_base_url(console, 'orchestrator')
+    account_id = get_api_account_id(console)
+    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
+    api_url = f"{base_url}/api/orch/v1/accounts/{account_id}/plan/statistics"
+    params = {
+        'limit': STATISTICS_LIMIT,
+        'includeDisabled': 'false',
+        'getConstraints': 'false',
+        'getAllConstraints': 'false',
+        'useCache': 'true',
+    }
+
+    logger.info(f"Scoring plan statistics on console '{console}'")
+    response = requests.post(api_url, headers=headers, params=params, json=body,
+                             timeout=STATISTICS_TIMEOUT_SECONDS)
+    try:
+        check_rbac_response(response)
+    except requests.exceptions.HTTPError:
+        detail = getattr(response, 'text', '')
+        logger.error(f"Statistics API error {response.status_code}: {detail}")
+        raise ValueError(f"Statistics API error ({response.status_code}): {detail}")
+
+    return response.json().get('data', {}) or {}
+
+
+def _normalize_statistics_steps(payload):
+    """The counts exactly as the console reported them, and nothing derived.
+
+    This is where ``moves`` is dropped. The endpoint always sends it and offers
+    no parameter to suppress it, so this is the earliest point this side
+    controls; on a real step it is a couple of thousand attack ids and the
+    largest field in the payload. Counting attacks is the other question, and
+    carrying the map through three layers to discard it at the fourth is work
+    done for nothing.
+    """
+    steps = []
+    for index, step in enumerate(payload.get('steps') or []):
+        count = step.get('simulationCount')
+        steps.append({
+            'step_index': index,
+            'simulation_count': count,
+            'counts_computed': is_computed_count(count),
+            'is_limit_reached': bool(step.get('isLimitReached')),
+            'attacker_simulators': dict(step.get('attackerSimulators') or {}),
+            'target_simulators': dict(step.get('targetSimulators') or {}),
+        })
+    return steps
+
+
+def _split_simulator_map(mapping):
+    """The simulators that produce simulations, ranked, and those never measured.
+
+    Measured zeros are dropped; ``None`` is not. A simulator whose count was
+    never taken must not be binned with the ones measured at zero — that would
+    assert it contributes nothing on the strength of a measurement nobody made.
+    """
+    contributing, unmeasured = {}, []
+    for simulator_id, count in mapping.items():
+        if not is_computed_count(count):
+            unmeasured.append(simulator_id)
+        elif count > 0:
+            contributing[simulator_id] = count
+    ranked = dict(sorted(contributing.items(), key=lambda kv: (-kv[1], str(kv[0]))))
+    return ranked, sorted(unmeasured, key=str)
+
+
+def _shape_statistics_step(step):
+    """One step's answer: the count, and which simulators produce it in each role."""
+    shaped = {
+        'step_index': step['step_index'],
+        'simulation_count': step['simulation_count'],
+        'counts_computed': step['counts_computed'],
+        'is_limit_reached': step['is_limit_reached'],
+    }
+    offered = 0
+    for role in ('attacker_simulators', 'target_simulators'):
+        contributing, unmeasured = _split_simulator_map(step[role])
+        shaped[role] = contributing
+        shaped[f'{role}_total'] = len(step[role])
+        shaped[f'{role}_unmeasured'] = unmeasured
+        # The raw map is kept for the named-id answers only. A disposition read
+        # off the contributing map instead would report a simulator measured at
+        # exactly zero as one the step never offered — the two facts this filter
+        # exists to tell apart.
+        shaped[f'{role}_offered'] = step[role]
+        offered = max(offered, len(step[role]))
+    # The trigger is the fleet the step offers, not how many of it contributes:
+    # 500 offered of which 3 produce is still a 500-entry answer to "which ones".
+    shaped['listing_omitted'] = offered > SIMULATOR_LISTING_CAP
+    shaped['simulators_offered'] = offered
+    return shaped
+
+
+def _parse_simulator_ids(simulator_ids):
+    """The simulators to answer for individually, in the order they were named."""
+    if _is_blank_input(simulator_ids):
+        return []
+    if isinstance(simulator_ids, (list, tuple)):
+        tokens = [str(token).strip() for token in simulator_ids]
+    else:
+        tokens = [token.strip() for token in str(simulator_ids).split(',')]
+    named, seen = [], set()
+    for token in tokens:
+        if not token:
+            continue
+        if token not in seen:
+            seen.add(token)
+            named.append(token)
+    if not named:
+        raise ValueError(
+            "simulator_ids was given but named no simulator. "
+            "Leave it out to list the step's own simulators."
+        )
+    return named
+
+
+def _simulator_disposition(step, role, simulator_id):
+    """What this step says about one named simulator in one role.
+
+    Four answers, none readable as another. Absence from the map is not a zero:
+    the step never offered this simulator in this role, which is a different
+    fact from offering it and measuring nothing.
+    """
+    mapping = step[f'{role}_offered']
+    if simulator_id not in mapping:
+        return {'state': 'not_in_step', 'count': None}
+    count = mapping[simulator_id]
+    if not is_computed_count(count):
+        return {'state': 'not_computed', 'count': None}
+    if count == 0:
+        return {'state': 'measured_zero', 'count': 0}
+    return {'state': 'contributes', 'count': count}
+
+
+def _project_simulation_counts(steps, named_simulator_ids, steps_submitted):
+    """"How many simulations, and which simulators produce them?" — nothing else.
+
+    Three data fields per step and three structural ones. The structural keys
+    are what make the numbers honest: without them a missing count reads as a
+    zero, which would report a scenario nobody scored as a scenario that runs
+    nothing.
+    """
+    projected = []
+    for step in steps:
+        view = {
+            'step_index': step['step_index'],
+            'simulation_count': step['simulation_count'],
+            'counts_computed': step['counts_computed'],
+            'is_limit_reached': step['is_limit_reached'],
+            'listing_omitted': step['listing_omitted'],
+            'simulators_offered': step['simulators_offered'],
+        }
+        for role in ('attacker_simulators', 'target_simulators'):
+            view[role] = dict(step[role])
+            view[f'{role}_total'] = step[f'{role}_total']
+            view[f'{role}_unmeasured'] = list(step[f'{role}_unmeasured'])
+        if named_simulator_ids:
+            view['asked_about'] = {
+                simulator_id: {
+                    role: _simulator_disposition(step, role, simulator_id)
+                    for role in ('attacker_simulators', 'target_simulators')
+                }
+                for simulator_id in named_simulator_ids
+            }
+        projected.append(view)
+
+    computed = [s['simulation_count'] for s in projected if s['counts_computed']]
+    return {
+        'counts_mode': 'runnable',
+        'steps': projected,
+        'steps_returned': len(projected),
+        'steps_submitted': steps_submitted,
+        # A reply shorter than the plan means evaluation stopped early. Only
+        # knowable when this side held the step list; the passthrough forms are
+        # resolved server-side, so `steps_submitted` is None and no claim is made.
+        'steps_truncated': bool(steps_submitted is not None
+                                and len(projected) < steps_submitted),
+        'total_simulations': sum(computed) if computed else None,
+        'steps_scored': len(computed),
+        'asked_about': list(named_simulator_ids),
+        'hint_to_agent': COUNTS_HINT,
+    }
+
+
+def sb_get_scenario_simulation_counts(
+    console: str = "default",
+    scenario=None,
+    scenario_id: str = None,
+    test_id: str = None,
+    simulator_ids: str = None,
+) -> Dict[str, Any]:
+    """How many simulations a scenario would produce, and which simulators produce them.
+
+    Scores a scenario against the fleet as it stands without running it, and
+    changes nothing. Constraints are never evaluated: this answer renders none,
+    and asking for them is the single most expensive thing this endpoint can be
+    asked to do.
+
+    Args:
+        console: SafeBreach console identifier
+        scenario: An ad-hoc scenario body, as JSON text or a parsed dict
+        scenario_id: A saved scenario's UUID, or a custom plan's integer id
+        test_id: A planRunId, scoring whatever scenario that run executed
+        simulator_ids: Comma-separated simulators to answer for individually
+
+    Returns:
+        Per-step simulation counts with the contributing simulators in each role.
+
+    Raises:
+        ValueError: If not exactly one input names what to score, if the
+            scenario has no steps, or if the statistics API rejects the body.
+    """
+    named_simulator_ids = _parse_simulator_ids(simulator_ids)
+    body, steps_submitted = _statistics_plan_body(console, scenario, scenario_id, test_id)
+    payload = _fetch_plan_statistics(console, body)
+    steps = [_shape_statistics_step(step)
+             for step in _normalize_statistics_steps(payload)]
+    return _project_simulation_counts(steps, named_simulator_ids, steps_submitted)
+
 # ---------------------------------------------------------------------------
 # quick_run — SAF-31295: Quick Run attack execution
 # ---------------------------------------------------------------------------

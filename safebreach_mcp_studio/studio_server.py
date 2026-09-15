@@ -28,7 +28,9 @@ from .studio_functions import (
     sb_run_scenario,
     sb_quick_run,
     sb_manage_test,
+    sb_get_scenario_simulation_counts,
 )
+from .studio_functions import SIMULATOR_LISTING_CAP
 
 logger = logging.getLogger(__name__)
 
@@ -1650,6 +1652,195 @@ manage_test(test_id="1776488350786.15", action="delete", console="demo",
             except Exception as e:
                 logger.error(f"Error in manage_test: {e}")
                 return f"Error managing test: {str(e)}"
+
+        @self.mcp.tool(
+            name="get_scenario_simulation_counts",
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            description="""Answers ONE question: how many simulations would this scenario produce, and
+which simulators produce them?
+
+Scores a scenario against the fleet as it stands WITHOUT running it, and changes nothing.
+It reports what runs and how much; it does not explain why a step produces nothing.
+
+Name exactly ONE of:
+- scenario: an ad-hoc scenario body never saved, as JSON text or a parsed object. Only
+  'steps' is required. This is the form to use while assembling a configuration.
+- scenario_id: a saved scenario's UUID, or a custom plan's integer id.
+- test_id: a planRunId (e.g. "1764165600525.2") — scores whatever scenario that run executed.
+
+Parameters:
+- console (required): SafeBreach console name.
+- simulator_ids (optional): comma-separated simulator ids to answer for individually. Each
+  named simulator is answered in BOTH roles with its count, "0 - measured", "not computed",
+  or "not in this step". Two of those the normal listing cannot give: a simulator measured
+  at exactly zero is not a contributor and so never appears in the listing, and past the
+  listing threshold naming ids is the only way to get a per-simulator count. Naming ids
+  narrows what is LISTED, never what is counted.
+
+Counts are runnable: offline, disabled and unapproved simulators are excluded. The expected
+figure (which counts them) is not offered and cannot be derived from this answer.
+
+Returns markdown: the total, then per step its simulation count, its coverage - how many of
+the step's simulators produce simulations - and which ones. A step offering more than 20
+simulators omits the per-simulator listing entirely rather than sampling it; the counts and
+coverage still cover every simulator. A count that was never measured is reported as not
+computed, never as a zero.
+
+Examples:
+get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
+get_scenario_simulation_counts(console="demo", test_id="1764165600525.2")
+get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simulator_ids="sim-a,sim-b")"""
+        )
+        def get_scenario_simulation_counts(
+            console: str = "default",
+            scenario: str = None,
+            scenario_id: str = None,
+            test_id: str = None,
+            simulator_ids: str = None,
+        ) -> str:
+            """How many simulations a scenario produces, and which simulators produce them."""
+            try:
+                return _format_scenario_simulation_counts(
+                    sb_get_scenario_simulation_counts(
+                        console=console, scenario=scenario, scenario_id=scenario_id,
+                        test_id=test_id, simulator_ids=simulator_ids,
+                    )
+                )
+            except PermissionError as e:
+                logger.error(f"Scenario simulation counts permission error: {e}")
+                return f"Scenario Simulation Counts Permission Error: {str(e)}"
+            except ValueError as e:
+                logger.error(f"Scenario simulation counts error: {e}")
+                return f"Scenario Simulation Counts Error: {str(e)}"
+            except Exception as e:
+                logger.error(f"Error in get_scenario_simulation_counts: {e}")
+                return f"Error getting scenario simulation counts: {str(e)}"
+
+
+
+_DISPOSITION_LABELS = {
+    'measured_zero': "0 - measured",
+    'not_computed': "not computed",
+    'not_in_step': "not in this step",
+}
+
+
+def _format_total_simulations(projected: dict) -> str:
+    """The one number the caller came for, or the reason there isn't one.
+
+    Summing nothing gives 0, which would assert that this scenario runs nothing —
+    the one claim a report that scored nothing has not earned.
+    """
+    if not projected['steps']:
+        return "**Total simulations:** not computed - no step was returned"
+    if projected['total_simulations'] is None:
+        return "**Total simulations:** not computed - no step was scored"
+    if projected['steps_scored'] < projected['steps_returned']:
+        return (f"**Total simulations:** {projected['total_simulations']:,} across the "
+                f"{projected['steps_scored']} step(s) that were scored")
+    return f"**Total simulations:** {projected['total_simulations']:,}"
+
+
+def _format_step_coverage(step: dict) -> str:
+    """How much of the fleet this step offers actually produces simulations."""
+    return (f"{len(step['target_simulators']):,} of {step['target_simulators_total']:,} "
+            f"target simulators, {len(step['attacker_simulators']):,} of "
+            f"{step['attacker_simulators_total']:,} attacker simulators")
+
+
+def _format_simulator_counts(mapping: dict) -> str:
+    """Simulator ids with their counts, highest contribution first."""
+    return ", ".join(f"{simulator_id} ({count:,})"
+                     for simulator_id, count in mapping.items())
+
+
+def _render_step_simulators(step: dict) -> list:
+    """Which simulators produce this step's simulations — or why they are not listed.
+
+    Dropped rather than sampled past the cap: a caller reading "20 of 498" cannot
+    tell whether the machine they care about is among the 478 unshown, so a
+    sample answers nobody.
+    """
+    if step['listing_omitted']:
+        return ["  - Per-simulator listing omitted: this step offers more than "
+                f"{SIMULATOR_LISTING_CAP} simulators. The count and coverage above cover "
+                "all of them. Name simulator_ids to get each one's count."]
+
+    lines = []
+    for role, label in (('attacker_simulators', 'attackers'),
+                        ('target_simulators', 'targets')):
+        if step[role]:
+            lines.append(f"  - Contributing {label}: {_format_simulator_counts(step[role])}")
+        unmeasured = step[f'{role}_unmeasured']
+        if unmeasured:
+            lines.append(f"  - Not computed as {label}: {', '.join(unmeasured)}")
+    return lines
+
+
+def _render_asked_about(step: dict) -> list:
+    """The named simulators, answered in both roles whatever the listing did."""
+    asked = step.get('asked_about')
+    if not asked:
+        return []
+    lines = []
+    for role, label in (('attacker_simulators', 'attackers'),
+                        ('target_simulators', 'targets')):
+        answers = []
+        for simulator_id, roles in asked.items():
+            disposition = roles[role]
+            if disposition['state'] == 'contributes':
+                answers.append(f"{simulator_id} ({disposition['count']:,})")
+            else:
+                answers.append(f"{simulator_id} ({_DISPOSITION_LABELS[disposition['state']]})")
+        lines.append(f"  - Asked about as {label}: {', '.join(answers)}")
+    return lines
+
+
+def _format_scenario_simulation_counts(projected: dict) -> str:
+    """Narrate the counts answer."""
+    parts = [
+        "## Scenario Simulation Counts",
+        "",
+        "**Counts:** runnable - offline, disabled and unapproved simulators are excluded.",
+        f"**Steps returned:** {projected['steps_returned']:,}",
+        _format_total_simulations(projected),
+    ]
+
+    if projected['steps_truncated']:
+        parts.append("")
+        parts.append(
+            f"**Note:** SafeBreach returned {projected['steps_returned']:,} step(s) for a "
+            f"{projected['steps_submitted']:,}-step scenario - it stopped evaluating early, "
+            "and the steps it never reached are absent rather than empty."
+        )
+    parts.append("")
+
+    for step in projected['steps']:
+        if not step['counts_computed']:
+            why = ("SafeBreach hit its evaluation limit on this step"
+                   if step['is_limit_reached']
+                   else "SafeBreach stopped evaluating before reaching this step")
+            parts.append(f"- **Step {step['step_index']}** - simulation count not "
+                         f"computed; {why}.")
+            parts.extend(_render_asked_about(step))
+            continue
+        parts.append(
+            f"- **Step {step['step_index']}** - {step['simulation_count']:,} simulations. "
+            f"Coverage: {_format_step_coverage(step)} produce simulations."
+        )
+        parts.extend(_render_step_simulators(step))
+        parts.extend(_render_asked_about(step))
+
+    if projected['asked_about']:
+        parts.append("")
+        parts.append(
+            f"**Scoped to:** {', '.join(projected['asked_about'])} - the simulation counts "
+            "and the coverage figures are NOT; they cover every simulator in the step."
+        )
+
+    parts.append("")
+    parts.append(f"**Hint:** {projected['hint_to_agent']}")
+    return "\n".join(parts)
 
 
 def _human_bytes(n: int) -> str:
