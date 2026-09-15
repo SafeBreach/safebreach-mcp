@@ -5,6 +5,24 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `get_scenario_simulation_counts` (SAF-35508) — a read-only Studio tool that scores a scenario
+  against the fleet without running it, answering how many simulations it would produce and which
+  simulators produce them. Takes exactly one of `scenario` (an ad-hoc body never saved, so a
+  configuration can be scored while it is still being assembled), `scenario_id` (an OOB UUID or a
+  custom plan's integer id, passed through to Core as `{id}`) or `test_id` (a planRunId), plus an
+  optional `simulator_ids` filter that answers each named simulator in both roles. Every query
+  parameter to `POST /plan/statistics` is fixed internally: counts are *runnable*
+  (`includeDisabled=false`), and constraints are never requested, since this answer renders none and
+  one ordinary step measured 38,531 of them. A count the orchestrator never computed is reported as
+  not computed rather than as a zero, and a reply shorter than the submitted plan is reported as
+  early termination. A step offering more than 20 simulators omits the per-simulator listing whole
+  rather than sampling it; the counts and coverage still cover every simulator, and named
+  `simulator_ids` are answered regardless.
+
 ## 1.14.0 — 2026-09-07
 
 ### Removed
