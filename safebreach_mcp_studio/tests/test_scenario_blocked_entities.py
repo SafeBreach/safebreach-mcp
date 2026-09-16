@@ -321,22 +321,85 @@ class TestCatalog:
 class TestCaps:
     """Lists are capped; counts never are."""
 
-    def test_blocked_attacks_are_capped_with_a_true_total(self):
-        over = BLOCKED_ATTACKS_CAP + 1
-        result, _ = _report([_step(moves={f'atk-{i:03d}': 0 for i in range(over)})])
+    def test_the_attack_list_survives_at_the_cap(self):
+        at = BLOCKED_ATTACKS_CAP
+        result, _ = _report([_step(moves={f'atk-{i:03d}': 0 for i in range(at)})])
         step = result['steps'][0]
-        assert len(step['blocked_attacks']) == BLOCKED_ATTACKS_CAP
+        assert len(step['blocked_attacks']) == at
+        assert 'blocked_attack_codes' not in step
+
+    def test_past_the_cap_no_partial_attack_list_is_returned(self):
+        """A fifty-of-sixty sample accounts for fifty; the tally accounts for sixty."""
+        over = BLOCKED_ATTACKS_CAP + 10
+        result, _ = _report([_step(
+            moves={f'atk-{i:03d}': 0 for i in range(over)},
+            constraints=_target({'sim-b': {f'atk-{i:03d}': ['incompatible_os']
+                                           for i in range(over)}}))])
+        step = result['steps'][0]
+        # Absent, not empty — empty would read as "looked and found nothing".
+        assert 'blocked_attacks' not in step
         assert step['blocked_attacks_total'] == over
         assert result['verdict']['blocked_attack_count'] == over
-        assert f'{BLOCKED_ATTACKS_CAP} of {over}' in _format_scenario_blocked_entities(result)
+        row = step['blocked_attack_codes'][0]
+        assert row['attack_count'] == over, "the tally must cover every blocked attack"
+        text = _format_scenario_blocked_entities(result)
+        assert f'({over:,}), by constraint' in text
+        assert 'per-attack detail omitted' in text
+        assert 'Name attack_ids' in text
 
-    def test_a_named_attack_is_pinned_ahead_of_the_cap(self):
+    def test_tally_rows_carry_no_validator_detail(self):
+        """A row stands for many attacks; one leaf's values must not speak for all."""
+        over = BLOCKED_ATTACKS_CAP + 1
+        result, _ = _report([_step(
+            moves={f'atk-{i:03d}': 0 for i in range(over)},
+            constraints=_target({'sim-b': {f'atk-{i:03d}': [
+                {'reason': 'incompatible_os', 'required': 'WINDOWS', 'actual': 'LINUX'}]
+                for i in range(over)}}))])
+        assert all('detail' not in row for row in result['steps'][0]['blocked_attack_codes'])
+        # Scoped to the tally lines: the simulator sections legitimately carry
+        # detail, because there a row is one simulator rather than many attacks.
+        tally_lines = [line for line in _format_scenario_blocked_entities(result).splitlines()
+                       if 'attack(s)' in line]
+        assert tally_lines, "expected the tally to render"
+        assert not any('required: WINDOWS' in line for line in tally_lines)
+
+    def test_the_catalog_covers_codes_cited_only_past_the_cap(self):
+        """Cited codes are collected before capping, not from the rendered rows."""
+        over = BLOCKED_ATTACKS_CAP + 5
+        blocked = {f'atk-{i:03d}': 0 for i in range(over)}
+        constraints = _target({
+            'sim-common': {f'atk-{i:03d}': ['incompatible_os'] for i in range(over - 1)},
+            'sim-rare': {f'atk-{over - 1:03d}': ['only_the_last_one']},
+        })
+        result, _ = _report([_step(moves=blocked, constraints=constraints)],
+                            catalog={'incompatible_os': {'description': 'x'},
+                                     'only_the_last_one': {'description': 'rare'}})
+        assert 'only_the_last_one' in result['constraint_catalog']
+        assert 'rare' in _format_scenario_blocked_entities(result)
+
+    def test_a_named_attack_carries_its_blockers_past_the_cap(self):
+        """The list is gone, so attack_ids is the only route to an exact reason."""
         over = BLOCKED_ATTACKS_CAP + 5
         last = f'atk-{over - 1:03d}'
-        result, _ = _report([_step(moves={f'atk-{i:03d}': 0 for i in range(over)})],
-                            attack_ids=last)
-        listed = [e['attack_id'] for e in result['steps'][0]['blocked_attacks']]
-        assert last in listed
+        result, _ = _report([_step(
+            moves={f'atk-{i:03d}': 0 for i in range(over)},
+            constraints=_target({'sim-b': {last: ['incompatible_os']}}))],
+            attack_ids=last)
+        asked = result['steps'][0]['asked_about'][last]
+        assert asked['state'] == 'blocked'
+        assert [b['code'] for b in asked['blockers']] == ['incompatible_os']
+        assert f'Asked about: #{last} (blocked) — `incompatible_os`' in \
+            _format_scenario_blocked_entities(result)
+
+    def test_a_named_attack_that_ran_carries_no_blockers(self):
+        """Constraints exist for the simulators that did not run it; they explain no failure."""
+        result, _ = _report([_step(
+            moves={'atk-000': 7},
+            constraints=_target({'sim-b': {'atk-000': ['incompatible_os']}}))],
+            attack_ids='atk-000')
+        asked = result['steps'][0]['asked_about']['atk-000']
+        assert asked['state'] == 'ran'
+        assert 'blockers' not in asked
 
     def test_simulator_names_are_capped_but_the_group_count_is_exact(self):
         over = CONSTRAINT_NODES_CAP + 1

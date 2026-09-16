@@ -557,9 +557,15 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   **Meanings come from the console.** The response's own `constraintCatalog` (orchestrator SAF-35568) is
   relayed verbatim, narrowed to the codes this answer cites; a code the console did not describe stays
   undescribed and an older console with no catalog is reported as such. No meaning is authored in this repo.
-  **Caps**: 50 blocked attacks per step (named `attack_ids` pinned ahead of it), 3 simulator ids named per
-  constraint code then a count, blocked simulators uncapped because they are grouped per code. No count map
-  is ever capped, so the verdict and every total stay exact.
+  **Caps**: past **50** blocked attacks in a step the per-attack list is dropped **whole** and replaced by a
+  tally of blocked attacks per constraint code — every blocked attack stays accounted for, where a `50 of 60`
+  sample accounted for fifty and buried which reason dominated. Tally rows carry **no** validator detail: a row
+  stands for many attacks, and the detail fields belong to whichever leaf was recorded first, so one
+  `required`/`actual` pair would speak for attacks that need not share it. Cited codes are collected **before**
+  capping, so the catalog still covers every code any blocked entity cites. `attack_ids` is the route back to an
+  exact per-attack reason, and a named attack carries its blockers in both cap states. Also 3 simulator ids named
+  per constraint code then a count; blocked simulators uncapped because they are grouped per code. No count map is
+  ever capped, so the verdict and every total stay exact.
 
 ## Filtering and Search Capabilities
 

@@ -2996,6 +2996,50 @@ def _attack_blockers(step, attack_id):
     return blockers
 
 
+def _attack_code_tally(step, attack_ids):
+    """How many blocked attacks each constraint code accounts for.
+
+    Replaces the per-attack list once that list would be truncated. A tally
+    accounts for every blocked attack where a fifty-of-sixty sample accounts for
+    fifty, and it surfaces what a wall of near-identical lines buries — which
+    reason is behind most of them.
+
+    No validator detail is carried. A row stands for many attacks, and the
+    detail fields belong to whichever leaf happened to be recorded first, so one
+    ``required``/``actual`` pair would speak for attacks that need not share it.
+    Detail stays on the per-attack lines below the cap, where it is exact.
+    """
+    tally = {}
+    for attack_id in attack_ids:
+        for code, entry in step['by_attack'].get(attack_id, {}).items():
+            row = tally.setdefault(code, {'code': code, 'sides': set(), 'attack_count': 0})
+            row['sides'] |= entry['sides']
+            row['attack_count'] += 1
+    rows = [{'code': row['code'], 'side': sorted(row['sides']),
+             'attack_count': row['attack_count']} for row in tally.values()]
+    rows.sort(key=lambda row: (-row['attack_count'], row['code']))
+    return rows
+
+
+def _named_attack_answer(step, disposition, attack_id):
+    """A named attack's scenario-wide verdict, plus why it runs nowhere.
+
+    Blockers are attached only when the attack runs nowhere in the *whole*
+    scenario and this step scored it at zero. Both halves matter. An attack that
+    ran somewhere has constraints recorded against the simulators that did not
+    run it, and hanging those off a line that reads "ran, 240 simulations" would
+    offer an explanation for a failure that did not happen.
+
+    This is what keeps ``attack_ids`` useful once the per-attack list is
+    summarised away: it is the only remaining route to an exact reason.
+    """
+    answer = dict(disposition)
+    count = step['moves'].get(attack_id)
+    if disposition['state'] == 'blocked' and is_computed_count(count) and count == 0:
+        answer['blockers'] = _attack_blockers(step, attack_id)
+    return answer
+
+
 def _simulator_groups(step, simulator_ids):
     """Blocked simulators reported per constraint code rather than per simulator.
 
@@ -3129,15 +3173,21 @@ def _project_blocked_entities(steps, catalog, named_attack_ids):
         }
         if step['counts_computed']:
             blocked_attacks = _scored_zero(step['moves'])
-            # Named ids are pinned ahead of the cap: an attack the caller asked
-            # about must never be the one the truncation removes.
-            named_first = sorted(blocked_attacks,
-                                 key=lambda attack_id: attack_id not in named_attack_ids)
-            entries = [{'attack_id': attack_id,
-                        'blockers': _attack_blockers(step, attack_id)}
-                       for attack_id in named_first[:BLOCKED_ATTACKS_CAP]]
-            view['blocked_attacks'] = entries
             view['blocked_attacks_total'] = len(blocked_attacks)
+            # The tally is built whether or not it is rendered: it is also where
+            # the cited codes come from, and taking those from the rendered rows
+            # instead would shrink the catalog exactly when it does the most work.
+            tally = _attack_code_tally(step, blocked_attacks)
+            if len(blocked_attacks) > BLOCKED_ATTACKS_CAP:
+                # Absent, not empty — an empty list would read as "looked and
+                # found nothing" rather than "summarised instead of listed".
+                view['blocked_attack_codes'] = tally
+            else:
+                view['blocked_attacks'] = [
+                    {'attack_id': attack_id, 'blockers': _attack_blockers(step, attack_id)}
+                    for attack_id in blocked_attacks
+                ]
+            cited.update(row['code'] for row in tally)
 
             groups, unexplained = _simulator_groups(step, _scored_zero(step['simulators']))
             view['blocked_simulators'] = groups
@@ -3148,19 +3198,20 @@ def _project_blocked_entities(steps, catalog, named_attack_ids):
             view['excluded_simulators'] = excluded
             view['excluded_simulators_total'] = len(_excluded_simulator_ids(step))
 
-            for entry in entries:
-                cited.update(blocker['code'] for blocker in entry['blockers'])
             for group in groups + excluded:
                 cited.add(group['code'])
         if named_attack_ids:
-            view['asked_about'] = {attack_id: dispositions[attack_id]
-                                   for attack_id in named_attack_ids}
+            view['asked_about'] = {
+                attack_id: _named_attack_answer(step, dispositions[attack_id], attack_id)
+                for attack_id in named_attack_ids
+            }
         projected.append(view)
 
     return {
         'verdict': verdict,
         'steps': projected,
         'asked_about': list(named_attack_ids),
+        'attacks_summarised': any('blocked_attack_codes' in view for view in projected),
         'constraint_catalog': _cited_catalog(catalog, cited),
         # None and {} are different facts: an older console supplies no catalog
         # at all, a current one can supply an empty one.

@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never by whether the lists are empty.
 - The counts tool's hint now routes to `get_scenario_blocked_entities` for why a step produces nothing;
   previously it could only say that it did not answer that.
+
+### Changed
+
+- `get_scenario_blocked_entities` no longer returns a partial attack list when a step blocks more than 50
+  attacks. It now drops the per-attack detail whole and reports a tally of blocked attacks per constraint
+  code, so all of them are accounted for rather than the first fifty — measured on a 60-attack fixture the
+  answer went from 8,462 characters covering 50 attacks to 1,793 covering 60, and the dominant reason (one
+  offline machine implicated in every one) became a single line instead of being spread across fifty.
+  Tally rows carry no validator detail, since a row stands for many attacks and one leaf's `required`/`actual`
+  pair must not speak for all of them. Cited codes are now collected before capping so the catalog still
+  covers every code any blocked entity cites. A named `attack_id` carries its blockers, which replaces the
+  previous mechanism of pinning named ids ahead of the cap — there is no list left to pin into, and without
+  it naming an attack past the cap would have returned a bare "blocked" with no reason.
 - `get_scenario_simulation_counts` (SAF-35508) — a read-only Studio tool that scores a scenario
   against the fleet without running it, answering how many simulations it would produce and which
   simulators produce them. Takes exactly one of `scenario` (an ad-hoc body never saved, so a

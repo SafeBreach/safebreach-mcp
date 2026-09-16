@@ -31,7 +31,7 @@ from .studio_functions import (
     sb_get_scenario_simulation_counts,
     sb_get_scenario_blocked_entities,
 )
-from .studio_functions import SIMULATOR_LISTING_CAP
+from .studio_functions import SIMULATOR_LISTING_CAP, BLOCKED_ATTACKS_CAP
 
 logger = logging.getLogger(__name__)
 
@@ -1768,6 +1768,13 @@ simulators contributing nothing grouped by constraint code, the simulators exclu
 scoring, and a catalog of the codes cited — with SafeBreach's own descriptions where the
 console supplies them, and never an invented meaning where it does not.
 
+Past 50 blocked attacks in a step the per-attack detail is dropped WHOLE, not sampled, and
+replaced by a tally of how many blocked attacks cite each constraint code — so every one of
+them is still accounted for, and the dominant reason becomes obvious instead of being spread
+across fifty near-identical lines. Name attack_ids to get the exact constraints back for
+specific attacks. Tally rows carry no validator detail, because a row stands for many attacks
+and one leaf's values must not speak for all of them.
+
 This is the EXPENSIVE half of the statistics endpoint: it asks for every constraint reason,
 not just the first. Call it when you need to know why something will not run, not routinely.
 
@@ -1943,8 +1950,27 @@ def _render_blocker(blocker: dict) -> str:
             f"{_format_detail(blocker['detail'])}")
 
 
+def _render_attack_code_tally(step: dict) -> list:
+    """Past the cap: every blocked attack accounted for by reason, none by name.
+
+    Dropped whole rather than sampled — fifty of sixty tells a caller neither
+    what the other ten were nor which reason dominates. The routing to
+    `attack_ids` is on the same line, because naming an attack is the only way
+    back to an exact per-attack reason from here.
+    """
+    lines = [f"  - **Attacks contributing nothing** ({step['blocked_attacks_total']:,}), by "
+             f"constraint — per-attack detail omitted: more than {BLOCKED_ATTACKS_CAP} are "
+             "blocked. Name attack_ids for the exact constraints on specific attacks."]
+    for row in step['blocked_attack_codes']:
+        lines.append(f"    - `{row['code']}` ({_format_side(row['side'])}) — "
+                     f"{row['attack_count']:,} attack(s)")
+    return lines
+
+
 def _render_blocked_attacks(step: dict) -> list:
     """The attacks that run nowhere in this step, with what stopped them."""
+    if 'blocked_attack_codes' in step:
+        return _render_attack_code_tally(step)
     entries = step['blocked_attacks']
     if not entries:
         return []
@@ -1980,13 +2006,18 @@ def _render_blocked_dispositions(step: dict) -> list:
     asked = step.get('asked_about')
     if not asked:
         return []
-    answers = []
+    lines = []
     for attack_id, disposition in asked.items():
         if disposition['state'] == 'ran':
-            answers.append(f"#{attack_id} (ran, {disposition['count']:,} simulation(s))")
+            answer = f"#{attack_id} (ran, {disposition['count']:,} simulation(s))"
         else:
-            answers.append(f"#{attack_id} ({_ATTACK_DISPOSITION_LABELS[disposition['state']]})")
-    return [f"  - Asked about: {', '.join(answers)}"]
+            answer = f"#{attack_id} ({_ATTACK_DISPOSITION_LABELS[disposition['state']]})"
+        blockers = disposition.get('blockers')
+        if blockers is not None:
+            answer += " — " + (", ".join(_render_blocker(b) for b in blockers)
+                               or "no constraint reported")
+        lines.append(f"  - Asked about: {answer}")
+    return lines
 
 
 def _format_constraint_catalog(projected: dict) -> list:

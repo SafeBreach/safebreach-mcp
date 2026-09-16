@@ -39,9 +39,9 @@ estimating it, which is a precondition for autonomous scenario construction.
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-09-16 12:27 |
+| **Last Updated** | 2026-09-16 12:52 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | Phase 5 of 5 — pending (Phases 1-4 complete, PR #98 open) |
+| **Current Phase** | All 5 phases complete — PR #98 open, awaiting review |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -293,10 +293,10 @@ One INFO log per call naming the console. No new metrics or dashboards.
 - [x] Both tools are registered with `readOnlyHint=True` and documented in the `CLAUDE.md` tool catalog.
 - [x] The rate-limiting gate table is **not** extended.
 - [x] No caching MCP-side, so no stale impact number can be served.
-- [ ] At the attack cap no partial attack list is returned; the verdict, a per-code tally covering every blocked
-      attack, the simulator sections and the catalog are returned instead (Phase 5).
-- [ ] The constraint catalog at the cap covers every code any blocked entity cites, collected before capping (Phase 5).
-- [ ] A named `attack_id` carries its blockers in both cap states (Phase 5).
+- [x] At the attack cap no partial attack list is returned; the verdict, a per-code tally covering every blocked
+      attack, the simulator sections and the catalog are returned instead.
+- [x] The constraint catalog at the cap covers every code any blocked entity cites, collected before capping.
+- [x] A named `attack_id` carries its blockers in both cap states.
 
 **Quality Gates**
 - [x] Studio suite green — 562 passed / 37 skipped (80 tests across the two tools).
@@ -322,7 +322,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 2: Narrow `scenario_id` to numeric plan ids | ✅ Complete | 2026-09-15 | `199ea27` | Makes every input form one request |
 | Phase 3: Pair each simulator's attacker/target numbers | ✅ Complete | 2026-09-15 | `3b0a5fc` | Replaces two per-role lists |
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
-| Phase 5: Summarise by reason at the attack cap | ⏳ Pending | - | - | Supersedes the cap behaviour shipped in Phase 4 |
+| Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `SHA` | Supersedes the cap behaviour shipped in Phase 4 |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -540,9 +540,9 @@ avoided by construction.
 ## 12. Current Implementation State
 
 **Progress Summary**
-- **Last completed phase**: Phase 4 — Blocked-entities tool
-- **Next phase to implement**: Phase 5 — At the attack cap, summarise by reason instead of sampling attacks
-- **Overall progress**: 4 of 5 phases complete
+- **Last completed phase**: Phase 5 — At the attack cap, summarise by reason instead of sampling attacks
+- **Next phase to implement**: None — all phases complete
+- **Overall progress**: 5 of 5 phases complete
 
 **Blockers**: None blocking implementation. PR #98 is open and awaiting review.
 
@@ -565,7 +565,7 @@ avoided by construction.
 | Phase 2: Numeric `scenario_id` | ✅ | ✅ | ⏳ | 41 tests; suite 519 |
 | Phase 3: Paired role breakdown | ✅ | ✅ | ⏳ | 44 tests; suite 522 |
 | Phase 4: Blocked entities | ✅ | ✅ | ⏳ | 40 tests; suite 562 |
-| Phase 5: Summarise at the cap | ⏳ | ⏳ | ⏳ | Not started |
+| Phase 5: Summarise at the cap | ✅ | ✅ | ⏳ | 44 tests; suite 566 |
 
 Lint = `ruff --select F` on the changed files; the repo has no Python lint script, so this is the gate that actually
 inspects them. Tests = the two suite files, since no `test-results/` exists.
@@ -587,4 +587,5 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |
 | 2026-09-16 12:27 | Appended Phase 5 — at the attack cap, report blocked attacks by reason rather than a 50-of-60 sample. Updated §1.5, §3 Component C, §7 (3 new criteria), §9, §11, §12. Phases 1-4 untouched |
