@@ -1,80 +1,92 @@
 # Test Results — Phase Final (SAF-35508)
 
-> Plan: ../test-plan.md | Run: 2026-09-16T14:05Z | Mode: run
+> Plan: ../test-plan.md | Run: 2026-09-16T14:50Z | Mode: run (second pass, after remediation)
+
+## Run history
+
+| Pass | Result |
+|---|---|
+| 1 (14:05Z) | INCOMPLETE — 30 BLOCKED, 7 unwritten-planned, **0 green by id**. No test carried a `T-<n>:` title prefix, so no plan id was addressable. |
+| 2 (14:50Z, this pass) | INCOMPLETE — **29 executed with per-id evidence**, 7 BLOCKED (no console), 1 unwritten-planned. |
+
+Between passes: every test method was prefixed with its plan id, and the cases that had none were authored
+(T-9, T-12, T-22, T-28, the RBAC half of T-10, T-30, and T-31 … T-35).
 
 ## Preflight
 
 ```
 toolchain: uv present ✓ (0.9.25) · uv sync ✓ (46 packages audited, --python 3.12)
-repo-root  /Users/bariber/projects/core/safebreach-mcp/.claude/worktrees/SAF-35508-scenario-simulation-counts — cwd matches ✓
+repo-root  …/worktrees/SAF-35508-scenario-simulation-counts — cwd matches ✓
 dispatch   standalone-Python (pyproject.toml + uv.lock, no package.json) → uv-pytest mode ✓
 sub-runners  run-validate-attack installed ✓ · sb-ui:manual-ui-testing installed ✓ (1.1.17)
-authored files  test_scenario_simulation_counts.py ✓ · test_scenario_blocked_entities.py ✓
-planned files   test_scenario_statistics_contract.py ✗ absent · test_e2e_scenario_statistics.py ✗ absent
-environment     prds/.../environment.md ✗ absent
-reachability    network control (github) 200 ✓ · console pentest01.sbops.com 000 ✗ (no route / VPN) ·
-                console API token in env ✗ (0 found) · SafeBreach MCP servers ✗ (all 4 failed to connect)
-per-id check    pytest -k "T_<n>" → 88 deselected for every probed id (T-1, T-7, T-15, T-19, T-24) ✗
+test files   counts ✓ · blocked ✓ · statistics_contract ✓ (new) · e2e_scenario_statistics ✓ (new)
+environment  prds/.../environment.md ✗ absent
+reachability network control (github) 200 ✓ · console pentest01.sbops.com 000 ✗ (no route / VPN) ·
+             console API token ✗ · SafeBreach MCP servers ✗ (all 4 failed to connect)
+per-id check pytest -k "T_<n>_" resolves every id T-1 … T-35 to a non-empty set ✓ (T-29 = 0, by design)
 ```
 
-**Environment note:** a real Validate console was NOT provisioned. `provision-feature-environment` builds live AWS
-infrastructure at cost; with 7 of the 7 real-env tests unwritten, provisioning could not have moved the verdict, so
-it was left to an explicit human decision rather than spent unilaterally.
+**Selector convention.** Use `-k "T_<n>_"` **with the trailing underscore**. A bare `-k "T_1"` substring-matches
+T-10 … T-19 and selects 43 tests instead of 7 — the one trap in this scheme, confirmed by probe.
 
-## Suite-level evidence (the real signal)
+## Evidence
 
-The two authored suites are **green**:
+Primary evidence command (all three unit suites, one batch covering every unit id):
 
 ```
 $ SKIP_E2E_TESTS=true uv run --python 3.12 pytest \
     safebreach_mcp_studio/tests/test_scenario_simulation_counts.py \
-    safebreach_mcp_studio/tests/test_scenario_blocked_entities.py -q
-88 passed in 0.20s
+    safebreach_mcp_studio/tests/test_scenario_blocked_entities.py \
+    safebreach_mcp_studio/tests/test_scenario_statistics_contract.py -q
+116 passed in 0.27s
 ```
 
-This is genuine evidence that the delivered behaviour is covered and passing. It is **not** per-`T-<n>` evidence —
-see the accounting gap below, which is why no individual test is marked `executed`.
+Whole studio package, for regression context: `594 passed, 50 skipped in 1.80s`
+(independently reproduced by `validating-test-plan`).
+
+Per-id inclusion was verified by resolving each `T-<n>_` selector against the collected set before the batch
+ran; every unit id resolves to a non-empty subset of the 116 passing tests, so each id's pass is attributable.
 
 ## Accounting
 
-| T-\<n\> | Level | Execution | Env | Runner (intended) | Outcome | Evidence / Reason |
-|------|-------|-----------|-----|-------------------|---------|-------------------|
-| T-1 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green (88/88); `-k "T_1"` → 88 deselected — id not addressable |
-| T-2 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-3 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-4 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-5 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-6 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-7 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; `-k "T_7"` → 88 deselected |
-| T-8 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-9 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-10 | unit | Automatic | none | uv-pytest | BLOCKED | Id not addressable; **and** the RBAC/`PermissionError` case is a known coverage gap — `check_rbac_response` is patched to a no-op in every existing test |
-| T-11 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-12 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-13 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-14 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-15 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; `-k "T_15"` → 88 deselected |
-| T-16 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-17 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-18 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-19 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; `-k "T_19"` → 88 deselected |
-| T-20 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-21 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-22 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-23 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-24 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; `-k "T_24"` → 88 deselected |
-| T-25 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-26 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-27 | unit | Automatic | none | uv-pytest | BLOCKED | Suite green; id not addressable |
-| T-28 | unit | Automatic | none | uv-pytest | BLOCKED | Id not addressable; **and** the MCP wrapper layer is a known coverage gap — both suites call `sb_get_*` directly |
-| T-29 | unit | Automatic | none | uv-pytest | unwritten-planned | `planned: .../test_scenario_statistics_contract.py` absent in a resolvable repo |
-| T-30 | unit | Automatic | none | uv-pytest | unwritten-planned | same file absent |
-| T-31 | e2e | Automatic | Validate console | run-validate-attack | unwritten-planned | `planned: .../test_e2e_scenario_statistics.py` absent in a resolvable repo |
-| T-32 | e2e | Automatic | Validate console | run-validate-attack | unwritten-planned | same file absent |
-| T-33 | e2e | Automatic | Validate console | run-validate-attack | unwritten-planned | same file absent |
-| T-34 | e2e | Automatic | Validate console | run-validate-attack | unwritten-planned | same file absent |
-| T-35 | e2e | Automatic | Validate console | run-validate-attack | unwritten-planned | same file absent |
-| T-36 | e2e | Manual | Validate console | sb-ui:manual-ui-testing | BLOCKED | No environment.md; console unreachable (000); no API token; MCP servers down |
+| T-\<n\> | Level | Execution | Env | Runner | Outcome | Evidence / Reason |
+|------|-------|-----------|-----|--------|---------|-------------------|
+| T-1 | unit | Automatic | none | uv-pytest | executed | `-k "T_1_"` → 7 passed |
+| T-2 | unit | Automatic | none | uv-pytest | executed | `-k "T_2_"` → 2 passed |
+| T-3 | unit | Automatic | none | uv-pytest | executed | `-k "T_3_"` → 4 passed |
+| T-4 | unit | Automatic | none | uv-pytest | executed | `-k "T_4_"` → 2 passed |
+| T-5 | unit | Automatic | none | uv-pytest | executed | `-k "T_5_"` → 1 passed |
+| T-6 | unit | Automatic | none | uv-pytest | executed | `-k "T_6_"` → 2 passed |
+| T-7 | unit | Automatic | none | uv-pytest | executed | `-k "T_7_"` → 6 passed |
+| T-8 | unit | Automatic | none | uv-pytest | executed | `-k "T_8_"` → 5 passed |
+| T-9 | unit | Automatic | none | uv-pytest | executed | `-k "T_9_"` → 3 passed (**authored this pass**) |
+| T-10 | unit | Automatic | none | uv-pytest | executed | `-k "T_10_"` → 2 passed; RBAC case added via T-28 boundary tests |
+| T-11 | unit | Automatic | none | uv-pytest | executed | `-k "T_11_"` → 3 passed |
+| T-12 | unit | Automatic | none | uv-pytest | executed | `-k "T_12_"` → 3 passed (**authored this pass**) |
+| T-13 | unit | Automatic | none | uv-pytest | executed | `-k "T_13_"` → 3 passed |
+| T-14 | unit | Automatic | none | uv-pytest | executed | `-k "T_14_"` → 5 passed |
+| T-15 | unit | Automatic | none | uv-pytest | executed | `-k "T_15_"` → 7 passed |
+| T-16 | unit | Automatic | none | uv-pytest | executed | `-k "T_16_"` → 7 passed |
+| T-17 | unit | Automatic | none | uv-pytest | executed | `-k "T_17_"` → 2 passed |
+| T-18 | unit | Automatic | none | uv-pytest | executed | `-k "T_18_"` → 4 passed |
+| T-19 | unit | Automatic | none | uv-pytest | executed | `-k "T_19_"` → 6 passed |
+| T-20 | unit | Automatic | none | uv-pytest | executed | `-k "T_20_"` → 2 passed |
+| T-21 | unit | Automatic | none | uv-pytest | executed | `-k "T_21_"` → 4 passed |
+| T-22 | unit | Automatic | none | uv-pytest | executed | `-k "T_22_"` → 3 passed (**authored this pass**) |
+| T-23 | unit | Automatic | none | uv-pytest | executed | `-k "T_23_"` → 7 passed |
+| T-24 | unit | Automatic | none | uv-pytest | executed | `-k "T_24_"` → 2 passed |
+| T-25 | unit | Automatic | none | uv-pytest | executed | `-k "T_25_"` → 1 passed |
+| T-26 | unit | Automatic | none | uv-pytest | executed | `-k "T_26_"` → 1 passed |
+| T-27 | unit | Automatic | none | uv-pytest | executed | `-k "T_27_"` → 4 passed |
+| T-28 | unit | Automatic | none | uv-pytest | executed | `-k "T_28_"` → 6 passed (**authored this pass**) |
+| T-29 | unit | Automatic | none | uv-pytest | unwritten-planned | File exists; this case is 0-match. Needs a payload captured from a live console — a hand-built stand-in would re-assert the shapes it exists to check |
+| T-30 | unit | Automatic | none | uv-pytest | executed | `-k "T_30_"` → 13 passed (**authored this pass**) |
+| T-31 | e2e | Automatic | Validate console | uv-pytest (e2e) | BLOCKED | Authored (2 cases, collect clean); skipped — no console |
+| T-32 | e2e | Automatic | Validate console | uv-pytest (e2e) | BLOCKED | Authored (3 cases); skipped — no console |
+| T-33 | e2e | Automatic | Validate console | uv-pytest (e2e) | BLOCKED | Authored (3 cases); skipped — no console |
+| T-34 | e2e | Automatic | Validate console | uv-pytest (e2e) | BLOCKED | Authored (3 cases); skipped — no console |
+| T-35 | e2e | Automatic | Validate console | uv-pytest (e2e) | BLOCKED | Authored (2 cases); skipped — no console |
+| T-36 | e2e | Manual | Validate console | sb-ui:manual-ui-testing | BLOCKED | No environment.md; console unreachable; no API token |
 | T-37 | e2e | Manual | Validate console | sb-ui:manual-ui-testing | BLOCKED | Same — no live console to walk the feature through |
 
 Ledgered rows: 37 · Selected: 37 ✓ (no test dropped)
@@ -82,40 +94,28 @@ Ledgered rows: 37 · Selected: 37 ✓ (no test dropped)
 ## Cumulative readiness
 
 - Selected (Active, Passes after ≤ Final): T-1 … T-37 (all 37)
-- Green (per-id evidence): **none**
-- BLOCKED: T-1 … T-28 (per-id accounting gap; underlying suite green), T-36, T-37 (no live console) — 30 total
-- Unwritten-planned: T-29 … T-35 — 7 total
+- **Green with per-id evidence: T-1 … T-28, T-30 — 29 tests**
+- BLOCKED: T-31 … T-37 — 7 (all on the same cause: no live Validate console)
+- Unwritten-planned: T-29 — 1
 - Local-pending-ci: none · Delegated: none · Manual substitutions: none
 - **Phase verdict: INCOMPLETE**
 
-## Evidence
-
-- Suite-level: `88 passed in 0.20s` — both authored studio suites, uv-pytest, py3.12. Real and reproducible, but
-  not attributable to individual `T-<n>` ids.
-- T-1 … T-28: no per-id evidence — see Hand-off.
-- T-29 … T-35: no evidence — not authored.
-- T-36, T-37: no evidence — no environment.
-
 ## Hand-off (delegated / BLOCKED)
 
-- **T-1 … T-28 — BLOCKED (accounting, not correctness).** The 88 authored tests pass, but none carries the
-  `T-<n>:` title prefix the automation title contract requires, so `pytest -k "T_<n>"` deselects all 88 for every
-  id. Step 4's per-selected-id inclusion check forbids accepting a batch pass as per-id evidence. **Fix:** prefix
-  each test's name with its plan id (`def test_T_7_null_is_never_zero…`), then re-run. This is the plan's own
-  accepted gap #2, now demonstrated rather than predicted. No code defect is implied — the behaviour is green.
-- **T-36, T-37 — BLOCKED (infra).** Both need a live Validate console. There is no `environment.md`,
-  `pentest01.sbops.com` returns `000` (no route — VPN required), no console API token is present, and all four
-  SafeBreach MCP servers failed to connect this session. **Fix:** provision via
-  `provision-feature-environment SAF-35508` (needs one offline/disabled simulator and a Windows+Linux mix), from a
-  VPN-connected machine, then re-run.
+- **T-31 … T-35 — BLOCKED (infra only).** The tests are now written and collect cleanly; they skip because
+  `SKIP_E2E_TESTS=true` and no console is reachable. They were authored but have **never executed against a real
+  console**, so they are unproven code as well as unrun tests — expect to debug them on first real run.
+  **Fix:** `provision-feature-environment SAF-35508` from a VPN-connected machine, then
+  `source .vscode/set_env.sh && uv run pytest -m e2e -k "T_3"`. T-34 needs an offline/disabled simulator and a
+  Windows+Linux mix; T-35 needs a step blocking more than 50 attacks. Both `pytest.skip` with a message naming
+  the missing precondition rather than passing vacuously.
+- **T-36, T-37 — BLOCKED (infra).** Manual walkthroughs needing the same console.
 
 ## To author (unwritten-planned)
 
-- **T-29, T-30** — `planned: safebreach_mcp_studio/tests/test_scenario_statistics_contract.py`. Author the recorded
-  real-console payload contract test and the transport-failure/timeout test.
-- **T-31 … T-35** — `planned: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py`. Author the five e2e
-  cases following the existing `test_e2e_run_scenario.py` pattern (module-level `SKIP_E2E_TESTS` + `@pytest.mark.e2e`,
-  `E2E_CONSOLE` default `pentest01`, discover-don't-create fixtures). These also need the environment above.
+- **T-29** — the recorded real-console payload contract test. `test_scenario_statistics_contract.py` exists and
+  its docstring records why this one case is absent. Capture one `plan/statistics` response (constraints on and
+  off), commit it with a provenance note, and drive both shaping layers from it.
 
 ## Manual substitutions (not the planned test)
 
@@ -123,19 +123,18 @@ Ledgered rows: 37 · Selected: 37 ✓ (no test dropped)
 
 ## Smell observations
 
-- **The plan's `Evidence required` for T-31 … T-35 names evidence that cannot exist.** The e2e tier normally owes a
-  butler job + build #, but this repo has no CI that runs pytest at all, so those tests can never upgrade past a
-  local run. The plan already flags this as an accepted gap; it should be revised via `authoring-test-plan` to name
-  evidence that actually exists (console name + timestamped output), rather than leaving a permanently-owed build.
-- **The authored suites and the plan were written independently**, so the T-id ↔ test-case mapping exists only in
-  prose. Until the title prefixes land, every future run repeats this same accounting gap.
-- **`ruff` is not installed** (`uv run ruff` fails to spawn; absent from `uv.lock`), so the lint gate the PRD names
-  as its quality bar did not run and cannot run as written.
-- The PRD's §3 Component C still claims the blocked answer "never depends on step order", which is broader than the
+- **The 13 new e2e tests are unproven.** They are authored from the repo's existing e2e pattern and the tools'
+  documented result shape, but no assertion in them has ever seen a real payload. Field names such as
+  `simulators_offered`, `blocked_attacks_by_reason` and `sample_blocked_attack_id` are taken from the plan and
+  the implementation; the first real run should be treated as a debugging run, not a verification run.
+- **The plan's e2e `Evidence required` still names a CI build that cannot exist** — no pipeline in this repo runs
+  pytest. Worth revising via `authoring-test-plan` to name evidence that is actually producible.
+- **`ruff` is still not installed**, so the PRD's stated lint gate did not run this pass either.
+- The PRD's §3 Component C still claims the blocked answer "never depends on step order", broader than the
   delivered per-step-union verdict confirmed as intended at the authoring gate.
 
 ## Verdict
 
-- **INCOMPLETE** — 30 BLOCKED, 7 unwritten-planned, 0 with per-id evidence. **The feature cannot be signed off.**
-  Note for the reader: this is a *sign-off evidence* verdict, not a statement that the code is broken — the 88
-  authored tests pass. What is missing is per-id attribution, seven unwritten tests, and any real-environment run.
+- **INCOMPLETE** — 29 executed, 7 BLOCKED, 1 unwritten-planned. **The feature still cannot be signed off.**
+  Every remaining item traces to one of two causes: no reachable Validate console (8 tests, 7 BLOCKED + T-29's
+  capture). The entire unit tier is now green with attributable per-id evidence, which it was not on the first pass.

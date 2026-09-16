@@ -1,6 +1,6 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-16 13:40
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-16 14:45
 
 ## Status & Review
 
@@ -73,14 +73,17 @@ explicit justification. A file with neither is a validator violation — never s
     `security-scan.yml` exist. Nothing mechanically prevents a regression from merging.
   - **`ruff` is not installed** (reviewer input): `uv run ruff` fails to spawn and ruff is absent from `uv.lock`, so the
     PRD's `ruff check --select F` gate is manual and non-reproducible as written.
-  - **The 88 existing tests carry no `T-<n>:` title prefix** (reviewer input) — until titles are prefixed the executor
-    cannot address a plan id mechanically (`pytest -k "T_7"`). Tracked as an accepted gap below.
+  - ~~The 88 existing tests carry no `T-<n>:` title prefix~~ — **CLOSED 2026-09-16**: every test method now carries its
+    plan id. **Selector convention: `pytest -k "T_<n>_"` with the trailing underscore** — a bare `-k "T_1"` also
+    substring-matches T-10 … T-19 and silently over-selects, which is the one trap in this scheme.
 - Existing coverage (investigated): input exclusivity, plan-body construction, the fixed query-parameter sets, the
   null-is-not-zero arbiter, moves-dropping, the paired simulator breakdown, both caps, named-id dispositions, the three
   simulator states, the verdict, attack dispositions, and catalog handling → `safebreach_mcp_studio/tests/`
-  `test_scenario_simulation_counts.py` (44 tests) and `test_scenario_blocked_entities.py` (44 tests); 88 pass in 0.15s.
-  This plan targets the gaps: the MCP wrapper layer, the RBAC/`PermissionError` path, transport failures, the absence of
-  any recorded real-console payload, and the total absence of real-environment evidence.
+  `test_scenario_simulation_counts.py` and `test_scenario_blocked_entities.py`. As of 2026-09-16 the gaps this plan
+  targeted are closed in code: the MCP wrapper layer (T-28), the RBAC/`PermissionError` path (T-10, T-28), the
+  runnable disclosure (T-9), no-MCP-caching (T-12), report-mutates-nothing (T-22) and transport failures (T-30) are all
+  authored, alongside a new e2e suite (T-31 … T-35). The full studio suite is 594 passed / 50 skipped in 1.80s.
+  Two gaps remain open: no recorded real-console payload (T-29) and no real-environment evidence for any e2e test.
 - What we protect: the three-state simulator model (blocked vs excluded vs ran) and `null` never reading as `0` — the
   two claims whose silent breakage would make every answer confidently wrong; the fixed per-tool query parameters, which
   are what make each tool's cost predictable; and the one-request / zero-playbook-request cost contract.
@@ -750,7 +753,11 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   notes the console and date it came from.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, and the recorded fixture's provenance note.
 - Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
+  (the file exists and carries the rest of the contract suite; this case alone is still unwritten, because it
+  needs a payload captured from a live console — a hand-built stand-in would re-assert the shapes this test
+  exists to check. The file's docstring records that.)
 - Environment needs: none
+  - Requires a one-off capture from a reachable console before it can be authored.
 
 ### T-30 — A dead or slow console fails loudly instead of answering zero
 
@@ -768,7 +775,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each failure raises a typed error naming what went wrong; none produces zeros, an empty answer, or a
   `clean` verdict. The statistics request carries the module's configured timeout rather than defaulting to none.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
 - Environment needs: none
 
 ### T-31 — The counts tool scores a real scenario against a real fleet
@@ -788,7 +795,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   in the console's execution history as a result of the call.
 - Evidence required: the exact pytest command, the console name, the returned totals, and the run timestamp. No CI job
   exists to run this — recorded as an accepted gap.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
 ### T-32 — All three input forms work against a live console
@@ -808,7 +815,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: All three forms return a scored answer, each costing exactly one request. The UUID is refused locally with
   the message routing to `get_scenario_details`, without contacting the console.
 - Evidence required: the exact pytest command, the console name, the plan id and planRunId used, and the run timestamp.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
 ### T-33 — Real role numbers and the cap behave as measured
@@ -828,7 +835,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   with one-role simulators saying so in the other role. Past the cap the breakdown is absent while the step's count is
   unchanged and the narrow-your-filter ask appears. Named ids are answered in both roles in both runs.
 - Evidence required: the exact pytest command, the console name, the fleet sizes used either side of the cap, and the run timestamp.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires a fleet that can be grown past the listing cap and shrunk back within the run.
 
@@ -851,7 +858,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   than invented — and the test asserts that disclosure instead of failing.
 - Evidence required: the exact pytest command, the console name, the offline simulator's id, the cited constraint codes,
   and the run timestamp.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires at least one offline or disabled simulator and simulators of two OS families.
 
@@ -875,7 +882,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   becomes a measured one.
 - Evidence required: the exact pytest command, the console name, the blocked-attack count, the measured response size
   and duration, and the run timestamp.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires a fleet and scenario able to produce more blocked attacks in one step than the attack cap.
 
@@ -956,8 +963,10 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
     an executor-run command plus its output.
   - **No `Automation-Pen-Testing-*` suite covers this surface**, because the automation repo has no MCP coverage at all.
-  - **The 88 existing tests carry no `T-<n>:` title prefix**, so the executor cannot yet address a plan id
-    mechanically. Prefixing the titles is a mechanical follow-up owed before the first executed phase.
+  - ~~The 88 existing tests carry no `T-<n>:` title prefix~~ — **CLOSED 2026-09-16**; select with
+    `pytest -k "T_<n>_"` (trailing underscore required, or T-1 over-selects T-10 … T-19).
+  - **T-29 is still unwritten** — it needs a response captured from a live console, and a hand-built stand-in would
+    re-assert the very shapes it exists to check.
   - **Verdict-level "ran outranks blocked" is deliberately untested** — confirmed at the gate as intended per-step-union
     behaviour; the PRD's §3 Component C wording should be narrowed to match.
   - **`getAllConstraints=true` has never been measured against a real console**; T-35 is the test that converts this
@@ -968,3 +977,4 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
+| 2026-09-16 14:45 | Phase Final execution follow-up. Every existing test method prefixed with its plan id (selector: `pytest -k "T_<n>_"`). Authored the cases that had none — T-9, T-12, T-22, T-28 and the RBAC half of T-10 — plus T-30 in a new contract suite and T-31 … T-35 in a new e2e suite; their `planned:` markers are now real paths. T-29 stays unwritten (needs a live-console capture). Suite: 594 passed / 50 skipped. Status stays Draft — the test set changed materially. |

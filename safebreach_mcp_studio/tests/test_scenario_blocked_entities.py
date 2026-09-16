@@ -53,43 +53,43 @@ def _report(steps, catalog=None, **kwargs):
 class TestInputsMatchTheSiblingTool:
     """The same plumbing, so the same rules — for free."""
 
-    def test_naming_none_names_all_three(self):
+    def test_T_1_naming_none_names_all_three(self):
         with pytest.raises(ValueError) as excinfo:
             sb_get_scenario_blocked_entities(console='demo')
         message = str(excinfo.value)
         assert 'scenario' in message and 'scenario_id' in message and 'test_id' in message
 
-    def test_naming_two_reports_both(self):
+    def test_T_1_naming_two_reports_both(self):
         with pytest.raises(ValueError) as excinfo:
             sb_get_scenario_blocked_entities(
                 console='demo', scenario_id='7', test_id='1764165600525.2')
         assert 'scenario_id' in str(excinfo.value) and 'test_id' in str(excinfo.value)
 
-    def test_blank_string_counts_as_absent(self):
+    def test_T_1_blank_string_counts_as_absent(self):
         _, post = _report([_step()], scenario=None, scenario_id='   ',
                           test_id='1764165600525.2')
         assert post.call_count == 1
 
-    def test_a_non_numeric_scenario_id_is_refused_before_scoring(self):
+    def test_T_13_a_non_numeric_scenario_id_is_refused_before_scoring(self):
         with patch.object(studio_functions, 'requests') as requests_mock:
             with pytest.raises(ValueError, match='numeric id'):
                 sb_get_scenario_blocked_entities(
                     console='demo', scenario_id='3b8eade5-9285-43b8-b3e7-6350420983a5')
         requests_mock.post.assert_not_called()
 
-    def test_step_less_scenario_never_reaches_the_api(self):
+    def test_T_2_step_less_scenario_never_reaches_the_api(self):
         with patch.object(studio_functions, 'requests') as requests_mock:
             with pytest.raises(ValueError, match='no steps'):
                 sb_get_scenario_blocked_entities(console='demo', scenario={'steps': []})
         requests_mock.post.assert_not_called()
 
-    def test_body_shapes_match_the_sibling(self):
+    def test_T_3_body_shapes_match_the_sibling(self):
         _, post = _report([_step()], scenario=None, scenario_id='4821')
         assert post.call_args.kwargs['json'] == {'name': '', 'id': 4821}
         _, post = _report([_step()], scenario=None, test_id='1764165600525.2')
         assert post.call_args.kwargs['json'] == {'name': '', 'testId': '1764165600525.2'}
 
-    def test_an_all_blank_attack_filter_is_rejected(self):
+    def test_T_27_an_all_blank_attack_filter_is_rejected(self):
         with pytest.raises(ValueError, match='named no attack'):
             sb_get_scenario_blocked_entities(
                 console='demo', scenario={'steps': [{}]}, attack_ids=' , , ')
@@ -98,7 +98,7 @@ class TestInputsMatchTheSiblingTool:
 class TestQueryParameters:
     """Constraints are the answer here, so this tool pays for them."""
 
-    def test_both_constraint_flags_are_on(self):
+    def test_T_17_both_constraint_flags_are_on(self):
         _, post = _report([_step()])
         assert post.call_args.kwargs['params'] == {
             'limit': 500000,
@@ -108,7 +108,7 @@ class TestQueryParameters:
             'useCache': 'true',
         }
 
-    def test_the_sibling_tool_still_asks_for_no_constraints(self):
+    def test_T_17_the_sibling_tool_still_asks_for_no_constraints(self):
         """The shared fetch grew a parameter; the counts tool must not have moved."""
         from safebreach_mcp_studio.studio_functions import sb_get_scenario_simulation_counts
         response = MagicMock()
@@ -125,11 +125,11 @@ class TestQueryParameters:
         assert params['getConstraints'] == 'false'
         assert params['getAllConstraints'] == 'false'
 
-    def test_one_call_per_report(self):
+    def test_T_8_one_call_per_report(self):
         _, post = _report([_step(), _step()])
         assert post.call_count == 1
 
-    def test_no_playbook_or_config_request_is_made(self):
+    def test_T_8_no_playbook_or_config_request_is_made(self):
         with patch.object(studio_functions, '_build_attack_name_map') as names:
             _report([_step()])
         names.assert_not_called()
@@ -138,7 +138,7 @@ class TestQueryParameters:
 class TestThreeStates:
     """Blocked, excluded and not-computed are three different facts."""
 
-    def test_a_simulator_scored_zero_is_blocked(self):
+    def test_T_18_a_simulator_scored_zero_is_blocked(self):
         result, _ = _report([_step(
             simulators={'sim-a': 7, 'sim-b': 0},
             constraints=_target({'sim-b': {'1000': ['incompatible_os']}}))])
@@ -147,7 +147,7 @@ class TestThreeStates:
         assert step['blocked_simulators'][0]['simulator_ids'] == ['sim-b']
         assert step['excluded_simulators_total'] == 0
 
-    def test_a_simulator_absent_from_scoring_is_excluded_not_blocked(self):
+    def test_T_18_a_simulator_absent_from_scoring_is_excluded_not_blocked(self):
         """Offline nodes carry constraints but are never seeded into the count map."""
         result, _ = _report([_step(
             simulators={'sim-a': 7},
@@ -160,19 +160,19 @@ class TestThreeStates:
         assert 'excluded from scoring' in text
         assert result['verdict']['blocked_simulator_count'] == 0
 
-    def test_a_null_count_is_never_called_blocked(self):
+    def test_T_18_a_null_count_is_never_called_blocked(self):
         result, _ = _report([_step(simulators={'sim-a': None, 'sim-b': 0})])
         step = result['steps'][0]
         assert step['blocked_simulators_total'] == 1
         assert 'sim-a' not in str(step['blocked_simulators'])
 
-    def test_an_attack_scored_zero_is_blocked_and_a_null_one_is_not(self):
+    def test_T_18_an_attack_scored_zero_is_blocked_and_a_null_one_is_not(self):
         result, _ = _report([_step(moves={'1000': 0, '2000': None, '3000': 5})])
         step = result['steps'][0]
         assert [e['attack_id'] for e in step['blocked_attacks']] == ['1000']
         assert step['blocked_attacks_total'] == 1
 
-    def test_a_blocked_simulator_with_no_constraint_is_still_reported(self):
+    def test_T_23_a_blocked_simulator_with_no_constraint_is_still_reported(self):
         result, _ = _report([_step(simulators={'sim-b': 0})])
         step = result['steps'][0]
         assert step['blocked_simulators_unexplained'] == ['sim-b']
@@ -182,18 +182,18 @@ class TestThreeStates:
 class TestVerdict:
     """Decided by whether counts were computed, never by list emptiness."""
 
-    def test_limit_reached_is_not_evaluated_not_clean(self):
+    def test_T_19_limit_reached_is_not_evaluated_not_clean(self):
         result, _ = _report([_step(count=None, limit_reached=True,
                                    moves={'1': None}, simulators={})])
         assert result['verdict']['state'] == 'not_evaluated'
         text = _format_scenario_blocked_entities(result)
         assert 'not a clean result' in text
 
-    def test_a_scenario_with_nothing_blocked_is_clean(self):
+    def test_T_19_a_scenario_with_nothing_blocked_is_clean(self):
         result, _ = _report([_step()])
         assert result['verdict']['state'] == 'clean'
 
-    def test_a_partly_scored_scenario_says_so(self):
+    def test_T_19_a_partly_scored_scenario_says_so(self):
         result, _ = _report([_step(moves={'1000': 0}, simulators={'sim-b': 0}),
                              _step(count=None, limit_reached=True)])
         verdict = result['verdict']
@@ -201,14 +201,14 @@ class TestVerdict:
         assert verdict['steps_scored'] == 1
         assert 'unscored steps were not examined' in verdict['summary']
 
-    def test_counts_are_over_distinct_entities_scenario_wide(self):
+    def test_T_19_counts_are_over_distinct_entities_scenario_wide(self):
         """One attack blocked in three steps is one attack."""
         blocked = _step(moves={'1000': 0}, simulators={'sim-b': 0})
         result, _ = _report([blocked, dict(blocked), dict(blocked)])
         assert result['verdict']['blocked_attack_count'] == 1
         assert result['verdict']['blocked_simulator_count'] == 1
 
-    def test_a_sentinel_step_without_side_subkeys_does_not_raise(self):
+    def test_T_19_a_sentinel_step_without_side_subkeys_does_not_raise(self):
         result, _ = _report([_step(count=None, limit_reached=True,
                                    moves={'1': None}, simulators={}, constraints={})])
         assert _format_scenario_blocked_entities(result)
@@ -217,7 +217,7 @@ class TestVerdict:
 class TestAttackDispositions:
     """Naming attacks narrows what is listed, never what is claimed."""
 
-    def test_ran_outranks_blocked_regardless_of_step_order(self):
+    def test_T_20_ran_outranks_blocked_regardless_of_step_order(self):
         zero = _step(moves={'1000': 0})
         ran = _step(moves={'1000': 240})
         for steps in ([zero, ran], [ran, zero]):
@@ -225,7 +225,7 @@ class TestAttackDispositions:
             asked = result['steps'][0]['asked_about']['1000']
             assert asked == {'state': 'ran', 'count': 240}
 
-    def test_the_four_dispositions_are_distinct(self):
+    def test_T_20_the_four_dispositions_are_distinct(self):
         result, _ = _report([_step(moves={'ran': 5, 'blocked': 0, 'unmeasured': None})],
                             attack_ids='ran,blocked,unmeasured,absent')
         asked = result['steps'][0]['asked_about']
@@ -234,14 +234,14 @@ class TestAttackDispositions:
             'unmeasured': 'not_computed', 'absent': 'absent',
         }
 
-    def test_naming_ids_does_not_change_the_verdict(self):
+    def test_T_19_naming_ids_does_not_change_the_verdict(self):
         steps = [_step(moves={'1000': 0, '2000': 0}, simulators={'sim-b': 0})]
         plain, _ = _report(steps, )
         scoped, _ = _report(steps, attack_ids='1000')
         assert plain['verdict'] == scoped['verdict']
         assert 'the verdict above is NOT' in _format_scenario_blocked_entities(scoped)
 
-    def test_named_ids_are_answered_on_an_unscored_step(self):
+    def test_T_27_named_ids_are_answered_on_an_unscored_step(self):
         result, _ = _report([_step(count=None, limit_reached=True, moves={'1': None})],
                             attack_ids='1000')
         assert 'Asked about: #1000' in _format_scenario_blocked_entities(result)
@@ -250,13 +250,13 @@ class TestAttackDispositions:
 class TestConstraintDetail:
     """Only `reason` is guaranteed; the rest is relayed where present."""
 
-    def test_a_bare_reason_renders(self):
+    def test_T_23_a_bare_reason_renders(self):
         result, _ = _report([_step(
             moves={'1000': 0},
             constraints=_target({'sim-b': {'1000': ['incompatible_os']}}))])
         assert '`incompatible_os`' in _format_scenario_blocked_entities(result)
 
-    def test_validator_detail_is_relayed(self):
+    def test_T_23_validator_detail_is_relayed(self):
         result, _ = _report([_step(
             moves={'1000': 0},
             constraints=_target({'sim-b': {'1000': [
@@ -264,14 +264,14 @@ class TestConstraintDetail:
         text = _format_scenario_blocked_entities(result)
         assert 'required: WINDOWS' in text and 'actual: LINUX' in text
 
-    def test_list_detail_is_rendered_readably(self):
+    def test_T_23_list_detail_is_rendered_readably(self):
         result, _ = _report([_step(
             moves={'1000': 0},
             constraints=_target({'sim-b': {'1000': [
                 {'reason': 'port_in_use', 'values': [445, 139]}]}}))])
         assert 'values: 445, 139' in _format_scenario_blocked_entities(result)
 
-    def test_both_sides_are_distinguished(self):
+    def test_T_23_both_sides_are_distinguished(self):
         constraints = _target({'sim-b': {'1000': ['incompatible_os']}})
         constraints['attackerConstraints'] = {
             'sim-b': {'1000': [{'reason': 'port_in_use'}]}}
@@ -284,7 +284,7 @@ class TestConstraintDetail:
 class TestCatalog:
     """Meanings come from the console or not at all."""
 
-    def test_descriptions_are_relayed_verbatim(self):
+    def test_T_21_descriptions_are_relayed_verbatim(self):
         result, _ = _report(
             [_step(moves={'1000': 0},
                    constraints=_target({'sim-b': {'1000': ['incompatible_os']}}))],
@@ -292,7 +292,7 @@ class TestCatalog:
         assert result['catalog_supplied'] is True
         assert 'Needs another OS.' in _format_scenario_blocked_entities(result)
 
-    def test_an_absent_catalog_says_so_and_invents_nothing(self):
+    def test_T_21_an_absent_catalog_says_so_and_invents_nothing(self):
         result, _ = _report(
             [_step(moves={'1000': 0},
                    constraints=_target({'sim-b': {'1000': ['incompatible_os']}}))])
@@ -301,7 +301,7 @@ class TestCatalog:
         assert 'supplied no descriptions' in text
         assert 'not described by this console' in text
 
-    def test_an_undescribed_code_is_not_given_a_meaning(self):
+    def test_T_21_an_undescribed_code_is_not_given_a_meaning(self):
         result, _ = _report(
             [_step(moves={'1000': 0},
                    constraints=_target({'sim-b': {'1000': ['brand_new_code']}}))],
@@ -309,7 +309,7 @@ class TestCatalog:
         assert result['constraint_catalog']['brand_new_code'] == {}
         assert 'not described by this console' in _format_scenario_blocked_entities(result)
 
-    def test_the_catalog_is_narrowed_to_codes_actually_cited(self):
+    def test_T_21_the_catalog_is_narrowed_to_codes_actually_cited(self):
         result, _ = _report(
             [_step(moves={'1000': 0},
                    constraints=_target({'sim-b': {'1000': ['incompatible_os']}}))],
@@ -321,14 +321,14 @@ class TestCatalog:
 class TestCaps:
     """Lists are capped; counts never are."""
 
-    def test_the_attack_list_survives_at_the_cap(self):
+    def test_T_24_the_attack_list_survives_at_the_cap(self):
         at = BLOCKED_ATTACKS_CAP
         result, _ = _report([_step(moves={f'atk-{i:03d}': 0 for i in range(at)})])
         step = result['steps'][0]
         assert len(step['blocked_attacks']) == at
         assert 'blocked_attack_codes' not in step
 
-    def test_past_the_cap_no_partial_attack_list_is_returned(self):
+    def test_T_24_past_the_cap_no_partial_attack_list_is_returned(self):
         """A fifty-of-sixty sample accounts for fifty; the tally accounts for sixty."""
         over = BLOCKED_ATTACKS_CAP + 10
         result, _ = _report([_step(
@@ -347,7 +347,7 @@ class TestCaps:
         assert 'per-attack detail omitted' in text
         assert 'Name attack_ids' in text
 
-    def test_tally_rows_carry_no_validator_detail(self):
+    def test_T_25_tally_rows_carry_no_validator_detail(self):
         """A row stands for many attacks; one leaf's values must not speak for all."""
         over = BLOCKED_ATTACKS_CAP + 1
         result, _ = _report([_step(
@@ -363,7 +363,7 @@ class TestCaps:
         assert tally_lines, "expected the tally to render"
         assert not any('required: WINDOWS' in line for line in tally_lines)
 
-    def test_the_catalog_covers_codes_cited_only_past_the_cap(self):
+    def test_T_26_the_catalog_covers_codes_cited_only_past_the_cap(self):
         """Cited codes are collected before capping, not from the rendered rows."""
         over = BLOCKED_ATTACKS_CAP + 5
         blocked = {f'atk-{i:03d}': 0 for i in range(over)}
@@ -377,7 +377,7 @@ class TestCaps:
         assert 'only_the_last_one' in result['constraint_catalog']
         assert 'rare' in _format_scenario_blocked_entities(result)
 
-    def test_a_named_attack_carries_its_blockers_past_the_cap(self):
+    def test_T_27_a_named_attack_carries_its_blockers_past_the_cap(self):
         """The list is gone, so attack_ids is the only route to an exact reason."""
         over = BLOCKED_ATTACKS_CAP + 5
         last = f'atk-{over - 1:03d}'
@@ -391,7 +391,7 @@ class TestCaps:
         assert f'Asked about: #{last} (blocked) — `incompatible_os`' in \
             _format_scenario_blocked_entities(result)
 
-    def test_a_named_attack_that_ran_carries_no_blockers(self):
+    def test_T_27_a_named_attack_that_ran_carries_no_blockers(self):
         """Constraints exist for the simulators that did not run it; they explain no failure."""
         result, _ = _report([_step(
             moves={'atk-000': 7},
@@ -401,7 +401,7 @@ class TestCaps:
         assert asked['state'] == 'ran'
         assert 'blockers' not in asked
 
-    def test_simulator_names_are_capped_but_the_group_count_is_exact(self):
+    def test_T_23_simulator_names_are_capped_but_the_group_count_is_exact(self):
         over = CONSTRAINT_NODES_CAP + 1
         simulators = {f'sim-{i}': 0 for i in range(over)}
         constraints = _target({f'sim-{i}': {'1000': ['incompatible_os']} for i in range(over)})
@@ -411,7 +411,7 @@ class TestCaps:
         assert group['simulator_count'] == over
         assert 'and 1 more' in _format_scenario_blocked_entities(result)
 
-    def test_blocked_simulators_are_grouped_by_code_not_listed_per_node(self):
+    def test_T_23_blocked_simulators_are_grouped_by_code_not_listed_per_node(self):
         simulators = {f'sim-{i}': 0 for i in range(60)}
         constraints = _target({f'sim-{i}': {'1000': ['incompatible_os']} for i in range(60)})
         result, _ = _report([_step(simulators=simulators, constraints=constraints)])
@@ -422,7 +422,7 @@ class TestCaps:
 class TestApiErrors:
     """Failures surface as typed errors."""
 
-    def test_http_error_becomes_a_value_error(self):
+    def test_T_10_http_error_becomes_a_value_error(self):
         import requests as real_requests
         response = MagicMock()
         response.status_code = 400
@@ -442,7 +442,7 @@ class TestApiErrors:
 class TestToolRegistration:
     """Registered read-only, alongside its sibling."""
 
-    def test_registered_as_read_only(self):
+    def test_T_11_registered_as_read_only(self):
         from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
         tools = SafeBreachStudioServer().mcp._tool_manager._tools
         assert 'get_scenario_blocked_entities' in tools
@@ -450,7 +450,90 @@ class TestToolRegistration:
         assert annotations.readOnlyHint is True
         assert annotations.destructiveHint is False
 
-    def test_the_two_tools_route_to_each_other(self):
+    def test_T_11_the_two_tools_route_to_each_other(self):
         from safebreach_mcp_studio.studio_functions import BLOCKED_HINT, COUNTS_HINT
         assert 'get_scenario_blocked_entities' in COUNTS_HINT
         assert 'get_scenario_simulation_counts' in BLOCKED_HINT
+
+
+class TestReportingChangesNothing:
+    """The tool is a report: it never edits the scenario and never blocks a save."""
+
+    def test_T_22_the_submitted_scenario_is_unchanged_after_scoring(self):
+        import copy
+        body = {'steps': [{'name': 'step one'}, {'name': 'step two'}]}
+        before = copy.deepcopy(body)
+        _report([_step(), _step()], scenario=body)
+        assert body == before
+
+    def test_T_22_nothing_but_the_statistics_endpoint_is_contacted(self):
+        _, post = _report([_step()])
+        assert post.call_count == 1
+        url = post.call_args[0][0] if post.call_args[0] else post.call_args.kwargs['url']
+        assert url.endswith('/plan/statistics')
+
+    def test_T_22_no_save_or_update_verb_is_ever_issued(self):
+        """A report must not reach for a mutating verb, whatever the payload says."""
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {'data': {'steps': [_step()]}}
+        with patch.object(studio_functions, 'requests') as requests_mock, \
+                patch.object(studio_functions, 'get_api_base_url', return_value='https://console'), \
+                patch.object(studio_functions, 'get_api_account_id', return_value='1111'), \
+                patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
+                patch.object(studio_functions, 'check_rbac_response'):
+            requests_mock.post.return_value = response
+            sb_get_scenario_blocked_entities(console='demo', scenario={'steps': [{}]})
+        assert requests_mock.put.call_count == 0
+        assert requests_mock.patch.call_count == 0
+        assert requests_mock.delete.call_count == 0
+
+
+class TestRegisteredToolBoundary:
+    """An agent sees a message naming the tool, never a traceback."""
+
+    def _registered(self):
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        return SafeBreachStudioServer().mcp._tool_manager._tools[
+            'get_scenario_blocked_entities'].fn
+
+    def test_T_28_a_refused_input_comes_back_as_text(self):
+        answer = self._registered()(console='demo')
+        assert isinstance(answer, str)
+        assert 'Scenario Blocked Entities Error' in answer
+        assert 'scenario' in answer and 'test_id' in answer
+
+    def test_T_28_an_api_failure_carries_its_cause_into_the_text(self):
+        import requests as real_requests
+        response = MagicMock()
+        response.status_code = 503
+        response.text = 'upstream exploded'
+        with patch.object(studio_functions, 'requests') as requests_mock, \
+                patch.object(studio_functions, 'get_api_base_url', return_value='https://console'), \
+                patch.object(studio_functions, 'get_api_account_id', return_value='1111'), \
+                patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
+                patch.object(studio_functions, 'check_rbac_response',
+                             side_effect=real_requests.exceptions.HTTPError()):
+            requests_mock.post.return_value = response
+            requests_mock.exceptions = real_requests.exceptions
+            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+        assert isinstance(answer, str)
+        assert 'upstream exploded' in answer
+
+    def test_T_28_an_rbac_refusal_is_not_reported_as_a_clean_scenario(self):
+        import requests as real_requests
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {'data': {'steps': []}}
+        with patch.object(studio_functions, 'requests') as requests_mock, \
+                patch.object(studio_functions, 'get_api_base_url', return_value='https://console'), \
+                patch.object(studio_functions, 'get_api_account_id', return_value='1111'), \
+                patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
+                patch.object(studio_functions, 'check_rbac_response',
+                             side_effect=PermissionError('role may not read this account')):
+            requests_mock.post.return_value = response
+            requests_mock.exceptions = real_requests.exceptions
+            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+        assert 'Permission Error' in answer
+        assert 'role may not read this account' in answer
+        assert 'clean' not in answer.lower()
