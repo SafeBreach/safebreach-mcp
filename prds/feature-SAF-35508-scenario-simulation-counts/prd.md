@@ -322,7 +322,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 2: Narrow `scenario_id` to numeric plan ids | ✅ Complete | 2026-09-15 | `199ea27` | Makes every input form one request |
 | Phase 3: Pair each simulator's attacker/target numbers | ✅ Complete | 2026-09-15 | `3b0a5fc` | Replaces two per-role lists |
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
-| Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `SHA` | Supersedes the cap behaviour shipped in Phase 4 |
+| Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
 
 ### Phase 1 — Counts tool over plan/statistics
 
