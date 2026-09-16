@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simulators produce them. Takes exactly one of `scenario` (an ad-hoc body never saved, so a
   configuration can be scored while it is still being assembled), `scenario_id` (an OOB UUID or a
   custom plan's integer id, passed through to Core as `{id}`) or `test_id` (a planRunId), plus an
-  optional `simulator_ids` filter that answers each named simulator in both roles. Every query
+  optional `simulator_ids` filter that answers each named simulator in both roles. An OOB scenario's
+  UUID is refused rather than resolved, so no input form lists the console and every call costs exactly
+  one request. Every query
   parameter to `POST /plan/statistics` is fixed internally: counts are *runnable*
   (`includeDisabled=false`), and constraints are never requested, since this answer renders none and
   one ordinary step measured 38,531 of them. A count the orchestrator never computed is reported as

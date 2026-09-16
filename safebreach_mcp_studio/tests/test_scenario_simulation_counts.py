@@ -88,19 +88,28 @@ class TestPlanBody:
         scenarios.assert_not_called()
         assert post.call_args.kwargs['json'] == {'name': '', 'id': 42}
 
-    def test_uuid_scenario_id_is_resolved_to_steps(self):
-        saved = [{'id': 'abc-uuid', 'steps': [{'from_saved': True}]}]
-        with patch.object(studio_functions, '_fetch_all_scenarios', return_value=saved):
-            _, post = _score([_step()], scenario=None, scenario_id='abc-uuid')
-        assert post.call_args.kwargs['json']['steps'] == [{'from_saved': True}]
-
-    def test_unknown_uuid_raises_before_scoring(self):
-        with patch.object(studio_functions, '_fetch_all_scenarios', return_value=[]), \
-                patch.object(studio_functions, '_fetch_all_plans', return_value=[]), \
-                patch.object(studio_functions, 'requests') as requests_mock:
-            with pytest.raises(ValueError, match='not found'):
-                sb_get_scenario_simulation_counts(console='demo', scenario_id='ghost-uuid')
+    def test_a_non_numeric_scenario_id_is_refused_before_scoring(self):
+        with patch.object(studio_functions, 'requests') as requests_mock:
+            with pytest.raises(ValueError) as excinfo:
+                sb_get_scenario_simulation_counts(
+                    console='demo', scenario_id='3b8eade5-9285-43b8-b3e7-6350420983a5')
         requests_mock.post.assert_not_called()
+        message = str(excinfo.value)
+        assert 'numeric id' in message
+        # The refusal names the way through, not just the way blocked.
+        assert 'get_scenario_details' in message and 'scenario' in message
+
+    def test_no_input_form_lists_the_console(self):
+        """Every form costs exactly one request; none resolves an id by listing."""
+        for kwargs in ({'scenario': {'steps': [{}]}},
+                       {'scenario': None, 'scenario_id': '4821'},
+                       {'scenario': None, 'test_id': '1764165600525.2'}):
+            with patch.object(studio_functions, '_fetch_all_scenarios') as scenarios, \
+                    patch.object(studio_functions, '_fetch_all_plans') as plans:
+                _, post = _score([_step()], **kwargs)
+            scenarios.assert_not_called()
+            plans.assert_not_called()
+            assert post.call_count == 1
 
     def test_test_id_passes_through_as_test_id(self):
         _, post = _score([_step()], scenario=None, test_id='1764165600525.2')

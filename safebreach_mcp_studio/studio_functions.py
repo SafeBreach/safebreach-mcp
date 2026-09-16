@@ -2568,29 +2568,13 @@ def _parse_scenario_argument(scenario):
     return parsed
 
 
-def _saved_scenario_steps(console, scenario_id):
-    """The steps of a saved scenario the endpoint cannot resolve for itself.
-
-    Only non-numeric ids reach here. A custom plan's integer id is sent as
-    ``id`` and resolved server-side; there is no body field that accepts an OOB
-    scenario's UUID, so its steps have to be fetched and posted.
-    """
-    for scenario in _fetch_all_scenarios(console):
-        if str(scenario.get('id')) == scenario_id:
-            return scenario.get('steps')
-    for plan in _fetch_all_plans(console):
-        if str(plan.get('id')) == scenario_id:
-            return plan.get('steps')
-    raise ValueError(f"Scenario '{scenario_id}' not found")
-
-
-def _statistics_plan_body(console, scenario, scenario_id, test_id):
+def _statistics_plan_body(scenario, scenario_id, test_id):
     """The body to score, and how many steps it holds when that is knowable.
 
     The step count is returned alongside because the orchestrator truncates its
     reply when it stops evaluating early, and a reply shorter than the plan is
-    only detectable against a step list this side holds. The two passthrough
-    forms resolve server-side, so nothing here knows their length.
+    only detectable against a step list this side holds. The two id forms are
+    resolved server-side, so nothing here knows their length.
     """
     named = _sole_scenario_input(scenario, scenario_id, test_id)
 
@@ -2598,18 +2582,31 @@ def _statistics_plan_body(console, scenario, scenario_id, test_id):
         return {'name': '', 'testId': str(test_id).strip()}, None
 
     if named == 'scenario_id':
-        resolved = str(scenario_id).strip()
-        if resolved.isdigit():
-            return {'name': '', 'id': int(resolved)}, None
-        steps = _saved_scenario_steps(console, resolved)
-        _require_steps(steps, f"Scenario '{resolved}'")
-        return {'name': '', 'steps': steps}, len(steps)
+        return {'name': '', 'id': _plan_id(scenario_id)}, None
 
     body = _parse_scenario_argument(scenario)
     steps = body.get('steps')
     _require_steps(steps, "The scenario given")
     body.setdefault('name', '')
     return body, len(steps)
+
+
+def _plan_id(scenario_id):
+    """A saved plan's numeric id, which the endpoint resolves for itself.
+
+    An OOB scenario's UUID is refused rather than resolved here. The endpoint
+    has no body field that accepts one, so honouring it would mean listing every
+    scenario on the console to recover steps the caller can fetch directly — a
+    second request this tool would otherwise never make.
+    """
+    resolved = str(scenario_id).strip()
+    if not resolved.isdigit():
+        raise ValueError(
+            f"scenario_id must be a saved plan's numeric id, not '{resolved}'. "
+            "For an OOB scenario, fetch its steps with get_scenario_details and "
+            "pass them as 'scenario'."
+        )
+    return int(resolved)
 
 
 def _require_steps(steps, subject):
@@ -2826,12 +2823,13 @@ def sb_get_scenario_simulation_counts(
     Scores a scenario against the fleet as it stands without running it, and
     changes nothing. Constraints are never evaluated: this answer renders none,
     and asking for them is the single most expensive thing this endpoint can be
-    asked to do.
+    asked to do. Every input form costs exactly one request - nothing here
+    resolves an id by listing the console.
 
     Args:
         console: SafeBreach console identifier
         scenario: An ad-hoc scenario body, as JSON text or a parsed dict
-        scenario_id: A saved scenario's UUID, or a custom plan's integer id
+        scenario_id: A saved plan's numeric id, resolved by the endpoint itself
         test_id: A planRunId, scoring whatever scenario that run executed
         simulator_ids: Comma-separated simulators to answer for individually
 
@@ -2839,11 +2837,12 @@ def sb_get_scenario_simulation_counts(
         Per-step simulation counts with the contributing simulators in each role.
 
     Raises:
-        ValueError: If not exactly one input names what to score, if the
-            scenario has no steps, or if the statistics API rejects the body.
+        ValueError: If not exactly one input names what to score, if
+            scenario_id is not numeric, if the scenario has no steps, or if
+            the statistics API rejects the body.
     """
     named_simulator_ids = _parse_simulator_ids(simulator_ids)
-    body, steps_submitted = _statistics_plan_body(console, scenario, scenario_id, test_id)
+    body, steps_submitted = _statistics_plan_body(scenario, scenario_id, test_id)
     payload = _fetch_plan_statistics(console, body)
     steps = [_shape_statistics_step(step)
              for step in _normalize_statistics_steps(payload)]

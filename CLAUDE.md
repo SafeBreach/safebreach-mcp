@@ -505,8 +505,9 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
 25. `get_scenario_simulation_counts` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
   Scores a scenario against the fleet **without running it** and changes nothing: how many simulations it
   would produce, and which simulators produce them. Name exactly one of `scenario` (an ad-hoc body never
-  saved — the form to use while a configuration is still being assembled), `scenario_id` (an OOB UUID, or a
-  custom plan's integer id passed through to Core as `{id}`), or `test_id` (a planRunId). Optional
+  saved — the form to use while a configuration is still being assembled), `scenario_id` (a saved plan's
+  **numeric** id, passed through to Core as `{id}`; an OOB scenario's UUID is **refused** — fetch its steps
+  with `get_scenario_details` and pass them as `scenario`), or `test_id` (a planRunId). Optional
   `simulator_ids` (comma-separated) answers each named simulator in **both** roles with its count,
   `0 - measured`, `not computed`, or `not in this step` — two answers the normal listing cannot give, since
   a simulator measured at exactly zero is not a contributor and past the listing threshold naming ids is the
@@ -516,7 +517,8 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   (offline, disabled and unapproved simulators excluded); the *expected* figure is neither offered nor
   derivable from this answer. Constraints are never requested — this answer renders none, and one ordinary
   step measured 38,531 conflicts / 11.8 MB. The `moves` map is discarded on arrival, so the tool makes **no
-  playbook request at all**. `null` is never reported as `0`: an uncomputed count reads "not computed", and a
+  playbook request at all**, and no input form resolves an id by listing the console, so every call costs
+  exactly **one** request. `null` is never reported as `0`: an uncomputed count reads "not computed", and a
   reply shorter than the submitted plan is reported as early termination. A step offering more than **20**
   simulators omits the per-simulator listing **whole** rather than sampling it (a sample answers nobody);
   the counts and coverage still cover every simulator, and named `simulator_ids` are never subject to it.

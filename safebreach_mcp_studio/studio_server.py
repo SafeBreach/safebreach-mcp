@@ -1665,7 +1665,9 @@ It reports what runs and how much; it does not explain why a step produces nothi
 Name exactly ONE of:
 - scenario: an ad-hoc scenario body never saved, as JSON text or a parsed object. Only
   'steps' is required. This is the form to use while assembling a configuration.
-- scenario_id: a saved scenario's UUID, or a custom plan's integer id.
+- scenario_id: a saved plan's NUMERIC id, which SafeBreach resolves itself. An OOB
+  scenario's UUID is not accepted here — fetch its steps with get_scenario_details
+  (Config server) and pass them as 'scenario'.
 - test_id: a planRunId (e.g. "1764165600525.2") — scores whatever scenario that run executed.
 
 Parameters:
@@ -1687,7 +1689,7 @@ coverage still cover every simulator. A count that was never measured is reporte
 computed, never as a zero.
 
 Examples:
-get_scenario_simulation_counts(console="demo", scenario_id="3b8eade5-9285-43b8-b3e7-6350420983a5")
+get_scenario_simulation_counts(console="demo", scenario_id="4821")
 get_scenario_simulation_counts(console="demo", test_id="1764165600525.2")
 get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simulator_ids="sim-a,sim-b")"""
         )
