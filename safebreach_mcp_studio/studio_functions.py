@@ -2414,30 +2414,19 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
         List of per-step stat dicts with simulationCount, matched counts,
         resolved_attacks, and optionally constraint details.
     """
-    base_url = get_api_base_url(console, 'orchestrator')
-    account_id = get_api_account_id(console)
-    headers = {"Content-Type": "application/json", **get_auth_headers_for_console(console)}
-
-    constraint_params = "&getConstraints=true&getAllConstraints=true" if include_constraints else ""
-    api_url = (
-        f"{base_url}/api/orch/v1/accounts/{account_id}"
-        f"/plan/statistics?limit=500000&includeDisabled=true{constraint_params}"
-    )
-    payload = {"name": "", "steps": steps}
-
     logger.info(f"Calling statistics API for {len(steps)} steps on console '{console}'"
                 f"{' (with constraints)' if include_constraints else ''}")
-    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
-    try:
-        check_rbac_response(response)
-    except requests.exceptions.HTTPError:
-        body = getattr(response, 'text', '')
-        logger.error(f"Statistics API error {response.status_code}: {body}")
-        raise ValueError(
-            f"Statistics API error ({response.status_code}): {body}"
-        )
-
-    data = response.json().get('data', {})
+    # includeDisabled=True is this path's long-standing behaviour, kept as-is so
+    # routing the call through the shared fetcher changes nothing on the wire. It
+    # scores the whole fleet rather than the runnable part, so the prediction can
+    # exceed what a run produces and offline nodes never surface as blockers.
+    data = _fetch_plan_statistics(
+        console,
+        {"name": "", "steps": steps},
+        get_constraints=include_constraints,
+        get_all_constraints=include_constraints,
+        include_disabled=True,
+    )
     step_stats = data.get('steps', [])
 
     # Build attack name map for evaluate (resolved attacks + constraint rendering)
@@ -2619,14 +2608,20 @@ def _require_steps(steps, subject):
 
 
 def _fetch_plan_statistics(console, body, get_constraints=False,
-                           get_all_constraints=False):
+                           get_all_constraints=False, include_disabled=False):
     """Score one plan body against the fleet as it stands.
 
-    Every parameter but the two constraint flags is fixed, and those follow the
-    question being asked: constraints are the whole answer to what will not run,
-    and dead weight to how much will. They are never free — a single ordinary
-    step measured 38,531 of them. Both default off so a caller that does not ask
-    for them cannot be made to pay.
+    The single place this repo calls the statistics endpoint. Every parameter
+    but the three flags is fixed, and the constraint pair follows the question
+    being asked: constraints are the whole answer to what will not run, and dead
+    weight to how much will. They are never free — a single ordinary step
+    measured 38,531 of them. Both default off so a caller that does not ask for
+    them cannot be made to pay.
+
+    ``include_disabled`` widens scoring from the enabled fleet to the whole one.
+    It defaults off, which is both the runnable figure and the endpoint's own
+    default. On, the orchestrator also empties its offline-node set, so a fleet
+    scored that way can never report ``simulator_is_offline`` as a blocker.
 
     ``get_all_constraints`` decides how many reasons a simulator records, not how
     they are grouped. Off, validators run as a chain over survivors and a
@@ -2642,7 +2637,7 @@ def _fetch_plan_statistics(console, body, get_constraints=False,
     api_url = f"{base_url}/api/orch/v1/accounts/{account_id}/plan/statistics"
     params = {
         'limit': STATISTICS_LIMIT,
-        'includeDisabled': 'false',
+        'includeDisabled': 'true' if include_disabled else 'false',
         'getConstraints': 'true' if get_constraints else 'false',
         'getAllConstraints': 'true' if get_all_constraints else 'false',
         'useCache': 'true',
