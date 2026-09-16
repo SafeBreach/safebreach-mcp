@@ -1682,11 +1682,17 @@ Parameters:
 Counts are runnable: offline, disabled and unapproved simulators are excluded. The expected
 figure (which counts them) is not offered and cannot be derived from this answer.
 
-Returns markdown: the total, then per step its simulation count, its coverage - how many of
-the step's simulators produce simulations - and which ones. A step offering more than 20
-simulators omits the per-simulator listing entirely rather than sampling it; the counts and
-coverage still cover every simulator. A count that was never measured is reported as not
-computed, never as a zero.
+Returns markdown: the total, then per step its simulation count and a per-simulator
+breakdown - every simulator the step offers, with what it would produce AS ATTACKER and
+AS TARGET, strongest first. That pairing is what a choice of attackers and targets is made
+on: a simulator offered in only one role says so in the other, and one measured at zero is
+listed rather than hidden, since "produces nothing here" is the most actionable thing this
+answer can say about a machine.
+
+A step offering more than 20 simulators returns its simulation count WITHOUT the breakdown,
+and asks you to narrow the step's simulators filter - by OS, role, label or explicit ids -
+and score it again. A count that was never measured is reported as not computed, never as
+a zero.
 
 Examples:
 get_scenario_simulation_counts(console="demo", scenario_id="4821")
@@ -1743,59 +1749,45 @@ def _format_total_simulations(projected: dict) -> str:
     return f"**Total simulations:** {projected['total_simulations']:,}"
 
 
-def _format_step_coverage(step: dict) -> str:
-    """How much of the fleet this step offers actually produces simulations."""
-    return (f"{len(step['target_simulators']):,} of {step['target_simulators_total']:,} "
-            f"target simulators, {len(step['attacker_simulators']):,} of "
-            f"{step['attacker_simulators_total']:,} attacker simulators")
+def _format_disposition(disposition: dict) -> str:
+    """One simulator's contribution in one role, or the reason there is no number."""
+    if disposition['state'] == 'contributes':
+        return f"{disposition['count']:,}"
+    return _DISPOSITION_LABELS[disposition['state']]
 
 
-def _format_simulator_counts(mapping: dict) -> str:
-    """Simulator ids with their counts, highest contribution first."""
-    return ", ".join(f"{simulator_id} ({count:,})"
-                     for simulator_id, count in mapping.items())
+def _render_simulator_row(row: dict) -> str:
+    """A machine's two numbers side by side — what the choice is actually made on."""
+    return (f"  - {row['simulator_id']} — attacker: "
+            f"{_format_disposition(row['attacker'])}, target: "
+            f"{_format_disposition(row['target'])}")
 
 
 def _render_step_simulators(step: dict) -> list:
-    """Which simulators produce this step's simulations — or why they are not listed.
+    """What each simulator would produce — or, past the cap, how to get there.
 
-    Dropped rather than sampled past the cap: a caller reading "20 of 498" cannot
-    tell whether the machine they care about is among the 478 unshown, so a
-    sample answers nobody.
+    Past the cap the breakdown is dropped whole and the caller is told to narrow
+    the step's simulators filter. Naming ids cannot be the instruction here:
+    choosing simulators is how a caller would learn which ids are worth naming,
+    so pointing at `simulator_ids` would close the loop on itself.
     """
     if step['listing_omitted']:
-        return ["  - Per-simulator listing omitted: this step offers more than "
-                f"{SIMULATOR_LISTING_CAP} simulators. The count and coverage above cover "
-                "all of them. Name simulator_ids to get each one's count."]
-
-    lines = []
-    for role, label in (('attacker_simulators', 'attackers'),
-                        ('target_simulators', 'targets')):
-        if step[role]:
-            lines.append(f"  - Contributing {label}: {_format_simulator_counts(step[role])}")
-        unmeasured = step[f'{role}_unmeasured']
-        if unmeasured:
-            lines.append(f"  - Not computed as {label}: {', '.join(unmeasured)}")
-    return lines
+        return [f"  - Per-simulator breakdown omitted: this step offers "
+                f"{step['simulators_offered']:,} simulators, over the {SIMULATOR_LISTING_CAP} "
+                "this answer lists. Narrow the step's simulators filter — by OS, role, "
+                "label or explicit ids — and score it again to see what each one produces."]
+    return [_render_simulator_row(row) for row in step['simulator_rows']]
 
 
 def _render_asked_about(step: dict) -> list:
-    """The named simulators, answered in both roles whatever the listing did."""
+    """The named simulators, answered in both roles whatever the breakdown did."""
     asked = step.get('asked_about')
     if not asked:
         return []
-    lines = []
-    for role, label in (('attacker_simulators', 'attackers'),
-                        ('target_simulators', 'targets')):
-        answers = []
-        for simulator_id, roles in asked.items():
-            disposition = roles[role]
-            if disposition['state'] == 'contributes':
-                answers.append(f"{simulator_id} ({disposition['count']:,})")
-            else:
-                answers.append(f"{simulator_id} ({_DISPOSITION_LABELS[disposition['state']]})")
-        lines.append(f"  - Asked about as {label}: {', '.join(answers)}")
-    return lines
+    return [f"  - Asked about: {simulator_id} — attacker: "
+            f"{_format_disposition(roles['attacker_simulators'])}, target: "
+            f"{_format_disposition(roles['target_simulators'])}"
+            for simulator_id, roles in asked.items()]
 
 
 def _format_scenario_simulation_counts(projected: dict) -> str:
@@ -1826,18 +1818,16 @@ def _format_scenario_simulation_counts(projected: dict) -> str:
                          f"computed; {why}.")
             parts.extend(_render_asked_about(step))
             continue
-        parts.append(
-            f"- **Step {step['step_index']}** - {step['simulation_count']:,} simulations. "
-            f"Coverage: {_format_step_coverage(step)} produce simulations."
-        )
+        parts.append(f"- **Step {step['step_index']}** - "
+                     f"{step['simulation_count']:,} simulations.")
         parts.extend(_render_step_simulators(step))
         parts.extend(_render_asked_about(step))
 
     if projected['asked_about']:
         parts.append("")
         parts.append(
-            f"**Scoped to:** {', '.join(projected['asked_about'])} - the simulation counts "
-            "and the coverage figures are NOT; they cover every simulator in the step."
+            f"**Scoped to:** {', '.join(projected['asked_about'])} - the simulation "
+            "counts are NOT; they cover every simulator in the step."
         )
 
     parts.append("")

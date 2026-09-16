@@ -21,9 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`includeDisabled=false`), and constraints are never requested, since this answer renders none and
   one ordinary step measured 38,531 of them. A count the orchestrator never computed is reported as
   not computed rather than as a zero, and a reply shorter than the submitted plan is reported as
-  early termination. A step offering more than 20 simulators omits the per-simulator listing whole
-  rather than sampling it; the counts and coverage still cover every simulator, and named
-  `simulator_ids` are answered regardless.
+  early termination. Under 20 simulators offered, a step returns its simulation count plus a
+  per-simulator breakdown — each simulator with what it would produce *as attacker* and *as target*,
+  which is the pairing a choice of attackers and targets is made on; at or over the cap it returns
+  only the count and asks the caller to narrow the step's simulators filter. Named `simulator_ids`
+  are answered either way.
 
 ## 1.14.0 — 2026-09-07
 

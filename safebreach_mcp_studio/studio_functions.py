@@ -2676,48 +2676,56 @@ def _normalize_statistics_steps(payload):
     return steps
 
 
-def _split_simulator_map(mapping):
-    """The simulators that produce simulations, ranked, and those never measured.
-
-    Measured zeros are dropped; ``None`` is not. A simulator whose count was
-    never taken must not be binned with the ones measured at zero — that would
-    assert it contributes nothing on the strength of a measurement nobody made.
-    """
-    contributing, unmeasured = {}, []
-    for simulator_id, count in mapping.items():
-        if not is_computed_count(count):
-            unmeasured.append(simulator_id)
-        elif count > 0:
-            contributing[simulator_id] = count
-    ranked = dict(sorted(contributing.items(), key=lambda kv: (-kv[1], str(kv[0]))))
-    return ranked, sorted(unmeasured, key=str)
-
-
 def _shape_statistics_step(step):
-    """One step's answer: the count, and which simulators produce it in each role."""
-    shaped = {
+    """One step's answer: the count, and what each simulator would produce in each role.
+
+    The raw role maps are kept whole. Both the default per-simulator breakdown
+    and the named-id answers are read from them through the same disposition
+    vocabulary, so a simulator measured at exactly zero stays distinguishable
+    from one the step never offered in that role.
+    """
+    offered = set(step['attacker_simulators']) | set(step['target_simulators'])
+    return {
         'step_index': step['step_index'],
         'simulation_count': step['simulation_count'],
         'counts_computed': step['counts_computed'],
         'is_limit_reached': step['is_limit_reached'],
+        'attacker_simulators_offered': step['attacker_simulators'],
+        'target_simulators_offered': step['target_simulators'],
+        'simulators_offered': len(offered),
+        # The trigger is the fleet the step offers, not how much of it produces:
+        # 500 offered of which 3 produce is still a 500-row breakdown.
+        'listing_omitted': len(offered) > SIMULATOR_LISTING_CAP,
     }
-    offered = 0
-    for role in ('attacker_simulators', 'target_simulators'):
-        contributing, unmeasured = _split_simulator_map(step[role])
-        shaped[role] = contributing
-        shaped[f'{role}_total'] = len(step[role])
-        shaped[f'{role}_unmeasured'] = unmeasured
-        # The raw map is kept for the named-id answers only. A disposition read
-        # off the contributing map instead would report a simulator measured at
-        # exactly zero as one the step never offered — the two facts this filter
-        # exists to tell apart.
-        shaped[f'{role}_offered'] = step[role]
-        offered = max(offered, len(step[role]))
-    # The trigger is the fleet the step offers, not how many of it contributes:
-    # 500 offered of which 3 produce is still a 500-entry answer to "which ones".
-    shaped['listing_omitted'] = offered > SIMULATOR_LISTING_CAP
-    shaped['simulators_offered'] = offered
-    return shaped
+
+
+def _simulator_rows(step):
+    """What every simulator in this step would produce, in both roles at once.
+
+    One row per simulator rather than a list per role: the caller is choosing
+    which machines to attack from and which to attack, and that decision reads
+    a machine's two numbers together. A simulator offered in only one role is
+    stated as such in the other, which is the fact that makes it a target-only
+    or attacker-only candidate.
+
+    Ranked by total contribution so the strongest candidates lead. Simulators
+    measured at zero are kept: "produces nothing here" is the most actionable
+    thing this answer can say about a machine.
+    """
+    offered = sorted(set(step['attacker_simulators_offered'])
+                     | set(step['target_simulators_offered']), key=str)
+    rows = [
+        {
+            'simulator_id': simulator_id,
+            'attacker': _simulator_disposition(step, 'attacker_simulators', simulator_id),
+            'target': _simulator_disposition(step, 'target_simulators', simulator_id),
+        }
+        for simulator_id in offered
+    ]
+    rows.sort(key=lambda row: (-((row['attacker']['count'] or 0)
+                                 + (row['target']['count'] or 0)),
+                               str(row['simulator_id'])))
+    return rows
 
 
 def _parse_simulator_ids(simulator_ids):
@@ -2779,10 +2787,10 @@ def _project_simulation_counts(steps, named_simulator_ids, steps_submitted):
             'listing_omitted': step['listing_omitted'],
             'simulators_offered': step['simulators_offered'],
         }
-        for role in ('attacker_simulators', 'target_simulators'):
-            view[role] = dict(step[role])
-            view[f'{role}_total'] = step[f'{role}_total']
-            view[f'{role}_unmeasured'] = list(step[f'{role}_unmeasured'])
+        # Absent rather than empty past the cap: an empty list would read as a
+        # step whose simulators were looked at and found to produce nothing.
+        if not step['listing_omitted']:
+            view['simulator_rows'] = _simulator_rows(step)
         if named_simulator_ids:
             view['asked_about'] = {
                 simulator_id: {

@@ -508,10 +508,9 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   saved — the form to use while a configuration is still being assembled), `scenario_id` (a saved plan's
   **numeric** id, passed through to Core as `{id}`; an OOB scenario's UUID is **refused** — fetch its steps
   with `get_scenario_details` and pass them as `scenario`), or `test_id` (a planRunId). Optional
-  `simulator_ids` (comma-separated) answers each named simulator in **both** roles with its count,
-  `0 - measured`, `not computed`, or `not in this step` — two answers the normal listing cannot give, since
-  a simulator measured at exactly zero is not a contributor and past the listing threshold naming ids is the
-  only way to get a per-simulator count. Naming ids narrows what is **listed**, never what is counted.
+  `simulator_ids` (comma-separated) answers each named simulator in **both** roles — the one way to get a
+  per-simulator number once the breakdown is dropped. Naming ids narrows what is **listed**, never what is
+  counted.
   **Every query parameter to `POST /plan/statistics` is internal**: `limit=500000`, `includeDisabled=false`,
   `getConstraints=false`, `getAllConstraints=false`, `useCache=true`. Counts are therefore **runnable**
   (offline, disabled and unapproved simulators excluded); the *expected* figure is neither offered nor
@@ -519,9 +518,17 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   step measured 38,531 conflicts / 11.8 MB. The `moves` map is discarded on arrival, so the tool makes **no
   playbook request at all**, and no input form resolves an id by listing the console, so every call costs
   exactly **one** request. `null` is never reported as `0`: an uncomputed count reads "not computed", and a
-  reply shorter than the submitted plan is reported as early termination. A step offering more than **20**
-  simulators omits the per-simulator listing **whole** rather than sampling it (a sample answers nobody);
-  the counts and coverage still cover every simulator, and named `simulator_ids` are never subject to it.
+  reply shorter than the submitted plan is reported as early termination.
+  **Output shape, by whether the cap is reached.** Under **20** simulators offered (the union of both role
+  maps), the step returns its simulation count plus a **per-simulator breakdown**: every simulator the step
+  offers with what it would produce *as attacker* and *as target*, strongest first. That pairing is what a
+  choice of attackers and targets is made on — a simulator offered in only one role says so in the other
+  (making it a target-only or attacker-only candidate), and one measured at zero is listed rather than
+  hidden, since "produces nothing here" is the most actionable thing the answer can say about a machine.
+  At or over the cap the step returns **only** its simulation count and asks the caller to narrow the step's
+  simulators filter and score again. It deliberately does **not** say "name simulator_ids" there: choosing
+  simulators is how a caller would learn which ids are worth naming, so that instruction closes the loop on
+  itself. Named `simulator_ids` are answered either way.
 
 
 ## Filtering and Search Capabilities

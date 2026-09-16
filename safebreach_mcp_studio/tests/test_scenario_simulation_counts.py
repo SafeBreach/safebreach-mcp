@@ -38,6 +38,17 @@ def _score(steps, **kwargs):
     return result, requests_mock.post
 
 
+def _rows(result, step=0):
+    """The step's per-simulator breakdown, keyed by simulator id."""
+    return {row['simulator_id']: row
+            for row in result['steps'][step]['simulator_rows']}
+
+
+def _row_ids(result, step=0):
+    """The breakdown in the order it is rendered."""
+    return [row['simulator_id'] for row in result['steps'][step]['simulator_rows']]
+
+
 class TestInputExclusivity:
     """Exactly one input names what to score."""
 
@@ -173,13 +184,12 @@ class TestNullIsNotZero:
         assert 'across the 1 step(s) that were scored' in \
             _format_scenario_simulation_counts(result)
 
-    def test_unmeasured_simulator_is_listed_apart_from_measured_zeros(self):
+    def test_unmeasured_is_distinguished_from_a_measured_zero(self):
         result, _ = _score([_step(attackers={'sim-a': None, 'sim-b': 0, 'sim-c': 3})])
-        step = result['steps'][0]
-        assert step['attacker_simulators'] == {'sim-c': 3}
-        assert step['attacker_simulators_unmeasured'] == ['sim-a']
-        assert 'Not computed as attackers: sim-a' in \
-            _format_scenario_simulation_counts(result)
+        rows = _rows(result)
+        assert rows['sim-a']['attacker']['state'] == 'not_computed'
+        assert rows['sim-b']['attacker']['state'] == 'measured_zero'
+        assert rows['sim-c']['attacker'] == {'state': 'contributes', 'count': 3}
 
     def test_truncated_reply_is_reported_against_the_submitted_steps(self):
         result, _ = _score([_step()], scenario={'steps': [{}, {}, {}]})
@@ -209,64 +219,97 @@ class TestMovesAreDropped:
         names.assert_not_called()
 
 
-class TestContributingSimulators:
-    """Which simulators produce the simulations, ranked."""
+class TestSimulatorBreakdown:
+    """Every simulator the step offers, with both its role numbers."""
 
-    def test_measured_zeros_are_not_contributors(self):
-        result, _ = _score([_step(attackers={'sim-a': 0, 'sim-b': 4})])
-        assert result['steps'][0]['attacker_simulators'] == {'sim-b': 4}
+    def test_every_offered_simulator_gets_a_row_including_measured_zeros(self):
+        """"Produces nothing here" is the most actionable thing to say about a machine."""
+        result, _ = _score([_step(attackers={'sim-a': 0, 'sim-b': 4},
+                                 targets={'sim-a': 0, 'sim-b': 4})])
+        assert _row_ids(result) == ['sim-b', 'sim-a']
+        assert _rows(result)['sim-a']['attacker']['state'] == 'measured_zero'
 
-    def test_contributors_are_ranked_by_contribution(self):
-        result, _ = _score([_step(attackers={'low': 1, 'high': 9, 'mid': 5})])
-        assert list(result['steps'][0]['attacker_simulators']) == ['high', 'mid', 'low']
+    def test_a_row_carries_both_roles_at_once(self):
+        result, _ = _score([_step(attackers={'sim-a': 7}, targets={'sim-a': 2})])
+        row = _rows(result)['sim-a']
+        assert row['attacker'] == {'state': 'contributes', 'count': 7}
+        assert row['target'] == {'state': 'contributes', 'count': 2}
+        assert 'sim-a — attacker: 7, target: 2' in \
+            _format_scenario_simulation_counts(result)
 
-    def test_coverage_denominator_is_the_offered_fleet(self):
-        result, _ = _score([_step(targets={'a': 3, 'b': 0, 'c': 0})])
-        step = result['steps'][0]
-        assert step['target_simulators_total'] == 3
-        assert len(step['target_simulators']) == 1
-        assert '1 of 3 target simulators' in _format_scenario_simulation_counts(result)
+    def test_rows_are_ranked_by_total_contribution(self):
+        result, _ = _score([_step(attackers={'low': 1, 'high': 5, 'mid': 2},
+                                  targets={'low': 0, 'high': 4, 'mid': 4})])
+        assert _row_ids(result) == ['high', 'mid', 'low']
+
+    def test_a_simulator_offered_in_one_role_says_so_in_the_other(self):
+        """The fact that makes a machine a target-only or attacker-only candidate."""
+        result, _ = _score([_step(attackers={'win-1': 3}, targets={'lin-1': 2})])
+        rows = _rows(result)
+        assert rows['win-1']['target']['state'] == 'not_in_step'
+        assert rows['lin-1']['attacker']['state'] == 'not_in_step'
+        text = _format_scenario_simulation_counts(result)
+        assert 'win-1 — attacker: 3, target: not in this step' in text
+        assert 'lin-1 — attacker: not in this step, target: 2' in text
+
+    def test_an_unmeasured_count_reads_as_not_computed_not_as_zero(self):
+        result, _ = _score([_step(attackers={'sim-a': None}, targets={'sim-a': 0})])
+        text = _format_scenario_simulation_counts(result)
+        assert 'sim-a — attacker: not computed, target: 0 - measured' in text
 
 
 class TestListingCap:
-    """Past the cap the listing is dropped whole, never sampled."""
+    """Past the cap the breakdown is dropped whole and the caller is told how to get it."""
 
-    def test_listing_survives_at_the_cap(self):
+    def test_breakdown_survives_at_the_cap(self):
         fleet = {f'sim-{i:03d}': 1 for i in range(SIMULATOR_LISTING_CAP)}
         result, _ = _score([_step(attackers=fleet, targets=fleet)])
-        assert result['steps'][0]['listing_omitted'] is False
-        text = _format_scenario_simulation_counts(result)
-        assert 'Contributing attackers:' in text
-        assert 'listing omitted' not in text
+        step = result['steps'][0]
+        assert step['listing_omitted'] is False
+        assert len(step['simulator_rows']) == SIMULATOR_LISTING_CAP
+        assert 'breakdown omitted' not in _format_scenario_simulation_counts(result)
 
-    def test_listing_is_dropped_past_the_cap(self):
+    def test_breakdown_is_dropped_past_the_cap(self):
         fleet = {f'sim-{i:03d}': 1 for i in range(SIMULATOR_LISTING_CAP + 1)}
         result, _ = _score([_step(attackers=fleet, targets=fleet)])
-        assert result['steps'][0]['listing_omitted'] is True
-        text = _format_scenario_simulation_counts(result)
-        assert 'Per-simulator listing omitted' in text
-        assert 'Contributing attackers:' not in text
-
-    def test_the_trigger_is_the_fleet_offered_not_the_fleet_contributing(self):
-        """500 offered of which 3 produce is still a 500-entry answer to "which ones"."""
-        fleet = {f'sim-{i:03d}': (1 if i < 3 else 0) for i in range(500)}
-        result, _ = _score([_step(attackers=fleet, targets=fleet)])
         step = result['steps'][0]
-        assert len(step['attacker_simulators']) == 3
+        assert step['listing_omitted'] is True
+        # Absent, not empty: an empty list would read as "looked and found nothing".
+        assert 'simulator_rows' not in step
+
+    def test_the_omission_asks_for_a_narrower_filter_not_for_ids(self):
+        """Naming ids cannot be the instruction: choosing is how you learn which ids."""
+        fleet = {f'sim-{i:03d}': 1 for i in range(500)}
+        result, _ = _score([_step(attackers=fleet, targets=fleet)])
+        text = _format_scenario_simulation_counts(result)
+        assert 'Narrow the step' in text and 'simulators filter' in text
+        assert 'Name simulator_ids' not in text
+
+    def test_the_trigger_is_the_union_of_both_role_maps(self):
+        """Neither map alone passes the cap, but the breakdown would still be 30 rows."""
+        attackers = {f'atk-{i:02d}': 1 for i in range(15)}
+        targets = {f'tgt-{i:02d}': 1 for i in range(15)}
+        result, _ = _score([_step(attackers=attackers, targets=targets)])
+        step = result['steps'][0]
+        assert step['simulators_offered'] == 30
         assert step['listing_omitted'] is True
 
-    def test_capping_never_touches_the_counts(self):
+    def test_the_trigger_is_the_fleet_offered_not_the_fleet_producing(self):
+        """500 offered of which 3 produce is still a 500-row breakdown."""
+        fleet = {f'sim-{i:03d}': (1 if i < 3 else 0) for i in range(500)}
+        result, _ = _score([_step(attackers=fleet, targets=fleet)])
+        assert result['steps'][0]['listing_omitted'] is True
+
+    def test_capping_never_touches_the_simulation_count(self):
         fleet = {f'sim-{i:03d}': 2 for i in range(500)}
         result, _ = _score([_step(count=1000, attackers=fleet, targets=fleet)])
-        text = _format_scenario_simulation_counts(result)
         assert result['total_simulations'] == 1000
-        assert '500 of 500 target simulators' in text
-        assert '500 of 500 attacker simulators' in text
+        assert '1,000 simulations' in _format_scenario_simulation_counts(result)
 
-    def test_dropping_the_listing_keeps_the_answer_small(self):
+    def test_dropping_the_breakdown_keeps_the_answer_small(self):
         fleet = {f'{i:08d}-0000-0000-0000-0000000000ce': 500 - i for i in range(500)}
         result, _ = _score([_step(count=125250, attackers=fleet, targets=fleet)])
-        assert len(_format_scenario_simulation_counts(result)) < 1500
+        assert len(_format_scenario_simulation_counts(result)) < 1000
 
 
 class TestNamedSimulators:
@@ -294,32 +337,24 @@ class TestNamedSimulators:
         }
 
     def test_named_ids_are_answered_past_the_cap(self):
+        """The one way to get a per-simulator number once the breakdown is dropped."""
         fleet = {f'sim-{i:03d}': 500 - i for i in range(500)}
         result, _ = _score([_step(attackers=fleet, targets=fleet)],
                            simulator_ids='sim-000,sim-499')
         text = _format_scenario_simulation_counts(result)
         assert result['steps'][0]['listing_omitted'] is True
-        assert 'Asked about as attackers: sim-000 (500), sim-499 (1)' in text
+        assert 'Asked about: sim-000 — attacker: 500, target: 500' in text
+        assert 'Asked about: sim-499 — attacker: 1, target: 1' in text
 
-    def test_a_measured_zero_is_reachable_only_by_naming_it(self):
-        """It is in neither the contributors nor the unmeasured list, yet it counts."""
-        result, _ = _score([_step(attackers={'sim-a': 0, 'sim-b': 4})],
-                           simulator_ids='sim-a')
-        step = result['steps'][0]
-        assert 'sim-a' not in step['attacker_simulators']
-        assert 'sim-a' not in step['attacker_simulators_unmeasured']
-        assert step['asked_about']['sim-a']['attacker_simulators']['count'] == 0
-        assert '0 - measured' in _format_scenario_simulation_counts(result)
-
-    def test_naming_ids_does_not_change_the_counts_or_the_coverage(self):
+    def test_naming_ids_does_not_change_the_counts(self):
         fleet = {'sim-a': 3, 'sim-b': 4}
         plain, _ = _score([_step(count=7, attackers=fleet, targets=fleet)])
         scoped, _ = _score([_step(count=7, attackers=fleet, targets=fleet)],
                            simulator_ids='sim-a')
         assert plain['total_simulations'] == scoped['total_simulations']
-        for key in ('attacker_simulators_total', 'target_simulators_total'):
-            assert plain['steps'][0][key] == scoped['steps'][0][key]
-        assert 'the simulation counts and the coverage figures are NOT' in \
+        assert plain['steps'][0]['simulators_offered'] == \
+            scoped['steps'][0]['simulators_offered']
+        assert 'the simulation counts are NOT' in \
             _format_scenario_simulation_counts(scoped)
 
     def test_named_ids_are_deduped_in_the_order_given(self):
@@ -337,7 +372,7 @@ class TestNamedSimulators:
                            simulator_ids='sim-a')
         text = _format_scenario_simulation_counts(result)
         assert 'not computed' in text
-        assert 'Asked about as attackers: sim-a (not in this step)' in text
+        assert 'Asked about: sim-a — attacker: not in this step' in text
 
 
 class TestApiErrors:
