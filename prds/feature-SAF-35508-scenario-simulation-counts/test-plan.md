@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-16 14:45
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Reviewed  |  Updated: 2026-09-16 15:05
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD 2026-09-16 12:52) |
+| Status | Reviewed (In Sync with PRD 2026-09-16 12:52) — scoped sign-off, see `test-results/signoff.md` |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
@@ -952,13 +952,19 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 
 ## Sign-off
 
-- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope
-- [ ] Change Coverage complete — every changed file tested or justified
-- [ ] Regression complete — >=1 Manual regression test (or justification) + post-ship CI builds named
-- [ ] Progression evidence — >=1 Manual progression test walking the new feature (or justification)
-- [ ] validating-test-plan: RESULT: clean
-- [ ] All tests green (cumulative through Final) — evidence: test-results/<phase-or-date>.md
-- [ ] Accepted gaps listed and approved:
+**Scope note (2026-09-16).** A **scoped** sign-off was recorded: the unit tier is signed off on per-id evidence;
+the real-environment tier is **unverified and explicitly waived by the owner**. The three unchecked boxes below are
+waived, not satisfied. The record is `test-results/signoff.md`. This plan's Status stays `Reviewed` rather than
+`Signed off`, because a full sign-off requires every box.
+
+- [x] Requirements traceability complete — every R# covered or explicitly out-of-scope (validator: all 25 R-rows Covered)
+- [x] Change Coverage complete — every changed file tested or justified
+- [ ] Regression complete — **WAIVED**: T-36 is authored but has never run; no console. CI suite named.
+- [ ] Progression evidence — **WAIVED**: T-37 is authored but has never run; no console.
+- [x] validating-test-plan: RESULT: clean
+- [ ] All tests green (cumulative through Final) — **WAIVED for the real-environment tier**. Unit tier green with
+      per-id evidence: 29 of 29 executed (`test-results/phase-Final.md`). Open: T-29 unwritten, T-31 … T-37 BLOCKED.
+- [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
     an executor-run command plus its output.
