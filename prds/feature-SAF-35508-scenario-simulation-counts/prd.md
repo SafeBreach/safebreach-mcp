@@ -39,9 +39,9 @@ estimating it, which is a precondition for autonomous scenario construction.
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-09-16 11:46 |
+| **Last Updated** | 2026-09-16 12:27 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 4 phases complete — PR #98 open, awaiting review |
+| **Current Phase** | Phase 5 of 5 — pending (Phases 1-4 complete, PR #98 open) |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -129,8 +129,13 @@ blocked.
 - An attack that runs on fewer simulators than offered is a **reduction, not a block**, and is not listed.
 - A four-state verdict — blocked / clean / partially evaluated / not evaluated — decided by whether counts were
   computed and never by whether the lists are empty.
-- Constraint meanings are relayed verbatim from the response's own `constraintCatalog`, narrowed to cited codes. No
-  meaning is authored in this repo.
+- Constraint meanings are relayed verbatim from the response's own `constraintCatalog`. No meaning is authored in
+  this repo.
+- **At the attack cap the answer summarises rather than samples.** Past 50 blocked attacks in a step the per-attack
+  list is dropped **whole** and replaced by a tally of blocked attacks per constraint code, so all of them are
+  accounted for instead of the first 50. The catalog then covers every code any blocked entity cites, and a caller
+  who needs exact per-attack constraints names them in `attack_ids`, which carries the blockers in its answer. This
+  is the same rule the counts tool applies to its own listing: a sample answers nobody.
 
 **Component interaction**: The two tools' hints route to each other. Component A is shared by both; B and C have
 independent shaping layers because their payloads differ by roughly three orders of magnitude.
@@ -288,6 +293,10 @@ One INFO log per call naming the console. No new metrics or dashboards.
 - [x] Both tools are registered with `readOnlyHint=True` and documented in the `CLAUDE.md` tool catalog.
 - [x] The rate-limiting gate table is **not** extended.
 - [x] No caching MCP-side, so no stale impact number can be served.
+- [ ] At the attack cap no partial attack list is returned; the verdict, a per-code tally covering every blocked
+      attack, the simulator sections and the catalog are returned instead (Phase 5).
+- [ ] The constraint catalog at the cap covers every code any blocked entity cites, collected before capping (Phase 5).
+- [ ] A named `attack_id` carries its blockers in both cap states (Phase 5).
 
 **Quality Gates**
 - [x] Studio suite green — 562 passed / 37 skipped (80 tests across the two tools).
@@ -313,6 +322,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 2: Narrow `scenario_id` to numeric plan ids | ✅ Complete | 2026-09-15 | `199ea27` | Makes every input form one request |
 | Phase 3: Pair each simulator's attacker/target numbers | ✅ Complete | 2026-09-15 | `3b0a5fc` | Replaces two per-role lists |
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
+| Phase 5: Summarise by reason at the attack cap | ⏳ Pending | - | - | Supersedes the cap behaviour shipped in Phase 4 |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -394,6 +404,55 @@ tools against one payload with agreement assertions.
 
 **Git commit**: `feat(SAF-35508): get_scenario_blocked_entities answers what will not run, and why`
 
+### Phase 5 — At the attack cap, summarise by reason instead of sampling attacks
+
+**Semantic change**: Past 50 blocked attacks in a step, replace the truncated per-attack list with an exact tally of
+blocked attacks per constraint code.
+
+**Why**: Phase 4 shipped a `50 of 60` sample. That contradicts the rule the counts tool already follows and states in
+its own output — a sample answers nobody — and it is the weaker half of the trade: fifty near-identical lines cost
+~8,500 characters while leaving ten attacks unaccounted for, and they bury the fact a tally makes obvious (on the
+measured fixture, one offline machine was implicated in **all sixty**). Summarising is both smaller and more complete.
+
+**Deliverables**: A cap branch that reports every blocked attack by reason, a catalog widened to match, blockers on
+named-attack answers, and a hint that routes to `attack_ids`.
+
+**Implementation details**
+- In the projection's cap branch, stop truncating the blocked-attack list. Instead walk the step's per-attack
+  constraint grouping and accumulate, per code, how many **blocked** attacks cite it and which sides it was recorded
+  against. Emit that tally in place of the list; the list key is **absent**, not empty, matching the counts tool's rule
+  that an empty list would read as "looked and found nothing".
+- **Carry no validator detail on tally rows.** A row stands for many attacks, and the detail fields belong to whichever
+  leaf happened to be first — thirty attacks failing `incompatible_os` need not share one `required`/`actual` pair, and
+  showing one pair would misrepresent the rest. Detail stays on the per-attack lines below the cap, where it is exact.
+- Collect the cited codes **before** capping rather than from the rendered rows, so the catalog covers every code any
+  blocked entity cites. Without this the catalog shrinks as the list is dropped, exactly when it is doing the most work.
+- Add blockers to a named attack's answer, so `attack_ids` remains the way to get exact per-attack constraints once the
+  list is gone. This **supersedes** the Phase 4 mechanism that pinned named ids ahead of the cap — the pinning is
+  removed, because the list no longer exists to be pinned into.
+- Leave the blocked-simulator and excluded-simulator sections untouched: they are already grouped per code and
+  uncapped, so sixty nodes is still a few lines.
+- Ordering: tally rows by attack count descending, then code, matching every other grouped list in these two tools.
+
+**What can go wrong**: a step whose sixty attacks all cite one code collapses to a single row. That is correct and
+still complete — the verdict carries the exact count — but it is thin, and it is the case where naming `attack_ids`
+matters most. The hint says so.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Cap branch emits a per-code tally; cited codes collected pre-cap; named-attack answers gain blockers; pinning removed |
+| `safebreach_mcp_studio/studio_server.py` | Narrator renders the tally and the cap hint |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | Cap-behaviour tests updated — the existing ones assert the superseded sample |
+| `CLAUDE.md`, `CHANGELOG.md` | Catalog item 26 cap paragraph; Unreleased/Added |
+
+**Verification**: `SKIP_E2E_TESTS=true uv run --python 3.12 pytest safebreach_mcp_studio/tests` and
+`uvx ruff check --select F` on the changed files. The repo has no Python lint script, so `ruff --select F` is the gate
+that actually inspects these files.
+
+**Git commit**: `feat(SAF-35508): at the attack cap, report blocked attacks by reason rather than a sample`
+
 ---
 
 ## 9. Risks and Assumptions
@@ -406,6 +465,8 @@ tools against one payload with agreement assertions.
 | `getAllConstraints=true` payload size on a large estate | Medium | Caps and per-code grouping are the cost control; the tool's description warns it is the expensive call. **Not yet measured at `true` against a real console** |
 | Shared `_fetch_plan_statistics` now serves two tools | Low | Both flags default off; a test asserts the counts tool's exact params are unmoved |
 | Reason codes are a moving vocabulary (97 today, was ~102 before `e2c69b25f`) | Low | Nothing is keyed on the vocabulary — an unrecognised code is reported with whatever the catalog says, or nothing |
+
+| Phase 5's tally is only as informative as the code variety | Low | A step where every blocked attack cites one code renders one row. Complete and exact, but thin; the hint routes to `attack_ids` for that case |
 
 **Assumptions Under Question**
 - **No test plan exists.** `test-plan.md` was never authored for this feature; tests were written alongside the code.
@@ -454,7 +515,8 @@ blocked attacks and simulators with the constraints cited against them. Both acc
 3. **Blocked is three-state.** Present-and-zero is blocked; absent is excluded. Conflating them would report every
    offline machine as incompatible.
 4. **Caps drop whole, never sample.** A sample answers nobody — a caller reading "20 of 498" cannot tell whether their
-   machine is among the 478 unshown.
+   machine is among the 478 unshown. Phase 5 extends this to the blocked tool, which shipped a `50 of 60` sample in
+   Phase 4: past the cap it reports every blocked attack **by reason** instead of listing the first fifty.
 5. **Meanings are relayed, never authored**, now that the API supplies `constraintCatalog`.
 
 **Scope Changes**
@@ -464,6 +526,8 @@ blocked attacks and simulators with the constraints cited against them. Both acc
 - Ticket AC 6 (migrating the legacy helper) **not done** — deferred with a stated reason.
 - `getAllConstraints=true`, against the ticket's note, because `false` records only whichever reason a validator chain
   happened to hit first.
+- **Phase 5 supersedes Phase 4's cap behaviour** — the per-attack sample and the named-id pinning that went with it are
+  replaced by a per-code tally plus blockers on named-attack answers.
 
 **Business Value Delivered**
 A configuration can be scored before it exists as a saved scenario, which is the precondition for an agent assembling
@@ -477,8 +541,8 @@ avoided by construction.
 
 **Progress Summary**
 - **Last completed phase**: Phase 4 — Blocked-entities tool
-- **Next phase to implement**: None — all phases complete
-- **Overall progress**: 4 of 4 phases complete
+- **Next phase to implement**: Phase 5 — At the attack cap, summarise by reason instead of sampling attacks
+- **Overall progress**: 4 of 5 phases complete
 
 **Blockers**: None blocking implementation. PR #98 is open and awaiting review.
 
@@ -501,6 +565,7 @@ avoided by construction.
 | Phase 2: Numeric `scenario_id` | ✅ | ✅ | ⏳ | 41 tests; suite 519 |
 | Phase 3: Paired role breakdown | ✅ | ✅ | ⏳ | 44 tests; suite 522 |
 | Phase 4: Blocked entities | ✅ | ✅ | ⏳ | 40 tests; suite 562 |
+| Phase 5: Summarise at the cap | ⏳ | ⏳ | ⏳ | Not started |
 
 Lint = `ruff --select F` on the changed files; the repo has no Python lint script, so this is the gate that actually
 inspects them. Tests = the two suite files, since no `test-results/` exists.
@@ -522,3 +587,4 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-16 12:27 | Appended Phase 5 — at the attack cap, report blocked attacks by reason rather than a 50-of-60 sample. Updated §1.5, §3 Component C, §7 (3 new criteria), §9, §11, §12. Phases 1-4 untouched |
