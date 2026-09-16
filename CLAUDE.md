@@ -529,7 +529,37 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   simulators filter and score again. It deliberately does **not** say "name simulator_ids" there: choosing
   simulators is how a caller would learn which ids are worth naming, so that instruction closes the loop on
   itself. Named `simulator_ids` are answered either way.
-
+26. `get_scenario_blocked_entities` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
+  The sibling of item 25, answering the question it refuses: **what in this scenario will not run, and
+  why?** Same three inputs (`scenario` / numeric `scenario_id` / `test_id`, exactly one), plus optional
+  `attack_ids` answering each named attack `ran` (with its count), `blocked`, `not computed` or
+  `not in this scenario`. **Ran outranks blocked** — an attack scored `0` in one step and 240 in another
+  ran, and the answer never depends on step order. Naming ids narrows what is **listed**; the verdict
+  stays scenario-wide.
+  **Reports only.** Nothing is removed from the scenario and save is never blocked; acting on the report
+  belongs to whoever holds the configuration. An attack that runs on fewer simulators than were offered is
+  **reduced, not blocked**, and is deliberately not listed (that is SAF-35484).
+  **Three states, not two.** A simulator present in scoring and measured at `0` is **blocked**; one
+  **absent** from the count map — offline, disabled or unapproved under `includeDisabled=false` — is
+  reported separately as **excluded**, because it is switched off rather than incompatible. Offline nodes
+  carry `simulator_is_offline` in `simulatorConstraints` while never being seeded into `simulators`, so
+  folding the two would call every switched-off machine incompatible. `null` is never reported as `0`.
+  **Query parameters** differ from item 25 in one place that matters: `getConstraints=true` and
+  `getAllConstraints=true` — the constraints *are* this answer, and every applicable reason is asked for
+  rather than only the first a validator chain happened to record. This is the **expensive** half of the
+  endpoint (one ordinary step measured 38,531 conflicts / 11.8 MB at `getAllConstraints=false`), so the
+  caps and the per-code grouping are the only cost control. Still exactly **one** request; no playbook or
+  config lookup, so attacks and simulators are reported as **ids**.
+  **Verdict**: `blocked` / `clean` / `partially_evaluated` / `not_evaluated`, decided by whether counts
+  were computed and **never** by whether the lists are empty — a report that stopped early empties both by
+  construction, and a verdict read off their length would call a scenario nobody scored a scenario with
+  nothing wrong. Counts are over **distinct** entities scenario-wide.
+  **Meanings come from the console.** The response's own `constraintCatalog` (orchestrator SAF-35568) is
+  relayed verbatim, narrowed to the codes this answer cites; a code the console did not describe stays
+  undescribed and an older console with no catalog is reported as such. No meaning is authored in this repo.
+  **Caps**: 50 blocked attacks per step (named `attack_ids` pinned ahead of it), 3 simulator ids named per
+  constraint code then a count, blocked simulators uncapped because they are grouped per code. No count map
+  is ever capped, so the verdict and every total stay exact.
 
 ## Filtering and Search Capabilities
 

@@ -2509,9 +2509,9 @@ SIMULATOR_LISTING_CAP = 20
 
 COUNTS_HINT = (
     "These are runnable counts: offline, disabled and unapproved simulators are "
-    "excluded. This tool reports what runs and how much; it does not explain why "
-    "a step produces nothing. Nothing is cached here, so re-call after any change "
-    "to the scenario."
+    "excluded. This tool reports what runs and how much; for why an attack or a "
+    "simulator produces nothing, call get_scenario_blocked_entities. Nothing is "
+    "cached here, so re-call after any change to the scenario."
 )
 
 
@@ -2618,14 +2618,23 @@ def _require_steps(steps, subject):
         )
 
 
-def _fetch_plan_statistics(console, body):
+def _fetch_plan_statistics(console, body, get_constraints=False,
+                           get_all_constraints=False):
     """Score one plan body against the fleet as it stands.
 
-    Every query parameter is fixed. ``getConstraints`` stays off because this
-    answer renders no conflicts and they are not free — a single ordinary step
-    measured 38,531 of them. Booleans are sent as their JSON spelling; the
-    endpoint reads them as strings, and ``"True"`` would quietly ask a different
-    question.
+    Every parameter but the two constraint flags is fixed, and those follow the
+    question being asked: constraints are the whole answer to what will not run,
+    and dead weight to how much will. They are never free — a single ordinary
+    step measured 38,531 of them. Both default off so a caller that does not ask
+    for them cannot be made to pay.
+
+    ``get_all_constraints`` decides how many reasons a simulator records, not how
+    they are grouped. Off, validators run as a chain over survivors and a
+    simulator keeps only the first reason that eliminated it; on, every validator
+    runs against the full node set and it accumulates every reason it fails.
+
+    Booleans are sent as their JSON spelling; the endpoint reads them as strings,
+    and ``"True"`` would quietly ask a different question.
     """
     base_url = get_api_base_url(console, 'orchestrator')
     account_id = get_api_account_id(console)
@@ -2634,8 +2643,8 @@ def _fetch_plan_statistics(console, body):
     params = {
         'limit': STATISTICS_LIMIT,
         'includeDisabled': 'false',
-        'getConstraints': 'false',
-        'getAllConstraints': 'false',
+        'getConstraints': 'true' if get_constraints else 'false',
+        'getAllConstraints': 'true' if get_all_constraints else 'false',
         'useCache': 'true',
     }
 
@@ -2728,14 +2737,18 @@ def _simulator_rows(step):
     return rows
 
 
-def _parse_simulator_ids(simulator_ids):
-    """The simulators to answer for individually, in the order they were named."""
-    if _is_blank_input(simulator_ids):
+def _parse_id_list(raw, field, subject, fallback):
+    """The ids to answer for individually, in the order they were named.
+
+    Parsed before anything else a tool does, so a malformed filter costs no
+    request against a 120-second timeout.
+    """
+    if _is_blank_input(raw):
         return []
-    if isinstance(simulator_ids, (list, tuple)):
-        tokens = [str(token).strip() for token in simulator_ids]
+    if isinstance(raw, (list, tuple)):
+        tokens = [str(token).strip() for token in raw]
     else:
-        tokens = [token.strip() for token in str(simulator_ids).split(',')]
+        tokens = [token.strip() for token in str(raw).split(',')]
     named, seen = [], set()
     for token in tokens:
         if not token:
@@ -2744,10 +2757,7 @@ def _parse_simulator_ids(simulator_ids):
             seen.add(token)
             named.append(token)
     if not named:
-        raise ValueError(
-            "simulator_ids was given but named no simulator. "
-            "Leave it out to list the step's own simulators."
-        )
+        raise ValueError(f"{field} was given but named no {subject}. {fallback}")
     return named
 
 
@@ -2849,12 +2859,361 @@ def sb_get_scenario_simulation_counts(
             scenario_id is not numeric, if the scenario has no steps, or if
             the statistics API rejects the body.
     """
-    named_simulator_ids = _parse_simulator_ids(simulator_ids)
+    named_simulator_ids = _parse_id_list(
+        simulator_ids, 'simulator_ids', 'simulator',
+        "Leave it out to list the step's own simulators.")
     body, steps_submitted = _statistics_plan_body(scenario, scenario_id, test_id)
     payload = _fetch_plan_statistics(console, body)
     steps = [_shape_statistics_step(step)
              for step in _normalize_statistics_steps(payload)]
     return _project_simulation_counts(steps, named_simulator_ids, steps_submitted)
+
+
+
+# ---------------------------------------------------------------------------
+# plan/statistics — what in a scenario will not run, and why
+# ---------------------------------------------------------------------------
+
+BLOCKED_ATTACKS_CAP = 50
+CONSTRAINT_NODES_CAP = 3
+
+SIDE_KEYS = (('attackerConstraints', 'attacker'), ('targetConstraints', 'target'))
+
+# Only `reason` is guaranteed on a constraint leaf. These are the fields the
+# validators attach alongside it, relayed where present and never invented.
+DETAIL_FIELDS = ('values', 'expected', 'actual', 'got', 'required', 'schemaErrors', 'value')
+
+BLOCKED_HINT = (
+    "Reports only what will not run at all — an attack or simulator the console scored "
+    "at exactly zero. An entity that runs on fewer simulators than were offered is "
+    "reduced, not blocked, and is deliberately not listed. Nothing is removed from the "
+    "scenario; acting on this report belongs to whoever holds the configuration. For how "
+    "many simulations the scenario produces, call get_scenario_simulation_counts. Nothing "
+    "is cached here, so re-call after any change to the scenario."
+)
+
+
+def _normalize_blocked_steps(payload):
+    """The counts and the constraints exactly as the console reported them.
+
+    ``moves`` is kept here, unlike the counts path that drops it: a blocked
+    attack *is* that map reading zero, and it is also what tells a block apart
+    from a reduction. ``simulators`` is the attacker-union-target map, which is
+    the only sound denominator for a blocked simulator.
+    """
+    steps = []
+    for index, step in enumerate(payload.get('steps') or []):
+        count = step.get('simulationCount')
+        steps.append({
+            'step_index': index,
+            'simulation_count': count,
+            'counts_computed': is_computed_count(count),
+            'is_limit_reached': bool(step.get('isLimitReached')),
+            'moves': {str(k): v for k, v in (step.get('moves') or {}).items()},
+            'simulators': dict(step.get('simulators') or {}),
+            'constraints': step.get('simulatorConstraints') or {},
+        })
+    return steps
+
+
+def _constraint_leaves(constraints):
+    """Every (side, simulator, move, code) pairing the console recorded.
+
+    Both levels are read defensively: when evaluation stops early the sentinel
+    step carries ``simulatorConstraints: {}`` with neither side sub-key, and the
+    single-simulation rerun path creates them lazily.
+    """
+    for key, side in SIDE_KEYS:
+        for simulator_id, by_move in (constraints.get(key) or {}).items():
+            for move_id, leaves in (by_move or {}).items():
+                for leaf in leaves or ():
+                    code = (leaf or {}).get('reason')
+                    if code:
+                        yield side, simulator_id, str(move_id), code, leaf
+
+
+def _leaf_detail(leaf):
+    """What a validator attached beside the reason, where it attached anything."""
+    return {field: leaf[field] for field in DETAIL_FIELDS
+            if leaf.get(field) not in (None, [], {})}
+
+
+def _shape_blocked_step(step):
+    """Group the step's constraints by attack and by simulator in one pass.
+
+    One traversal rather than two: ``getAllConstraints=true`` makes every
+    validator run against the full node set, so the raw structure is large
+    enough that walking it twice is the difference that matters.
+    """
+    by_attack, by_simulator = {}, {}
+    for side, simulator_id, move_id, code, leaf in _constraint_leaves(step['constraints']):
+        detail = _leaf_detail(leaf)
+
+        codes = by_attack.setdefault(move_id, {})
+        entry = codes.setdefault(code, {'sides': set(), 'simulators': set(), 'detail': {}})
+        entry['sides'].add(side)
+        entry['simulators'].add(simulator_id)
+        entry['detail'] = entry['detail'] or detail
+
+        codes = by_simulator.setdefault(simulator_id, {})
+        entry = codes.setdefault(code, {'sides': set(), 'moves': set(), 'detail': {}})
+        entry['sides'].add(side)
+        entry['moves'].add(move_id)
+        entry['detail'] = entry['detail'] or detail
+
+    shaped = dict(step)
+    shaped['by_attack'] = by_attack
+    shaped['by_simulator'] = by_simulator
+    return shaped
+
+
+def _scored_zero(mapping):
+    """Ids the console measured at exactly zero — never the ones it never measured."""
+    return sorted(key for key, count in mapping.items()
+                  if is_computed_count(count) and count == 0)
+
+
+def _excluded_simulator_ids(step):
+    """Simulators the console constrained but never scored.
+
+    Offline, disabled and unapproved nodes are seeded into the constraint map —
+    carrying ``simulator_is_offline`` on every move — but are never seeded into
+    the count map under ``includeDisabled=false``. Absent is therefore a third
+    state, and reporting it as blocked would call every switched-off machine
+    incompatible.
+    """
+    return sorted(sid for sid in step['by_simulator'] if sid not in step['simulators'])
+
+
+def _attack_blockers(step, attack_id):
+    """The codes cited against one attack, worst-reach first."""
+    blockers = [
+        {'code': code, 'side': sorted(entry['sides']),
+         'simulator_count': len(entry['simulators']), 'detail': entry['detail']}
+        for code, entry in step['by_attack'].get(attack_id, {}).items()
+    ]
+    blockers.sort(key=lambda blocker: (-blocker['simulator_count'], blocker['code']))
+    return blockers
+
+
+def _simulator_groups(step, simulator_ids):
+    """Blocked simulators reported per constraint code rather than per simulator.
+
+    Sixty nodes eliminated by three codes is three lines, not sixty. Only the
+    names are capped; the count in each group is exact.
+    """
+    groups, explained = {}, set()
+    for simulator_id in simulator_ids:
+        for code, entry in step['by_simulator'].get(simulator_id, {}).items():
+            explained.add(simulator_id)
+            key = (code, tuple(sorted(entry['sides'])))
+            group = groups.setdefault(key, {
+                'code': code, 'side': list(key[1]),
+                'simulator_ids': [], 'detail': entry['detail'],
+            })
+            group['simulator_ids'].append(simulator_id)
+
+    rendered = []
+    for group in groups.values():
+        names = sorted(group['simulator_ids'])
+        group['simulator_count'] = len(names)
+        group['simulator_ids'] = names[:CONSTRAINT_NODES_CAP]
+        rendered.append(group)
+    rendered.sort(key=lambda group: (-group['simulator_count'], group['code']))
+    return rendered, sorted(set(simulator_ids) - explained)
+
+
+def _attack_disposition(steps, attack_id):
+    """What the whole scenario says about one named attack.
+
+    Ran outranks blocked: an attack scored zero in one step and 240 in another
+    ran, and the answer must not depend on which step the scenario lists first.
+    """
+    ran, blocked, offered = None, False, False
+    for step in steps:
+        if attack_id not in step['moves']:
+            continue
+        offered = True
+        count = step['moves'][attack_id]
+        if not is_computed_count(count):
+            continue
+        if count > 0:
+            ran = count if ran is None else max(ran, count)
+        else:
+            blocked = True
+    if ran is not None:
+        return {'state': 'ran', 'count': ran}
+    if blocked:
+        return {'state': 'blocked', 'count': 0}
+    if offered:
+        return {'state': 'not_computed', 'count': None}
+    return {'state': 'absent', 'count': None}
+
+
+def _verdict_summary(state, attacks, simulators, scored, returned):
+    """The verdict as a sentence, with the unscored steps never written off."""
+    if state == 'not_evaluated':
+        return ("No step was scored, so nothing can be said about what will run. "
+                "This is not a clean result.")
+    if state == 'partially_evaluated':
+        return (f"{scored} of {returned} step(s) were scored. Across those, {attacks} "
+                f"attack(s) and {simulators} simulator(s) contribute nothing; the "
+                "unscored steps were not examined.")
+    if state == 'blocked':
+        return (f"{attacks} attack(s) and {simulators} simulator(s) contribute nothing "
+                "in this scenario.")
+    return "Every attack and simulator in this scenario contributes at least one simulation."
+
+
+def _blocked_verdict(steps):
+    """Decided by whether counts were computed, never by whether the lists are empty.
+
+    A report that stopped early empties both lists by construction, so a verdict
+    read off their length would call a scenario nobody scored a scenario with
+    nothing wrong. Counts are over distinct entities scenario-wide: one attack
+    blocked in three steps is one attack.
+    """
+    scored = [step for step in steps if step['counts_computed']]
+    attacks, simulators = set(), set()
+    for step in scored:
+        attacks.update(_scored_zero(step['moves']))
+        simulators.update(_scored_zero(step['simulators']))
+
+    if not scored:
+        state = 'not_evaluated'
+    elif len(scored) < len(steps):
+        state = 'partially_evaluated'
+    elif attacks or simulators:
+        state = 'blocked'
+    else:
+        state = 'clean'
+
+    return {
+        'state': state,
+        'blocked_attack_count': len(attacks),
+        'blocked_simulator_count': len(simulators),
+        'steps_scored': len(scored),
+        'steps_returned': len(steps),
+        'summary': _verdict_summary(state, len(attacks), len(simulators),
+                                    len(scored), len(steps)),
+    }
+
+
+def _cited_catalog(catalog, codes):
+    """One entry per code this answer cites, relayed verbatim from the console.
+
+    Narrowed to what was actually rendered, so a caller is never handed the
+    whole vocabulary to explain a handful of blockers. Nothing here is authored
+    on this side: a code the console did not describe stays undescribed.
+    """
+    supplied = catalog or {}
+    return {code: dict(supplied.get(code) or {}) for code in sorted(codes)}
+
+
+def _project_blocked_entities(steps, catalog, named_attack_ids):
+    """What will not run, and why — nothing about how much will.
+
+    The verdict is computed first, over the unfiltered report, so narrowing what
+    is shown can never narrow what is claimed.
+    """
+    verdict = _blocked_verdict(steps)
+    dispositions = {attack_id: _attack_disposition(steps, attack_id)
+                    for attack_id in named_attack_ids}
+
+    projected, cited = [], set()
+    for step in steps:
+        view = {
+            'step_index': step['step_index'],
+            'counts_computed': step['counts_computed'],
+            'is_limit_reached': step['is_limit_reached'],
+        }
+        if step['counts_computed']:
+            blocked_attacks = _scored_zero(step['moves'])
+            # Named ids are pinned ahead of the cap: an attack the caller asked
+            # about must never be the one the truncation removes.
+            named_first = sorted(blocked_attacks,
+                                 key=lambda attack_id: attack_id not in named_attack_ids)
+            entries = [{'attack_id': attack_id,
+                        'blockers': _attack_blockers(step, attack_id)}
+                       for attack_id in named_first[:BLOCKED_ATTACKS_CAP]]
+            view['blocked_attacks'] = entries
+            view['blocked_attacks_total'] = len(blocked_attacks)
+
+            groups, unexplained = _simulator_groups(step, _scored_zero(step['simulators']))
+            view['blocked_simulators'] = groups
+            view['blocked_simulators_total'] = len(_scored_zero(step['simulators']))
+            view['blocked_simulators_unexplained'] = unexplained
+
+            excluded, _ = _simulator_groups(step, _excluded_simulator_ids(step))
+            view['excluded_simulators'] = excluded
+            view['excluded_simulators_total'] = len(_excluded_simulator_ids(step))
+
+            for entry in entries:
+                cited.update(blocker['code'] for blocker in entry['blockers'])
+            for group in groups + excluded:
+                cited.add(group['code'])
+        if named_attack_ids:
+            view['asked_about'] = {attack_id: dispositions[attack_id]
+                                   for attack_id in named_attack_ids}
+        projected.append(view)
+
+    return {
+        'verdict': verdict,
+        'steps': projected,
+        'asked_about': list(named_attack_ids),
+        'constraint_catalog': _cited_catalog(catalog, cited),
+        # None and {} are different facts: an older console supplies no catalog
+        # at all, a current one can supply an empty one.
+        'catalog_supplied': catalog is not None,
+        'hint_to_agent': BLOCKED_HINT,
+    }
+
+
+def sb_get_scenario_blocked_entities(
+    console: str = "default",
+    scenario=None,
+    scenario_id: str = None,
+    test_id: str = None,
+    attack_ids: str = None,
+) -> Dict[str, Any]:
+    """What in a scenario will not run at all, and the constraints cited against it.
+
+    Scores a scenario against the fleet as it stands without running it, and
+    changes nothing. Reports every attack and simulator the console measured at
+    exactly zero; an entity that merely runs on fewer simulators than were
+    offered is reduced, not blocked, and is not listed.
+
+    Constraints are requested here, which is the expensive half of this
+    endpoint, and every reason is asked for rather than only the first — a
+    simulator eliminated by several rules is worth more than its alphabetically
+    earliest one. The caps and the per-code grouping are what keep that
+    affordable.
+
+    Args:
+        console: SafeBreach console identifier
+        scenario: An ad-hoc scenario body, as JSON text or a parsed dict
+        scenario_id: A saved plan's numeric id, resolved by the endpoint itself
+        test_id: A planRunId, scoring whatever scenario that run executed
+        attack_ids: Comma-separated attacks to answer for individually
+
+    Returns:
+        A scenario-wide verdict, and per step what contributes nothing and why.
+
+    Raises:
+        ValueError: If not exactly one input names what to score, if
+            scenario_id is not numeric, if the scenario has no steps, or if
+            the statistics API rejects the body.
+    """
+    named_attack_ids = _parse_id_list(
+        attack_ids, 'attack_ids', 'attack',
+        "Leave it out to report every blocked attack in the scenario.")
+    body, _ = _statistics_plan_body(scenario, scenario_id, test_id)
+    payload = _fetch_plan_statistics(console, body, get_constraints=True,
+                                     get_all_constraints=True)
+    steps = [_shape_blocked_step(step)
+             for step in _normalize_blocked_steps(payload)]
+    return _project_blocked_entities(steps, payload.get('constraintCatalog'),
+                                     named_attack_ids)
 
 # ---------------------------------------------------------------------------
 # quick_run — SAF-31295: Quick Run attack execution

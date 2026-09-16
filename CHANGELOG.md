@@ -9,14 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `get_scenario_blocked_entities` (SAF-35508) — the sibling of `get_scenario_simulation_counts`,
+  answering what in a scenario will not run and why. Same three inputs plus an optional `attack_ids`
+  filter (`ran` outranks `blocked`, so a step-order-dependent answer is impossible). Reports every
+  attack and simulator the console measured at exactly `0` with the constraints cited against it;
+  an entity that merely runs on fewer simulators than offered is a reduction, not a block, and is not
+  listed. Distinguishes **blocked** (scored `0`) from **excluded** (absent from scoring — offline,
+  disabled or unapproved), which the raw response conflates only if you read absence as zero. Asks for
+  `getConstraints=true, getAllConstraints=true`, so every applicable reason is recorded rather than the
+  first; the caps and per-code grouping are what keep that affordable. Constraint meanings are relayed
+  verbatim from the response's own `constraintCatalog` and none is authored here. The verdict
+  (blocked / clean / partially evaluated / not evaluated) is decided by whether counts were computed,
+  never by whether the lists are empty.
+- The counts tool's hint now routes to `get_scenario_blocked_entities` for why a step produces nothing;
+  previously it could only say that it did not answer that.
 - `get_scenario_simulation_counts` (SAF-35508) — a read-only Studio tool that scores a scenario
   against the fleet without running it, answering how many simulations it would produce and which
   simulators produce them. Takes exactly one of `scenario` (an ad-hoc body never saved, so a
-  configuration can be scored while it is still being assembled), `scenario_id` (an OOB UUID or a
-  custom plan's integer id, passed through to Core as `{id}`) or `test_id` (a planRunId), plus an
-  optional `simulator_ids` filter that answers each named simulator in both roles. An OOB scenario's
-  UUID is refused rather than resolved, so no input form lists the console and every call costs exactly
-  one request. Every query
+  configuration can be scored while it is still being assembled), `scenario_id` (a saved plan's numeric
+  id, passed through to Core as `{id}`) or `test_id` (a planRunId), plus an optional `simulator_ids`
+  filter that answers each named simulator in both roles. An OOB scenario's UUID is refused rather
+  than resolved, so no input form lists the console and every call costs exactly one request. Every
+  query
   parameter to `POST /plan/statistics` is fixed internally: counts are *runnable*
   (`includeDisabled=false`), and constraints are never requested, since this answer renders none and
   one ordinary step measured 38,531 of them. A count the orchestrator never computed is reported as
