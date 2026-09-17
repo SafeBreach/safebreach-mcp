@@ -2887,6 +2887,20 @@ BLOCKED_HINT = (
     "is cached here, so re-call after any change to the scenario."
 )
 
+# The unscoped hint's "reduced, not blocked" clause is false under a simulator scope —
+# an attack that ran elsewhere but produced nothing here is exactly that, and is listed.
+# Leaving the clause in place would have the answer contradict its own footnote.
+BLOCKED_HINT_SCOPED = (
+    "Scoped to the named simulator(s): the per-step list is what produced nothing ON "
+    "them, so it includes attacks that ran elsewhere in the scenario and excludes "
+    "scenario-wide zeros recorded against other machines. It is therefore NOT a subset "
+    "of the unscoped list — call without simulator_ids for what runs nowhere at all. "
+    "The verdict and every total stay scenario-wide and count only scenario-wide zeros. "
+    "Nothing is removed from the scenario; acting on this report belongs to whoever holds "
+    "the configuration. For how many simulations the scenario produces, call "
+    "get_scenario_simulation_counts. Nothing is cached here, so re-call after any change."
+)
+
 
 def _normalize_blocked_steps(payload):
     """The counts and the constraints exactly as the console reported them.
@@ -2999,16 +3013,21 @@ def _attack_blockers(step, attack_id, only_simulators=None):
     return blockers
 
 
-def _attacks_blocked_on(step, blocked_attacks, simulator_ids):
-    """Of this step's blocked attacks, those whose constraints cite a named machine.
+def _attacks_blocked_on(step, simulator_ids):
+    """Every attack the console recorded a constraint against on a named machine.
 
-    An attack blocked scenario-wide but recorded against none of the named
-    simulators is not blocked *on them* and is left out — the caller is told how
-    many were left out rather than being handed a silently shorter list.
+    Deliberately **independent of the attack's scenario-wide count**: an attack
+    that ran elsewhere still produced nothing *here*, and "what will not run on
+    this machine" is the question the filter asks. Conversely a scenario-wide zero
+    citing none of the named machines is absent — it is not blocked *here*.
+
+    So the scoped list is not a subset of the unscoped one; it answers a different
+    question about a narrower subject. The scenario-wide totals and the verdict are
+    what stay invariant, and they continue to count only scenario-wide zeros.
     """
-    return [attack_id for attack_id in blocked_attacks
-            if any(entry['simulators'] & simulator_ids
-                   for entry in step['by_attack'].get(attack_id, {}).values())]
+    return sorted(attack_id for attack_id, codes in step['by_attack'].items()
+                  if any(entry['simulators'] & simulator_ids
+                         for entry in codes.values()))
 
 
 def _blocked_simulator_disposition(steps, simulator_id):
@@ -3250,8 +3269,12 @@ def _project_blocked_entities(steps, catalog, named_attack_ids, named_simulator_
                 view['blocked_attacks_withheld'] = withheld
                 listed, only = [], None
             elif scope:
-                listed = _attacks_blocked_on(step, blocked_attacks, effective)
+                listed = _attacks_blocked_on(step, effective)
                 only = effective
+                # The denominator changes with the question: scoped, the honest
+                # comparison is against the attacks this step holds, not against
+                # the scenario-wide blocked count the list is no longer a subset of.
+                view['attacks_in_step'] = len(step['moves'])
             else:
                 listed, only = blocked_attacks, None
 
@@ -3308,7 +3331,7 @@ def _project_blocked_entities(steps, catalog, named_attack_ids, named_simulator_
         # None and {} are different facts: an older console supplies no catalog
         # at all, a current one can supply an empty one.
         'catalog_supplied': catalog is not None,
-        'hint_to_agent': BLOCKED_HINT,
+        'hint_to_agent': BLOCKED_HINT_SCOPED if named_simulator_ids else BLOCKED_HINT,
     }
 
 

@@ -46,6 +46,7 @@ An uncovered requirement is a hard GAP — add a test or justify out-of-scope; n
 | R28 | A named simulator **excluded** from scoring renders no scoped attack list and is reported as excluded | T-40, T-44 | Covered |
 | R29 | A named simulator that ran, or is absent from the scenario, is answered explicitly; silence never stands in for an answer | T-41 | Covered |
 | R30 | The 50-attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids` | T-42 | Covered |
+| R31 | Under a simulator scope the list is **per-simulator**: an attack that ran elsewhere but produced nothing on a named machine is listed, a scenario-wide zero citing no named machine is not, and the verdict and totals still count only scenario-wide zeros | T-45 | Covered |
 
 ## Change Coverage
 
@@ -115,7 +116,7 @@ explicit justification. A file with neither is a validator violation — never s
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 36   | 0           | 0      | 6   | 42    |
+| Automatic | 37   | 0           | 0      | 6   | 43    |
 | Manual    | 0    | 0           | 0      | 2   | 2     |
 
 ## Environment Requirements (aggregated)
@@ -201,6 +202,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-41 | A named simulator that is fine says so rather than going quiet | — | Phase 6 | safebreach-mcp |
 | T-42 | The cap follows the scoped list, and the two filters compose | perf | Phase 6 | safebreach-mcp |
 | T-43 | Under scoping the catalog still explains exactly what is shown | API-contract | Phase 6 | safebreach-mcp |
+| T-45 | Scoping answers what fails on this machine, not which global zeros touch it | regression | Phase 7 | safebreach-mcp |
 
 **E2E**
 
@@ -1086,6 +1088,30 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
+### T-45 — Scoping answers what fails on this machine, not which global zeros touch it
+
+- Description: Proves the filter answers the per-machine question field data showed callers actually ask, rather than a narrowed scenario-wide one.
+- Status: Active
+- Passes after: Phase 7
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: Phase 6 intersected the scope with the scenario-wide blocked set, so an attack eliminated on the named
+  machine but running elsewhere was invisible — on the field payload that meant filtering on the attacker returned
+  nothing while the one thing genuinely blocked there went unmentioned. The inverse error is as bad: listing a
+  scenario-wide zero recorded against some other machine would blame this one for it.
+- Risk source: reviewer input
+- Verify: Shape a step from the field payload — one attack scored `0` everywhere and constrained on the target, one
+  attack scored above zero but constrained on its attacker, one attack running cleanly, and a third simulator with
+  nothing recorded against it. Scope to each simulator in turn.
+- Expected: Scoping to the attacker lists the attack that ran elsewhere, with only the code cited there, and omits
+  the scenario-wide zero recorded against the target. Scoping to the target lists only that scenario-wide zero.
+  Scoping to the uninvolved simulator lists nothing and still answers it explicitly. In every case the verdict and
+  `blocked_attacks_total` are identical to the unscoped answer and count only scenario-wide zeros.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
 ### T-44 — Simulator scoping holds against a real fleet, including a switched-off node
 
 - Description: Proves the filter works against constraints a live orchestrator actually emits, which is the only place the offline-seeding behaviour can be observed for real.
@@ -1120,7 +1146,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 4 | T-11, T-17 … T-23, T-28, T-34 | 28 tests |
 | Phase 5 | T-24, T-25, T-26, T-27, T-35 | 33 tests |
 | Phase 6 | T-38 … T-44 | 40 tests |
-| Final | T-29, T-30, T-36, T-37 | all 44 |
+| Phase 7 | T-45 | 41 tests |
+| Final | T-29, T-30, T-36, T-37 | all 45 |
 
 ## Sign-off
 

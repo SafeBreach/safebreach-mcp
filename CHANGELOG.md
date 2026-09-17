@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `get_scenario_blocked_entities` gains a `simulator_ids` filter (SAF-35508 Phase 6) that scopes the
-  per-step blocked-attack listing to named machines — only attacks blocked *on* them, each showing only
-  the codes cited *on* them. The omission is disclosed as an `n of m` ratio; the verdict, every total and
+- `get_scenario_blocked_entities` gains a `simulator_ids` filter (SAF-35508 Phases 6-7) that makes the per-step
+  listing a **per-simulator** answer: every attack the console recorded a constraint against on a named machine,
+  independent of that attack's scenario-wide count. An attack that ran elsewhere but produced nothing *here* is
+  listed; a scenario-wide zero citing no named machine is not. The scoped list is deliberately **not a subset** of
+  the unscoped one, and carries its own hint saying so. Each listed attack shows only
+  the codes cited *on* them. The ratio is reported against the step's attacks; the verdict, every total and
   both simulator-side sections stay scenario-wide. Each named simulator is answered `ran` / `blocked` /
   `excluded` / `not computed` / `not in this scenario` so an empty scoped list is never read as a clean
   scenario. Excluded (offline/disabled/unapproved) simulators are dropped from the match set — they carry

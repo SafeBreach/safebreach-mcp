@@ -593,6 +593,64 @@ class TestSimulatorScoping:
         assert _listed_ids(result['steps'][0]) == ['1000', '1001', '1002']
 
 
+class TestPerSimulatorBlocks:
+    """Scoping asks "what does not run HERE" — not "which scenario-wide zeros touch here"."""
+
+    @staticmethod
+    def _field_step():
+        """A real console payload's shape: one scenario-wide zero, one per-simulator zero.
+
+        '5328' scores 0 everywhere and is constrained on the target. '98' scores 2 —
+        it RAN — but produced nothing on the attacker it is constrained against. The
+        second is the case that distinguishes a per-simulator answer from a narrowed
+        scenario-wide one.
+        """
+        step = _step(
+            count=24,
+            moves={'98': 2, '5328': 0, '7071': 22},
+            simulators={'sim-att': 1, 'sim-other': 1, 'sim-tgt': 24},
+            constraints={
+                'targetConstraints': {'sim-tgt': {'5328': [
+                    {'reason': 'simulator_variant_is_root_user'},
+                    {'reason': 'move_does_not_support_root_simulation_user'}]}},
+                'attackerConstraints': {'sim-att': {'98': [
+                    {'reason': 'move_doesnt_requires_proxy_ignoring_proxy_variant'}]}},
+            },
+        )
+        return [step]
+
+    def test_T_45_an_attack_that_ran_elsewhere_is_listed_where_it_produced_nothing(self):
+        result, _ = _report(self._field_step(), simulator_ids='sim-att')
+        step = result['steps'][0]
+        assert _listed_ids(step) == ['98']
+        assert [b['code'] for b in step['blocked_attacks'][0]['blockers']] == [
+            'move_doesnt_requires_proxy_ignoring_proxy_variant']
+
+    def test_T_45_the_scenario_wide_zero_is_not_listed_where_it_is_uncited(self):
+        result, _ = _report(self._field_step(), simulator_ids='sim-att')
+        assert '5328' not in _listed_ids(result['steps'][0])
+
+    def test_T_45_scoping_to_the_target_lists_only_what_is_blocked_there(self):
+        result, _ = _report(self._field_step(), simulator_ids='sim-tgt')
+        assert _listed_ids(result['steps'][0]) == ['5328']
+
+    def test_T_45_the_scenario_wide_total_still_counts_only_scenario_wide_zeros(self):
+        result, _ = _report(self._field_step(), simulator_ids='sim-att')
+        step = result['steps'][0]
+        # 98 is listed HERE but ran, so it is not a scenario-wide block. The totals
+        # and verdict must keep saying so — the filter changes the question asked of
+        # a step, never the scenario-level claim.
+        assert step['blocked_attacks_total'] == 1
+        assert step['blocked_attacks_listed'] == 1
+        assert result['verdict'] == _report(self._field_step())[0]['verdict']
+
+    def test_T_45_a_simulator_with_nothing_recorded_against_it_lists_nothing(self):
+        result, _ = _report(self._field_step(), simulator_ids='sim-other')
+        step = result['steps'][0]
+        assert step['blocked_attacks'] == []
+        assert step['asked_about_simulators']['sim-other']['state'] == 'ran'
+
+
 class TestScopingChangesOnlyTheListing:
     """Naming ids narrows what is listed — never what is claimed."""
 

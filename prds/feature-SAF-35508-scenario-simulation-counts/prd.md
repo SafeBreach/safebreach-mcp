@@ -341,6 +341,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
 | Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
 | Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
+| Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | — | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -535,6 +536,53 @@ clean". The per-simulator answer block is what prevents this — it states `ran`
 --select F` on the changed files.
 
 **Git commit**: `feat(SAF-35508): scope blocked entities to named simulators`
+
+---
+
+### Phase 7 — Make the simulator scope a per-simulator answer
+
+**Semantic change**: Under `simulator_ids`, list every attack the console recorded a constraint against on a named
+machine — **independent of that attack's scenario-wide count**. An attack that ran elsewhere but produced nothing
+*here* is now listed; a scenario-wide zero citing none of the named machines is not.
+
+**Why**: Phase 6 narrowed the scenario-wide blocked set, which answers "which of the things that run nowhere touch
+this machine". Field data showed that is not the question callers ask. In a real payload, attack `98` scored 2
+overall but was eliminated on its attacker with `move_doesnt_requires_proxy_ignoring_proxy_variant`; filtering on
+that attacker returned **nothing**, while the one thing genuinely blocked there went unmentioned. "What will not
+run on this machine" has to include it.
+
+**Supersedes Phase 6** on this one point. Phase 6's excluded short-circuit, per-simulator answers, ratio disclosure
+and cap behaviour are unchanged.
+
+**Implementation details**
+- `_attacks_blocked_on(step, simulator_ids)` no longer intersects with `_scored_zero(moves)`. The constraint leaf
+  *is* the evidence the attack produced nothing on that simulator; the payload carries no per-(attack, simulator)
+  count, and none is needed.
+- **The scoped list is deliberately NOT a subset of the unscoped one.** It answers a different question about a
+  narrower subject. The invariant that survives is the one that matters: the verdict and every total stay
+  scenario-wide and keep counting only scenario-wide zeros.
+- Because the subset relation is gone, the `n of m` ratio changes denominator when scoped — comparing against
+  `blocked_attacks_total` would misread as a subset. Scoped, the header reports `n of <attacks in this step>` and
+  states the scenario-wide figure separately.
+- A scoped answer carries its own `hint_to_agent`. The unscoped hint's "reduced, not blocked, and is deliberately
+  not listed" clause is **false** under a scope — attack `98` is exactly a reduction and is listed — so leaving it
+  would have the answer contradict its own footnote.
+
+**What can go wrong**: a caller compares a scoped count against an unscoped one and reads the difference as a
+change in the scenario. The hint states the non-subset relation outright, and the totals beside it do not move.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | `_attacks_blocked_on` drops the blocked-set intersection; scoped hint; `attacks_in_step` |
+| `safebreach_mcp_studio/studio_server.py` | Scoped header reports the step-relative denominator |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-45 — five cases on the field payload's shape |
+| `CLAUDE.md`, `CHANGELOG.md` | Catalog item 26 and Unreleased/Added restated |
+
+**Verification**: `uv run --python 3.12 pytest safebreach_mcp_studio/tests -m "not e2e"` → 620 passed.
+
+**Git commit**: `feat(SAF-35508): make the simulator scope a per-simulator answer`
 
 ---
 

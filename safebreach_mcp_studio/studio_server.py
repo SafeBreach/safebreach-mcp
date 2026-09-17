@@ -2030,9 +2030,18 @@ def _render_blocked_attacks(step: dict) -> list:
     # the caller learns the list was narrowed rather than that nothing is blocked.
     if not entries and not step.get('blocked_attacks_scoped'):
         return []
-    total = step['blocked_attacks_total']
-    lines = [f"  - **Attacks contributing nothing** ({len(entries):,} of {total:,}) "
-             "— still in the scenario:"]
+    if step.get('blocked_attacks_scoped'):
+        # Not "n of blocked_attacks_total": a scoped list is not a subset of the
+        # scenario-wide one — it can name an attack that ran overall but produced
+        # nothing here. Comparing it against that total would misread as a subset.
+        in_step = step.get('attacks_in_step', len(entries))
+        lines = [f"  - **Attacks contributing nothing on the named simulator(s)** "
+                 f"({len(entries):,} of {in_step:,} attacks in this step) — "
+                 f"{step['blocked_attacks_total']:,} contribute nothing anywhere:"]
+    else:
+        total = step['blocked_attacks_total']
+        lines = [f"  - **Attacks contributing nothing** ({len(entries):,} of {total:,}) "
+                 "— still in the scenario:"]
     for entry in entries:
         blockers = ", ".join(_render_blocker(b) for b in entry['blockers'])
         # An empty blocker list is a real outcome, not a rendering gap: the

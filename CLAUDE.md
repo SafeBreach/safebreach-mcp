@@ -536,9 +536,13 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   `not in this scenario`. **Ran outranks blocked** — an attack scored `0` in one step and 240 in another
   ran, and the answer never depends on step order. Naming ids narrows what is **listed**; the verdict
   stays scenario-wide.
-  **`simulator_ids`** (SAF-35508 Phase 6) scopes the per-step blocked-attack listing to named machines:
-  only attacks blocked **on** them are listed, each showing only the codes cited **on** them — "what will
-  not run HERE, and why". The omission is disclosed as an `n of m` ratio, and the verdict, every total and
+  **`simulator_ids`** (SAF-35508 Phases 6-7) makes the per-step listing a **per-simulator** answer: it lists
+  every attack the console recorded a constraint against on a named machine, **independent of that attack's
+  scenario-wide count**. An attack that ran elsewhere but produced nothing *here* IS listed; a scenario-wide zero
+  citing none of the named machines is not. The scoped list is therefore **not a subset** of the unscoped one — it
+  answers a different question about a narrower subject, and the scoped `hint_to_agent` says so. Each listed attack
+  shows only the codes cited **on** the named machines. The ratio is reported against the attacks in that step
+  (the scenario-wide figure is stated separately), and the verdict, every total and
   both simulator-side sections stay scenario-wide, because those are the frame that tells a caller whether
   the named machine is even in play. Each named simulator is additionally answered `ran` / `blocked` /
   `excluded` / `not computed` / `not in this scenario` (precedence in that order — a machine scored
