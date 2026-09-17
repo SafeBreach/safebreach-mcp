@@ -525,10 +525,13 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   choice of attackers and targets is made on — a simulator offered in only one role says so in the other
   (making it a target-only or attacker-only candidate), and one measured at zero is listed rather than
   hidden, since "produces nothing here" is the most actionable thing the answer can say about a machine.
-  At or over the cap the step returns **only** its simulation count and asks the caller to narrow the step's
-  simulators filter and score again. It deliberately does **not** say "name simulator_ids" there: choosing
-  simulators is how a caller would learn which ids are worth naming, so that instruction closes the loop on
-  itself. Named `simulator_ids` are answered either way.
+  A machine's two numbers are its participation **per role**, not two batches to add up, and the step line
+  says so wherever rows follow it. At or over the cap the step returns **only** its simulation count and
+  names **both** routes back: narrow the step's simulators filter and score again (the better route, but
+  open only to a caller holding the scenario body — the `scenario_id` and `test_id` forms are resolved
+  server-side), or name `simulator_ids`, which is reachable from every input form. `get_console_simulators`
+  is cited as where ids worth naming come from, so the instruction does not close the loop on itself.
+  Named `simulator_ids` are answered either way.
 26. `get_scenario_blocked_entities` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
   The sibling of item 25, answering the question it refuses: **what in this scenario will not run, and
   why?** Same three inputs (`scenario` / numeric `scenario_id` / `test_id`, exactly one), plus optional

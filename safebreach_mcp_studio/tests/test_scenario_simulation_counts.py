@@ -237,6 +237,20 @@ class TestSimulatorBreakdown:
         assert 'sim-a — attacker: 7, target: 2' in \
             _format_scenario_simulation_counts(result)
 
+    def test_T_14_the_two_role_numbers_are_not_offered_as_addable(self):
+        """Five machines at attacker 1 / target 1 under a total of 5 invites reading 10."""
+        fleet = {f'sim-{i}': 1 for i in range(5)}
+        result, _ = _score([_step(count=5, attackers=fleet, targets=fleet)])
+        assert 'per role, not as two separate batches' in \
+            _format_scenario_simulation_counts(result)
+
+    def test_T_14_the_per_role_note_is_absent_when_no_rows_follow_it(self):
+        """Past the cap there is no breakdown to misread, so the note is noise."""
+        fleet = {f'sim-{i:03d}': 1 for i in range(500)}
+        result, _ = _score([_step(attackers=fleet, targets=fleet)])
+        assert 'per role, not as two separate batches' not in \
+            _format_scenario_simulation_counts(result)
+
     def test_T_14_rows_are_ranked_by_total_contribution(self):
         result, _ = _score([_step(attackers={'low': 1, 'high': 5, 'mid': 2},
                                   targets={'low': 0, 'high': 4, 'mid': 4})])
@@ -255,7 +269,7 @@ class TestSimulatorBreakdown:
     def test_T_14_an_unmeasured_count_reads_as_not_computed_not_as_zero(self):
         result, _ = _score([_step(attackers={'sim-a': None}, targets={'sim-a': 0})])
         text = _format_scenario_simulation_counts(result)
-        assert 'sim-a — attacker: not computed, target: 0 - measured' in text
+        assert 'sim-a — attacker: not computed, target: 0 (measured)' in text
 
 
 class TestListingCap:
@@ -277,13 +291,19 @@ class TestListingCap:
         # Absent, not empty: an empty list would read as "looked and found nothing".
         assert 'simulator_rows' not in step
 
-    def test_T_15_the_omission_asks_for_a_narrower_filter_not_for_ids(self):
-        """Naming ids cannot be the instruction: choosing is how you learn which ids."""
+    def test_T_15_the_omission_names_both_routes_back(self):
+        """Narrowing is the better route, but only a caller holding the body can take it.
+
+        The scenario_id and test_id forms are resolved server-side, so naming the
+        filter alone would leave them nowhere. simulator_ids is reachable from
+        every form, and get_console_simulators is where those ids come from.
+        """
         fleet = {f'sim-{i:03d}': 1 for i in range(500)}
         result, _ = _score([_step(attackers=fleet, targets=fleet)])
         text = _format_scenario_simulation_counts(result)
         assert 'Narrow the step' in text and 'simulators filter' in text
-        assert 'Name simulator_ids' not in text
+        assert 'name simulator_ids' in text
+        assert 'get_console_simulators' in text
 
     def test_T_15_the_trigger_is_the_union_of_both_role_maps(self):
         """Neither map alone passes the cap, but the breakdown would still be 30 rows."""
@@ -413,6 +433,21 @@ class TestToolRegistration:
         annotations = tools['get_scenario_simulation_counts'].annotations
         assert annotations.readOnlyHint is True
         assert annotations.destructiveHint is False
+
+    def test_T_11_the_markdown_is_not_shipped_twice(self):
+        """A str return defaults to an outputSchema, which sends the whole answer again."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        tools = SafeBreachStudioServer().mcp._tool_manager._tools
+        assert tools['get_scenario_simulation_counts'].output_schema is None
+        assert tools['get_scenario_blocked_entities'].output_schema is None
+
+    def test_T_11_an_assembled_scenario_can_be_passed_as_an_object(self):
+        """The prose offers a parsed object, so the schema has to accept one."""
+        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+        tools = SafeBreachStudioServer().mcp._tool_manager._tools
+        schema = tools['get_scenario_simulation_counts'].parameters['properties']['scenario']
+        assert {'type': 'string'} in schema['anyOf']
+        assert any(branch.get('type') == 'object' for branch in schema['anyOf'])
 
 
 class TestRunnableDisclosure:

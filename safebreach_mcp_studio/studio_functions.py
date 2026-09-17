@@ -2499,8 +2499,10 @@ SIMULATOR_LISTING_CAP = 20
 COUNTS_HINT = (
     "These are runnable counts: offline, disabled and unapproved simulators are "
     "excluded. This tool reports what runs and how much; for why an attack or a "
-    "simulator produces nothing, call get_scenario_blocked_entities. Nothing is "
-    "cached here, so re-call after any change to the scenario."
+    "simulator produces nothing, call get_scenario_blocked_entities. Simulators are "
+    "reported as ids — resolve them to names with get_console_simulators, which is "
+    "also where ids worth naming in simulator_ids come from. Nothing is cached here, "
+    "so re-call after any change to the scenario."
 )
 
 

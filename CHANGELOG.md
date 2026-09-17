@@ -40,6 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Both scenario-statistics tools now register with `structured_output=False`. A tool returning `str` otherwise gets
+  an auto-generated `{result: string}` output schema, and the MCP SDK then ships the whole answer twice — once as
+  text and once as `structuredContent`. Measured on a ten-simulator step, the wire payload drops from 2,506 to
+  1,471 characters with the rendered output unchanged.
+- `get_scenario_simulation_counts` names both routes back when a step offers more than 20 simulators. Narrowing the
+  step's simulators filter is still the better one, but it is open only to a caller holding the scenario body — the
+  `scenario_id` and `test_id` forms are resolved server-side — so the omission now also points at `simulator_ids`,
+  and at `get_console_simulators` as the place those ids come from.
+- The per-simulator breakdown states that a machine's two numbers are its participation per role, not two batches to
+  add up. Five simulators reading `attacker: 1, target: 1` under a total of `5` otherwise invites reading 10. The
+  note rides on the step line only where rows follow it.
+- `get_scenario_simulation_counts` reports a measured zero as `0 (measured)` rather than `0 - measured`, which
+  parsed as a range on first read.
+- Both tools accept `scenario` as a parsed object as well as JSON text. The prose offered both; the schema
+  advertised only a string. A malformed JSON string still reaches the worded error rather than a validation failure.
+- `get_scenario_simulation_counts` hint now says simulators are reported as ids and points at
+  `get_console_simulators` to resolve them — ten bare UUIDs were otherwise a dead end.
 - `get_scenario_blocked_entities` no longer returns a partial attack list when a step blocks more than 50
   attacks. It now drops the per-attack detail whole and reports a tally of blocked attacks per constraint
   code, so all of them are accounted for rather than the first fifty — measured on a 60-attack fixture the

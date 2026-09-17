@@ -1657,6 +1657,7 @@ manage_test(test_id="1776488350786.15", action="delete", console="demo",
         @self.mcp.tool(
             name="get_scenario_simulation_counts",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            structured_output=False,
             description="""Answers ONE question: how many simulations would this scenario produce, and
 which simulators produce them?
 
@@ -1674,26 +1675,28 @@ Name exactly ONE of:
 Parameters:
 - console (required): SafeBreach console name.
 - simulator_ids (optional): comma-separated simulator ids to answer for individually. Each
-  named simulator is answered in BOTH roles with its count, "0 - measured", "not computed",
+  named simulator is answered in BOTH roles with its count, "0 (measured)", "not computed",
   or "not in this step". Two of those the normal listing cannot give: a simulator measured
   at exactly zero is not a contributor and so never appears in the listing, and past the
   listing threshold naming ids is the only way to get a per-simulator count. Naming ids
-  narrows what is LISTED, never what is counted.
+  narrows what is LISTED, never what is counted. Simulator ids are reported as ids; resolve
+  them to names with get_console_simulators (Config server).
 
 Counts are runnable: offline, disabled and unapproved simulators are excluded. The expected
 figure (which counts them) is not offered and cannot be derived from this answer.
 
 Returns markdown: the total, then per step its simulation count and a per-simulator
 breakdown - every simulator the step offers, with what it would produce AS ATTACKER and
-AS TARGET, strongest first. That pairing is what a choice of attackers and targets is made
-on: a simulator offered in only one role says so in the other, and one measured at zero is
-listed rather than hidden, since "produces nothing here" is the most actionable thing this
-answer can say about a machine.
+AS TARGET, strongest first. Each row is one machine's participation PER ROLE in that step's
+simulations, not two separate batches to add up. That pairing is what a choice of attackers
+and targets is made on: a simulator offered in only one role says so in the other, and one
+measured at zero is listed rather than hidden, since "produces nothing here" is the most
+actionable thing this answer can say about a machine.
 
-A step offering more than 20 simulators returns its simulation count WITHOUT the breakdown,
-and asks you to narrow the step's simulators filter - by OS, role, label or explicit ids -
-and score it again. A count that was never measured is reported as not computed, never as
-a zero.
+A step offering more than 20 simulators returns its simulation count WITHOUT the breakdown.
+Narrow the step's simulators filter - by OS, role, label or explicit ids - and score it
+again, or name simulator_ids to get those machines' numbers without narrowing anything.
+A count that was never measured is reported as not computed, never as a zero.
 
 Examples:
 get_scenario_simulation_counts(console="demo", scenario_id="4821")
@@ -1702,7 +1705,7 @@ get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simu
         )
         def get_scenario_simulation_counts(
             console: str = "default",
-            scenario: str = None,
+            scenario: str | dict = None,
             scenario_id: str = None,
             test_id: str = None,
             simulator_ids: str = None,
@@ -1728,6 +1731,7 @@ get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simu
         @self.mcp.tool(
             name="get_scenario_blocked_entities",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            structured_output=False,
             description="""Answers ONE question: what in this scenario will not run, and why?
 
 Scores a scenario against the fleet as it stands WITHOUT running it, and changes nothing.
@@ -1795,7 +1799,7 @@ get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attac
         )
         def get_scenario_blocked_entities(
             console: str = "default",
-            scenario: str = None,
+            scenario: str | dict = None,
             scenario_id: str = None,
             test_id: str = None,
             attack_ids: str = None,
@@ -1823,7 +1827,7 @@ get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attac
 
 
 _DISPOSITION_LABELS = {
-    'measured_zero': "0 - measured",
+    'measured_zero': "0 (measured)",
     'not_computed': "not computed",
     'not_in_step': "not in this step",
 }
@@ -1862,16 +1866,19 @@ def _render_simulator_row(row: dict) -> str:
 def _render_step_simulators(step: dict) -> list:
     """What each simulator would produce — or, past the cap, how to get there.
 
-    Past the cap the breakdown is dropped whole and the caller is told to narrow
-    the step's simulators filter. Naming ids cannot be the instruction here:
-    choosing simulators is how a caller would learn which ids are worth naming,
-    so pointing at `simulator_ids` would close the loop on itself.
+    Both routes back are named. Narrowing the filter is the better one, but it
+    is only open to a caller holding the scenario body: the `scenario_id` and
+    `test_id` forms are resolved server-side, so telling them alone to narrow a
+    filter they cannot reach would leave them nowhere. Naming ids is reachable
+    from every form, and `get_console_simulators` — not this listing — is where
+    a caller finds ids worth naming, so it does not close the loop on itself.
     """
     if step['listing_omitted']:
         return [f"  - Per-simulator breakdown omitted: this step offers "
                 f"{step['simulators_offered']:,} simulators, over the {SIMULATOR_LISTING_CAP} "
                 "this answer lists. Narrow the step's simulators filter — by OS, role, "
-                "label or explicit ids — and score it again to see what each one produces."]
+                "label or explicit ids — and score it again to see what each one produces, "
+                "or name simulator_ids (from get_console_simulators) for specific machines."]
     return [_render_simulator_row(row) for row in step['simulator_rows']]
 
 
@@ -1914,9 +1921,16 @@ def _format_scenario_simulation_counts(projected: dict) -> str:
                          f"computed; {why}.")
             parts.extend(_render_asked_about(step))
             continue
+        # The per-role note rides on the step line only when rows follow it. Two
+        # numbers per machine under one total invite being added together, and a
+        # machine's attacker and target figures are two views of the same step,
+        # not two batches of work.
+        rows = _render_step_simulators(step)
+        note = ("" if step['listing_omitted'] or not rows
+                else " Each simulator below is shown per role, not as two separate batches.")
         parts.append(f"- **Step {step['step_index']}** - "
-                     f"{step['simulation_count']:,} simulations.")
-        parts.extend(_render_step_simulators(step))
+                     f"{step['simulation_count']:,} simulations.{note}")
+        parts.extend(rows)
         parts.extend(_render_asked_about(step))
 
     if projected['asked_about']:
