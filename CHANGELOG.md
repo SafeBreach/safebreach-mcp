@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `get_scenario_blocked_entities` gains a `simulator_ids` filter (SAF-35508 Phase 6) that scopes the
+  per-step blocked-attack listing to named machines — only attacks blocked *on* them, each showing only
+  the codes cited *on* them. The omission is disclosed as an `n of m` ratio; the verdict, every total and
+  both simulator-side sections stay scenario-wide. Each named simulator is answered `ran` / `blocked` /
+  `excluded` / `not computed` / `not in this scenario` so an empty scoped list is never read as a clean
+  scenario. Excluded (offline/disabled/unapproved) simulators are dropped from the match set — they carry
+  a constraint against every move, so scoping to one naively would report a switched-off machine as
+  incompatible with the entire step — and the list is withheld with a stated reason only when that empties
+  the scope. Composes with `attack_ids`. Also repairs five never-executed assertions in the e2e suite
+  whose field names never matched the emitted shape.
+
 - `get_scenario_blocked_entities` (SAF-35508) — the sibling of `get_scenario_simulation_counts`,
   answering what in a scenario will not run and why. Same three inputs plus an optional `attack_ids`
   filter (`ran` outranks `blocked`, so a step-order-dependent answer is impossible). Reports every

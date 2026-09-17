@@ -778,14 +778,21 @@ class TestScopedCatalog:
         renders it in a scenario-wide simulator section, which legitimately puts
         port_in_use in the catalog and makes the absence assertion below fail
         against a perfectly correct implementation.
+
+        Attack '1001' is the one that makes this guard anything: it IS listed (it
+        cites sim-b) and it ALSO carries port_in_use from sim-c. Without that code
+        being filtered out of the tally, the catalog would describe a code appearing
+        nowhere in the rendered lines. A fixture whose out-of-scope code sits only on
+        an unlisted attack cannot catch that — the listing filter alone removes it,
+        and the tally filter could be deleted with every assertion still passing.
         """
         return [_step(
             count=5,
-            moves={'1000': 0, '1002': 0},
+            moves={'1000': 0, '1001': 0, '1002': 0},
             simulators={'sim-b': 0, 'sim-c': 5},
             constraints=_target({
-                'sim-b': {'1000': ['incompatible_os']},
-                'sim-c': {'1002': ['port_in_use']},
+                'sim-b': {'1000': ['incompatible_os'], '1001': ['incompatible_os']},
+                'sim-c': {'1001': ['port_in_use'], '1002': ['port_in_use']},
             }),
         )]
 

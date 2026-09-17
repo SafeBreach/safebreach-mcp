@@ -496,11 +496,20 @@ answers reusing the existing state vocabulary, and the excluded short-circuit.
 - **Excluded simulators short-circuit before rendering.** Offline, disabled and unapproved nodes are seeded into
   `simulatorConstraints` carrying `simulator_is_offline` on *every* move, so naïve scoping to one would list every
   attack in the step as blocked on it. That is the single most misleading output this tool could produce and the
-  exact confusion the three-state vocabulary exists to prevent. A named simulator that is excluded is reported as
-  excluded, with **no** scoped list and a line saying why the list is withheld.
+  exact confusion the three-state vocabulary exists to prevent. Excluded simulators are therefore dropped from the
+  match set **always**, and the list is withheld only when that leaves it empty — an excluded machine named
+  alongside a healthy one must not drag the whole step into the healthy one's listing. Either way the excluded
+  machine is reported as excluded, with a line saying why the list was withheld when it was.
 - The cap applies to the **scoped** list. Scoping is precisely the "narrow and score again" remedy the tool already
   recommends, so a scope that brings a step under 50 earns its per-attack detail back.
 - `simulator_ids` and `attack_ids` compose — independent axes, both narrowing only what is listed.
+- **Scenario-wide precedence for a named simulator**: `ran` > `blocked` > `excluded` > `not computed` >
+  `not in this scenario`. Steps can offer different fleets, so one simulator can be excluded in one step and
+  scored `0` in another; evidence of contribution outranks evidence of non-contribution, and appearing in any
+  count map outranks being absent from all of them — reporting a machine the console scored somewhere as
+  switched-off would be the same false positive the three-state model exists to prevent, one level up. The
+  per-step short-circuit is judged **per step** against `_excluded_simulator_ids(step)` and is deliberately
+  independent of this ordering, so the two can legitimately disagree for a single step.
 - Leave `blocked_simulators` and `excluded_simulators` **scenario-wide**. They are the frame that tells a caller
   whether the named machine is even in play; scoping them away would strip the context that makes an empty scoped
   list legible.

@@ -2980,18 +2980,77 @@ def _excluded_simulator_ids(step):
     return sorted(sid for sid in step['by_simulator'] if sid not in step['simulators'])
 
 
-def _attack_blockers(step, attack_id):
-    """The codes cited against one attack, worst-reach first."""
+def _attack_blockers(step, attack_id, only_simulators=None):
+    """The codes cited against one attack, worst-reach first.
+
+    ``only_simulators`` narrows to the codes recorded against those machines,
+    which is what turns a line from "why this runs nowhere" into "why this will
+    not run HERE". ``simulator_count`` stays the code's full reach either way: it
+    describes how far the constraint extends, and rescoping it to the named
+    machines would silently answer a different question.
+    """
     blockers = [
         {'code': code, 'side': sorted(entry['sides']),
          'simulator_count': len(entry['simulators']), 'detail': entry['detail']}
         for code, entry in step['by_attack'].get(attack_id, {}).items()
+        if only_simulators is None or (entry['simulators'] & only_simulators)
     ]
     blockers.sort(key=lambda blocker: (-blocker['simulator_count'], blocker['code']))
     return blockers
 
 
-def _attack_code_tally(step, attack_ids):
+def _attacks_blocked_on(step, blocked_attacks, simulator_ids):
+    """Of this step's blocked attacks, those whose constraints cite a named machine.
+
+    An attack blocked scenario-wide but recorded against none of the named
+    simulators is not blocked *on them* and is left out — the caller is told how
+    many were left out rather than being handed a silently shorter list.
+    """
+    return [attack_id for attack_id in blocked_attacks
+            if any(entry['simulators'] & simulator_ids
+                   for entry in step['by_attack'].get(attack_id, {}).values())]
+
+
+def _blocked_simulator_disposition(steps, simulator_id):
+    """What the whole scenario says about one named simulator.
+
+    Precedence is ``ran`` > ``blocked`` > ``excluded`` > ``not_computed`` >
+    ``absent``. Steps can offer different fleets, so one machine can be excluded
+    in one step and scored zero in another: evidence of contribution outranks
+    evidence of non-contribution, and appearing in any count map outranks being
+    absent from all of them. Reporting a machine the console scored somewhere as
+    switched-off would be the same false positive the three-state model exists to
+    prevent, one level up.
+    """
+    ran, blocked, excluded, offered = None, False, False, False
+    for step in steps:
+        in_counts = simulator_id in step['simulators']
+        if not in_counts and simulator_id not in step['by_simulator']:
+            continue
+        offered = True
+        if not in_counts:
+            # Constrained but never scored: switched off, not incompatible.
+            excluded = True
+            continue
+        count = step['simulators'][simulator_id]
+        if not is_computed_count(count):
+            continue
+        if count > 0:
+            ran = count if ran is None else max(ran, count)
+        else:
+            blocked = True
+    if ran is not None:
+        return {'state': 'ran', 'count': ran}
+    if blocked:
+        return {'state': 'blocked', 'count': 0}
+    if excluded:
+        return {'state': 'excluded', 'count': None}
+    if offered:
+        return {'state': 'not_computed', 'count': None}
+    return {'state': 'absent', 'count': None}
+
+
+def _attack_code_tally(step, attack_ids, only_simulators=None):
     """How many blocked attacks each constraint code accounts for.
 
     Replaces the per-attack list once that list would be truncated. A tally
@@ -3007,6 +3066,8 @@ def _attack_code_tally(step, attack_ids):
     tally = {}
     for attack_id in attack_ids:
         for code, entry in step['by_attack'].get(attack_id, {}).items():
+            if only_simulators is not None and not (entry['simulators'] & only_simulators):
+                continue
             row = tally.setdefault(code, {'code': code, 'sides': set(), 'attack_count': 0})
             row['sides'] |= entry['sides']
             row['attack_count'] += 1
@@ -3149,15 +3210,21 @@ def _cited_catalog(catalog, codes):
     return {code: dict(supplied.get(code) or {}) for code in sorted(codes)}
 
 
-def _project_blocked_entities(steps, catalog, named_attack_ids):
+def _project_blocked_entities(steps, catalog, named_attack_ids, named_simulator_ids=()):
     """What will not run, and why — nothing about how much will.
 
     The verdict is computed first, over the unfiltered report, so narrowing what
-    is shown can never narrow what is claimed.
+    is shown can never narrow what is claimed. ``named_simulator_ids`` narrows
+    only the per-step attack listing; the verdict, every total and both
+    simulator-side sections stay scenario-wide, because those are the frame that
+    tells a caller whether the machine they named is even in play.
     """
     verdict = _blocked_verdict(steps)
     dispositions = {attack_id: _attack_disposition(steps, attack_id)
                     for attack_id in named_attack_ids}
+    simulator_answers = {simulator_id: _blocked_simulator_disposition(steps, simulator_id)
+                         for simulator_id in named_simulator_ids}
+    scope = set(named_simulator_ids)
 
     projected, cited = [], set()
     for step in steps:
@@ -3169,20 +3236,43 @@ def _project_blocked_entities(steps, catalog, named_attack_ids):
         if step['counts_computed']:
             blocked_attacks = _scored_zero(step['moves'])
             view['blocked_attacks_total'] = len(blocked_attacks)
-            # The tally is built whether or not it is rendered: it is also where
-            # the cited codes come from, and taking those from the rendered rows
-            # instead would shrink the catalog exactly when it does the most work.
-            tally = _attack_code_tally(step, blocked_attacks)
-            if len(blocked_attacks) > BLOCKED_ATTACKS_CAP:
-                # Absent, not empty — an empty list would read as "looked and
-                # found nothing" rather than "summarised instead of listed".
-                view['blocked_attack_codes'] = tally
+
+            # An excluded node is seeded into the constraint map against EVERY move,
+            # so leaving one in the scope would drag the whole step into the listing
+            # — including alongside a healthy machine that blocks one attack. They
+            # are dropped from the match set first, and the list is withheld only
+            # when that empties it. Either way the machine is reported as switched
+            # off rather than as incompatible with everything.
+            withheld = [simulator_id for simulator_id in named_simulator_ids
+                        if simulator_id in _excluded_simulator_ids(step)]
+            effective = scope - set(withheld)
+            if scope and not effective:
+                view['blocked_attacks_withheld'] = withheld
+                listed, only = [], None
+            elif scope:
+                listed = _attacks_blocked_on(step, blocked_attacks, effective)
+                only = effective
             else:
-                view['blocked_attacks'] = [
-                    {'attack_id': attack_id, 'blockers': _attack_blockers(step, attack_id)}
-                    for attack_id in blocked_attacks
-                ]
-            cited.update(row['code'] for row in tally)
+                listed, only = blocked_attacks, None
+
+            if 'blocked_attacks_withheld' not in view:
+                view['blocked_attacks_listed'] = len(listed)
+                view['blocked_attacks_scoped'] = bool(scope)
+                # The tally is built whether or not it is rendered: it is also where
+                # the cited codes come from, and taking those from the rendered rows
+                # instead would shrink the catalog exactly when it does the most work.
+                tally = _attack_code_tally(step, listed, only_simulators=only)
+                if len(listed) > BLOCKED_ATTACKS_CAP:
+                    # Absent, not empty — an empty list would read as "looked and
+                    # found nothing" rather than "summarised instead of listed".
+                    view['blocked_attack_codes'] = tally
+                else:
+                    view['blocked_attacks'] = [
+                        {'attack_id': attack_id,
+                         'blockers': _attack_blockers(step, attack_id, only_simulators=only)}
+                        for attack_id in listed
+                    ]
+                cited.update(row['code'] for row in tally)
 
             groups, unexplained = _simulator_groups(step, _scored_zero(step['simulators']))
             view['blocked_simulators'] = groups
@@ -3200,12 +3290,19 @@ def _project_blocked_entities(steps, catalog, named_attack_ids):
                 attack_id: _named_attack_answer(step, dispositions[attack_id], attack_id)
                 for attack_id in named_attack_ids
             }
+        if named_simulator_ids:
+            # Scenario-wide, so identical on every step — carried per step anyway so
+            # an empty scoped list is never read alone. Silence is the failure mode
+            # here: a caller who names a healthy machine and sees nothing must not
+            # conclude the scenario is clean.
+            view['asked_about_simulators'] = dict(simulator_answers)
         projected.append(view)
 
     return {
         'verdict': verdict,
         'steps': projected,
         'asked_about': list(named_attack_ids),
+        'asked_about_simulators': list(named_simulator_ids),
         'attacks_summarised': any('blocked_attack_codes' in view for view in projected),
         'constraint_catalog': _cited_catalog(catalog, cited),
         # None and {} are different facts: an older console supplies no catalog
@@ -3221,6 +3318,7 @@ def sb_get_scenario_blocked_entities(
     scenario_id: str = None,
     test_id: str = None,
     attack_ids: str = None,
+    simulator_ids: str = None,
 ) -> Dict[str, Any]:
     """What in a scenario will not run at all, and the constraints cited against it.
 
@@ -3241,6 +3339,10 @@ def sb_get_scenario_blocked_entities(
         scenario_id: A saved plan's numeric id, resolved by the endpoint itself
         test_id: A planRunId, scoring whatever scenario that run executed
         attack_ids: Comma-separated attacks to answer for individually
+        simulator_ids: Comma-separated simulators to scope the blocked-attack
+            listing to — only attacks blocked ON them are listed, each showing
+            only the codes cited on them. Narrows what is listed, never what is
+            counted.
 
     Returns:
         A scenario-wide verdict, and per step what contributes nothing and why.
@@ -3253,13 +3355,16 @@ def sb_get_scenario_blocked_entities(
     named_attack_ids = _parse_id_list(
         attack_ids, 'attack_ids', 'attack',
         "Leave it out to report every blocked attack in the scenario.")
+    named_simulator_ids = _parse_id_list(
+        simulator_ids, 'simulator_ids', 'simulator',
+        "Leave it out to report what is blocked anywhere in the scenario.")
     body, _ = _statistics_plan_body(scenario, scenario_id, test_id)
     payload = _fetch_scenario_statistics(console, body, get_constraints=True,
                                      get_all_constraints=True)
     steps = [_shape_blocked_step(step)
              for step in _normalize_blocked_steps(payload)]
     return _project_blocked_entities(steps, payload.get('constraintCatalog'),
-                                     named_attack_ids)
+                                     named_attack_ids, named_simulator_ids)
 
 # ---------------------------------------------------------------------------
 # quick_run — SAF-31295: Quick Run attack execution

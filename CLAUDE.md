@@ -536,6 +536,17 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   `not in this scenario`. **Ran outranks blocked** — an attack scored `0` in one step and 240 in another
   ran, and the answer never depends on step order. Naming ids narrows what is **listed**; the verdict
   stays scenario-wide.
+  **`simulator_ids`** (SAF-35508 Phase 6) scopes the per-step blocked-attack listing to named machines:
+  only attacks blocked **on** them are listed, each showing only the codes cited **on** them — "what will
+  not run HERE, and why". The omission is disclosed as an `n of m` ratio, and the verdict, every total and
+  both simulator-side sections stay scenario-wide, because those are the frame that tells a caller whether
+  the named machine is even in play. Each named simulator is additionally answered `ran` / `blocked` /
+  `excluded` / `not computed` / `not in this scenario` (precedence in that order — a machine scored
+  somewhere outranks one switched off elsewhere), so an empty scoped list is never mistaken for a clean
+  scenario. An **excluded** simulator is dropped from the match set: offline nodes carry
+  `simulator_is_offline` against *every* move, so scoping to one naively would report a switched-off
+  machine as incompatible with the whole step. When that empties the scope the list is withheld with a
+  stated reason rather than rendered. Composes with `attack_ids` — independent axes.
   **Reports only.** Nothing is removed from the scenario and save is never blocked; acting on the report
   belongs to whoever holds the configuration. An attack that runs on fewer simulators than were offered is
   **reduced, not blocked**, and is deliberately not listed (that is SAF-35484).

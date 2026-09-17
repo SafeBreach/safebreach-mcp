@@ -1754,6 +1754,16 @@ Parameters:
   scenario" — silence never stands in for an answer. RAN OUTRANKS BLOCKED: an attack scored
   zero in one step and 240 in another ran. Naming ids narrows what is LISTED; the verdict
   stays scenario-wide either way.
+- simulator_ids (optional): comma-separated simulators to scope the blocked-attack listing
+  to. Only attacks blocked ON those machines are listed, each showing only the codes cited
+  on them — "what will not run HERE, and why" rather than "what will not run anywhere". The
+  omission is disclosed as an "n of m" ratio; the verdict, every total and both simulator
+  sections below stay scenario-wide. Every named simulator is additionally answered ran /
+  blocked / excluded / not computed / not in this scenario, so an empty scoped list is never
+  mistaken for a clean scenario. A named simulator that is EXCLUDED from scoring gets NO
+  scoped list at all: an offline node carries a constraint against every move, so listing
+  them would report a switched-off machine as incompatible with the whole step. Composes
+  with attack_ids — independent axes, both narrowing only what is listed.
 
 Three states, not two. A simulator PRESENT in the scenario's scoring and measured at zero
 contributes nothing and is reported as blocked. A simulator ABSENT from scoring — offline,
@@ -1789,6 +1799,7 @@ get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attac
             scenario_id: str = None,
             test_id: str = None,
             attack_ids: str = None,
+            simulator_ids: str = None,
         ) -> str:
             """What in a scenario will not run, and the constraints cited against it."""
             try:
@@ -1796,6 +1807,7 @@ get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attac
                     sb_get_scenario_blocked_entities(
                         console=console, scenario=scenario, scenario_id=scenario_id,
                         test_id=test_id, attack_ids=attack_ids,
+                        simulator_ids=simulator_ids,
                     )
                 )
             except PermissionError as e:
@@ -1967,12 +1979,56 @@ def _render_attack_code_tally(step: dict) -> list:
     return lines
 
 
+_SIMULATOR_STATE_WORDING = {
+    'ran': "ran — contributed {count:,} simulation(s) somewhere in this scenario",
+    'blocked': "blocked — scored zero everywhere it was offered",
+    'excluded': "excluded from scoring — offline, disabled or unapproved, so it is "
+                "switched off rather than incompatible",
+    'not_computed': "not computed — the steps offering it were never scored, which is "
+                    "not the same as scoring zero",
+    'absent': "not in this scenario — it was never offered by any step",
+}
+
+
+def _render_named_simulators(projected: dict) -> list:
+    """Each named simulator's own verdict, so an empty scoped list stays readable.
+
+    Without this a caller who scopes to a healthy machine sees nothing and reads
+    it as "the scenario is clean". Every named id gets exactly one state; silence
+    never stands in for an answer.
+    """
+    named = projected.get('asked_about_simulators')
+    if not named:
+        return []
+    answers = next((step['asked_about_simulators'] for step in projected['steps']
+                    if 'asked_about_simulators' in step), {})
+    lines = ["",
+             f"**Scoped to simulator(s):** {', '.join(named)} — the blocked-attack lists "
+             "below show only what is blocked ON them. The verdict, every total and both "
+             "simulator sections above remain scenario-wide."]
+    for simulator_id in named:
+        answer = answers.get(simulator_id, {'state': 'absent', 'count': None})
+        wording = _SIMULATOR_STATE_WORDING.get(answer['state'], answer['state'])
+        lines.append(f"  - `{simulator_id}` — "
+                     + wording.format(count=answer.get('count') or 0))
+    return lines
+
+
 def _render_blocked_attacks(step: dict) -> list:
     """The attacks that run nowhere in this step, with what stopped them."""
+    withheld = step.get('blocked_attacks_withheld')
+    if withheld:
+        return ["  - **Attacks contributing nothing** — list withheld: "
+                + ", ".join(withheld)
+                + " excluded from scoring, so every attack in this step carries a "
+                  "constraint against them. That is a fact about the machine being "
+                  "switched off, not about the attacks."]
     if 'blocked_attack_codes' in step:
         return _render_attack_code_tally(step)
     entries = step['blocked_attacks']
-    if not entries:
+    # A scoped run still renders its header when nothing matched: the ratio is how
+    # the caller learns the list was narrowed rather than that nothing is blocked.
+    if not entries and not step.get('blocked_attacks_scoped'):
         return []
     total = step['blocked_attacks_total']
     lines = [f"  - **Attacks contributing nothing** ({len(entries):,} of {total:,}) "
@@ -2052,6 +2108,7 @@ def _format_scenario_blocked_entities(projected: dict) -> str:
             f"**Scoped to:** {', '.join('#' + a for a in projected['asked_about'])} — the "
             "verdict above is NOT; it covers the whole scenario."
         )
+    parts.extend(_render_named_simulators(projected))
     parts.append("")
 
     for step in projected['steps']:

@@ -1077,8 +1077,11 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Verify: Score a scoped report whose named simulator cites a subset of the step's codes, once below the attack cap and
   once above it, with a catalog supplied and again with none.
 - Expected: The catalog covers every code cited anywhere in the rendered answer, including codes appearing only in
-  dropped rows, and is narrowed to those codes rather than relaying the whole vocabulary or the unscoped set. With no
-  catalog supplied, codes are rendered bare and the absence is disclosed rather than filled with a local meaning.
+  dropped rows, and is narrowed to those codes rather than relaying the whole vocabulary. Because the blocked- and
+  excluded-simulator sections stay scenario-wide by design, "the rendered answer" is the **union** of the scoped
+  attack codes and those sections' codes — not the scoped attack codes alone; a code cited only by an out-of-scope
+  *attack* and by no rendered simulator is what must be absent. With no catalog supplied, codes are rendered bare and
+  the absence is disclosed rather than filled with a local meaning.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
