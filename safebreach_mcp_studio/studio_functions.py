@@ -2420,7 +2420,7 @@ def _get_scenario_statistics(steps, console, include_constraints=False,
     # routing the call through the shared fetcher changes nothing on the wire. It
     # scores the whole fleet rather than the runnable part, so the prediction can
     # exceed what a run produces and offline nodes never surface as blockers.
-    data = _fetch_plan_statistics(
+    data = _fetch_scenario_statistics(
         console,
         {"name": "", "steps": steps},
         get_constraints=include_constraints,
@@ -2607,7 +2607,7 @@ def _require_steps(steps, subject):
         )
 
 
-def _fetch_plan_statistics(console, body, get_constraints=False,
+def _fetch_scenario_statistics(console, body, get_constraints=False,
                            get_all_constraints=False, include_disabled=False):
     """Score one plan body against the fleet as it stands.
 
@@ -2858,7 +2858,7 @@ def sb_get_scenario_simulation_counts(
         simulator_ids, 'simulator_ids', 'simulator',
         "Leave it out to list the step's own simulators.")
     body, steps_submitted = _statistics_plan_body(scenario, scenario_id, test_id)
-    payload = _fetch_plan_statistics(console, body)
+    payload = _fetch_scenario_statistics(console, body)
     steps = [_shape_statistics_step(step)
              for step in _normalize_statistics_steps(payload)]
     return _project_simulation_counts(steps, named_simulator_ids, steps_submitted)
@@ -3254,7 +3254,7 @@ def sb_get_scenario_blocked_entities(
         attack_ids, 'attack_ids', 'attack',
         "Leave it out to report every blocked attack in the scenario.")
     body, _ = _statistics_plan_body(scenario, scenario_id, test_id)
-    payload = _fetch_plan_statistics(console, body, get_constraints=True,
+    payload = _fetch_scenario_statistics(console, body, get_constraints=True,
                                      get_all_constraints=True)
     steps = [_shape_blocked_step(step)
              for step in _normalize_blocked_steps(payload)]
