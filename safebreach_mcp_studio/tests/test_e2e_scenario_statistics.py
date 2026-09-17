@@ -240,8 +240,11 @@ def test_T_34_a_switched_off_simulator_is_excluded_not_blocked():
 
     excluded, blocked = [], []
     for step in result['steps']:
-        excluded += [s['simulator_id'] for s in step.get('excluded_simulators', [])]
-        blocked += [s['simulator_id'] for s in step.get('blocked_simulators', [])]
+        # Groups are per constraint code and carry a capped LIST of ids, not one id.
+        excluded += [sid for group in step.get('excluded_simulators', [])
+                     for sid in group['simulator_ids']]
+        blocked += [sid for group in step.get('blocked_simulators', [])
+                    for sid in group['simulator_ids']]
 
     if not excluded:
         pytest.skip(
@@ -276,15 +279,15 @@ def test_T_34_constraint_meanings_are_relayed_or_declared_absent():
 
     catalog = result.get('constraint_catalog')
     if catalog is None:
-        assert result.get('catalog_available') is False, (
+        assert result.get('catalog_supplied') is False, (
             "an absent catalog must be disclosed as absent")
         return
 
     cited = set()
     for step in result['steps']:
         for group in step.get('blocked_simulators', []):
-            if group.get('reason'):
-                cited.add(group['reason'])
+            if group.get('code'):
+                cited.add(group['code'])
     assert set(catalog).issubset(cited | set(catalog)), "catalog must stay narrowed to cited codes"
 
 
@@ -303,7 +306,7 @@ def test_T_35_past_the_attack_cap_a_tally_replaces_the_list():
         console=E2E_CONSOLE, scenario={'steps': steps})
 
     capped = [s for s in result['steps']
-              if (s.get('blocked_attack_count') or 0) > BLOCKED_ATTACKS_CAP]
+              if (s.get('blocked_attacks_total') or 0) > BLOCKED_ATTACKS_CAP]
     if not capped:
         pytest.skip(
             f"no step on {E2E_CONSOLE} blocks more than {BLOCKED_ATTACKS_CAP} attacks — "
@@ -312,9 +315,9 @@ def test_T_35_past_the_attack_cap_a_tally_replaces_the_list():
     for step in capped:
         assert 'blocked_attacks' not in step, (
             "past the cap the per-attack list must be absent, not truncated")
-        tally = step.get('blocked_attacks_by_reason')
+        tally = step.get('blocked_attack_codes')
         assert tally, "the cap must replace the list with a per-code tally"
-        assert sum(row['attack_count'] for row in tally) == step['blocked_attack_count'], (
+        assert sum(row['attack_count'] for row in tally) == step['blocked_attacks_total'], (
             "the tally must account for every blocked attack, not a sample")
 
 
@@ -328,16 +331,98 @@ def test_T_35_a_named_attack_still_carries_its_blockers_past_the_cap():
         console=E2E_CONSOLE, scenario={'steps': steps})
 
     capped = [s for s in result['steps']
-              if (s.get('blocked_attack_count') or 0) > BLOCKED_ATTACKS_CAP]
+              if (s.get('blocked_attacks_total') or 0) > BLOCKED_ATTACKS_CAP]
     if not capped:
         pytest.skip(
             f"no step blocks more than {BLOCKED_ATTACKS_CAP} attacks on {E2E_CONSOLE}")
 
-    tally = capped[0].get('blocked_attacks_by_reason') or []
+    tally = capped[0].get('blocked_attack_codes') or []
     assert tally, "expected a tally to source a code from"
+    assert sum(row['attack_count'] for row in tally) == capped[0]['blocked_attacks_total'], (
+        "the tally must account for every blocked attack in the step")
 
-    named = sb_get_scenario_blocked_entities(
-        console=E2E_CONSOLE, scenario={'steps': steps},
-        attack_ids=str(capped[0].get('sample_blocked_attack_id') or ''))
-    assert named.get('asked_about') is not None, (
-        "a named attack must be answered even when the list is gone")
+    # The named-attack escape hatch cannot be exercised from a capped step: the
+    # per-attack list is absent BY DESIGN there, so this output carries no attack
+    # id to name. Skipping says so; the previous `.get(...) or ''` passed '' and
+    # asserted against the empty answer, which could not fail.
+    pytest.skip(
+        "a capped step exposes no attack id by design, so T-35 cannot source one "
+        "from this output — exercise the attack_ids escape hatch via T-27 (unit) or "
+        "name an id discovered from an uncapped step")
+
+
+# ---------------------------------------------------------------------------
+# T-44 — Phase 6: simulator scoping against a real fleet
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_e2e
+def test_T_44_scoping_to_a_contributing_simulator_lists_strictly_fewer_attacks():
+    """Scoping narrows the listing and moves no total the console reported."""
+    _, steps = _discover_scenario_steps(E2E_CONSOLE)
+    plain = sb_get_scenario_blocked_entities(
+        console=E2E_CONSOLE, scenario={'steps': steps})
+
+    scopable = [(index, group['simulator_ids'][0])
+                for index, step in enumerate(plain['steps'])
+                for group in step.get('blocked_simulators', [])
+                if group.get('simulator_ids')]
+    if not scopable:
+        pytest.skip(
+            f"no step on {E2E_CONSOLE} reports a blocked simulator to scope to")
+    index, simulator_id = scopable[0]
+
+    scoped = sb_get_scenario_blocked_entities(
+        console=E2E_CONSOLE, scenario={'steps': steps}, simulator_ids=simulator_id)
+
+    assert scoped['verdict'] == plain['verdict'], (
+        "scoping narrows the listing, never the verdict")
+    for plain_step, scoped_step in zip(plain['steps'], scoped['steps']):
+        if not plain_step['counts_computed']:
+            continue
+        for key in ('blocked_attacks_total', 'blocked_simulators_total',
+                    'excluded_simulators_total'):
+            assert plain_step[key] == scoped_step[key], f"{key} moved under scoping"
+
+    step = scoped['steps'][index]
+    assert step['blocked_attacks_listed'] <= step['blocked_attacks_total']
+    unscoped_codes = {blocker['code']
+                      for entry in plain['steps'][index].get('blocked_attacks', [])
+                      for blocker in entry['blockers']}
+    if unscoped_codes:
+        for entry in step.get('blocked_attacks', []):
+            for blocker in entry['blockers']:
+                assert blocker['code'] in unscoped_codes, (
+                    "a scoped line cited a code the unscoped answer never recorded")
+
+
+@pytest.mark.e2e
+@skip_e2e
+def test_T_44_an_offline_simulator_is_reported_excluded_with_no_scoped_list():
+    """The claim the unit fixtures encode, checked against a real orchestrator."""
+    _, steps = _discover_scenario_steps(E2E_CONSOLE)
+    plain = sb_get_scenario_blocked_entities(
+        console=E2E_CONSOLE, scenario={'steps': steps})
+
+    excluded = [(index, sid)
+                for index, step in enumerate(plain['steps'])
+                for group in step.get('excluded_simulators', [])
+                for sid in group.get('simulator_ids', [])]
+    if not excluded:
+        pytest.skip(
+            f"no offline/disabled/unapproved simulator on {E2E_CONSOLE} — the excluded "
+            "short-circuit cannot be observed; add one to exercise T-44")
+    index, simulator_id = excluded[0]
+
+    scoped = sb_get_scenario_blocked_entities(
+        console=E2E_CONSOLE, scenario={'steps': steps}, simulator_ids=simulator_id)
+    step = scoped['steps'][index]
+
+    assert step['asked_about_simulators'][simulator_id]['state'] == 'excluded', (
+        "a switched-off simulator must never be reported as blocked")
+    assert 'blocked_attacks' not in step and 'blocked_attack_codes' not in step, (
+        "an excluded simulator must withhold the scoped list, not render every "
+        "attack in the step as blocked on a machine that is merely switched off")
+    assert step['blocked_attacks_withheld'] == [simulator_id]
+    assert scoped['verdict'] == plain['verdict']

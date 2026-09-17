@@ -537,3 +537,283 @@ class TestRegisteredToolBoundary:
         assert 'Permission Error' in answer
         assert 'role may not read this account' in answer
         assert 'clean' not in answer.lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — simulator_ids scopes the blocked-attack list
+# ---------------------------------------------------------------------------
+
+def _scoped_step(**overrides):
+    """Three blocked attacks spread across two simulators that were both scored.
+
+    '1000' is cited only on sim-b, '1002' only on sim-c, and '1001' on both but
+    under a different code each side — which is what makes "only the codes cited
+    on that simulator" falsifiable rather than incidentally true.
+    """
+    step = _step(
+        count=0,
+        moves={'1000': 0, '1001': 0, '1002': 0},
+        simulators={'sim-b': 0, 'sim-c': 0},
+        constraints=_target({
+            'sim-b': {'1000': ['incompatible_os'], '1001': ['incompatible_os']},
+            'sim-c': {'1001': ['port_in_use'], '1002': ['port_in_use']},
+        }),
+    )
+    step.update(overrides)
+    return step
+
+
+def _listed_ids(step):
+    return [entry['attack_id'] for entry in step['blocked_attacks']]
+
+
+class TestSimulatorScoping:
+    """What will not run on THIS machine, rather than what will not run anywhere."""
+
+    def test_T_38_only_attacks_blocked_on_the_named_simulator_are_listed(self):
+        result, _ = _report([_scoped_step()], simulator_ids='sim-b')
+        step = result['steps'][0]
+        assert _listed_ids(step) == ['1000', '1001']
+        assert step['blocked_attacks_listed'] == 2
+        assert step['blocked_attacks_total'] == 3
+
+    def test_T_38_a_line_shows_only_the_codes_cited_on_that_simulator(self):
+        result, _ = _report([_scoped_step()], simulator_ids='sim-b')
+        entries = result['steps'][0]['blocked_attacks']
+        shared = next(e for e in entries if e['attack_id'] == '1001')
+        assert [b['code'] for b in shared['blockers']] == ['incompatible_os']
+        # Scoped to the attack lines, not the whole narration: sim-c is scored 0,
+        # so the scenario-wide blocked-simulator section cites port_in_use for an
+        # unrelated and entirely correct reason.
+        assert all(b['code'] != 'port_in_use'
+                   for entry in entries for b in entry['blockers'])
+
+    def test_T_38_naming_two_simulators_returns_the_union(self):
+        result, _ = _report([_scoped_step()], simulator_ids='sim-b,sim-c')
+        assert _listed_ids(result['steps'][0]) == ['1000', '1001', '1002']
+
+
+class TestScopingChangesOnlyTheListing:
+    """Naming ids narrows what is listed — never what is claimed."""
+
+    def test_T_39_the_verdict_and_every_total_survive_scoping(self):
+        plain, _ = _report([_scoped_step()])
+        scoped, _ = _report([_scoped_step()], simulator_ids='sim-b')
+        assert plain['verdict'] == scoped['verdict']
+        for key in ('blocked_attacks_total', 'blocked_simulators_total',
+                    'excluded_simulators_total'):
+            assert plain['steps'][0][key] == scoped['steps'][0][key]
+
+    def test_T_39_both_simulator_sections_are_unchanged_by_scoping(self):
+        plain, _ = _report([_scoped_step()])
+        scoped, _ = _report([_scoped_step()], simulator_ids='sim-b')
+        for key in ('blocked_simulators', 'blocked_simulators_unexplained',
+                    'excluded_simulators'):
+            assert plain['steps'][0][key] == scoped['steps'][0][key]
+
+    def test_T_39_the_scoped_list_discloses_its_omission_as_a_ratio(self):
+        result, _ = _report([_scoped_step()], simulator_ids='sim-b')
+        assert '2 of 3' in _format_scenario_blocked_entities(result)
+
+
+class TestExcludedSimulatorShortCircuit:
+    """A switched-off machine is not an incompatibility with every attack."""
+
+    @staticmethod
+    def _with_offline():
+        """sim-off carries simulator_is_offline on every move and was never scored."""
+        return _step(
+            count=0,
+            moves={'1000': 0, '1001': 0, '1002': 0},
+            simulators={'sim-b': 0},
+            constraints=_target({
+                'sim-b': {'1000': ['incompatible_os']},
+                'sim-off': {move: ['simulator_is_offline']
+                            for move in ('1000', '1001', '1002')},
+            }),
+        )
+
+    def test_T_40_an_excluded_simulator_gets_no_scoped_attack_list(self):
+        result, _ = _report([self._with_offline()], simulator_ids='sim-off')
+        step = result['steps'][0]
+        assert 'blocked_attacks' not in step
+        assert 'blocked_attack_codes' not in step
+
+    def test_T_40_the_withheld_list_states_its_reason(self):
+        result, _ = _report([self._with_offline()], simulator_ids='sim-off')
+        assert result['steps'][0]['blocked_attacks_withheld'] == ['sim-off']
+        narrated = _format_scenario_blocked_entities(result)
+        # A distinctive phrase, not "excluded from scoring" — that is the existing
+        # section heading and renders whenever anything is excluded, so asserting
+        # it would pass with no short-circuit implemented at all.
+        assert 'list withheld' in narrated
+        assert 'sim-off' in narrated
+
+    def test_T_40_the_named_simulator_is_answered_excluded_never_blocked(self):
+        result, _ = _report([self._with_offline()], simulator_ids='sim-off')
+        answer = result['steps'][0]['asked_about_simulators']['sim-off']
+        assert answer['state'] == 'excluded'
+
+    def test_T_40_the_verdict_and_totals_are_untouched_by_the_short_circuit(self):
+        plain, _ = _report([self._with_offline()])
+        scoped, _ = _report([self._with_offline()], simulator_ids='sim-off')
+        assert plain['verdict'] == scoped['verdict']
+        assert (plain['steps'][0]['blocked_attacks_total']
+                == scoped['steps'][0]['blocked_attacks_total'] == 3)
+
+    def test_T_40_a_genuinely_blocked_simulator_still_gets_its_scoped_list(self):
+        result, _ = _report([self._with_offline()], simulator_ids='sim-b')
+        step = result['steps'][0]
+        assert 'blocked_attacks_withheld' not in step
+        assert _listed_ids(step) == ['1000']
+
+    def test_T_40_naming_one_excluded_and_one_scored_still_lists_the_scored_one(self):
+        result, _ = _report([self._with_offline()], simulator_ids='sim-off,sim-b')
+        step = result['steps'][0]
+        assert 'blocked_attacks_withheld' not in step
+        assert _listed_ids(step) == ['1000']
+        assert step['asked_about_simulators']['sim-off']['state'] == 'excluded'
+
+
+class TestNamedSimulatorAnswers:
+    """Silence never stands in for an answer."""
+
+    @staticmethod
+    def _mixed_steps():
+        scored = _step(
+            count=4,
+            moves={'1000': 0},
+            simulators={'sim-ran': 4, 'sim-zero': 0},
+            constraints=_target({'sim-zero': {'1000': ['incompatible_os']}}),
+        )
+        unscored = _step(
+            count=None,
+            moves={'1000': None},
+            simulators={'sim-unmeasured': None},
+            constraints=_target({'sim-off': {'1000': ['simulator_is_offline']}}),
+        )
+        return [scored, unscored]
+
+    def test_T_41_every_named_simulator_gets_exactly_one_state(self):
+        named = 'sim-ran,sim-zero,sim-unmeasured,sim-off,sim-nowhere'
+        result, _ = _report(self._mixed_steps(), simulator_ids=named)
+        assert result['asked_about_simulators'] == named.split(',')
+        states = {sid: answer['state']
+                  for sid, answer in result['steps'][0]['asked_about_simulators'].items()}
+        assert set(states) == set(named.split(','))
+        assert states['sim-ran'] == 'ran'
+        assert states['sim-zero'] == 'blocked'
+        assert states['sim-off'] == 'excluded'
+        assert states['sim-nowhere'] == 'absent'
+
+    def test_T_41_an_unmeasured_simulator_is_not_computed_never_zero(self):
+        result, _ = _report(self._mixed_steps(), simulator_ids='sim-unmeasured')
+        answer = result['steps'][0]['asked_about_simulators']['sim-unmeasured']
+        assert answer['state'] == 'not_computed'
+        assert answer['count'] is None
+
+    def test_T_41_an_empty_scoped_list_still_answers_the_named_simulator(self):
+        result, _ = _report([_scoped_step()], simulator_ids='sim-nowhere')
+        step = result['steps'][0]
+        assert step['blocked_attacks_listed'] == 0
+        assert step['blocked_attacks_total'] == 3
+        narrated = _format_scenario_blocked_entities(result)
+        assert '0 of 3' in narrated
+        assert 'sim-nowhere' in narrated
+
+
+class TestScopedCapAndComposition:
+    """The cap follows the scoped list, and the two filters are independent axes."""
+
+    @staticmethod
+    def _over_cap(cited_on_b):
+        """Every attack blocked; only `cited_on_b` of them cite sim-b."""
+        blocked = [str(2000 + i) for i in range(BLOCKED_ATTACKS_CAP + 10)]
+        return _step(
+            count=0,
+            moves={attack: 0 for attack in blocked},
+            simulators={'sim-b': 0, 'sim-c': 0},
+            constraints=_target({
+                'sim-b': {attack: ['incompatible_os'] for attack in blocked[:cited_on_b]},
+                'sim-c': {attack: ['port_in_use'] for attack in blocked},
+            }),
+        )
+
+    def test_T_42_scoping_under_the_cap_earns_the_per_attack_list_back(self):
+        result, _ = _report([self._over_cap(3)], simulator_ids='sim-b')
+        step = result['steps'][0]
+        assert 'blocked_attacks' in step
+        assert 'blocked_attack_codes' not in step
+        assert step['blocked_attacks_listed'] == 3
+        assert step['blocked_attacks_total'] == BLOCKED_ATTACKS_CAP + 10
+
+    def test_T_42_a_scoped_set_still_over_the_cap_is_summarised(self):
+        result, _ = _report([self._over_cap(BLOCKED_ATTACKS_CAP + 1)],
+                            simulator_ids='sim-b')
+        step = result['steps'][0]
+        assert 'blocked_attacks' not in step
+        tally = step['blocked_attack_codes']
+        assert sum(row['attack_count'] for row in tally) == BLOCKED_ATTACKS_CAP + 1
+
+    def test_T_42_the_two_filters_compose_without_narrowing_each_other(self):
+        outside = str(2000 + BLOCKED_ATTACKS_CAP + 5)
+        result, _ = _report([self._over_cap(3)],
+                            simulator_ids='sim-b', attack_ids=outside)
+        step = result['steps'][0]
+        assert step['blocked_attacks_listed'] == 3
+        assert _listed_ids(step) == ['2000', '2001', '2002']
+        named = step['asked_about'][outside]
+        assert named['state'] == 'blocked'
+        assert [b['code'] for b in named['blockers']] == ['port_in_use']
+
+
+class TestScopedCatalog:
+    """The meanings track what the scoped answer actually shows."""
+
+    @staticmethod
+    def _steps():
+        """port_in_use is cited only by an out-of-scope ATTACK, on no rendered simulator.
+
+        sim-c must CONTRIBUTE, not score zero and not be excluded: either of those
+        renders it in a scenario-wide simulator section, which legitimately puts
+        port_in_use in the catalog and makes the absence assertion below fail
+        against a perfectly correct implementation.
+        """
+        return [_step(
+            count=5,
+            moves={'1000': 0, '1002': 0},
+            simulators={'sim-b': 0, 'sim-c': 5},
+            constraints=_target({
+                'sim-b': {'1000': ['incompatible_os']},
+                'sim-c': {'1002': ['port_in_use']},
+            }),
+        )]
+
+    def test_T_43_the_catalog_is_narrowed_to_codes_the_scoped_answer_shows(self):
+        catalog = {'incompatible_os': {'description': 'OS mismatch.'},
+                   'port_in_use': {'description': 'Port taken.'}}
+        result, _ = _report(self._steps(), catalog=catalog, simulator_ids='sim-b')
+        assert 'incompatible_os' in result['constraint_catalog']
+        assert 'port_in_use' not in result['constraint_catalog']
+
+    def test_T_43_the_catalog_covers_codes_dropped_at_the_scoped_cap(self):
+        blocked = [str(3000 + i) for i in range(BLOCKED_ATTACKS_CAP + 1)]
+        step = _step(
+            count=0,
+            moves={attack: 0 for attack in blocked},
+            simulators={'sim-b': 0},
+            constraints=_target({'sim-b': {
+                **{attack: ['incompatible_os'] for attack in blocked[:-1]},
+                blocked[-1]: ['rare_code'],
+            }}),
+        )
+        catalog = {'incompatible_os': {'description': 'OS mismatch.'},
+                   'rare_code': {'description': 'Seldom seen.'}}
+        result, _ = _report([step], catalog=catalog, simulator_ids='sim-b')
+        assert 'blocked_attacks' not in result['steps'][0]
+        assert 'rare_code' in result['constraint_catalog']
+
+    def test_T_43_a_scoped_report_without_a_catalog_invents_no_meaning(self):
+        result, _ = _report(self._steps(), simulator_ids='sim-b')
+        assert result['catalog_supplied'] is False
+        assert 'incompatible_os' in _format_scenario_blocked_entities(result)
