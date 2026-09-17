@@ -39,9 +39,9 @@ estimating it, which is a precondition for autonomous scenario construction.
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-09-16 12:52 |
+| **Last Updated** | 2026-09-17 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 5 phases complete — PR #98 open, awaiting review |
+| **Current Phase** | Phases 1-5 complete (PR #98 open); Phase 6 appended and pending implementation |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -90,7 +90,7 @@ diverge.
 - `_plan_id` accepts **numeric plan ids only**. An OOB scenario UUID is refused, and the message routes the caller to
   `get_scenario_details`. This is what keeps every input form at exactly one request.
 - `_require_steps` rejects a step-less scenario before a request is spent (the endpoint answers it `400 NOT_ALLOWED`).
-- `_fetch_plan_statistics` issues the single POST, 120 s timeout, with two keyword flags (`get_constraints`,
+- `_fetch_scenario_statistics` issues the single POST, 120 s timeout, with two keyword flags (`get_constraints`,
   `get_all_constraints`) both defaulting **off**. Booleans are sent as their JSON spelling — `requests` would serialise
   a Python `True` as `"True"`, which the endpoint reads as a different question.
 - `is_computed_count` is the single arbiter of "was this measured" and excludes `bool` deliberately, since `True` is an
@@ -121,6 +121,10 @@ blocked.
 **Key features**
 - Same three inputs, plus `attack_ids`. **Ran outranks blocked**: an attack scored `0` in one step and 240 in another
   ran, and the answer never depends on step order.
+- Plus `simulator_ids`, which **scopes the blocked-attack list to one or more machines**: only attacks blocked *on*
+  the named simulator are listed, each showing only the codes cited *on that simulator*. The simulator-side sections
+  and the verdict stay scenario-wide, so an empty scoped list is still legible. Naming ids narrows what is **listed**,
+  never what is counted. See Phase 6.
 - Query parameters differ in one place that matters: `getConstraints=true` **and** `getAllConstraints=true`.
 - **Three states, not two.** A simulator present in the count map at `0` is *blocked*; one **absent** from it —
   offline, disabled or unapproved under `includeDisabled=false` — is reported as *excluded*. Offline nodes are seeded
@@ -268,7 +272,7 @@ it unusable for the simulator half of the blocked answer.
 - Python 3.12+; `requests`; no new dependencies.
 - Depends on orchestrator `e2c69b25f` (SAF-35568) for `constraintCatalog`. That commit is on `develop`, which is not
   necessarily the deployed build, so the catalog is treated as **optional** throughout.
-- Backward compatible: purely additive. `_fetch_plan_statistics` gained two keyword flags, both defaulting off.
+- Backward compatible: purely additive. `_fetch_scenario_statistics` gained two keyword flags, both defaulting off.
 
 **Monitoring & Observability**
 One INFO log per call naming the console. No new metrics or dashboards.
@@ -297,6 +301,16 @@ One INFO log per call naming the console. No new metrics or dashboards.
       attack, the simulator sections and the catalog are returned instead.
 - [x] The constraint catalog at the cap covers every code any blocked entity cites, collected before capping.
 - [x] A named `attack_id` carries its blockers in both cap states.
+- [ ] `simulator_ids` scopes the blocked-attack list to attacks blocked on the named simulators, each rendered with
+      only the codes cited on that simulator.
+- [ ] The scoped list discloses its own omission as a ratio (`n of m` blocked attacks cite this simulator); the
+      verdict, every total and both simulator-side sections stay scenario-wide and exact.
+- [ ] A named simulator that was **excluded** from scoring renders no scoped attack list at all — it is reported as
+      excluded, because every attack in the step carries `simulator_is_offline` against it and listing them would
+      report a switched-off machine as an incompatibility across the whole step.
+- [ ] A named simulator that ran, or that is absent from the scenario, is answered explicitly; silence never stands
+      in for an answer.
+- [ ] The attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids`.
 
 **Quality Gates**
 - [x] Studio suite green — 562 passed / 37 skipped (80 tests across the two tools).
@@ -323,6 +337,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 3: Pair each simulator's attacker/target numbers | ✅ Complete | 2026-09-15 | `3b0a5fc` | Replaces two per-role lists |
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
 | Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
+| Phase 6: Scope the blocked list by simulator | ⬜ Pending | — | — | Adds `simulator_ids`; additive, no prior phase changes |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -455,6 +470,62 @@ that actually inspects these files.
 
 ---
 
+### Phase 6 — Scope the blocked list by simulator
+
+**Semantic change**: Add `simulator_ids` to `get_scenario_blocked_entities`. When named, the per-step blocked-attack
+list contains **only** attacks blocked on those simulators, each rendered with only the codes cited on that
+simulator — answering "what will not run on this machine, and why" rather than "what will not run anywhere".
+
+**Why**: The tool answers the scenario-wide question well and the per-machine one not at all. A caller holding a
+specific simulator — one they just added, or one they suspect — currently reads a step's whole blocked list and
+does the intersection by eye, and past the 50-attack cap they cannot do it at all, because the per-attack list is
+gone and the tally is per code. `attack_ids` already establishes the pattern for narrowing; this is its simulator-side
+twin.
+
+**Feasibility**: projection-only. `_shape_blocked_step` already builds `by_simulator[sid][code]['moves']` — the exact
+inverse index this needs — from the same constraint leaves it uses for `by_attack`. No extra request, no new parsing,
+no orchestrator dependency.
+
+**Deliverables**: a `simulator_ids` parameter, a scoped per-step attack list with ratio disclosure, per-simulator named
+answers reusing the existing state vocabulary, and the excluded short-circuit.
+
+**Implementation details**
+- Scope from `by_simulator[sid]['<code>']['moves']` intersected with the step's blocked set (`_scored_zero(moves)`).
+  An attack blocked scenario-wide whose constraints do not cite a named simulator is **not** blocked on it and is
+  omitted — but the omission is disclosed as a ratio, never silently.
+- **Excluded simulators short-circuit before rendering.** Offline, disabled and unapproved nodes are seeded into
+  `simulatorConstraints` carrying `simulator_is_offline` on *every* move, so naïve scoping to one would list every
+  attack in the step as blocked on it. That is the single most misleading output this tool could produce and the
+  exact confusion the three-state vocabulary exists to prevent. A named simulator that is excluded is reported as
+  excluded, with **no** scoped list and a line saying why the list is withheld.
+- The cap applies to the **scoped** list. Scoping is precisely the "narrow and score again" remedy the tool already
+  recommends, so a scope that brings a step under 50 earns its per-attack detail back.
+- `simulator_ids` and `attack_ids` compose — independent axes, both narrowing only what is listed.
+- Leave `blocked_simulators` and `excluded_simulators` **scenario-wide**. They are the frame that tells a caller
+  whether the named machine is even in play; scoping them away would strip the context that makes an empty scoped
+  list legible.
+- Catalog narrowed to codes cited in the rendered answer, collected before capping, exactly as Phase 5 established.
+
+**What can go wrong**: a caller names a simulator that is fine and reads the empty scoped list as "the scenario is
+clean". The per-simulator answer block is what prevents this — it states `ran`, `excluded`, `not computed` or
+`not in this scenario` explicitly, and the scenario-wide verdict is unchanged beside it.
+
+**Changes**
+
+| File | Description |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | `simulator_ids` parameter; scoped projection; per-simulator answers; excluded short-circuit |
+| `safebreach_mcp_studio/studio_server.py` | Tool description and parameter docs; narrator renders the scoped section and ratio |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | New cases per the reconciled `test-plan.md` |
+| `CLAUDE.md`, `CHANGELOG.md` | Catalog item 26 gains the filter; Unreleased/Added |
+
+**Verification**: `uv run --python 3.12 pytest safebreach_mcp_studio/tests -m "not e2e"` and `uvx ruff check
+--select F` on the changed files.
+
+**Git commit**: `feat(SAF-35508): scope blocked entities to named simulators`
+
+---
+
 ## 9. Risks and Assumptions
 
 **Technical Risks**
@@ -463,8 +534,10 @@ that actually inspects these files.
 |---|---|---|
 | `constraintCatalog` absent on the deployed console (orchestrator `e2c69b25f` is on `develop`, not necessarily released) | Medium | Treated as optional end to end; an absent catalog renders bare codes with an explicit "no descriptions supplied" note rather than failing or inventing meanings |
 | `getAllConstraints=true` payload size on a large estate | Medium | Caps and per-code grouping are the cost control; the tool's description warns it is the expensive call. **Not yet measured at `true` against a real console** |
-| Shared `_fetch_plan_statistics` now serves two tools | Low | Both flags default off; a test asserts the counts tool's exact params are unmoved |
+| Shared `_fetch_scenario_statistics` now serves two tools | Low | Both flags default off; a test asserts the counts tool's exact params are unmoved |
 | Reason codes are a moving vocabulary (97 today, was ~102 before `e2c69b25f`) | Low | Nothing is keyed on the vocabulary — an unrecognised code is reported with whatever the catalog says, or nothing |
+| Phase 6: scoping to an **excluded** simulator would list every attack in the step as blocked on it | High | Offline nodes carry `simulator_is_offline` on every move, so the naïve scope is a maximal false positive. Excluded simulators short-circuit before rendering — reported as excluded, with no scoped list and a stated reason |
+| Phase 6: an empty scoped list read as "the scenario is clean" | Medium | The per-simulator answer states `ran` / `excluded` / `not computed` / `not in this scenario` explicitly, and the scenario-wide verdict and totals are unchanged beside it |
 
 | Phase 5's tally is only as informative as the code variety | Low | A step where every blocked attack cites one code renders one row. Complete and exact, but thin; the hint routes to `attack_ids` for that case |
 
@@ -589,3 +662,4 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
 | 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |
 | 2026-09-16 12:27 | Appended Phase 5 — at the attack cap, report blocked attacks by reason rather than a 50-of-60 sample. Updated §1.5, §3 Component C, §7 (3 new criteria), §9, §11, §12. Phases 1-4 untouched |
+| 2026-09-17 | Appended Phase 6 (pending) — `simulator_ids` scopes the blocked-attack list to attacks blocked on named simulators. Updated §1.5, §3 Component C, §7 (5 new unchecked criteria), §8 table, §9 (2 risk rows). Phases 1-5 untouched. Design note: scoping is projection-only (`by_simulator[sid][code]['moves']` already exists), and excluded simulators must short-circuit or the scope emits a maximal false positive |

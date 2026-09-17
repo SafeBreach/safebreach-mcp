@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Reviewed  |  Updated: 2026-09-16 15:05
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-17
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Reviewed (In Sync with PRD 2026-09-16 12:52) — scoped sign-off, see `test-results/signoff.md` |
+| Status | Draft (In Sync with PRD 2026-09-17) — reset from Reviewed: Phase 6 added T-38 … T-44, a material change the 2026-09-16 scoped sign-off does not cover |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
@@ -31,7 +31,7 @@ An uncovered requirement is a hard GAP — add a test or justify out-of-scope; n
 | R13 | No constraint meaning authored here; `constraintCatalog` relayed verbatim; absence disclosed | T-21, T-34 | Covered |
 | R14 | Four-state verdict decided by whether counts were computed, never by list emptiness | T-19 | Covered |
 | R15 | At the 50-attack cap: no partial list; a per-code tally covering every blocked attack | T-24, T-35 | Covered |
-| R16 | The catalog at the cap covers every cited code, collected pre-cap | T-26 | Covered |
+| R16 | The catalog at the cap covers every cited code, collected pre-cap | T-26, T-43 | Covered |
 | R17 | A named `attack_id` carries its blockers in both cap states | T-27 | Covered |
 | R18 | Tally rows carry no validator detail | T-25 | Covered |
 | R19 | Both tools registered `readOnlyHint=True` and documented in the `CLAUDE.md` catalog | T-11 | Covered |
@@ -41,6 +41,11 @@ An uncovered requirement is a hard GAP — add a test or justify out-of-scope; n
 | R23 | Fixed per-tool query parameters (counts `getConstraints=false`; blocked both `true`) | T-4, T-17 | Covered |
 | R24 | Booleans sent in their JSON spelling, not the Python `"True"` string | T-5 | Covered |
 | R25 | RBAC enforced via `check_rbac_response`; an HTTP failure becomes a typed error carrying status and body | T-10 | Covered |
+| R26 | `simulator_ids` scopes the blocked-attack list to attacks blocked on the named simulators, each rendered with only the codes cited on that simulator | T-38, T-44 | Covered |
+| R27 | The scoped list discloses its omission as an `n of m` ratio; the verdict, every total and both simulator-side sections stay scenario-wide and exact | T-39 | Covered |
+| R28 | A named simulator **excluded** from scoring renders no scoped attack list and is reported as excluded | T-40, T-44 | Covered |
+| R29 | A named simulator that ran, or is absent from the scenario, is answered explicitly; silence never stands in for an answer | T-41 | Covered |
+| R30 | The 50-attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids` | T-42 | Covered |
 
 ## Change Coverage
 
@@ -49,10 +54,10 @@ explicit justification. A file with neither is a validator violation — never s
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1 … T-8, T-10, T-12 … T-27, T-29, T-30 | — |
-| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-24, T-28 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1 … T-8, T-10, T-12 … T-27, T-29, T-30, T-38 … T-43 | — |
+| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-24, T-28, T-39 | — |
 | `safebreach_mcp_studio/tests/test_scenario_simulation_counts.py` | T-1 … T-16 | Test file — it *is* the coverage it would otherwise need |
-| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-17 … T-27 | Test file — it *is* the coverage it would otherwise need |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-17 … T-27, T-38 … T-43 | Test file — it *is* the coverage it would otherwise need |
 | `CLAUDE.md` | — | Docs-only, no runtime surface. The catalog entry's existence is asserted indirectly by T-11 |
 | `CHANGELOG.md` | — | Docs-only, no runtime surface |
 
@@ -64,11 +69,17 @@ explicit justification. A file with neither is a validator violation — never s
   - `getAllConstraints=true` payload size on a large estate — one ordinary step measured 38,531 conflicts / 11.8 MB at
     `getAllConstraints=false`, and `true` is strictly larger. **Never yet measured at `true` against a real console**
     (PRD §9). Read-only tools get no rate-limit cover, so the caps are the only cost control.
-  - The shared `_fetch_plan_statistics` now serves two tools — a default drift would silently change the counts tool's
+  - The shared `_fetch_scenario_statistics` now serves two tools — a default drift would silently change the counts tool's
     question (PRD §9).
   - Reason codes are a moving vocabulary (97 today, ~102 before `e2c69b25f`) — nothing may be keyed on it (PRD §9).
   - Phase 5's tally is only as informative as the code variety — a step whose blocked attacks all cite one code renders
     one row (PRD §9).
+  - **Phase 6: scoping to an excluded simulator would list every attack in the step as blocked on it** (PRD §9, High).
+    Offline, disabled and unapproved nodes are seeded into `simulatorConstraints` carrying `simulator_is_offline` on
+    *every* move, so the naïve scope is a maximal false positive — the exact confusion the three-state vocabulary
+    exists to prevent. T-40 is the test that pins the short-circuit.
+  - **Phase 6: an empty scoped list read as "the scenario is clean"** (PRD §9, Medium). The per-simulator answer and the
+    unchanged scenario-wide verdict are what prevent it; T-39 and T-41 pin both halves.
   - **No CI in this repo executes pytest** (reviewer input, confirmed at the gate): only `release.yml` and
     `security-scan.yml` exist. Nothing mechanically prevents a regression from merging.
   - **`ruff` is not installed** (reviewer input): `uv run ruff` fails to spawn and ruff is absent from `uv.lock`, so the
@@ -104,7 +115,7 @@ explicit justification. A file with neither is a validator violation — never s
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 30   | 0           | 0      | 5   | 35    |
+| Automatic | 36   | 0           | 0      | 6   | 42    |
 | Manual    | 0    | 0           | 0      | 2   | 2     |
 
 ## Environment Requirements (aggregated)
@@ -143,7 +154,8 @@ Capability checklist — answer EVERY line (Yes/No + one-line why; `N/A` only wh
   workflow, `Release`, runs on version-bump tags), so the test-suite half of the regression gate is the executor
   running `SKIP_E2E_TESTS=true uv run --python 3.12 pytest safebreach_mcp_studio/tests` and recording the pass line.
   Both absences are carried as accepted gaps at Sign-off.
-- Regression tests in this plan: T-36 (the mandatory Manual regression), plus Automatic T-12, T-17, T-19, T-29, T-30.
+- Regression tests in this plan: T-36 (the mandatory Manual regression), plus Automatic T-12, T-17, T-19, T-29, T-30,
+  and T-39 (Phase 6 — the scenario-wide totals must not move when the listing is scoped).
 
 ## Tests
 
@@ -183,6 +195,12 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-28 | What an agent actually receives on failure is a message, not a traceback | API-contract | Phase 4 | safebreach-mcp |
 | T-29 | A renamed orchestrator field breaks a test rather than the answer | API-contract, regression | Final | safebreach-mcp |
 | T-30 | A dead or slow console fails loudly instead of answering zero | regression | Final | safebreach-mcp |
+| T-38 | Scoping by simulator lists only what is blocked on that machine | — | Phase 6 | safebreach-mcp |
+| T-39 | Narrowing the listing never moves a total or the verdict | regression | Phase 6 | safebreach-mcp |
+| T-40 | A switched-off simulator is never blamed for every attack in the step | — | Phase 6 | safebreach-mcp |
+| T-41 | A named simulator that is fine says so rather than going quiet | — | Phase 6 | safebreach-mcp |
+| T-42 | The cap follows the scoped list, and the two filters compose | perf | Phase 6 | safebreach-mcp |
+| T-43 | Under scoping the catalog still explains exactly what is shown | API-contract | Phase 6 | safebreach-mcp |
 
 **E2E**
 
@@ -193,6 +211,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-33 | Real role numbers and the cap behave as measured, not as assumed | Automatic | — | Phase 3 | safebreach-mcp | Validate console environment |
 | T-34 | The three-state model matches a live orchestrator | Automatic | — | Phase 4 | safebreach-mcp | Validate console environment |
 | T-35 | The cap tally holds on a fleet large enough to trigger it | Automatic | perf | Phase 5 | safebreach-mcp | Validate console environment |
+| T-44 | Simulator scoping holds against a real fleet, including a switched-off node | Automatic | — | Phase 6 | safebreach-mcp | Validate console environment |
 | T-36 | The neighbouring tools that share the fetch helper still behave | Manual | regression | Final | — | Validate console environment |
 | T-37 | An agent can actually assemble a scenario with these two answers | Manual | progression | Final | — | Validate console environment |
 
@@ -894,7 +913,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Level: e2e
 - Execution: Manual
 - Aspect: regression
-- Risk: `_fetch_plan_statistics` gained two keyword flags and now serves two additional tools. `run_scenario` and
+- Risk: `_fetch_scenario_statistics` gained two keyword flags and now serves two additional tools. `run_scenario` and
   `quick_run` with `evaluate=True` consume constraint summaries shaped differently from the new tools. A defaults drift
   would change their narrated pre-flight without failing any assertion, since their output is prose an agent reads.
 - Risk source: PRD §9
@@ -937,6 +956,155 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   configuration — a judgment about usefulness that no assertion captures.
 - Environment needs: Validate console environment
 
+### T-38 — Scoping by simulator lists only what is blocked on that machine
+
+- Description: Proves the filter answers the per-machine question it was added for, rather than re-printing the scenario-wide list.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Risk: A filter that narrows the heading but not the rows would read as a per-machine answer while still showing every
+  blocked attack — the caller would act on attacks that have nothing to do with the simulator they named.
+- Risk source: PRD §7
+- Verify: Shape a step whose blocked attacks are blocked by constraints recorded against different simulators, with at
+  least one attack cited against several simulators and at least one cited against none of the named ones. Name a
+  single simulator, then name two.
+- Expected: The scoped list contains exactly the blocked attacks whose recorded constraints cite a named simulator, and
+  no others. Each listed attack shows only the codes cited against that simulator — a code recorded only against a
+  different simulator does not appear on the line. Naming two simulators returns the union.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-39 — Narrowing the listing never moves a total or the verdict
+
+- Description: Proves the tool's central invariant survives the new filter — naming ids changes what is shown, never what is claimed.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: If scoping narrowed the counted set rather than the listed set, a caller could narrow their way into a clean
+  verdict on a blocked scenario. This is the same invariant `attack_ids` already relies on, so breaking it here breaks
+  the tool's whole contract, not just the new parameter.
+- Risk source: PRD §7
+- Verify: Score one step-set twice — once with no `simulator_ids`, once naming a simulator implicated in only some of
+  the blocked attacks — and compare the verdict, every total, and both simulator-side sections between the two runs.
+- Expected: The verdict, `blocked_attacks_total`, `blocked_simulators_total`, `excluded_simulators_total` and both
+  simulator-side sections are identical in both runs. The scoped run additionally discloses its own omission as an
+  `n of m` ratio, where `m` is the unscoped blocked-attack total for that step and `n` the number listed.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-40 — A switched-off simulator is never blamed for every attack in the step
+
+- Description: Proves the highest-risk edge of this feature — that naming an offline machine cannot turn every attack in the step into a false positive.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Risk: Offline, disabled and unapproved nodes are seeded into the constraint map carrying `simulator_is_offline`
+  against *every* move, so a naïve scope returns the entire step as "blocked on this simulator". That is the maximal
+  false positive this tool can emit, and it contradicts the three-state model that keeps *excluded* distinct from
+  *blocked*.
+- Risk source: PRD §9
+- Verify: Shape a step containing a simulator present in the constraint map but absent from the count map — carrying
+  `simulator_is_offline` against every move — and name it in `simulator_ids`. Separately, name a simulator that is
+  genuinely blocked, to confirm the short-circuit is keyed on exclusion and not on the code.
+- Expected: The excluded simulator's answer is *excluded*, never *blocked*, and no scoped attack list is rendered for
+  it — the absence is stated with its reason rather than left as an empty list. The scenario-wide verdict and every
+  total are unchanged. The genuinely blocked simulator still produces its scoped list, so the short-circuit did not
+  swallow the ordinary case.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-41 — A named simulator that is fine says so rather than going quiet
+
+- Description: Proves an empty scoped list can be read correctly, because the simulator itself is always given an explicit state.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Risk: Silence is ambiguous — a caller who names a healthy simulator and sees nothing cannot distinguish "nothing is
+  blocked on it", "it is not in this scenario" and "it was never scored", and the most likely misreading is that the
+  whole scenario is clean.
+- Risk source: PRD §7
+- Verify: Name, in one call, a simulator that contributed simulations, one absent from the scenario entirely, one in a
+  step whose counts were never computed, and one that is blocked.
+- Expected: Each named simulator is answered with exactly one state — ran (carrying its contribution), not in this
+  scenario, not computed, blocked or excluded — and none is omitted from the answer. A count that was never measured is
+  reported as not computed, never as a zero.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-42 — The cap follows the scoped list, and the two filters compose
+
+- Description: Proves scoping is a real remedy for the cap rather than a second thing the cap ignores, and that the two filters are independent axes.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Aspect: perf
+- Risk: If the cap were judged on the unscoped list, a caller who narrowed to one machine would still be handed a tally
+  instead of the handful of attacks they asked for — scoping would fail exactly where it is most useful. If the two
+  filters interfered, naming both would silently drop one of the answers.
+- Risk source: PRD §7
+- Verify: Shape a step whose unscoped blocked set exceeds the attack cap but whose scoped set falls under it, and the
+  reverse. Then call with `simulator_ids` and `attack_ids` together.
+- Expected: The cap decision follows the scoped list — under the cap the per-attack list is present even though the
+  unscoped set exceeds it, and over the cap the list key is absent and replaced by the per-code tally. Naming both
+  filters returns both answers: the named attacks keep their scenario-wide dispositions and the scoped list is still
+  scoped by simulator; neither narrows the other.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-43 — Under scoping the catalog still explains exactly what is shown
+
+- Description: Proves the meanings track the narrowed answer, so a scoped report is neither missing descriptions nor padded with irrelevant ones.
+- Status: Active
+- Passes after: Phase 6
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: A catalog computed before scoping would describe codes the scoped answer never shows; one computed from the
+  rendered rows alone would lose the codes dropped at the cap — the same shrinkage Phase 5 fixed, reintroduced through
+  the new filter.
+- Risk source: PRD §7
+- Verify: Score a scoped report whose named simulator cites a subset of the step's codes, once below the attack cap and
+  once above it, with a catalog supplied and again with none.
+- Expected: The catalog covers every code cited anywhere in the rendered answer, including codes appearing only in
+  dropped rows, and is narrowed to those codes rather than relaying the whole vocabulary or the unscoped set. With no
+  catalog supplied, codes are rendered bare and the absence is disclosed rather than filled with a local meaning.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
+### T-44 — Simulator scoping holds against a real fleet, including a switched-off node
+
+- Description: Proves the filter works against constraints a live orchestrator actually emits, which is the only place the offline-seeding behaviour can be observed for real.
+- Status: Active
+- Passes after: Phase 6
+- Level: e2e
+- Execution: Automatic
+- Risk: The offline short-circuit is built on a documented claim about how the orchestrator seeds excluded nodes into
+  `simulatorConstraints`. Every unit test asserts that claim against a fixture that encodes it, so only a live console
+  can confirm the claim itself — if it is wrong, T-40 passes while the real answer is a maximal false positive.
+- Risk source: PRD §9
+- Verify: Against a live console holding a saved plan and a fleet that includes at least one offline or disabled
+  simulator, call `get_scenario_blocked_entities` unscoped, then scoped to a simulator that contributes, then scoped to
+  the offline one.
+- Expected: The scoped runs list strictly fewer blocked attacks than the unscoped run, and every listed attack's codes
+  are ones the unscoped run also recorded for that simulator. The offline simulator is reported as excluded with no
+  scoped list. The verdict and all totals are identical across all three runs. No test is queued at any point.
+- Evidence required: the exact pytest command scoped to this id plus its pass line, the console name, the simulator ids
+  used, and the three answers' totals side by side.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Environment needs: Validate console environment
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -948,7 +1116,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 3 | T-14, T-15, T-16, T-33 | 18 tests |
 | Phase 4 | T-11, T-17 … T-23, T-28, T-34 | 28 tests |
 | Phase 5 | T-24, T-25, T-26, T-27, T-35 | 33 tests |
-| Final | T-29, T-30, T-36, T-37 | all 37 |
+| Phase 6 | T-38 … T-44 | 40 tests |
+| Final | T-29, T-30, T-36, T-37 | all 44 |
 
 ## Sign-off
 
@@ -957,13 +1126,18 @@ the real-environment tier is **unverified and explicitly waived by the owner**. 
 waived, not satisfied. The record is `test-results/signoff.md`. This plan's Status stays `Reviewed` rather than
 `Signed off`, because a full sign-off requires every box.
 
-- [x] Requirements traceability complete — every R# covered or explicitly out-of-scope (validator: all 25 R-rows Covered)
+**Superseded (2026-09-17).** That sign-off predates Phase 6. T-38 … T-44 are authored but unwritten and unrun, so the
+boxes it covered no longer cover the current test set; Status is reset to `Draft` and the affected boxes are unchecked
+below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence for this plan.
+
+- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (30 R-rows; re-run the validator)
 - [x] Change Coverage complete — every changed file tested or justified
 - [ ] Regression complete — **WAIVED**: T-36 is authored but has never run; no console. CI suite named.
 - [ ] Progression evidence — **WAIVED**: T-37 is authored but has never run; no console.
-- [x] validating-test-plan: RESULT: clean
+- [ ] validating-test-plan: RESULT: clean — must be re-run against the Phase 6 test set
 - [ ] All tests green (cumulative through Final) — **WAIVED for the real-environment tier**. Unit tier green with
-      per-id evidence: 29 of 29 executed (`test-results/phase-Final.md`). Open: T-29 unwritten, T-31 … T-37 BLOCKED.
+      per-id evidence for T-1 … T-30: 29 of 29 executed (`test-results/phase-Final.md`). Open: T-29 unwritten,
+      T-31 … T-37 BLOCKED, and T-38 … T-44 not yet written (Phase 6 is pending implementation).
 - [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
@@ -983,4 +1157,5 @@ waived, not satisfied. The record is `test-results/signoff.md`. This plan's Stat
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
+| 2026-09-17 | Reconciled with PRD Phase 6 (`simulator_ids` scopes the blocked-attack list). Added R26 … R30 and T-38 … T-44 — six unit tests at Phase 6 plus one Phase 6 e2e, following the plan's per-slice e2e pattern. Extended R16 with T-43. Nothing reverted, so no tombstones and no existing T-id touched. Regenerated the index tables, Coverage Summary (42 Automatic / 2 Manual) and Tests by Phase. Status reset to Draft and the 2026-09-16 scoped sign-off marked superseded — a material change it does not cover. |
 | 2026-09-16 14:45 | Phase Final execution follow-up. Every existing test method prefixed with its plan id (selector: `pytest -k "T_<n>_"`). Authored the cases that had none — T-9, T-12, T-22, T-28 and the RBAC half of T-10 — plus T-30 in a new contract suite and T-31 … T-35 in a new e2e suite; their `planned:` markers are now real paths. T-29 stays unwritten (needs a live-console capture). Suite: 594 passed / 50 skipped. Status stays Draft — the test set changed materially. |
