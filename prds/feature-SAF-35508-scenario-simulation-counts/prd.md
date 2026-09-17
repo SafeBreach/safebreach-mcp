@@ -41,7 +41,7 @@ estimating it, which is a precondition for autonomous scenario construction.
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-09-17 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | Phases 1-5 complete (PR #98 open); Phase 6 appended and pending implementation |
+| **Current Phase** | All 6 phases complete — unit tier green (615 tests); real-env tier BLOCKED, no console |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -301,16 +301,19 @@ One INFO log per call naming the console. No new metrics or dashboards.
       attack, the simulator sections and the catalog are returned instead.
 - [x] The constraint catalog at the cap covers every code any blocked entity cites, collected before capping.
 - [x] A named `attack_id` carries its blockers in both cap states.
-- [ ] `simulator_ids` scopes the blocked-attack list to attacks blocked on the named simulators, each rendered with
-      only the codes cited on that simulator.
-- [ ] The scoped list discloses its own omission as a ratio (`n of m` blocked attacks cite this simulator); the
-      verdict, every total and both simulator-side sections stay scenario-wide and exact.
-- [ ] A named simulator that was **excluded** from scoring renders no scoped attack list at all — it is reported as
+- [x] `simulator_ids` scopes the blocked-attack list to attacks blocked on the named simulators, each rendered with
+      only the codes cited on that simulator. (T-38; mutation-verified)
+- [x] The scoped list discloses its own omission as a ratio (`n of m` blocked attacks cite this simulator); the
+      verdict, every total and both simulator-side sections stay scenario-wide and exact. (T-39)
+- [x] A named simulator that was **excluded** from scoring renders no scoped attack list at all — it is reported as
       excluded, because every attack in the step carries `simulator_is_offline` against it and listing them would
-      report a switched-off machine as an incompatibility across the whole step.
-- [ ] A named simulator that ran, or that is absent from the scenario, is answered explicitly; silence never stands
-      in for an answer.
-- [ ] The attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids`.
+      report a switched-off machine as an incompatibility across the whole step. (T-40; mutation-verified.
+      Refined in implementation: excluded simulators are dropped from the match set always, and the list is
+      withheld only when that empties it — otherwise an excluded machine named beside a healthy one would drag the
+      whole step into the healthy one's listing.)
+- [x] A named simulator that ran, or that is absent from the scenario, is answered explicitly; silence never stands
+      in for an answer. (T-41)
+- [x] The attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids`. (T-42)
 
 **Quality Gates**
 - [x] Studio suite green — 562 passed / 37 skipped (80 tests across the two tools).
@@ -337,7 +340,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 3: Pair each simulator's attacker/target numbers | ✅ Complete | 2026-09-15 | `3b0a5fc` | Replaces two per-role lists |
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
 | Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
-| Phase 6: Scope the blocked list by simulator | ⬜ Pending | — | — | Adds `simulator_ids`; additive, no prior phase changes |
+| Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
 
 ### Phase 1 — Counts tool over plan/statistics
 
