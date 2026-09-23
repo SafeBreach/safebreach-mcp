@@ -1,20 +1,21 @@
 # Sign-off — Scenario Statistics MCP Tools (SAF-35508)
 
-> Plan: ../test-plan.md | Recorded: 2026-09-23T15:10Z | Commit: `aaf725c` | Console: apricot-jellyfish.dev.sbops.com
+> Plan: ../test-plan.md | Recorded: 2026-09-23T15:50Z | Console: apricot-jellyfish.dev.sbops.com
 
 ## Verdict
 
-**NOT SIGNED OFF — one item open (T-33's over-cap half), awaiting either the work or an owner waiver.**
+**ALL 46 TESTS EXECUTED AND GREEN — no test gaps, no waivers.** The plan is not yet flipped to `Signed off` only
+because its validator gate (`validating-test-plan`) has not been re-run against the 46-id plan; that is a plan-level
+check, not a test.
 
 | Tier | State |
 |---|---|
 | Unit (38 ids) | **All 38 executed with per-id evidence** — 168 passed, including T-29 against a live recording. |
-| Real console, automatic (T-31 … T-35, T-44) | **All executed live** — 18 passed. T-33 only in part. |
+| Real console, automatic (T-31 … T-35, T-44) | **All executed live** — 18 passed; T-33 observed on both sides of the cap. |
 | Real console, manual (T-36, T-37) | **Both executed and passed.** T-37 found a defect, since fixed. |
 
 The 2026-09-16 scoped sign-off (at `5373c1a`) is **superseded**. It rested on the owner waiving the whole
-real-console tier; that tier has now run, so the waiver no longer describes anything, and it never covered Phases 6–8.
-It stays in git history as a record, not as evidence.
+real-console tier; that tier has now run in full, so no waiver is needed or recorded.
 
 ## What is verified
 
@@ -22,25 +23,24 @@ It stays in git history as a record, not as evidence.
   T-1 … T-30, T-38 … T-46 resolves to a non-empty passing subset via `-k "T_<n>_"`.
 - **T-29** — both tools replayed against `plan/statistics` responses recorded verbatim from apricot-jellyfish
   (`tests/fixtures/`, with provenance). Every expectation is computed from the recording's own field names; the tool
-  must still send the recorded request; and renaming any field the tools read changes their answer. A simulated
+  must still send the recorded request; renaming any field the tools read changes their answer, and a simulated
   orchestrator rename turns T-29 red.
-- **Real-console tier** on apricot-jellyfish, 15:05Z → 15:08Z: `18 passed`. This closes three of the previous
-  record's four open risks:
-  - *Shape mismatch* — every field the tools read was observed in a live response.
+- **Real-console tier** on apricot-jellyfish — `18 passed`. It closed every risk the previous record left open:
+  - *Shape mismatch* — every field the tools read was observed in a live response, and is now pinned by T-29.
   - *Three-state model* — 34 offline simulators reported as excluded, not blocked (T-34, T-44).
-  - *`getAllConstraints=true` unmeasured* — now measured: 154,744 bytes / 7.0 s for the capped fixture; the broadest
-    step this fleet allows (78 attacks × every connected simulator) measured 493,771 bytes / 10.8 s, 2.2× the
-    `false` payload, inside the 120 s timeout.
+  - *`getAllConstraints=true` unmeasured* — measured: ~155–162 KB / 7–8 s for the capped fixture; the broadest step
+    this fleet allows measured 493,771 bytes / 10.8 s, 2.2× the `false` payload, inside the 120 s timeout.
+  - *The listing cap* — T-33 observed live on a 22-simulator fleet (two mockulator sims added, then removed) and on
+    the restored 20: breakdown dropped only past 20, the count kept, both routes back named, named ids answered in
+    both roles on both sides.
 - **T-36** — `run_scenario` and `quick_run` at `evaluate=True` byte-identical to `main`; nothing queued.
 - **T-37** — the full score → why → adjust → re-score walk worked; the re-score moved exactly as predicted (336 → 84).
 
 Details and per-id accounting: `phase-Final.md`.
 
-## What is NOT verified — the one open item
+## What is NOT verified
 
-| Item | State | To close it |
-|---|---|---|
-| **T-33, over-cap half** | unobserved | Every step on apricot-jellyfish offers exactly 20 simulators, so the path that drops the breakdown past 20 never ran live. The unit tier covers it (T-15). Needs a 21+ simulator fleet (the plan's mockulator step) — or waive. |
+- No test. The only open box is the plan's validator re-run (below).
 
 ## Accepted gaps (carried forward from the 2026-09-16 owner approval)
 
@@ -59,13 +59,13 @@ pinned by T-46).
 
 ## What converts this to a full sign-off
 
-1. Observe T-33 on a 21+ simulator fleet — or the owner waives its over-cap half.
-2. Re-run `validating-test-plan` and record `RESULT: clean`.
-3. When every box in the plan's Sign-off section is checked, flip the plan's Status to `Signed off`.
+1. Re-run `validating-test-plan` and record `RESULT: clean`.
+2. When every box in the plan's Sign-off section is checked, flip the plan's Status to `Signed off`.
 
 ## Artifacts
 
 - Plan: `../test-plan.md` · Run accounting: `phase-Final.md`
 - Commits: `6108673` (e2e fixes after the first live run), `d9ffe6d` (T-35 live fixture), `6bbdf1c` (verdict fix,
-  Phase 8), `aaf725c` (PRD SHA), `cf0037e` (this record), and the T-29 commit that follows it
+  Phase 8), `aaf725c` (PRD SHA), `cf0037e` (first live-run record), `00275c0` (T-29), and the T-33 commit that
+  follows it
 - Recorded fixtures: `safebreach_mcp_studio/tests/fixtures/plan_statistics_{counts,blocked}.json`

@@ -9,7 +9,7 @@
 |---|---|
 | 1 (2026-09-16 14:05Z) | INCOMPLETE — 30 BLOCKED, 7 unwritten-planned, **0 green by id**. No test carried a `T-<n>:` title prefix. |
 | 2 (2026-09-16 14:50Z) | INCOMPLETE — 29 executed with per-id evidence, 7 BLOCKED (no console), 1 unwritten-planned. Recorded a scoped sign-off; see git history of this file at `5373c1a`. |
-| 3 (2026-09-23 15:05Z, this pass) | INCOMPLETE — **46 of 46 executed** (38 unit, 6 e2e automatic, 2 manual); T-33 only in part. Real-console tier run for the first time; T-29 authored from a live recording at 15:15Z. |
+| 3 (2026-09-23 15:05Z → 15:45Z, this pass) | **COMPLETE — 46 of 46 executed with evidence** (38 unit, 6 e2e automatic, 2 manual). Real-console tier run for the first time; T-29 authored from a live recording at 15:15Z; T-33 observed on both sides of the cap by growing the fleet to 22 with two mockulator simulators (15:32Z) and restoring it to 20 (15:41Z). |
 
 Between passes 2 and 3: Phases 6–8 landed (T-38 … T-46 added), the first live run surfaced three defective e2e tests
 (fixed in `6108673`), T-35's fixture became buildable (`d9ffe6d`), and T-37 surfaced a product defect in the verdict
@@ -52,6 +52,17 @@ $ E2E_CONSOLE=apricot-jellyfish SKIP_E2E_TESTS=false \
 18 passed in 177.46s
 ```
 
+T-33 across the cap — the same command on two fleet sizes. The console's own fleet offers exactly 20, so the over-cap
+side was reached by bringing up the on-box mockulator (`sb-dev-base:mockulator-connect`, image `mockulator:latest`
+v2.452.0) and adding two connected sims (`saf35508-t33-mock-win`, `saf35508-t33-mock-linux`); both were deleted and the
+container removed afterwards, leaving the console as found.
+
+```
+15:32Z → 15:40Z  fleet 22  → 17 passed, 1 skipped   T-33 observed: step 0–3 offer 22 — over the cap
+                                                    (skip: the per-row case, which has no rows past the cap)
+15:41Z → 15:45Z  fleet 20  → 18 passed              T-33 observed: step 0–3 offer 20 — up to the cap
+```
+
 ## Accounting
 
 | T-\<n\> | Level | Execution | Env | Runner | Outcome | Evidence / Reason |
@@ -88,7 +99,7 @@ $ E2E_CONSOLE=apricot-jellyfish SKIP_E2E_TESTS=false \
 | T-30 | unit | Automatic | none | uv-pytest | executed | 13 passed |
 | T-31 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 2 passed live |
 | T-32 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live |
-| T-33 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed — **partial** | 3 passed live. Every step on this fleet offers exactly 20 simulators, so only the "up to the cap" half is observed; the over-cap half needs a fleet of 21+ (the plan's mockulator step) |
+| T-33 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | **Both sides of the cap, live.** 22 simulators (fleet + 2 mockulator sims, 15:32Z): every step over the cap — breakdown dropped, count kept, both routes named, named ids answered in both roles; the per-row case skips by design. 20 simulators (mocks removed, 15:41Z): every step up to the cap — breakdown present, every row carries both roles, named ids answered. 3 passed in the second run |
 | T-34 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live (offline simulators present: 34 excluded) |
 | T-35 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 5 passed live, from both an unsaved body and a saved `scenario_id` (built fixture: 78 exfiltration attacks, one zero-target simulator; plan created and deleted). Payload 154,744 bytes / 7.0 s |
 | T-36 | e2e | Manual | Validate console | manual (executor) | executed | See Manual evidence — byte-identical to `main` |
@@ -138,10 +149,10 @@ contribute nothing anywhere in this scenario; 15 more contribute nothing in at l
 ## Cumulative readiness
 
 - Selected (Active, Passes after ≤ Final): T-1 … T-46 (46)
-- **Executed with evidence: 46** — T-33 executed but only its at-or-under-the-cap half is observable on this fleet
+- **Executed with evidence: 46** — T-33 on both sides of the cap (22- and 20-simulator fleets)
 - Unwritten-planned: none
 - BLOCKED: none · Local-pending-ci: none · Delegated: none · Manual substitutions: none
-- **Phase verdict: INCOMPLETE** — T-33's over-cap half unobserved
+- **Phase verdict: COMPLETE** — every selected test executed and green with evidence
 
 ## To author (unwritten-planned)
 
@@ -155,6 +166,10 @@ contribute nothing anywhere in this scenario; 15 more contribute nothing in at l
 - **The e2e tests had never met a real payload, and three were wrong.** T-33 dropped the breakdown at `>= 20` where the
   spec says more than 20; T-33 read a `named_simulators` key that has never existed; T-44 asserted Phase 6's subset
   rule after Phase 7 superseded it. All three were test defects — the tool behaved to spec each time.
+- **Two more tests silently depended on being under the cap.** The T-33 naming case and the T-35 fixture both took
+  their simulator ids from the breakdown rows, which the tool drops past 20 offered — on the 22-simulator fleet the
+  naming case had nothing to name and the T-35 fixture skipped with a misleading "no simulator is measured at zero".
+  Both now take ids from the console's connected-simulator list, the source the tool's own hint names.
 - **The plan encoded two of the same wrong assumptions.** T-44's Expected still stated the superseded subset rule, and
   T-35's claimed the tally rows sum to the blocked total (live: 78 blocked, rows summing to 721 — an attack cites every
   code recorded against it). Both corrected.
@@ -165,6 +180,6 @@ contribute nothing anywhere in this scenario; 15 more contribute nothing in at l
 
 ## Verdict
 
-- **INCOMPLETE** — all 46 executed; T-33 executed only in part. Every other test, including the whole real-console
-  tier, T-29's recorded-payload contract and both manual walkthroughs, passed with evidence. A full sign-off needs
-  T-33's over-cap half observed, or an explicit owner waiver for it.
+- **COMPLETE** — all 46 executed and green with evidence: the whole unit tier including T-29's recorded-payload
+  contract, the real-console tier with T-33 on both sides of the cap, and both manual walkthroughs. No waiver was
+  needed for any test.

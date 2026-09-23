@@ -864,7 +864,10 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Evidence required: the exact pytest command, the console name, the fleet sizes used either side of the cap, and the run timestamp.
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
-  - Requires a fleet that can be grown past the listing cap and shrunk back within the run.
+  - Requires a fleet that can be grown past the listing cap and shrunk back within the run. The test observes whatever
+    fleet it finds and prints which side of the cap each step is on, so both sides take two runs: done on 2026-09-23
+    by adding two mockulator sims to apricot-jellyfish's 20 (22 → over) and removing them (20 → up to). Named ids are
+    sourced from the console's connected-simulator list, since the breakdown rows are dropped past the cap.
 
 ### T-34 — The three-state model matches a live orchestrator
 
@@ -1200,10 +1203,10 @@ waived, not satisfied. The record is `test-results/signoff.md`. This plan's Stat
 boxes it covered no longer cover the current test set; Status is reset to `Draft` and the affected boxes are unchecked
 below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence for this plan.
 
-**Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish at `aaf725c`, and T-29
-was then authored from a live recording: all 46 ids executed with evidence (`test-results/phase-Final.md`). The record
-is `test-results/signoff.md`, verdict **not signed off** — one item open (T-33's over-cap half), awaiting the work or
-an owner waiver. No waiver has been given for it.
+**Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish, T-29 was authored
+from a live recording, and T-33 was observed on both sides of the cap (22- and 20-simulator fleets): all 46 ids
+executed and green with evidence (`test-results/phase-Final.md`), with no waiver. The record is
+`test-results/signoff.md`. Status is not yet `Signed off` only because the validator box below is still open.
 
 - [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (re-run the validator against
       the 46-id plan)
@@ -1211,8 +1214,8 @@ an owner waiver. No waiver has been given for it.
 - [x] Regression complete — T-36 executed live 2026-09-23: `run_scenario` / `quick_run` byte-identical to `main`.
 - [x] Progression evidence — T-37 executed live 2026-09-23: criteria met; its one defect fixed in Phase 8 (T-46).
 - [ ] validating-test-plan: RESULT: clean — not re-run against the 46-id plan
-- [ ] All tests green (cumulative through Final) — all 46 executed and green. Open: **T-33's over-cap half
-      unobserved** (the fleet offers exactly 20).
+- [x] All tests green (cumulative through Final) — all 46 executed and green with per-id evidence, T-33 on both
+      sides of the cap (`test-results/phase-Final.md`).
 - [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is

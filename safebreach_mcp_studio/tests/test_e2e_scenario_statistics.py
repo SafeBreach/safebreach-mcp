@@ -32,9 +32,11 @@ import uuid
 import pytest
 import requests
 
+from safebreach_mcp_config.config_functions import sb_get_console_simulators
 from safebreach_mcp_core.environments_metadata import get_api_account_id, get_api_base_url
 from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
 from safebreach_mcp_playbook.playbook_functions import sb_get_playbook_attacks
+from safebreach_mcp_studio.studio_server import _format_scenario_simulation_counts
 from safebreach_mcp_studio.studio_functions import (
     BLOCKED_ATTACKS_CAP,
     SIMULATOR_LISTING_CAP,
@@ -184,14 +186,20 @@ def test_T_33_the_breakdown_is_present_exactly_when_the_fleet_is_under_the_cap()
 
     result = sb_get_scenario_simulation_counts(
         console=E2E_CONSOLE, scenario={'steps': steps})
+    rendered = _format_scenario_simulation_counts(result)
 
     for step in result['steps']:
         offered = step.get('simulators_offered')
         if offered is None:
             continue
+        side = 'over' if offered > SIMULATOR_LISTING_CAP else 'up to'
+        print(f"\nT-33 observed: step {step['step_index']} offers {offered} — {side} the cap")
         if offered > SIMULATOR_LISTING_CAP:
             assert 'simulator_rows' not in step, (
                 f"{offered} simulators offered — the breakdown should be dropped whole")
+            assert isinstance(step['simulation_count'], int), "the step's count survives the cap"
+            assert 'Narrow the step' in rendered and 'name simulator_ids' in rendered, (
+                "past the cap the answer must name both routes back")
         else:
             assert 'simulator_rows' in step, (
                 f"{offered} simulators offered — the breakdown should be present")
@@ -220,14 +228,19 @@ def test_T_33_every_offered_simulator_carries_both_role_numbers():
 @pytest.mark.e2e
 @skip_e2e
 def test_T_33_naming_simulator_ids_answers_them_in_both_roles():
-    """Naming a machine is the reliable per-simulator number, cap or no cap."""
-    _, steps = _discover_scenario_steps(E2E_CONSOLE)
-    first = sb_get_scenario_simulation_counts(
-        console=E2E_CONSOLE, scenario={'steps': steps})
+    """Naming a machine is the reliable per-simulator number, cap or no cap.
 
-    named = sorted(_offered_union(first['steps'][0])) if first['steps'] else []
+    Past the cap the breakdown rows are gone, so the ids are taken from the console's
+    own simulator list — the source the tool's hint points at — rather than from rows.
+    """
+    _, steps = _discover_scenario_steps(E2E_CONSOLE)
+    connected = sb_get_console_simulators(console=E2E_CONSOLE, status_filter='connected')
+    named = sorted(sim['id'] for sim in connected.get('simulators', []) if sim.get('id'))
     if not named:
-        pytest.skip("no simulator was offered on the first step to name")
+        first = sb_get_scenario_simulation_counts(console=E2E_CONSOLE, scenario={'steps': steps})
+        named = sorted(_offered_union(first['steps'][0])) if first['steps'] else []
+    if not named:
+        pytest.skip("no connected simulator on this console to name")
 
     result = sb_get_scenario_simulation_counts(
         console=E2E_CONSOLE, scenario={'steps': steps},
@@ -355,12 +368,19 @@ def capped_scenario():
     if len(ids) <= BLOCKED_ATTACKS_CAP:
         pytest.skip(f"only {len(ids)} exfiltration attacks on {E2E_CONSOLE}; the cap is {BLOCKED_ATTACKS_CAP}")
 
-    offered = sb_get_scenario_simulation_counts(
-        console=E2E_CONSOLE, scenario={'steps': [_step(ids, CONNECTED)]})['steps'][0]
-    target = next((row['simulator_id'] for row in offered.get('simulator_rows', [])
-                   if row['target']['state'] == 'measured_zero'), None)
+    # Named simulators are answered whatever the listing cap does; the breakdown rows are
+    # not — past 20 offered they are dropped — so candidates come from the console's list.
+    candidates = sorted(sim['id'] for sim in sb_get_console_simulators(
+        console=E2E_CONSOLE, status_filter='connected').get('simulators', []) if sim.get('id'))
+    if not candidates:
+        pytest.skip(f"no connected simulator on {E2E_CONSOLE} to aim the step at")
+    answers = sb_get_scenario_simulation_counts(
+        console=E2E_CONSOLE, scenario={'steps': [_step(ids, CONNECTED)]},
+        simulator_ids=','.join(candidates))['steps'][0].get('asked_about', {})
+    target = next((simulator_id for simulator_id, roles in sorted(answers.items())
+                   if roles['target_simulators']['state'] == 'measured_zero'), None)
     if target is None:
-        pytest.skip(f"no simulator on {E2E_CONSOLE} is measured at zero as a target for these attacks")
+        pytest.skip(f"no connected simulator on {E2E_CONSOLE} is measured at zero as a target for these attacks")
 
     body = {'name': 'SAF-35508 e2e cap fixture',
             'steps': [_step(ids, {'simulators': {'operator': 'is', 'values': [target],
