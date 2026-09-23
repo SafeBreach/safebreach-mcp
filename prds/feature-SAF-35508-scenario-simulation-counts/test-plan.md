@@ -6,7 +6,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (In Sync with PRD 2026-09-17) — reset from Reviewed: Phase 6 added T-38 … T-44, a material change the 2026-09-16 scoped sign-off does not cover |
+| Status | Signed off (2026-09-23, in sync with PRD Phase 8) — all 46 tests green with evidence, no waivers, `validating-test-plan` clean; supersedes the 2026-09-16 scoped sign-off |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
