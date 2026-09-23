@@ -571,7 +571,11 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   **Verdict**: `blocked` / `clean` / `partially_evaluated` / `not_evaluated`, decided by whether counts
   were computed and **never** by whether the lists are empty — a report that stopped early empties both by
   construction, and a verdict read off their length would call a scenario nobody scored a scenario with
-  nothing wrong. Counts are over **distinct** entities scenario-wide.
+  nothing wrong. Counts are over **distinct** entities scenario-wide. The state and `blocked_*_count` follow the
+  **per-step union** (a zero in any step); `blocked_everywhere_*_count` is the part of it whose scenario-wide
+  disposition is `blocked` (same helpers as a named id), and the sentence states both — "N contribute nothing
+  anywhere in this scenario; M more contribute nothing in at least one step but run in another" — so a machine
+  that runs in another step is never called useless (Phase 8, found live: "20" read where 15 of them ran).
   **Meanings come from the console.** The response's own `constraintCatalog` (orchestrator SAF-35568) is
   relayed verbatim, narrowed to the codes this answer cites; a code the console did not describe stays
   undescribed and an older console with no catalog is reported as such. No meaning is authored in this repo.

@@ -214,6 +214,67 @@ class TestVerdict:
         assert _format_scenario_blocked_entities(result)
 
 
+class TestVerdictSaysWhereNothingIsContributed:
+    """A zero in one step is not "nothing in this scenario" when the same entity runs in another."""
+
+    def test_T_46_a_simulator_that_runs_elsewhere_is_not_called_useless(self):
+        zero = _step(simulators={'sim-a': 7, 'sim-b': 0})
+        ran = _step(simulators={'sim-a': 7, 'sim-b': 5})
+        for steps in ([zero, ran], [ran, zero]):
+            verdict = _report(steps)[0]['verdict']
+            assert verdict['state'] == 'blocked', "a per-step zero still flags the scenario"
+            assert verdict['blocked_simulator_count'] == 1, "the per-step union is unchanged"
+            assert verdict['blocked_everywhere_simulator_count'] == 0
+            assert verdict['summary'] == (
+                "0 attack(s) contribute nothing anywhere in this scenario. "
+                "1 simulator(s) contribute nothing in at least one step but run in another.")
+
+    def test_T_46_an_attack_that_runs_elsewhere_is_not_called_useless(self):
+        zero = _step(moves={'1000': 0, '2000': 4})
+        ran = _step(moves={'1000': 240, '2000': 4})
+        for steps in ([zero, ran], [ran, zero]):
+            verdict = _report(steps)[0]['verdict']
+            assert verdict['blocked_attack_count'] == 1
+            assert verdict['blocked_everywhere_attack_count'] == 0
+            assert verdict['summary'].startswith(
+                "1 attack(s) contribute nothing in at least one step but run in another.")
+
+    def test_T_46_equal_counts_keep_the_one_line_sentence(self):
+        blocked = _step(moves={'1000': 0}, simulators={'sim-b': 0})
+        verdict = _report([blocked, dict(blocked)])[0]['verdict']
+        assert verdict['blocked_everywhere_attack_count'] == verdict['blocked_attack_count'] == 1
+        assert verdict['summary'] == (
+            "1 attack(s) and 1 simulator(s) contribute nothing anywhere in this scenario.")
+
+    def test_T_46_both_kinds_of_zero_are_stated_side_by_side(self):
+        first = _step(simulators={'sim-a': 7, 'sim-b': 0, 'sim-c': 0})
+        second = _step(simulators={'sim-a': 7, 'sim-b': 0, 'sim-c': 3})
+        verdict = _report([first, second])[0]['verdict']
+        assert verdict['blocked_simulator_count'] == 2
+        assert verdict['blocked_everywhere_simulator_count'] == 1
+        assert verdict['summary'].endswith(
+            "1 simulator(s) contribute nothing anywhere in this scenario; "
+            "1 more contribute nothing in at least one step but run in another.")
+
+    def test_T_46_a_partly_scored_scenario_scopes_both_counts_to_the_scored_steps(self):
+        result, _ = _report([_step(simulators={'sim-a': 7, 'sim-b': 0}),
+                             _step(simulators={'sim-a': 7, 'sim-b': 2}),
+                             _step(count=None, limit_reached=True)])
+        summary = result['verdict']['summary']
+        assert result['verdict']['state'] == 'partially_evaluated'
+        assert 'in this scenario' not in summary, "unscored steps must not be written off"
+        assert "1 simulator(s) contribute nothing in at least one step but run in another" in summary
+        assert 'unscored steps were not examined' in summary
+
+    def test_T_46_the_verdict_agrees_with_naming_each_simulator(self):
+        steps = [_step(simulators={'sim-a': 7, 'sim-b': 0, 'sim-c': 0}),
+                 _step(simulators={'sim-a': 0, 'sim-b': 0, 'sim-c': 3})]
+        result, _ = _report(steps, simulator_ids='sim-a,sim-b,sim-c')
+        answers = result['steps'][0]['asked_about_simulators']
+        named_blocked = sum(1 for answer in answers.values() if answer['state'] == 'blocked')
+        assert result['verdict']['blocked_everywhere_simulator_count'] == named_blocked == 1
+
+
 class TestAttackDispositions:
     """Naming attacks narrows what is listed, never what is claimed."""
 

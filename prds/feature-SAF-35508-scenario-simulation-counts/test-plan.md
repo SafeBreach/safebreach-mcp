@@ -103,7 +103,8 @@ explicit justification. A file with neither is a validator violation — never s
   - **Verdict-level precedence for "ran outranks blocked"** — confirmed at the gate as *intended* behaviour: the verdict
     is a per-step union, and R11 scopes to the per-attack disposition only. An attack scoring 0 in one step and 240 in
     another is reported `ran` in `asked_about` while the verdict still counts the zero. T-20 pins the per-attack rule;
-    nothing pins verdict-level precedence, by decision. The PRD's §3 Component C wording ("the answer never depends on
+    nothing pins verdict-level precedence, by decision. (Phase 8 keeps that union unchanged but adds a
+    `blocked_everywhere_*` count beside it and rewords the sentence to state both — T-46.) The PRD's §3 Component C wording ("the answer never depends on
     step order") is broader than the delivered behaviour and should be narrowed — carried to the PRD, not tested here.
   - **Migrating `_get_scenario_statistics`** and its two callers onto the new path (ticket AC 6) — explicitly deferred by
     the PRD; the legacy path is untouched, so T-36 regresses it rather than testing a migration that does not exist.
@@ -203,6 +204,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-42 | The cap follows the scoped list, and the two filters compose | perf | Phase 6 | safebreach-mcp |
 | T-43 | Under scoping the catalog still explains exactly what is shown | API-contract | Phase 6 | safebreach-mcp |
 | T-45 | Scoping answers what fails on this machine, not which global zeros touch it | regression | Phase 7 | safebreach-mcp |
+| T-46 | The verdict never calls an entity useless that runs in another step | regression | Phase 8 | safebreach-mcp |
 
 **E2E**
 
@@ -1142,6 +1144,31 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
+### T-46 — The verdict never calls an entity useless that runs in another step
+
+- Description: Proves the verdict sentence separates entities that run nowhere from entities that are zero in one step but run in another.
+- Status: Active
+- Passes after: Phase 8
+- Level: unit
+- Execution: Automatic
+- Aspect: regression
+- Risk: The verdict counts the per-step union — any entity scored zero in any step — and its sentence called that
+  union "contribute nothing in this scenario". Measured live (T-37, UNC1069 on apricot-jellyfish) it read "20
+  simulator(s) contribute nothing" when 15 of the 20 produce simulations in another step. An agent acting on it would
+  write off working machines.
+- Risk source: T-37 walkthrough
+- Verify: Shape two steps where one simulator (and separately one attack) is zero in the first and positive in the
+  second, in both step orders; a scenario where the two counts are equal; one mixing an entity zero everywhere with one
+  zero in a single step; a partly scored scenario; and name each simulator to compare its disposition with the count.
+- Expected: The state and the `blocked_*_count` fields still follow the per-step union, unchanged. New
+  `blocked_everywhere_*_count` fields count only entities whose scenario-wide disposition is `blocked`, and equal the
+  number of named entities answered `blocked`. The sentence states both — "N contribute nothing anywhere in this
+  scenario; M more contribute nothing in at least one step but run in another" — and stays one line when the two
+  counts are equal. A partly scored scenario says "in any scored step" and never "in this scenario".
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -1155,7 +1182,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 5 | T-24, T-25, T-26, T-27, T-35 | 33 tests |
 | Phase 6 | T-38 … T-44 | 40 tests |
 | Phase 7 | T-45 | 41 tests |
-| Final | T-29, T-30, T-36, T-37 | all 45 |
+| Phase 8 | T-46 | 42 tests |
+| Final | T-29, T-30, T-36, T-37 | all 46 |
 
 ## Sign-off
 

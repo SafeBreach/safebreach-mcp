@@ -3171,18 +3171,45 @@ def _attack_disposition(steps, attack_id):
     return {'state': 'absent', 'count': None}
 
 
-def _verdict_summary(state, attacks, simulators, scored, returned):
+def _contribution_clause(noun, everywhere, somewhere, where):
+    """One kind of entity, split into those that run nowhere and those that run elsewhere.
+
+    ``somewhere`` is the per-step union the verdict is decided on; ``everywhere`` is
+    the part of it that runs in no step at all. Stating only the union as
+    "contribute nothing" would write off machines that produce simulations in
+    another step.
+    """
+    elsewhere = somewhere - everywhere
+    if not elsewhere:
+        return f"{somewhere} {noun}(s) contribute nothing {where}"
+    runs_elsewhere = "contribute nothing in at least one step but run in another"
+    if not everywhere:
+        return f"{elsewhere} {noun}(s) {runs_elsewhere}"
+    return (f"{everywhere} {noun}(s) contribute nothing {where}; "
+            f"{elsewhere} more {runs_elsewhere}")
+
+
+def _contribution_sentence(counts, where):
+    """Both kinds in one line when neither splits, otherwise a clause each."""
+    attacks, simulators = counts['attack'], counts['simulator']
+    if attacks[0] == attacks[1] and simulators[0] == simulators[1]:
+        return (f"{attacks[1]} attack(s) and {simulators[1]} simulator(s) "
+                f"contribute nothing {where}")
+    return (f"{_contribution_clause('attack', *attacks, where)}. "
+            f"{_contribution_clause('simulator', *simulators, where)}")
+
+
+def _verdict_summary(state, counts, scored, returned):
     """The verdict as a sentence, with the unscored steps never written off."""
     if state == 'not_evaluated':
         return ("No step was scored, so nothing can be said about what will run. "
                 "This is not a clean result.")
     if state == 'partially_evaluated':
-        return (f"{scored} of {returned} step(s) were scored. Across those, {attacks} "
-                f"attack(s) and {simulators} simulator(s) contribute nothing; the "
+        return (f"{scored} of {returned} step(s) were scored. Across those, "
+                f"{_contribution_sentence(counts, 'in any scored step')}; the "
                 "unscored steps were not examined.")
     if state == 'blocked':
-        return (f"{attacks} attack(s) and {simulators} simulator(s) contribute nothing "
-                "in this scenario.")
+        return f"{_contribution_sentence(counts, 'anywhere in this scenario')}."
     return "Every attack and simulator in this scenario contributes at least one simulation."
 
 
@@ -3193,12 +3220,21 @@ def _blocked_verdict(steps):
     read off their length would call a scenario nobody scored a scenario with
     nothing wrong. Counts are over distinct entities scenario-wide: one attack
     blocked in three steps is one attack.
+
+    The state and the ``blocked_*_count`` fields follow the per-step union — a
+    zero in any step is worth flagging. The ``blocked_everywhere_*`` fields are the
+    part of that union whose scenario-wide disposition is ``blocked``, taken from
+    the same helpers that answer a named id, so the sentence can never call a
+    machine useless that naming it would report as having run.
     """
     scored = [step for step in steps if step['counts_computed']]
     attacks, simulators = set(), set()
     for step in scored:
         attacks.update(_scored_zero(step['moves']))
         simulators.update(_scored_zero(step['simulators']))
+    attacks_everywhere = {a for a in attacks if _attack_disposition(steps, a)['state'] == 'blocked'}
+    simulators_everywhere = {s for s in simulators
+                             if _blocked_simulator_disposition(steps, s)['state'] == 'blocked'}
 
     if not scored:
         state = 'not_evaluated'
@@ -3213,10 +3249,15 @@ def _blocked_verdict(steps):
         'state': state,
         'blocked_attack_count': len(attacks),
         'blocked_simulator_count': len(simulators),
+        'blocked_everywhere_attack_count': len(attacks_everywhere),
+        'blocked_everywhere_simulator_count': len(simulators_everywhere),
         'steps_scored': len(scored),
         'steps_returned': len(steps),
-        'summary': _verdict_summary(state, len(attacks), len(simulators),
-                                    len(scored), len(steps)),
+        'summary': _verdict_summary(
+            state,
+            {'attack': (len(attacks_everywhere), len(attacks)),
+             'simulator': (len(simulators_everywhere), len(simulators))},
+            len(scored), len(steps)),
     }
 
 

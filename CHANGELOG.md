@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `get_scenario_blocked_entities` no longer calls a machine useless that runs in another step. Its verdict counted any
+  entity scored zero in any step and said those "contribute nothing in this scenario"; on a live console that read
+  "20 simulator(s)" where 15 of them produce simulations elsewhere. The sentence now states both halves — "5
+  contribute nothing anywhere in this scenario; 15 more contribute nothing in at least one step but run in another" —
+  from new `blocked_everywhere_attack_count` / `blocked_everywhere_simulator_count` fields. The verdict state and the
+  existing counts are unchanged.
 - Both scenario-statistics tools now register with `structured_output=False`. A tool returning `str` otherwise gets
   an auto-generated `{result: string}` output schema, and the MCP SDK then ships the whole answer twice — once as
   text and once as `structuredContent`. Measured on a ten-simulator step, the wire payload drops from 2,506 to

@@ -39,9 +39,9 @@ estimating it, which is a precondition for autonomous scenario construction.
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-09-17 |
+| **Last Updated** | 2026-09-23 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 6 phases complete — unit tier green (615 tests); real-env tier BLOCKED, no console |
+| **Current Phase** | All 8 phases complete — unit tier green; real-env tier run on apricot-jellyfish (18/18 e2e, T-36/T-37 manual pass); not yet signed off |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -341,7 +341,8 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 4: Blocked-entities tool | ✅ Complete | 2026-09-16 | `7dc0fe6` | 1,047 insertions |
 | Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
 | Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
-| Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | — | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
+| Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
+| Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | — | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -584,6 +585,24 @@ change in the scenario. The hint states the non-subset relation outright, and th
 
 **Git commit**: `feat(SAF-35508): make the simulator scope a per-simulator answer`
 
+### Phase 8 — The verdict never calls a working machine useless
+
+**Semantic change**: the blocked tool's verdict counted the per-step union — any entity scored zero in any step — and its
+sentence called that union "contribute nothing in this scenario". The T-37 walkthrough on apricot-jellyfish (UNC1069)
+read "20 simulator(s) contribute nothing" while 15 of those 20 produce simulations in another step.
+
+**Deliverables**: the union, the verdict `state` and the `blocked_*_count` fields are unchanged — the gate decision that
+the verdict is a per-step union stands. Beside them, `blocked_everywhere_attack_count` /
+`blocked_everywhere_simulator_count` count only the entities whose scenario-wide disposition is `blocked`, computed with
+the same `_attack_disposition` / `_blocked_simulator_disposition` that answer a named id, so the sentence can never
+contradict naming. The sentence states both halves ("N contribute nothing anywhere in this scenario; M more contribute
+nothing in at least one step but run in another") and stays one line when they are equal; a partly scored scenario says
+"in any scored step".
+
+**Verification**: T-46 (6 unit cases). Live, the same scenario now reads "0 attack(s) contribute nothing anywhere in
+this scenario. 5 simulator(s) contribute nothing anywhere in this scenario; 15 more contribute nothing in at least one
+step but run in another."
+
 ---
 
 ## 9. Risks and Assumptions
@@ -720,6 +739,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-23 | Phase 8 appended and completed — the verdict sentence split into "nothing anywhere" and "nothing in at least one step but runs in another", found by the T-37 live walkthrough. Filled Phase 7's SHA; §1.5 brought current (8 phases, real-env tier run) |
 | 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |
 | 2026-09-16 12:27 | Appended Phase 5 — at the attack cap, report blocked attacks by reason rather than a 50-of-60 sample. Updated §1.5, §3 Component C, §7 (3 new criteria), §9, §11, §12. Phases 1-4 untouched |
 | 2026-09-17 | Appended Phase 6 (pending) — `simulator_ids` scopes the blocked-attack list to attacks blocked on named simulators. Updated §1.5, §3 Component C, §7 (5 new unchecked criteria), §8 table, §9 (2 risk rows). Phases 1-5 untouched. Design note: scoping is projection-only (`by_simulator[sid][code]['moves']` already exists), and excluded simulators must short-circuit or the scope emits a maximal false positive |
