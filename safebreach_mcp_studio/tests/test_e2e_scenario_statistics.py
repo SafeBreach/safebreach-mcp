@@ -164,7 +164,11 @@ def test_T_32_both_tools_accept_the_same_three_input_forms():
 @pytest.mark.e2e
 @skip_e2e
 def test_T_33_the_breakdown_is_present_exactly_when_the_fleet_is_under_the_cap():
-    """The cap is keyed on the offered union — the breakdown's own length."""
+    """The cap is keyed on the offered union — the breakdown's own length.
+
+    The breakdown is dropped only when MORE than the cap is offered; a step offering
+    exactly the cap keeps it, which is the boundary a live fleet is likeliest to sit on.
+    """
     _, steps = _discover_scenario_steps(E2E_CONSOLE)
 
     result = sb_get_scenario_simulation_counts(
@@ -174,7 +178,7 @@ def test_T_33_the_breakdown_is_present_exactly_when_the_fleet_is_under_the_cap()
         offered = step.get('simulators_offered')
         if offered is None:
             continue
-        if offered >= SIMULATOR_LISTING_CAP:
+        if offered > SIMULATOR_LISTING_CAP:
             assert 'simulator_rows' not in step, (
                 f"{offered} simulators offered — the breakdown should be dropped whole")
         else:
@@ -199,7 +203,7 @@ def test_T_33_every_offered_simulator_carries_both_role_numbers():
                 f"row for {row.get('simulator_id')} is missing a role")
             assert row['simulator_id']
     if not seen_a_row:
-        pytest.skip("every step on this console is at or over the listing cap")
+        pytest.skip("every step on this console is over the listing cap")
 
 
 @pytest.mark.e2e
@@ -218,10 +222,15 @@ def test_T_33_naming_simulator_ids_answers_them_in_both_roles():
         console=E2E_CONSOLE, scenario={'steps': steps},
         simulator_ids=','.join(named[:2]))
 
-    answered = result['steps'][0].get('named_simulators') or []
-    assert len(answered) == len(named[:2])
-    for row in answered:
-        assert 'attacker' in row and 'target' in row
+    answered = result['steps'][0].get('asked_about') or {}
+    assert sorted(answered) == named[:2]
+    for simulator_id, roles in answered.items():
+        assert set(roles) == {'attacker_simulators', 'target_simulators'}, (
+            f"{simulator_id} is not answered in both roles")
+        for role, disposition in roles.items():
+            assert disposition['state'] in (
+                'contributes', 'measured_zero', 'not_computed', 'not_in_step'), (
+                f"{simulator_id} {role} has no recognised answer: {disposition}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +367,15 @@ def test_T_35_a_named_attack_still_carries_its_blockers_past_the_cap():
 
 @pytest.mark.e2e
 @skip_e2e
-def test_T_44_scoping_to_a_contributing_simulator_lists_strictly_fewer_attacks():
-    """Scoping narrows the listing and moves no total the console reported."""
+def test_T_44_scoping_to_a_simulator_moves_no_total_and_explains_what_it_lists():
+    """Scoping answers what fails on that machine, and moves no total the console reported.
+
+    The scoped list is NOT a subset of the unscoped one: an attack that ran elsewhere
+    but produced nothing on the named machine is listed there, citing codes the
+    scenario-wide list never shows. So it is bounded by the step's attacks, not by
+    the scenario-wide blocked count, and its codes are checked against the catalog
+    rather than against the unscoped attack list.
+    """
     _, steps = _discover_scenario_steps(E2E_CONSOLE)
     plain = sb_get_scenario_blocked_entities(
         console=E2E_CONSOLE, scenario={'steps': steps})
@@ -386,15 +402,19 @@ def test_T_44_scoping_to_a_contributing_simulator_lists_strictly_fewer_attacks()
             assert plain_step[key] == scoped_step[key], f"{key} moved under scoping"
 
     step = scoped['steps'][index]
-    assert step['blocked_attacks_listed'] <= step['blocked_attacks_total']
-    unscoped_codes = {blocker['code']
-                      for entry in plain['steps'][index].get('blocked_attacks', [])
-                      for blocker in entry['blockers']}
-    if unscoped_codes:
-        for entry in step.get('blocked_attacks', []):
-            for blocker in entry['blockers']:
-                assert blocker['code'] in unscoped_codes, (
-                    "a scoped line cited a code the unscoped answer never recorded")
+    assert step['blocked_attacks_scoped'] is True
+    assert step['blocked_attacks_listed'] <= step['attacks_in_step'], (
+        "the scoped list cannot name more attacks than the step holds")
+
+    cited = {blocker['code']
+             for entry in step.get('blocked_attacks', [])
+             for blocker in entry['blockers']}
+    assert cited <= set(scoped['constraint_catalog']), (
+        f"scoped lines cite codes the catalog does not cover: {cited - set(scoped['constraint_catalog'])}")
+
+    answer = step['asked_about_simulators'][simulator_id]
+    assert answer['state'] in ('ran', 'blocked', 'excluded', 'not_computed', 'absent'), (
+        f"the named simulator got no explicit answer: {answer}")
 
 
 @pytest.mark.e2e

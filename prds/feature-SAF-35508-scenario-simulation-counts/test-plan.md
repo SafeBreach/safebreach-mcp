@@ -1126,9 +1126,11 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Verify: Against a live console holding a saved plan and a fleet that includes at least one offline or disabled
   simulator, call `get_scenario_blocked_entities` unscoped, then scoped to a simulator that contributes, then scoped to
   the offline one.
-- Expected: The scoped runs list strictly fewer blocked attacks than the unscoped run, and every listed attack's codes
-  are ones the unscoped run also recorded for that simulator. The offline simulator is reported as excluded with no
-  scoped list. The verdict and all totals are identical across all three runs. No test is queued at any point.
+- Expected: The scoped run is flagged as scoped and lists no more attacks than the step holds — it is NOT a subset of the
+  unscoped run (Phase 7, T-45): an attack that ran elsewhere but produced nothing on the named simulator is listed. Every
+  code a scoped line cites is covered by the answer's constraint catalog, and the named simulator is answered
+  explicitly. The offline simulator is reported as excluded with no scoped list. The verdict and all totals are identical
+  across all three runs. No test is queued at any point.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, the console name, the simulator ids
   used, and the three answers' totals side by side.
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
