@@ -9,7 +9,7 @@
 |---|---|
 | 1 (2026-09-16 14:05Z) | INCOMPLETE — 30 BLOCKED, 7 unwritten-planned, **0 green by id**. No test carried a `T-<n>:` title prefix. |
 | 2 (2026-09-16 14:50Z) | INCOMPLETE — 29 executed with per-id evidence, 7 BLOCKED (no console), 1 unwritten-planned. Recorded a scoped sign-off; see git history of this file at `5373c1a`. |
-| 3 (2026-09-23 15:05Z, this pass) | INCOMPLETE — **45 of 46 executed** (37 unit, 6 e2e automatic, 2 manual), 1 unwritten-planned (T-29). Real-console tier run for the first time. |
+| 3 (2026-09-23 15:05Z, this pass) | INCOMPLETE — **46 of 46 executed** (38 unit, 6 e2e automatic, 2 manual); T-33 only in part. Real-console tier run for the first time; T-29 authored from a live recording at 15:15Z. |
 
 Between passes 2 and 3: Phases 6–8 landed (T-38 … T-46 added), the first live run surfaced three defective e2e tests
 (fixed in `6108673`), T-35's fixture became buildable (`d9ffe6d`), and T-37 surfaced a product defect in the verdict
@@ -24,8 +24,7 @@ dispatch     standalone-Python (pyproject.toml + uv.lock) → uv-pytest mode ✓
 environment  prds/.../environment.md ✗ absent — console supplied by the owner (apricot-jellyfish.dev.sbops.com)
 reachability control (google) 200 ✓ · console 302 ✓ · API token ✓ (created via sb-support:apitoken-creator, kept out of repo)
              SafeBreach MCP servers ✗ (failed to connect) — not needed: tests call the functions and tool manager directly
-per-id check every id T-1 … T-46 resolves to a non-empty set via -k "T_<n>_", except T-29 (0, unwritten) and
-             T-36 / T-37 (manual)
+per-id check every id T-1 … T-46 resolves to a non-empty set via -k "T_<n>_", except T-36 / T-37 (manual)
 ```
 
 **Selector convention.** Use `-k "T_<n>_"` with the trailing underscore; a bare `-k "T_1"` over-selects T-10 … T-19.
@@ -39,10 +38,11 @@ $ SKIP_E2E_TESTS=true uv run --python 3.12 pytest \
     safebreach_mcp_studio/tests/test_scenario_simulation_counts.py \
     safebreach_mcp_studio/tests/test_scenario_blocked_entities.py \
     safebreach_mcp_studio/tests/test_scenario_statistics_contract.py -v
-152 passed in 0.42s
+168 passed in 0.39s
 ```
 
-Whole repo, for regression context: `1831 passed, 171 deselected` (`-m "not e2e"`, all six server packages).
+That is 152 at `aaf725c` plus T-29's 16 cases, authored this pass. Whole repo, for regression context:
+`1847 passed, 171 deselected` (`-m "not e2e"`, all six server packages).
 
 Real-console tier, run 15:05Z → 15:08Z:
 
@@ -84,7 +84,7 @@ $ E2E_CONSOLE=apricot-jellyfish SKIP_E2E_TESTS=false \
 | T-26 | unit | Automatic | none | uv-pytest | executed | 1 passed |
 | T-27 | unit | Automatic | none | uv-pytest | executed | 4 passed |
 | T-28 | unit | Automatic | none | uv-pytest | executed | 6 passed |
-| T-29 | unit | Automatic | none | uv-pytest | unwritten-planned | 0-match. The blocker is gone — a live console is reachable — so this is now authoring work, not infra |
+| T-29 | unit | Automatic | none | uv-pytest | executed | `-k "T_29_"` → 16 passed (**authored this pass**, from responses recorded verbatim on apricot-jellyfish 2026-09-23T15:15Z; a simulated rename of `attackerSimulators`, `simulationCount`, `moves` or `simulatorConstraints` turns it red) |
 | T-30 | unit | Automatic | none | uv-pytest | executed | 13 passed |
 | T-31 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 2 passed live |
 | T-32 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live |
@@ -138,16 +138,17 @@ contribute nothing anywhere in this scenario; 15 more contribute nothing in at l
 ## Cumulative readiness
 
 - Selected (Active, Passes after ≤ Final): T-1 … T-46 (46)
-- **Executed with evidence: 45** — T-33 executed but only its at-or-under-the-cap half is observable on this fleet
-- Unwritten-planned: T-29 — 1
+- **Executed with evidence: 46** — T-33 executed but only its at-or-under-the-cap half is observable on this fleet
+- Unwritten-planned: none
 - BLOCKED: none · Local-pending-ci: none · Delegated: none · Manual substitutions: none
-- **Phase verdict: INCOMPLETE** — T-29 unwritten; T-33's over-cap half unobserved
+- **Phase verdict: INCOMPLETE** — T-33's over-cap half unobserved
 
 ## To author (unwritten-planned)
 
-- **T-29** — the recorded real-console payload contract test. Capture one `plan/statistics` response from
-  apricot-jellyfish (constraints on and off), commit it with a provenance note, and drive both shaping layers from it.
-  The console is now reachable, so nothing blocks this but the work.
+- None. **T-29** was authored this pass from two responses recorded verbatim on apricot-jellyfish
+  (`tests/fixtures/plan_statistics_counts.json`, 4.6 KB of response; `plan_statistics_blocked.json`, 27 KB), each with
+  its provenance. The recording itself showed one thing no hand-built fixture had: a live step omits `isLimitReached`
+  when the limit is not reached. The tools read it with `.get()`, and T-29 now pins that.
 
 ## Smell observations
 
@@ -164,6 +165,6 @@ contribute nothing anywhere in this scenario; 15 more contribute nothing in at l
 
 ## Verdict
 
-- **INCOMPLETE** — 45 executed, 1 unwritten-planned (T-29), and T-33 executed only in part. Every other test,
-  including the whole real-console tier and both manual walkthroughs, passed with evidence. A full sign-off needs T-29
-  authored and T-33's over-cap half observed, or an explicit owner waiver for either.
+- **INCOMPLETE** — all 46 executed; T-33 executed only in part. Every other test, including the whole real-console
+  tier, T-29's recorded-payload contract and both manual walkthroughs, passed with evidence. A full sign-off needs
+  T-33's over-cap half observed, or an explicit owner waiver for it.

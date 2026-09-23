@@ -4,11 +4,11 @@
 
 ## Verdict
 
-**NOT SIGNED OFF — two items open, each awaiting either the work or an owner waiver.**
+**NOT SIGNED OFF — one item open (T-33's over-cap half), awaiting either the work or an owner waiver.**
 
 | Tier | State |
 |---|---|
-| Unit (37 ids) | **36 of 37 executed with per-id evidence** — 152 passed. T-29 unwritten. |
+| Unit (38 ids) | **All 38 executed with per-id evidence** — 168 passed, including T-29 against a live recording. |
 | Real console, automatic (T-31 … T-35, T-44) | **All executed live** — 18 passed. T-33 only in part. |
 | Real console, manual (T-36, T-37) | **Both executed and passed.** T-37 found a defect, since fixed. |
 
@@ -18,8 +18,12 @@ It stays in git history as a record, not as evidence.
 
 ## What is verified
 
-- **Unit tier** at `aaf725c`: `152 passed` across the three feature files; `1831 passed` repo-wide (`-m "not e2e"`).
-  Every id T-1 … T-28, T-30, T-38 … T-46 resolves to a non-empty passing subset via `-k "T_<n>_"`.
+- **Unit tier**: `168 passed` across the three feature files; `1847 passed` repo-wide (`-m "not e2e"`). Every id
+  T-1 … T-30, T-38 … T-46 resolves to a non-empty passing subset via `-k "T_<n>_"`.
+- **T-29** — both tools replayed against `plan/statistics` responses recorded verbatim from apricot-jellyfish
+  (`tests/fixtures/`, with provenance). Every expectation is computed from the recording's own field names; the tool
+  must still send the recorded request; and renaming any field the tools read changes their answer. A simulated
+  orchestrator rename turns T-29 red.
 - **Real-console tier** on apricot-jellyfish, 15:05Z → 15:08Z: `18 passed`. This closes three of the previous
   record's four open risks:
   - *Shape mismatch* — every field the tools read was observed in a live response.
@@ -32,11 +36,10 @@ It stays in git history as a record, not as evidence.
 
 Details and per-id accounting: `phase-Final.md`.
 
-## What is NOT verified — the two open items
+## What is NOT verified — the one open item
 
 | Item | State | To close it |
 |---|---|---|
-| **T-29** | unwritten | The real-payload contract test. Its old blocker (no console) is gone: capture one `plan/statistics` response from apricot-jellyfish, commit it with provenance, and drive both shaping layers from it. Work only — or waive. |
 | **T-33, over-cap half** | unobserved | Every step on apricot-jellyfish offers exactly 20 simulators, so the path that drops the breakdown past 20 never ran live. The unit tier covers it (T-15). Needs a 21+ simulator fleet (the plan's mockulator step) — or waive. |
 
 ## Accepted gaps (carried forward from the 2026-09-16 owner approval)
@@ -56,13 +59,13 @@ pinned by T-46).
 
 ## What converts this to a full sign-off
 
-1. Author T-29 against a captured apricot-jellyfish payload — or the owner waives it.
-2. Observe T-33 on a 21+ simulator fleet — or the owner waives its over-cap half.
-3. Re-run `validating-test-plan` and record `RESULT: clean`.
-4. When every box in the plan's Sign-off section is checked, flip the plan's Status to `Signed off`.
+1. Observe T-33 on a 21+ simulator fleet — or the owner waives its over-cap half.
+2. Re-run `validating-test-plan` and record `RESULT: clean`.
+3. When every box in the plan's Sign-off section is checked, flip the plan's Status to `Signed off`.
 
 ## Artifacts
 
 - Plan: `../test-plan.md` · Run accounting: `phase-Final.md`
 - Commits: `6108673` (e2e fixes after the first live run), `d9ffe6d` (T-35 live fixture), `6bbdf1c` (verdict fix,
-  Phase 8), `aaf725c` (PRD SHA)
+  Phase 8), `aaf725c` (PRD SHA), `cf0037e` (this record), and the T-29 commit that follows it
+- Recorded fixtures: `safebreach_mcp_studio/tests/fixtures/plan_statistics_{counts,blocked}.json`

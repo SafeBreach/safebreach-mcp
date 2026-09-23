@@ -1,0 +1,1730 @@
+{
+ "provenance": {
+  "test": "T-29 (SAF-35508 test plan)",
+  "console": "apricot-jellyfish.dev.sbops.com",
+  "captured_at": "2026-09-23T15:15:05Z",
+  "captured_with": "get_scenario_blocked_entities at commit cf0037e, by wrapping requests.post around a real call",
+  "request": {
+   "method": "POST",
+   "path": "/api/orch/v1/accounts/3475543660/plan/statistics",
+   "params": {
+    "limit": 500000,
+    "includeDisabled": "false",
+    "getConstraints": "true",
+    "getAllConstraints": "true",
+    "useCache": "true"
+   },
+   "body": {
+    "name": "SAF-35508 T-29 capture",
+    "steps": [
+     {
+      "name": "runs",
+      "attackerFilter": {
+       "connection": {
+        "operator": "is",
+        "values": [
+         true
+        ],
+        "name": "connection"
+       }
+      },
+      "targetFilter": {
+       "connection": {
+        "operator": "is",
+        "values": [
+         true
+        ],
+        "name": "connection"
+       }
+      },
+      "systemFilter": {},
+      "attacksFilter": {
+       "playbook": {
+        "operator": "is",
+        "values": [
+         10458,
+         10459
+        ],
+        "name": "playbook"
+       }
+      }
+     },
+     {
+      "name": "blocked on the AWS simulator",
+      "attackerFilter": {
+       "connection": {
+        "operator": "is",
+        "values": [
+         true
+        ],
+        "name": "connection"
+       }
+      },
+      "systemFilter": {},
+      "targetFilter": {
+       "simulators": {
+        "operator": "is",
+        "name": "simulators",
+        "values": [
+         "b320899a-5a1c-4ec5-bd6d-567ebc1baaef"
+        ]
+       }
+      },
+      "attacksFilter": {
+       "playbook": {
+        "operator": "is",
+        "values": [
+         98,
+         10000583
+        ],
+        "name": "playbook"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "status": 200,
+  "note": "response is the orchestrator reply VERBATIM. Do not hand-edit it: a hand-built stand-in re-asserts the shapes this fixture exists to check. If the contract moves, re-capture."
+ },
+ "response": {
+  "data": {
+   "steps": [
+    {
+     "simulationCount": 336,
+     "moves": {
+      "10458": 252,
+      "10459": 84
+     },
+     "targetSimulators": {
+      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
+      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 48,
+      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
+      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
+      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 48,
+      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
+      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
+      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
+      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
+      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
+      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 48,
+      "e47ce7ba-a689-4490-be4a-807a2730d307": 48,
+      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 48,
+      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
+      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 48,
+      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 48,
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
+      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
+      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
+      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+     },
+     "attackerSimulators": {
+      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 42,
+      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 36,
+      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
+      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
+      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 36,
+      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
+      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
+      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
+      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
+      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
+      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 36,
+      "e47ce7ba-a689-4490-be4a-807a2730d307": 36,
+      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 36,
+      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
+      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 36,
+      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 36,
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
+      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
+      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 42,
+      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+     },
+     "simulators": {
+      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 42,
+      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 84,
+      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
+      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
+      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 84,
+      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
+      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
+      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
+      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
+      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
+      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 84,
+      "e47ce7ba-a689-4490-be4a-807a2730d307": 84,
+      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 84,
+      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
+      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 84,
+      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 84,
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
+      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
+      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 42,
+      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+     },
+     "simulatorConstraints": {
+      "targetConstraints": {
+       "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": {
+        "10458": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e687a3bb-52e0-46a7-883d-c5212fdaf186": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "fe1d24ec-5300-4c6e-9fba-cad3b144e384": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "8ec02958-0125-45b6-b6c6-8cd64923736f": {
+        "10458": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "19674aa6-0e92-44c8-af94-b2d1cc695ce4": {
+        "10458": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "6a50ecd0-53b1-457a-9a29-f07b611fc4da": {
+        "10458": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "428bdc72-bed5-40cf-9780-5c85a2b07b5f": {
+        "10458": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "40890d4e-d3e2-4ac1-834b-ce61c4da2294": {
+        "10458": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "1edc7d68-9828-4a02-90ea-700f492e6790": {
+        "10458": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a592c57e-f944-4a66-aa45-6e12177167de": {
+        "10458": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "cbf02d70-b80c-4e45-a87f-4f886835f62e": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e47ce7ba-a689-4490-be4a-807a2730d307": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "3b988a7e-9538-4a35-b358-3b17613a4380": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e5595ca0-5724-4680-ada6-ca4f79dd4848": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": {
+        "10458": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": {
+        "10458": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "8e7e9433-fc41-4ab6-b0e1-f54327e98201": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a3049104-480f-4182-9e28-f860e3c496dc": {
+        "10458": [
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       }
+      },
+      "attackerConstraints": {
+       "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e687a3bb-52e0-46a7-883d-c5212fdaf186": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "fe1d24ec-5300-4c6e-9fba-cad3b144e384": {
+        "10458": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "8ec02958-0125-45b6-b6c6-8cd64923736f": {
+        "10458": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "19674aa6-0e92-44c8-af94-b2d1cc695ce4": {
+        "10458": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "6a50ecd0-53b1-457a-9a29-f07b611fc4da": {
+        "10458": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "428bdc72-bed5-40cf-9780-5c85a2b07b5f": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "40890d4e-d3e2-4ac1-834b-ce61c4da2294": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "1edc7d68-9828-4a02-90ea-700f492e6790": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a592c57e-f944-4a66-aa45-6e12177167de": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "cbf02d70-b80c-4e45-a87f-4f886835f62e": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e47ce7ba-a689-4490-be4a-807a2730d307": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "3b988a7e-9538-4a35-b358-3b17613a4380": {
+        "10458": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "e5595ca0-5724-4680-ada6-ca4f79dd4848": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": {
+        "10458": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": {
+        "10458": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": {
+        "10458": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "8e7e9433-fc41-4ab6-b0e1-f54327e98201": {
+        "10458": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a3049104-480f-4182-9e28-f860e3c496dc": {
+        "10458": [
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10459": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       }
+      }
+     }
+    },
+    {
+     "simulationCount": 0,
+     "moves": {
+      "98": 0,
+      "10000583": 0
+     },
+     "targetSimulators": {
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0
+     },
+     "attackerSimulators": {
+      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
+      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 0,
+      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
+      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
+      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 0,
+      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
+      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
+      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
+      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
+      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
+      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 0,
+      "e47ce7ba-a689-4490-be4a-807a2730d307": 0,
+      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 0,
+      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
+      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 0,
+      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 0,
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
+      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
+      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
+      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+     },
+     "simulators": {
+      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
+      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 0,
+      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
+      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
+      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 0,
+      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
+      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
+      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
+      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
+      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
+      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 0,
+      "e47ce7ba-a689-4490-be4a-807a2730d307": 0,
+      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 0,
+      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
+      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 0,
+      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 0,
+      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
+      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
+      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
+      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+     },
+     "simulatorConstraints": {
+      "targetConstraints": {
+       "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": {
+        "98": [
+         {
+          "reason": "simulator_has_no_associated_assets"
+         },
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "simulator_has_no_associated_assets"
+         },
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       }
+      },
+      "attackerConstraints": {
+       "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": {
+        "98": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65000_TCP",
+           "65000_TCP",
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65010_TCP",
+           "65010_TCP"
+          ]
+         }
+        ]
+       },
+       "e687a3bb-52e0-46a7-883d-c5212fdaf186": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "53_TCP",
+           "53_TCP",
+           "5432_TCP",
+           "5432_TCP",
+           "36837_TCP",
+           "36837_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "fe1d24ec-5300-4c6e-9fba-cad3b144e384": {
+        "98": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         }
+        ]
+       },
+       "8ec02958-0125-45b6-b6c6-8cd64923736f": {
+        "98": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "53_TCP",
+           "53_TCP",
+           "5432_TCP",
+           "5432_TCP",
+           "36837_TCP",
+           "36837_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "19674aa6-0e92-44c8-af94-b2d1cc695ce4": {
+        "98": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "22_TCP",
+           "22_TCP",
+           "53_TCP",
+           "53_TCP",
+           "53_TCP",
+           "53_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "6a50ecd0-53b1-457a-9a29-f07b611fc4da": {
+        "98": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "53_TCP",
+           "53_TCP",
+           "5432_TCP",
+           "5432_TCP",
+           "36837_TCP",
+           "36837_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "428bdc72-bed5-40cf-9780-5c85a2b07b5f": {
+        "98": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65000_TCP",
+           "65000_TCP",
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65010_TCP",
+           "65010_TCP"
+          ]
+         }
+        ]
+       },
+       "40890d4e-d3e2-4ac1-834b-ce61c4da2294": {
+        "98": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65000_TCP",
+           "65000_TCP",
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65010_TCP",
+           "65010_TCP"
+          ]
+         }
+        ]
+       },
+       "1edc7d68-9828-4a02-90ea-700f492e6790": {
+        "98": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65000_TCP",
+           "65000_TCP",
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65010_TCP",
+           "65010_TCP"
+          ]
+         }
+        ]
+       },
+       "a592c57e-f944-4a66-aa45-6e12177167de": {
+        "98": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "move_not_support_mail_ignoring_mail_variant"
+         },
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65000_TCP",
+           "65000_TCP",
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP",
+           "65010_TCP",
+           "65010_TCP"
+          ]
+         }
+        ]
+       },
+       "cbf02d70-b80c-4e45-a87f-4f886835f62e": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "e47ce7ba-a689-4490-be4a-807a2730d307": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "22_TCP",
+           "22_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "135_TCP",
+           "135_TCP",
+           "139_TCP",
+           "139_TCP",
+           "445_TCP",
+           "445_TCP",
+           "3389_TCP",
+           "3389_TCP",
+           "5985_TCP",
+           "5985_TCP",
+           "47001_TCP",
+           "47001_TCP",
+           "49152_TCP",
+           "49152_TCP",
+           "49153_TCP",
+           "49153_TCP",
+           "49154_TCP",
+           "49154_TCP",
+           "49179_TCP",
+           "49179_TCP",
+           "49180_TCP",
+           "49180_TCP",
+           "49196_TCP",
+           "49196_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "3b988a7e-9538-4a35-b358-3b17613a4380": {
+        "98": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator"
+         }
+        ]
+       },
+       "e5595ca0-5724-4680-ada6-ca4f79dd4848": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "65001_TCP",
+           "65001_TCP",
+           "65004_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "135_TCP",
+           "139_TCP",
+           "445_TCP",
+           "3389_TCP",
+           "5985_TCP",
+           "5986_TCP",
+           "47001_TCP",
+           "49664_TCP",
+           "49665_TCP",
+           "49666_TCP",
+           "49667_TCP",
+           "49668_TCP",
+           "49669_TCP",
+           "49670_TCP",
+           "49679_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": {
+        "98": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": {
+        "98": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         }
+        ]
+       },
+       "8e7e9433-fc41-4ab6-b0e1-f54327e98201": {
+        "10000583": [
+         {
+          "reason": "port_in_use",
+          "values": [
+           "135_TCP",
+           "139_TCP",
+           "445_TCP",
+           "3389_TCP",
+           "5040_TCP",
+           "5985_TCP",
+           "5986_TCP",
+           "7680_TCP",
+           "47001_TCP",
+           "49664_TCP",
+           "49665_TCP",
+           "49666_TCP",
+           "49667_TCP",
+           "49668_TCP",
+           "49669_TCP",
+           "49670_TCP",
+           "49673_TCP",
+           "49674_TCP",
+           "59928_TCP",
+           "65004_TCP"
+          ]
+         }
+        ]
+       },
+       "a3049104-480f-4182-9e28-f860e3c496dc": {
+        "98": [
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         }
+        ],
+        "10000583": [
+         {
+          "reason": "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator"
+         }
+        ]
+       }
+      }
+     }
+    }
+   ],
+   "constraintCatalog": {
+    "incompatible_package": {
+     "description": "Role is incompatible."
+    },
+    "simulator_on_both_sides": {
+     "description": "The attacker and target resolved to the same simulator, which this move does not allow."
+    },
+    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
+     "description": "This attack doesn't use a proxy, so the proxy variant was skipped."
+    },
+    "attack_is_not_web_application_attack_and_simulator_is_web_application_simulator": {
+     "description": "Web application simulator is incompatible with the attack."
+    },
+    "move_not_support_mail_ignoring_mail_variant": {
+     "description": "This attack doesn't support mailboxes."
+    },
+    "simulator_variant_is_not_root_user": {
+     "description": "This simulator variant is not a root user."
+    },
+    "attack_is_not_aws_attack_and_simulator_is_aws_simulator": {
+     "description": "AWS cloud simulator is incompatible with the attack."
+    },
+    "attack_is_not_azure_attack_and_simulator_is_azure_simulator": {
+     "description": "Azure cloud simulator is incompatible. Choose a different simulator."
+    },
+    "attack_is_not_bedrock_attack_and_simulator_is_bedrock_simulator": {
+     "description": "Bedrock simulator is incompatible with the attack."
+    },
+    "port_in_use": {
+     "description": "A required port is in use."
+    },
+    "simulator_has_no_associated_assets": {
+     "description": "This attack needs a data asset, and the simulator has none."
+    }
+   }
+  }
+ }
+}

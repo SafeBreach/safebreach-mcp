@@ -95,7 +95,8 @@ explicit justification. A file with neither is a validator violation — never s
   targeted are closed in code: the MCP wrapper layer (T-28), the RBAC/`PermissionError` path (T-10, T-28), the
   runnable disclosure (T-9), no-MCP-caching (T-12), report-mutates-nothing (T-22) and transport failures (T-30) are all
   authored, alongside a new e2e suite (T-31 … T-35). The full studio suite is 594 passed / 50 skipped in 1.80s.
-  Two gaps remain open: no recorded real-console payload (T-29) and no real-environment evidence for any e2e test.
+  Two gaps remained open then — no recorded real-console payload (T-29) and no real-environment evidence for any e2e
+  test. Both closed 2026-09-23 on apricot-jellyfish (see the Sign-off section).
 - What we protect: the three-state simulator model (blocked vs excluded vs ran) and `null` never reading as `0` — the
   two claims whose silent breakage would make every answer confidently wrong; the fixed per-tool query parameters, which
   are what make each tool's cost predictable; and the one-request / zero-playbook-request cost contract.
@@ -778,12 +779,12 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   the payload's real field names, so a rename fails this test rather than emptying the answer. The recorded fixture
   notes the console and date it came from.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, and the recorded fixture's provenance note.
-- Automation lives in: planned: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
-  (the file exists and carries the rest of the contract suite; this case alone is still unwritten, because it
-  needs a payload captured from a live console — a hand-built stand-in would re-assert the shapes this test
-  exists to check. The file's docstring records that.)
-- Environment needs: none
-  - Requires a one-off capture from a reachable console before it can be authored.
+- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py, driven by
+  `safebreach_mcp_studio/tests/fixtures/plan_statistics_counts.json` and `plan_statistics_blocked.json` — recorded
+  verbatim from apricot-jellyfish on 2026-09-23 (each carries its provenance: console, time, request, commit). The
+  suite also checks the tool still sends the recorded request, and that renaming each field the tools read changes
+  their answer.
+- Environment needs: none (the capture is committed; re-capture only if the contract moves)
 
 ### T-30 — A dead or slow console fails loudly instead of answering zero
 
@@ -1199,9 +1200,10 @@ waived, not satisfied. The record is `test-results/signoff.md`. This plan's Stat
 boxes it covered no longer cover the current test set; Status is reset to `Draft` and the affected boxes are unchecked
 below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence for this plan.
 
-**Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish at `aaf725c`: 45 of 46
-ids executed with evidence (`test-results/phase-Final.md`); the record is `test-results/signoff.md`, verdict **not
-signed off** — two items open, each awaiting the work or an owner waiver. No waiver has been given for them.
+**Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish at `aaf725c`, and T-29
+was then authored from a live recording: all 46 ids executed with evidence (`test-results/phase-Final.md`). The record
+is `test-results/signoff.md`, verdict **not signed off** — one item open (T-33's over-cap half), awaiting the work or
+an owner waiver. No waiver has been given for it.
 
 - [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (re-run the validator against
       the 46-id plan)
@@ -1209,8 +1211,8 @@ signed off** — two items open, each awaiting the work or an owner waiver. No w
 - [x] Regression complete — T-36 executed live 2026-09-23: `run_scenario` / `quick_run` byte-identical to `main`.
 - [x] Progression evidence — T-37 executed live 2026-09-23: criteria met; its one defect fixed in Phase 8 (T-46).
 - [ ] validating-test-plan: RESULT: clean — not re-run against the 46-id plan
-- [ ] All tests green (cumulative through Final) — 45 of 46 executed and green. Open: **T-29 unwritten** (no longer
-      blocked — a console is reachable), and **T-33's over-cap half unobserved** (the fleet offers exactly 20).
+- [ ] All tests green (cumulative through Final) — all 46 executed and green. Open: **T-33's over-cap half
+      unobserved** (the fleet offers exactly 20).
 - [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
@@ -1218,7 +1220,8 @@ signed off** — two items open, each awaiting the work or an owner waiver. No w
   - **No `Automation-Pen-Testing-*` suite covers this surface**, because the automation repo has no MCP coverage at all.
   - ~~The 88 existing tests carry no `T-<n>:` title prefix~~ — **CLOSED 2026-09-16**; select with
     `pytest -k "T_<n>_"` (trailing underscore required, or T-1 over-selects T-10 … T-19).
-  - ~~T-29 unwritten because no console~~ — the console now exists; T-29 is open **work**, not an accepted gap.
+  - ~~T-29 unwritten because no console~~ — **CLOSED 2026-09-23**: authored against responses recorded verbatim on
+    apricot-jellyfish (`tests/fixtures/plan_statistics_*.json`).
   - ~~Verdict-level "ran outranks blocked" deliberately untested~~ — **CLOSED 2026-09-23**: the union is unchanged,
     and Phase 8's `blocked_everywhere_*` count beside it is pinned by T-46.
   - ~~`getAllConstraints=true` never measured~~ — **CLOSED 2026-09-23** by T-35: 154,744 bytes / 7.0 s for the capped
