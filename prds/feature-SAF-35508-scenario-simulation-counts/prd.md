@@ -41,7 +41,7 @@ estimating it, which is a precondition for autonomous scenario construction.
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-09-23 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 8 phases complete — unit tier green; real-env tier run on apricot-jellyfish (18/18 e2e, T-36/T-37 manual pass); not yet signed off |
+| **Current Phase** | All 8 phases complete — test plan **signed off** 2026-09-23 (46/46 green incl. the real-console tier, validator clean); code review (§12) pending |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -739,6 +739,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-23 | Test plan signed off: all 46 tests green with evidence (real-console tier on apricot-jellyfish, T-29 from a live recording, T-33 on both sides of the cap), `validating-test-plan` clean, no waivers. PRD Status stays In Progress until code review (§12) |
 | 2026-09-23 | Phase 8 appended and completed — the verdict sentence split into "nothing anywhere" and "nothing in at least one step but runs in another", found by the T-37 live walkthrough. Filled Phase 7's SHA; §1.5 brought current (8 phases, real-env tier run) |
 | 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |
 | 2026-09-16 12:27 | Appended Phase 5 — at the attack cap, report blocked attacks by reason rather than a 50-of-60 sample. Updated §1.5, §3 Component C, §7 (3 new criteria), §9, §11, §12. Phases 1-4 untouched |

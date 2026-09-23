@@ -4,9 +4,9 @@
 
 ## Verdict
 
-**ALL 46 TESTS EXECUTED AND GREEN — no test gaps, no waivers.** The plan is not yet flipped to `Signed off` only
-because its validator gate (`validating-test-plan`) has not been re-run against the 46-id plan; that is a plan-level
-check, not a test.
+**SIGNED OFF — 2026-09-23.** All 46 tests executed and green with evidence, no waivers, and `validating-test-plan`
+returned `RESULT: clean` against the 46-id plan. The plan's Status is `Signed off`, with every box in its Sign-off
+section satisfied.
 
 | Tier | State |
 |---|---|
@@ -40,7 +40,8 @@ Details and per-id accounting: `phase-Final.md`.
 
 ## What is NOT verified
 
-- No test. The only open box is the plan's validator re-run (below).
+- No test. The validator gate is closed: `RESULT: clean` after two plan fixes it surfaced (the Coverage Summary's unit
+  count, 37 → 38; and every `Automation lives in:` path written repo-relative for this single-repo worktree).
 
 ## Accepted gaps (carried forward from the 2026-09-16 owner approval)
 
@@ -54,18 +55,12 @@ pinned by T-46).
 
 ## Also outstanding, outside this test record
 
-- `validating-test-plan` has not been re-run against the 46-id plan.
-- PRD §12 code review is `⏳` for every phase.
-
-## What converts this to a full sign-off
-
-1. Re-run `validating-test-plan` and record `RESULT: clean`.
-2. When every box in the plan's Sign-off section is checked, flip the plan's Status to `Signed off`.
+- PRD §12 code review is `⏳` for every phase. Test sign-off does not cover it.
 
 ## Artifacts
 
 - Plan: `../test-plan.md` · Run accounting: `phase-Final.md`
 - Commits: `6108673` (e2e fixes after the first live run), `d9ffe6d` (T-35 live fixture), `6bbdf1c` (verdict fix,
-  Phase 8), `aaf725c` (PRD SHA), `cf0037e` (first live-run record), `00275c0` (T-29), and the T-33 commit that
-  follows it
+  Phase 8), `aaf725c` (PRD SHA), `cf0037e` (first live-run record), `00275c0` (T-29), `7c1532c` (T-33), and the
+  sign-off commit that follows it
 - Recorded fixtures: `safebreach_mcp_studio/tests/fixtures/plan_statistics_{counts,blocked}.json`

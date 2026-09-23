@@ -1,6 +1,6 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-23
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Signed off  |  Updated: 2026-09-23
 
 ## Status & Review
 
@@ -118,7 +118,7 @@ explicit justification. A file with neither is a validator violation — never s
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 37   | 0           | 0      | 6   | 43    |
+| Automatic | 38   | 0           | 0      | 6   | 44    |
 | Manual    | 0    | 0           | 0      | 2   | 2     |
 
 ## Environment Requirements (aggregated)
@@ -236,7 +236,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   and `test_id`. A blank value is treated as absent, so a blank plus one populated input is accepted as that one input,
   and a blank alone is refused as naming nothing.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-2 — A step-less scenario is refused before a request is spent
@@ -252,7 +252,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Verify: Call with a `scenario` body whose `steps` is empty, and with one where `steps` is missing entirely.
 - Expected: A typed error naming the missing steps is raised, and no HTTP request is issued at all.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-3 — Each input form builds the body the endpoint expects
@@ -272,7 +272,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   id becomes `{"name": ..., "id": <int>}` with the id as an integer; a `test_id` becomes
   `{"name": ..., "testId": "<planRunId>"}`. No form carries more than one of the three keys.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-4 — The counts tool's fixed query parameters
@@ -290,7 +290,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Exactly `limit=500000`, `includeDisabled=false`, `getConstraints=false`, `getAllConstraints=false`,
   `useCache=true` — identical for every input form, with no parameter exposed as a tool argument.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-5 — Booleans are sent in their JSON spelling
@@ -307,7 +307,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Verify: Capture the serialised query string actually sent for both tools.
 - Expected: Boolean parameters appear as lowercase `true`/`false`, never as `True`/`False`.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-6 — Per-step and total counts are preserved exactly
@@ -325,7 +325,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each step reports its own `simulationCount` verbatim; the total equals the sum of the measured steps; and
   when no step was measured the total is reported as not computed rather than as `0`.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-7 — An unmeasured count is never rendered as zero
@@ -344,7 +344,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   measured `0` reads as a measured zero; a reply shorter than the submitted plan is reported as early termination, and
   that claim is only made when the submitted step count is knowable. A boolean is not accepted as a count.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-8 — One request per call, zero playbook requests
@@ -363,7 +363,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Exactly one POST per call for every input form; no playbook fetch and no scenario/plan listing call is made;
   the `moves` map is absent from everything the tool returns.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-9 — The answer discloses that it is runnable, not expected
@@ -381,7 +381,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Both state that counts are runnable — offline, disabled and unapproved simulators excluded — and that the
   expected figure is neither offered nor derivable from this response.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-10 — An API or RBAC failure surfaces as a typed error carrying the cause
@@ -400,7 +400,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: A non-2xx response raises a typed error whose message carries both the status code and the response body.
   An RBAC refusal propagates as a permission error, distinct from any empty-result path, and never as zeros.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-11 — Both tools declare themselves read-only and stay outside the rate limiter
@@ -420,7 +420,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Both register with `readOnlyHint=True`; neither calls `check_limit` or `record_action`; the gate table is
   unchanged. Both appear in the `CLAUDE.md` tool catalog.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-12 — Repeated calls re-measure rather than serving a stale number
@@ -439,7 +439,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each call issues its own POST and returns the payload it actually received; the second call reflects the
   changed payload.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-13 — A scenario UUID is refused with the route to its own steps
@@ -459,7 +459,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   message naming `get_scenario_details` as the way to fetch the steps and pass them as `scenario`. No input form lists
   the console.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-14 — One row per simulator carrying both role numbers
@@ -479,7 +479,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   target number, ranked by total contribution. A simulator absent from one role says so in that role rather than
   reading as zero. A simulator measured at zero in both roles is listed, not hidden.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-15 — Past the listing cap the breakdown is dropped whole
@@ -503,7 +503,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   `scenario_id` and `test_id` forms are resolved server-side (changed in `9e15ed0`). The 500-simulator rendering stays
   under 1,000 characters.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-16 — Named simulators are answered in both roles regardless of the cap
@@ -521,7 +521,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each named simulator is answered in both roles with one of the four dispositions, identically below and
   past the cap. Duplicates collapse to one answer; an all-blank filter is refused before any request.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
 ### T-17 — The blocked tool asks for every constraint without moving its sibling
@@ -541,7 +541,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   `includeDisabled=false` and `useCache=true`. The counts tool's parameters are unchanged, still with both constraint
   flags `false`.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-18 — A switched-off simulator is excluded, not incompatible
@@ -561,7 +561,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   distinct excluded category citing why it was not scored; a positive count is neither; an unmeasured count is neither
   blocked nor excluded.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-19 — The verdict follows whether counts were computed
@@ -583,7 +583,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   `not_evaluated` — with `not_evaluated` stated as explicitly not a clean result. Counts are over distinct entities
   scenario-wide. The emptiness mutation is caught by at least two assertions.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, and the mutation run's failure output.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-20 — An attack that ran anywhere is reported as having run
@@ -603,7 +603,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   is the per-attack disposition. Verdict-level precedence is intended to be a per-step union and is deliberately not
   asserted — see Intentionally out of scope.)
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-21 — Constraint meanings come from the console or are absent
@@ -623,7 +623,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   cites. A code the console did not describe is reported bare and stays undescribed. An absent catalog is disclosed as
   such rather than failing or substituting a local meaning.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-22 — Asking what is blocked changes nothing
@@ -641,7 +641,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: The submitted scenario is byte-identical after the call, nothing is removed from it, no save or update
   endpoint is contacted, and the tool issues no request other than the single statistics POST.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-23 — Blocked simulators are grouped by reason with their own detail
@@ -662,7 +662,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   reported, as unexplained. Past the node cap a bounded number of ids is named per code followed by a count, and no
   count map is capped, so totals stay exact.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-24 — At the attack cap every blocked attack is still accounted for
@@ -683,7 +683,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   Tally rows are ordered by attack count descending then by code. The simulator and excluded sections are unaffected,
   and a hint routes the caller to `attack_ids` for exact per-attack reasons.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-25 — A tally row never speaks for attacks it does not represent
@@ -701,7 +701,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Tally rows carry the code, the blocked-attack count and the sides it was recorded against, and no
   validator detail fields. Simulator rows still carry their detail, since there a row represents one simulator.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-26 — The catalog stays complete exactly when the list is dropped
@@ -719,7 +719,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: The catalog covers every code cited by any blocked entity, including codes that appear only in dropped
   rows, and remains narrowed to cited codes rather than relaying the whole vocabulary.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-27 — Naming an attack is the way back to its exact reasons
@@ -738,7 +738,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   `ran` with its count and carries no blockers; one never scored reads not computed; one absent says it is not in this
   scenario.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-28 — What an agent receives on failure is a message, not a traceback
@@ -758,7 +758,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each returns a text answer naming the tool and carrying the underlying cause; no exception escapes the
   registered boundary; a refusal remains distinguishable from an empty or zero result.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-29 — A renamed orchestrator field breaks a test, not the answer
@@ -779,7 +779,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   the payload's real field names, so a rename fails this test rather than emptying the answer. The recorded fixture
   notes the console and date it came from.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, and the recorded fixture's provenance note.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py, driven by
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_statistics_contract.py, driven by
   `safebreach_mcp_studio/tests/fixtures/plan_statistics_counts.json` and `plan_statistics_blocked.json` — recorded
   verbatim from apricot-jellyfish on 2026-09-23 (each carries its provenance: console, time, request, commit). The
   suite also checks the tool still sends the recorded request, and that renaming each field the tools read changes
@@ -802,7 +802,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: Each failure raises a typed error naming what went wrong; none produces zeros, an empty answer, or a
   `clean` verdict. The statistics request carries the module's configured timeout rather than defaulting to none.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
 - Environment needs: none
 
 ### T-31 — The counts tool scores a real scenario against a real fleet
@@ -822,7 +822,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   in the console's execution history as a result of the call.
 - Evidence required: the exact pytest command, the console name, the returned totals, and the run timestamp. No CI job
   exists to run this — recorded as an accepted gap.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
 ### T-32 — All three input forms work against a live console
@@ -842,7 +842,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Expected: All three forms return a scored answer, each costing exactly one request. The UUID is refused locally with
   the message routing to `get_scenario_details`, without contacting the console.
 - Evidence required: the exact pytest command, the console name, the plan id and planRunId used, and the run timestamp.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
 ### T-33 — Real role numbers and the cap behave as measured
@@ -862,7 +862,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   with one-role simulators saying so in the other role. Past the cap the breakdown is absent while the step's count is
   unchanged and the narrow-your-filter ask appears. Named ids are answered in both roles in both runs.
 - Evidence required: the exact pytest command, the console name, the fleet sizes used either side of the cap, and the run timestamp.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires a fleet that can be grown past the listing cap and shrunk back within the run. The test observes whatever
     fleet it finds and prints which side of the cap each step is on, so both sides take two runs: done on 2026-09-23
@@ -888,7 +888,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   than invented — and the test asserts that disclosure instead of failing.
 - Evidence required: the exact pytest command, the console name, the offline simulator's id, the cited constraint codes,
   and the run timestamp.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires at least one offline or disabled simulator and simulators of two OS families.
 
@@ -918,7 +918,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   the `scenario_id` form and deleted on teardown.
 - Evidence required: the exact pytest command, the console name, the blocked-attack count, the measured response size
   and duration, and the run timestamp.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
   - Requires a fleet and scenario able to produce more blocked attacks in one step than the attack cap.
 
@@ -990,7 +990,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   no others. Each listed attack shows only the codes cited against that simulator — a code recorded only against a
   different simulator does not appear on the line. Naming two simulators returns the union.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-39 — Narrowing the listing never moves a total or the verdict
@@ -1011,7 +1011,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   simulator-side sections are identical in both runs. The scoped run additionally discloses its own omission as an
   `n of m` ratio, where `m` is the unscoped blocked-attack total for that step and `n` the number listed.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-40 — A switched-off simulator is never blamed for every attack in the step
@@ -1034,7 +1034,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   total are unchanged. The genuinely blocked simulator still produces its scoped list, so the short-circuit did not
   swallow the ordinary case.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-41 — A named simulator that is fine says so rather than going quiet
@@ -1054,7 +1054,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   scenario, not computed, blocked or excluded — and none is omitted from the answer. A count that was never measured is
   reported as not computed, never as a zero.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-42 — The cap follows the scoped list, and the two filters compose
@@ -1076,7 +1076,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   filters returns both answers: the named attacks keep their scenario-wide dispositions and the scoped list is still
   scoped by simulator; neither narrows the other.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-43 — Under scoping the catalog still explains exactly what is shown
@@ -1100,7 +1100,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   *attack* and by no rendered simulator is what must be absent. With no catalog supplied, codes are rendered bare and
   the absence is disclosed rather than filled with a local meaning.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-45 — Scoping answers what fails on this machine, not which global zeros touch it
@@ -1124,7 +1124,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   Scoping to the uninvolved simulator lists nothing and still answers it explicitly. In every case the verdict and
   `blocked_attacks_total` are identical to the unscoped answer and count only scenario-wide zeros.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ### T-44 — Simulator scoping holds against a real fleet, including a switched-off node
@@ -1148,7 +1148,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   across all three runs. No test is queued at any point.
 - Evidence required: the exact pytest command scoped to this id plus its pass line, the console name, the simulator ids
   used, and the three answers' totals side by side.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
+- Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
 ### T-46 — The verdict never calls an entity useless that runs in another step
@@ -1173,7 +1173,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   scenario; M more contribute nothing in at least one step but run in another" — and stays one line when the two
   counts are equal. A partly scored scenario says "in any scored step" and never "in this scenario".
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
-- Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
 ## Tests by Phase (readiness view — generated)
@@ -1206,14 +1206,18 @@ below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence
 **Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish, T-29 was authored
 from a live recording, and T-33 was observed on both sides of the cap (22- and 20-simulator fleets): all 46 ids
 executed and green with evidence (`test-results/phase-Final.md`), with no waiver. The record is
-`test-results/signoff.md`. Status is not yet `Signed off` only because the validator box below is still open.
+`test-results/signoff.md`.
 
-- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (re-run the validator against
-      the 46-id plan)
+**Signed off (2026-09-23).** `validating-test-plan` returned `RESULT: clean` against the 46-id plan, after two fixes it
+surfaced: the Coverage Summary's unit count (37 → 38, missed when T-46 was added) and every `Automation lives in:` path
+written repo-relative (this plan lives in a single-repo worktree, so the `safebreach-mcp/` prefix did not resolve).
+Every box below is satisfied; none is waived.
+
+- [x] Requirements traceability complete — every R# covered: R1 … R31 each map to an Active T-id (validator clean)
 - [x] Change Coverage complete — every changed file tested or justified
 - [x] Regression complete — T-36 executed live 2026-09-23: `run_scenario` / `quick_run` byte-identical to `main`.
 - [x] Progression evidence — T-37 executed live 2026-09-23: criteria met; its one defect fixed in Phase 8 (T-46).
-- [ ] validating-test-plan: RESULT: clean — not re-run against the 46-id plan
+- [x] validating-test-plan: RESULT: clean — 2026-09-23, against the 46-id plan
 - [x] All tests green (cumulative through Final) — all 46 executed and green with per-id evidence, T-33 on both
       sides of the cap (`test-results/phase-Final.md`).
 - [x] Accepted gaps listed and approved:
@@ -1235,5 +1239,6 @@ executed and green with evidence (`test-results/phase-Final.md`), with no waiver
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
+| 2026-09-23 | **Signed off.** Real-console tier run on apricot-jellyfish; T-29 authored from a live recording; T-33 observed on both sides of the cap; T-46 added (Phase 8). T-15, T-35 and T-44 Expected corrected to the delivered behaviour. `validating-test-plan` → `RESULT: clean` after fixing the Coverage Summary's unit count and writing every `Automation lives in:` path repo-relative. Status `Draft` → `Signed off`. |
 | 2026-09-17 | Reconciled with PRD Phase 6 (`simulator_ids` scopes the blocked-attack list). Added R26 … R30 and T-38 … T-44 — six unit tests at Phase 6 plus one Phase 6 e2e, following the plan's per-slice e2e pattern. Extended R16 with T-43. Nothing reverted, so no tombstones and no existing T-id touched. Regenerated the index tables, Coverage Summary (42 Automatic / 2 Manual) and Tests by Phase. Status reset to Draft and the 2026-09-16 scoped sign-off marked superseded — a material change it does not cover. |
 | 2026-09-16 14:45 | Phase Final execution follow-up. Every existing test method prefixed with its plan id (selector: `pytest -k "T_<n>_"`). Authored the cases that had none — T-9, T-12, T-22, T-28 and the RBAC half of T-10 — plus T-30 in a new contract suite and T-31 … T-35 in a new e2e suite; their `planned:` markers are now real paths. T-29 stays unwritten (needs a live-console capture). Suite: 594 passed / 50 skipped. Status stays Draft — the test set changed materially. |
