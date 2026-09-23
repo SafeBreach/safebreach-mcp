@@ -897,10 +897,16 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Risk source: PRD §9
 - Verify: Build a scenario and fleet that put more blocked attacks in a step than the cap allows, score it with
   constraints requested, and record the wall-clock duration and response size.
-- Expected: The per-attack list is absent and the per-code tally's counts sum to the step's exact blocked-attack total.
-  The catalog still covers every cited code. Naming one of the capped attacks returns its exact blockers. The call
+- Expected: From both the unsaved `scenario` body and the saved plan's `scenario_id`, the per-attack list is absent and
+  a per-code tally replaces it. Each tally row counts between 1 and the step's blocked-attack total — the rows do NOT
+  sum to it, because with every constraint requested an attack cites every code recorded against it (measured live:
+  78 blocked attacks, rows summing to 721). The catalog still covers every tallied code. Naming every capped attack
+  returns each one as `blocked` with its exact blockers, which is what accounts for every blocked attack. The call
   completes within the configured timeout, and the observed payload size is recorded so the PRD's unmeasured risk
   becomes a measured one.
+- Fixture: built, not discovered — no shipped scenario exceeds the cap on an ordinary fleet. One step holds every
+  exfiltration attack, aimed at a simulator the counts tool measured at zero as a target; it is saved as a plan for
+  the `scenario_id` form and deleted on teardown.
 - Evidence required: the exact pytest command, the console name, the blocked-attack count, the measured response size
   and duration, and the run timestamp.
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py

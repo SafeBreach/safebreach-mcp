@@ -7,11 +7,13 @@ simulator model, and the cap tally.
 
 ZERO MOCKS — all calls hit real SafeBreach APIs.
 
-Fixtures are DISCOVERED, never created: these tools only read, so every test picks an
-existing scenario / plan / test run off the console rather than authoring one. Where a
-case needs a console property that cannot be discovered (an offline simulator, a step
-with more blocked attacks than the cap), it SKIPS naming that precondition rather than
-passing vacuously.
+Fixtures are DISCOVERED, not created: these tools only read, so tests pick an existing
+scenario / plan / test run off the console rather than authoring one. The one exception
+is T-35: no shipped scenario blocks more attacks than the cap, so its module fixture
+builds that step from discovered attacks and simulators, saves it as a plan to score it
+by id, and deletes the plan on teardown. Where a case needs a console property that
+cannot be discovered or built (an offline simulator), it SKIPS naming that precondition
+rather than passing vacuously.
 
 Requires:
 - Real SafeBreach console access with valid API tokens
@@ -21,16 +23,25 @@ Requires:
 Setup: source .vscode/set_env.sh && uv run pytest -m "e2e" -v
 """
 
+import json
 import logging
 import os
+import time
+import uuid
 
 import pytest
+import requests
 
+from safebreach_mcp_core.environments_metadata import get_api_account_id, get_api_base_url
+from safebreach_mcp_core.secret_utils import get_auth_headers_for_console
+from safebreach_mcp_playbook.playbook_functions import sb_get_playbook_attacks
 from safebreach_mcp_studio.studio_functions import (
     BLOCKED_ATTACKS_CAP,
     SIMULATOR_LISTING_CAP,
+    STATISTICS_TIMEOUT_SECONDS,
     _fetch_all_plans,
     _fetch_all_scenarios,
+    _fetch_scenario_statistics,
     sb_get_scenario_blocked_entities,
     sb_get_scenario_simulation_counts,
 )
@@ -303,61 +314,129 @@ def test_T_34_constraint_meanings_are_relayed_or_declared_absent():
 # ---------------------------------------------------------------------------
 # T-35 — the cap tally on a fleet large enough to trigger it
 # ---------------------------------------------------------------------------
+#
+# No shipped scenario blocks more than the cap on an ordinary fleet, so this is the
+# one fixture that is BUILT rather than discovered: a single step holding every
+# exfiltration attack in the playbook, aimed at one simulator the counts tool has
+# just measured at zero as a target. Every attack in the step is then blocked for a
+# reason the console itself records. The step is scored twice — as an unsaved body
+# and as a saved plan by id — and the saved plan is deleted on teardown.
+
+CONNECTED = {'connection': {'operator': 'is', 'values': [True], 'name': 'connection'}}
+
+
+def _exfiltration_attack_ids(console):
+    ids, page = [], 0
+    while True:
+        res = sb_get_playbook_attacks(console=console, page_number=page, name_filter='exfiltration')
+        batch = res.get('attacks_in_page', [])
+        ids += [attack['id'] for attack in batch]
+        if not batch or len(ids) >= res.get('total_attacks', 0):
+            return sorted(ids)
+        page += 1
+
+
+def _step(ids, target_filter):
+    return {'uuid': str(uuid.uuid4()), 'name': f'{len(ids)} exfiltration attacks',
+            'attacksFilter': {'playbook': {'operator': 'is', 'values': ids, 'name': 'playbook'}},
+            'attackerFilter': CONNECTED, 'targetFilter': target_filter, 'systemFilter': {}}
+
+
+def _plans_url(console, plan_id=None):
+    base = (f"{get_api_base_url(console, 'config')}/api/config/v3/accounts/"
+            f"{get_api_account_id(console)}/plans")
+    return f"{base}/{plan_id}" if plan_id is not None else base
+
+
+@pytest.fixture(scope='module')
+def capped_scenario():
+    """An over-the-cap step, as an unsaved body and as a saved plan id; the plan is deleted after."""
+    ids = _exfiltration_attack_ids(E2E_CONSOLE)
+    if len(ids) <= BLOCKED_ATTACKS_CAP:
+        pytest.skip(f"only {len(ids)} exfiltration attacks on {E2E_CONSOLE}; the cap is {BLOCKED_ATTACKS_CAP}")
+
+    offered = sb_get_scenario_simulation_counts(
+        console=E2E_CONSOLE, scenario={'steps': [_step(ids, CONNECTED)]})['steps'][0]
+    target = next((row['simulator_id'] for row in offered.get('simulator_rows', [])
+                   if row['target']['state'] == 'measured_zero'), None)
+    if target is None:
+        pytest.skip(f"no simulator on {E2E_CONSOLE} is measured at zero as a target for these attacks")
+
+    body = {'name': 'SAF-35508 e2e cap fixture',
+            'steps': [_step(ids, {'simulators': {'operator': 'is', 'values': [target],
+                                                 'name': 'simulators'}})]}
+    headers = {'Content-Type': 'application/json', **get_auth_headers_for_console(E2E_CONSOLE)}
+    created = requests.post(_plans_url(E2E_CONSOLE), headers=headers, timeout=60,
+                            json={**body, 'type': 'validate', 'draft': False,
+                                  'name': f"{body['name']} {int(time.time())}"})
+    assert created.status_code == 201, f"plan create failed: {created.status_code} {created.text[:300]}"
+    plan_id = created.json()['data']['id']
+    logger.info(f"T-35 fixture: {len(ids)} attacks, target {target}, saved as plan {plan_id}")
+    try:
+        yield {'ids': ids, 'target': target, 'plan_id': plan_id,
+               'forms': {'scenario': {'scenario': body}, 'scenario_id': {'scenario_id': str(plan_id)}}}
+    finally:
+        deleted = requests.delete(_plans_url(E2E_CONSOLE, plan_id), headers=headers, timeout=60)
+        assert deleted.status_code in (200, 204, 404), (
+            f"plan {plan_id} was not cleaned up: {deleted.status_code} {deleted.text[:200]}")
 
 
 @pytest.mark.e2e
 @skip_e2e
-def test_T_35_past_the_attack_cap_a_tally_replaces_the_list():
-    """Summarise-don't-sample, against a real constraint payload."""
-    _, steps = _discover_scenario_steps(E2E_CONSOLE)
-
+@pytest.mark.parametrize('form', ['scenario', 'scenario_id'])
+def test_T_35_past_the_attack_cap_a_tally_replaces_the_list(capped_scenario, form):
+    """Summarise-don't-sample, against a real constraint payload, from both input forms."""
     result = sb_get_scenario_blocked_entities(
-        console=E2E_CONSOLE, scenario={'steps': steps})
+        console=E2E_CONSOLE, **capped_scenario['forms'][form])
+    step = result['steps'][0]
+    total = step['blocked_attacks_total']
 
-    capped = [s for s in result['steps']
-              if (s.get('blocked_attacks_total') or 0) > BLOCKED_ATTACKS_CAP]
-    if not capped:
-        pytest.skip(
-            f"no step on {E2E_CONSOLE} blocks more than {BLOCKED_ATTACKS_CAP} attacks — "
-            "the cap tally cannot be observed; widen the scenario or fleet to exercise T-35")
-
-    for step in capped:
-        assert 'blocked_attacks' not in step, (
-            "past the cap the per-attack list must be absent, not truncated")
-        tally = step.get('blocked_attack_codes')
-        assert tally, "the cap must replace the list with a per-code tally"
-        assert sum(row['attack_count'] for row in tally) == step['blocked_attacks_total'], (
-            "the tally must account for every blocked attack, not a sample")
+    assert total == len(capped_scenario['ids']) > BLOCKED_ATTACKS_CAP, (
+        "every attack aimed only at a zero-target simulator should be blocked")
+    assert 'blocked_attacks' not in step, "past the cap the per-attack list must be absent, not truncated"
+    tally = step.get('blocked_attack_codes')
+    assert tally, "the cap must replace the list with a per-code tally"
+    # An attack cites every constraint recorded against it, so rows overlap: each row
+    # is bounded by the total, and the rows do NOT sum to it.
+    for row in tally:
+        assert 0 < row['attack_count'] <= total, f"{row['code']} counts {row['attack_count']} of {total}"
+    missing = {row['code'] for row in tally} - set(result['constraint_catalog'])
+    assert not missing, f"the catalog must cover every tallied code, missing: {missing}"
 
 
 @pytest.mark.e2e
 @skip_e2e
-def test_T_35_a_named_attack_still_carries_its_blockers_past_the_cap():
-    """attack_ids is the documented route back to exact reasons — it must work."""
-    _, steps = _discover_scenario_steps(E2E_CONSOLE)
-
+@pytest.mark.parametrize('form', ['scenario', 'scenario_id'])
+def test_T_35_every_capped_attack_still_carries_its_blockers_when_named(capped_scenario, form):
+    """attack_ids is the documented route back to exact reasons — for every capped attack."""
+    ids = capped_scenario['ids']
     result = sb_get_scenario_blocked_entities(
-        console=E2E_CONSOLE, scenario={'steps': steps})
+        console=E2E_CONSOLE, attack_ids=','.join(str(i) for i in ids),
+        **capped_scenario['forms'][form])
+    step = result['steps'][0]
+    assert 'blocked_attacks' not in step, "naming attacks must not bring the capped list back"
 
-    capped = [s for s in result['steps']
-              if (s.get('blocked_attacks_total') or 0) > BLOCKED_ATTACKS_CAP]
-    if not capped:
-        pytest.skip(
-            f"no step blocks more than {BLOCKED_ATTACKS_CAP} attacks on {E2E_CONSOLE}")
+    answers = step['asked_about']
+    assert sorted(answers, key=int) == [str(i) for i in ids]
+    for attack_id, answer in answers.items():
+        assert answer['state'] == 'blocked', f"#{attack_id} was {answer['state']}"
+        assert answer.get('blockers'), f"#{attack_id} is blocked but carries no reason"
+    assert len(answers) == step['blocked_attacks_total'], (
+        "naming every attack must account for every blocked attack in the step")
 
-    tally = capped[0].get('blocked_attack_codes') or []
-    assert tally, "expected a tally to source a code from"
-    assert sum(row['attack_count'] for row in tally) == capped[0]['blocked_attacks_total'], (
-        "the tally must account for every blocked attack in the step")
 
-    # The named-attack escape hatch cannot be exercised from a capped step: the
-    # per-attack list is absent BY DESIGN there, so this output carries no attack
-    # id to name. Skipping says so; the previous `.get(...) or ''` passed '' and
-    # asserted against the empty answer, which could not fail.
-    pytest.skip(
-        "a capped step exposes no attack id by design, so T-35 cannot source one "
-        "from this output — exercise the attack_ids escape hatch via T-27 (unit) or "
-        "name an id discovered from an uncapped step")
+@pytest.mark.e2e
+@skip_e2e
+def test_T_35_the_all_constraints_payload_is_measured(capped_scenario):
+    """getAllConstraints=true has no rate-limit cover, so its real size and duration are recorded."""
+    body = capped_scenario['forms']['scenario']['scenario']
+    started = time.perf_counter()
+    payload = _fetch_scenario_statistics(E2E_CONSOLE, body, get_constraints=True, get_all_constraints=True)
+    elapsed = time.perf_counter() - started
+    size = len(json.dumps(payload))
+    logger.warning(f"T-35 measured: {len(capped_scenario['ids'])} attacks, {size:,} bytes, {elapsed:.1f}s")
+    print(f"\nT-35 measured: {len(capped_scenario['ids'])} attacks, {size:,} bytes, {elapsed:.1f}s")
+    assert elapsed < STATISTICS_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
