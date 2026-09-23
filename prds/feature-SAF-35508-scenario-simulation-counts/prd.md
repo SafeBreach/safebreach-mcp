@@ -342,7 +342,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 5: Summarise by reason at the attack cap | ✅ Complete | 2026-09-16 | `0eb9fb4` | Supersedes the cap behaviour shipped in Phase 4 |
 | Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
 | Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
-| Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | — | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
+| Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | `6bbdf1c` | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
 
 ### Phase 1 — Counts tool over plan/statistics
 
