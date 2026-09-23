@@ -1,6 +1,6 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-17
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-23
 
 ## Status & Review
 
@@ -495,9 +495,12 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Risk source: reviewer input
 - Verify: Shape responses just under, exactly at, and over the cap, where the union exceeds the cap but neither role map
   does on its own. Measure the rendered output size for a 500-simulator fleet.
-- Expected: Under the cap the full breakdown is present. At or over it the breakdown key is absent rather than empty,
-  the step's simulation count is untouched, and the answer asks the caller to narrow the step's simulators filter —
-  without instructing them to name `simulator_ids`. The 500-simulator rendering stays under 1,000 characters.
+- Expected: Up to the cap — 20 simulators offered, inclusive — the full breakdown is present. Over it (21 or more) the
+  breakdown key is absent rather than empty, the step's simulation count is untouched, and the answer names two routes
+  back: narrow the step's simulators filter and score again, or name `simulator_ids` (sourced from
+  `get_console_simulators`). Both are named because narrowing is open only to a caller holding the scenario body — the
+  `scenario_id` and `test_id` forms are resolved server-side (changed in `9e15ed0`). The 500-simulator rendering stays
+  under 1,000 characters.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach-mcp/safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
@@ -1196,14 +1199,18 @@ waived, not satisfied. The record is `test-results/signoff.md`. This plan's Stat
 boxes it covered no longer cover the current test set; Status is reset to `Draft` and the affected boxes are unchecked
 below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence for this plan.
 
-- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (30 R-rows; re-run the validator)
+**Live run (2026-09-23).** The real-console tier ran for the first time, on apricot-jellyfish at `aaf725c`: 45 of 46
+ids executed with evidence (`test-results/phase-Final.md`); the record is `test-results/signoff.md`, verdict **not
+signed off** — two items open, each awaiting the work or an owner waiver. No waiver has been given for them.
+
+- [ ] Requirements traceability complete — every R# covered or explicitly out-of-scope (re-run the validator against
+      the 46-id plan)
 - [x] Change Coverage complete — every changed file tested or justified
-- [ ] Regression complete — **WAIVED**: T-36 is authored but has never run; no console. CI suite named.
-- [ ] Progression evidence — **WAIVED**: T-37 is authored but has never run; no console.
-- [ ] validating-test-plan: RESULT: clean — must be re-run against the Phase 6 test set
-- [ ] All tests green (cumulative through Final) — **WAIVED for the real-environment tier**. Unit tier green with
-      per-id evidence for T-1 … T-30: 29 of 29 executed (`test-results/phase-Final.md`). Open: T-29 unwritten,
-      T-31 … T-37 BLOCKED, and T-38 … T-44 not yet written (Phase 6 is pending implementation).
+- [x] Regression complete — T-36 executed live 2026-09-23: `run_scenario` / `quick_run` byte-identical to `main`.
+- [x] Progression evidence — T-37 executed live 2026-09-23: criteria met; its one defect fixed in Phase 8 (T-46).
+- [ ] validating-test-plan: RESULT: clean — not re-run against the 46-id plan
+- [ ] All tests green (cumulative through Final) — 45 of 46 executed and green. Open: **T-29 unwritten** (no longer
+      blocked — a console is reachable), and **T-33's over-cap half unobserved** (the fleet offers exactly 20).
 - [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
@@ -1211,12 +1218,11 @@ below. The 2026-09-16 record stands as history for T-1 … T-37, not as evidence
   - **No `Automation-Pen-Testing-*` suite covers this surface**, because the automation repo has no MCP coverage at all.
   - ~~The 88 existing tests carry no `T-<n>:` title prefix~~ — **CLOSED 2026-09-16**; select with
     `pytest -k "T_<n>_"` (trailing underscore required, or T-1 over-selects T-10 … T-19).
-  - **T-29 is still unwritten** — it needs a response captured from a live console, and a hand-built stand-in would
-    re-assert the very shapes it exists to check.
-  - **Verdict-level "ran outranks blocked" is deliberately untested** — confirmed at the gate as intended per-step-union
-    behaviour; the PRD's §3 Component C wording should be narrowed to match.
-  - **`getAllConstraints=true` has never been measured against a real console**; T-35 is the test that converts this
-    from an unmeasured risk into a measured one.
+  - ~~T-29 unwritten because no console~~ — the console now exists; T-29 is open **work**, not an accepted gap.
+  - ~~Verdict-level "ran outranks blocked" deliberately untested~~ — **CLOSED 2026-09-23**: the union is unchanged,
+    and Phase 8's `blocked_everywhere_*` count beside it is pinned by T-46.
+  - ~~`getAllConstraints=true` never measured~~ — **CLOSED 2026-09-23** by T-35: 154,744 bytes / 7.0 s for the capped
+    fixture, 493,771 bytes / 10.8 s for the broadest step on the fleet.
 
 ## Change Log
 
