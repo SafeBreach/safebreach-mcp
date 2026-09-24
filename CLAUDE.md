@@ -502,7 +502,97 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   run is visible only in Breach Studio (publish first to surface it in Test Results). If the status lookup
   fails (not a "not found"), it degrades to `draft=False` with an "unconfirmed" hint; an unknown `attack_id`
   raises a clear error before queuing. The response includes the resolved `draft` value.
-
+25. `get_scenario_simulation_counts` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
+  Scores a scenario against the fleet **without running it** and changes nothing: how many simulations it
+  would produce, and which simulators produce them. Name exactly one of `scenario_id` (a saved plan's
+  **numeric** id, passed through to Core as `{id}`) or `test_id` (a planRunId, passed as `{testId}`). There is
+  **no ad-hoc body input** (removed in Phase 10), so OOB scenarios are unsupported: an OOB UUID is **refused**
+  locally with the route to save it as a custom plan and pass that id, or to pass the `test_id` of a run. Optional
+  `simulator_ids` (comma-separated) answers each named simulator in **both** roles — the one way to get a
+  per-simulator number once the breakdown is dropped. Naming ids narrows what is **listed**, never what is
+  counted.
+  **Every query parameter to `POST /plan/statistics` is internal**: `limit=500000`, `includeDisabled=false`,
+  `getConstraints=false`, `getAllConstraints=false`, `useCache=true`. Counts are therefore **runnable**
+  (offline, disabled and unapproved simulators excluded); the *expected* figure is neither offered nor
+  derivable from this answer. Constraints are never requested — this answer renders none, and one ordinary
+  step measured 38,531 conflicts / 11.8 MB. The `moves` map is discarded on arrival, so the tool makes **no
+  playbook request at all**, and no input form resolves an id by listing the console, so every call costs
+  exactly **one** request. `null` is never reported as `0`: an uncomputed count reads "not computed". Both
+  inputs are resolved server-side, so the submitted step count is unknown and no early-termination claim is made.
+  **Output shape, by whether the cap is passed.** Up to **20** simulators offered (the union of both role
+  maps), the step returns its simulation count plus a **per-simulator breakdown**: every simulator the step
+  offers with what it would produce *as attacker* and *as target*, strongest first. That pairing is what a
+  choice of attackers and targets is made on — a simulator offered in only one role says so in the other
+  (making it a target-only or attacker-only candidate), and one measured at zero is listed rather than
+  hidden, since "produces nothing here" is the most actionable thing the answer can say about a machine.
+  A machine's two numbers are its participation **per role**, not two batches to add up, and the step line
+  says so wherever rows follow it. Over the cap (21 or more) the step returns **only** its simulation count and
+  names **both** routes back: edit the saved plan's step simulators filter and score it again, or name
+  `simulator_ids`, which is reachable from both input forms. `get_console_simulators`
+  is cited as where ids worth naming come from, so the instruction does not close the loop on itself.
+  Named `simulator_ids` are answered either way.
+26. `get_scenario_blocked_entities` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
+  The sibling of item 25, answering the question it refuses: **what in this scenario will not run, and
+  why?** Same two inputs (numeric `scenario_id` / `test_id`, exactly one), plus optional
+  `attack_ids` answering each named attack `ran` (with its count), `blocked`, `not computed` or
+  `not in this scenario`. **Ran outranks blocked** — an attack scored `0` in one step and 240 in another
+  ran, and the answer never depends on step order. Naming ids narrows what is **listed**; the verdict
+  stays scenario-wide.
+  **`simulator_ids`** (SAF-35508 Phases 6-7) makes the per-step listing a **per-simulator** answer: it lists
+  every attack the console recorded a constraint against on a named machine, **independent of that attack's
+  scenario-wide count**. An attack that ran elsewhere but produced nothing *here* IS listed; a scenario-wide zero
+  citing none of the named machines is not. The scoped list is therefore **not a subset** of the unscoped one — it
+  answers a different question about a narrower subject, and the scoped `hint_to_agent` says so. Each listed attack
+  shows only the codes cited **on** the named machines. The ratio is reported against the attacks in that step
+  (the scenario-wide figure is stated separately), and the verdict, every total and
+  both simulator-side sections stay scenario-wide, because those are the frame that tells a caller whether
+  the named machine is even in play. Each named simulator is additionally answered `ran` / `blocked` /
+  `excluded` / `not computed` / `not in this scenario` (precedence in that order — a machine scored
+  somewhere outranks one switched off elsewhere), so an empty scoped list is never mistaken for a clean
+  scenario. An **excluded** simulator is dropped from the match set: offline nodes carry
+  `simulator_is_offline` against *every* move, so scoping to one naively would report a switched-off
+  machine as incompatible with the whole step. When that empties the scope the list is withheld with a
+  stated reason rather than rendered. Composes with `attack_ids` — independent axes.
+  **Reports only.** Nothing is removed from the scenario and save is never blocked; acting on the report
+  belongs to whoever holds the configuration. An attack that runs on fewer simulators than were offered is
+  **reduced, not blocked**, and is deliberately not listed (that is SAF-35484).
+  **Three states, not two.** A simulator present in scoring and measured at `0` is **blocked**; one
+  **absent** from the count map — offline, disabled or unapproved under `includeDisabled=false` — is
+  reported separately as **excluded**, because it is switched off rather than incompatible. Offline nodes
+  carry `simulator_is_offline` in `simulatorConstraints` while never being seeded into `simulators`, so
+  folding the two would call every switched-off machine incompatible. `null` is never reported as `0`.
+  **Query parameters** differ from item 25 in one place that matters: `getConstraints=true` and
+  `getAllConstraints=true` — the constraints *are* this answer, and every applicable reason is asked for
+  rather than only the first a validator chain happened to record. This is the **expensive** half of the
+  endpoint (one ordinary step measured 38,531 conflicts / 11.8 MB at `getAllConstraints=false`), so the
+  caps and the per-code grouping are the only cost control. Still exactly **one** request; no playbook or
+  config lookup, so attacks and simulators are reported as **ids**.
+  **Verdict**: `blocked` / `clean` / `partially_evaluated` / `not_evaluated`, decided by whether counts
+  were computed and **never** by whether the lists are empty — a report that stopped early empties both by
+  construction, and a verdict read off their length would call a scenario nobody scored a scenario with
+  nothing wrong. Counts are over **distinct** entities scenario-wide. The state and `blocked_*_count` follow the
+  **per-step union** (a zero in any step); `blocked_everywhere_*_count` is the part of it whose scenario-wide
+  disposition is `blocked` (same helpers as a named id), and the sentence states both — "N contribute nothing
+  anywhere in this scenario; M more contribute nothing in at least one step but run in another" — so a machine
+  that runs in another step is never called useless (Phase 8, found live: "20" read where 15 of them ran).
+  **Meanings come from the console.** The response's own `constraintCatalog` (orchestrator SAF-35568) is
+  relayed verbatim, narrowed to the codes this answer cites; a code the console did not describe stays
+  undescribed and an older console with no catalog is reported as such. No meaning is authored in this repo.
+  **Caps**: past **50** blocked attacks in a step the per-attack list is dropped **whole** and replaced by a
+  tally of blocked attacks per constraint code — every blocked attack stays accounted for, where a `50 of 60`
+  sample accounted for fifty and buried which reason dominated. Tally rows carry **no** validator detail: a row
+  stands for many attacks, and the detail fields belong to whichever leaf was recorded first, so one
+  `required`/`actual` pair would speak for attacks that need not share it. Cited codes are collected **before**
+  capping, so the catalog still covers every code any blocked entity cites. `attack_ids` is the route back to an
+  exact per-attack reason, and a named attack carries its blockers in both cap states. Also 3 simulator ids named
+  per constraint code then a count; blocked simulators uncapped because they are grouped per code. No count map is
+  ever capped, so the verdict and every total stay exact.
+  **Answer-size caps** (Phase 9, rendering only): those caps bound how many entities are listed, not how large a line
+  is — on pentest01 one `schemaErrors` detail of 3,520 objects rendered a 1,076,267-character line in a 1.29 MB answer.
+  The rendered answer now shows at most **15 steps** (the rest as one line with their per-step totals), at most
+  **100 entries** across the answer (each step that loses entries says "and N more entries not shown"), and a detail
+  list's first **5** items then "and N more", with any single value clipped at 300 characters. Headers, the verdict,
+  every total and the catalog are never trimmed, and a named attack's reasons render even when its step is hidden.
 
 ## Filtering and Search Capabilities
 

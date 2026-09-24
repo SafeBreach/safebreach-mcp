@@ -1,0 +1,585 @@
+{
+ "provenance": {
+  "test": "T-29 (SAF-35508 test plan)",
+  "console": "pentest01.safebreach.com",
+  "captured_at": "2026-09-24T14:46:48Z",
+  "captured_with": "get_scenario_blocked_entities (PRD Phase 10: scenario_id / test_id only), by wrapping requests.post around a real call against a temporary saved plan created for the capture and deleted after",
+  "saved_plan": {
+   "type": "validate",
+   "draft": false,
+   "name": "SAF-35508 T-29 capture 1790261203",
+   "steps": [
+    {
+     "name": "one runs, one blocked",
+     "attackerFilter": {
+      "simulators": {
+       "operator": "is",
+       "values": [
+        "568e3190-73f4-40a4-8789-0ef35a04369c",
+        "a3d8ea5a-3077-4607-9952-4e44a702d1fe",
+        "2377fecb-4e9c-4404-a72f-1229d94a5264",
+        "2d699fbb-6195-406f-8649-843cb8ca2138",
+        "37b64b33-9d29-4333-a1d2-e229ff2855d4",
+        "1301007d-7d6b-44af-bbd4-a6a13c371463",
+        "3303d40c-50b9-4027-91dc-baa187fc15ee"
+       ],
+       "name": "simulators"
+      }
+     },
+     "targetFilter": {
+      "simulators": {
+       "operator": "is",
+       "values": [
+        "568e3190-73f4-40a4-8789-0ef35a04369c",
+        "a3d8ea5a-3077-4607-9952-4e44a702d1fe",
+        "2377fecb-4e9c-4404-a72f-1229d94a5264",
+        "2d699fbb-6195-406f-8649-843cb8ca2138",
+        "37b64b33-9d29-4333-a1d2-e229ff2855d4",
+        "1301007d-7d6b-44af-bbd4-a6a13c371463",
+        "3303d40c-50b9-4027-91dc-baa187fc15ee"
+       ],
+       "name": "simulators"
+      }
+     },
+     "systemFilter": {},
+     "attacksFilter": {
+      "playbook": {
+       "operator": "is",
+       "values": [
+        11034,
+        10976
+       ],
+       "name": "playbook"
+      }
+     }
+    }
+   ]
+  },
+  "request": {
+   "method": "POST",
+   "path": "/api/orch/v1/accounts/3471166703/plan/statistics",
+   "params": {
+    "limit": 500000,
+    "includeDisabled": "false",
+    "getConstraints": "true",
+    "getAllConstraints": "true",
+    "useCache": "true"
+   },
+   "body": {
+    "name": "",
+    "id": 247
+   }
+  },
+  "status": 200,
+  "note": "response is the orchestrator reply VERBATIM. Do not hand-edit it: a hand-built stand-in re-asserts the shapes this fixture exists to check. If the contract moves, re-capture."
+ },
+ "response": {
+  "data": {
+   "steps": [
+    {
+     "simulationCount": 8,
+     "moves": {
+      "10976": 8,
+      "11034": 0
+     },
+     "targetSimulators": {
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 0,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 8,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
+     },
+     "attackerSimulators": {
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 8,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 0,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
+     },
+     "simulators": {
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 8,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 8,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
+     },
+     "simulatorConstraints": {
+      "targetConstraints": {
+       "37b64b33-9d29-4333-a1d2-e229ff2855d4": {
+        "10976": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_azure_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "AZURE",
+          "actual": "WINDOWS"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_web_application_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "WEBAPPLICATION",
+          "actual": "WINDOWS"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a3d8ea5a-3077-4607-9952-4e44a702d1fe": {
+        "10976": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_azure_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "AZURE",
+          "actual": "LINUX"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "move_doesnt_requires_proxy_ignoring_proxy_variant"
+         },
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = false AND isExfiltration = false"
+          ],
+          "got": {
+           "isInfiltration": true,
+           "isExfiltration": true,
+           "hasHostLevelSupport": false
+          }
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_web_application_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "WEBAPPLICATION",
+          "actual": "LINUX"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "2d699fbb-6195-406f-8649-843cb8ca2138": {
+        "10976": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_is_not_azure_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "AZURE",
+          "actual": "AWS"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_is_not_web_application_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "WEBAPPLICATION",
+          "actual": "AWS"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "568e3190-73f4-40a4-8789-0ef35a04369c": {
+        "10976": [
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_is_not_web_application_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "WEBAPPLICATION",
+          "actual": "AZURE"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "2377fecb-4e9c-4404-a72f-1229d94a5264": {
+        "10976": [
+         {
+          "reason": "simulator_is_not_azure_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "AZURE",
+          "actual": "LINUX"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_is_not_web_application_simulator"
+         },
+         {
+          "reason": "incompatible_os",
+          "required": "WEBAPPLICATION",
+          "actual": "LINUX"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "1301007d-7d6b-44af-bbd4-a6a13c371463": {
+        "10976": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ]
+       },
+       "3303d40c-50b9-4027-91dc-baa187fc15ee": {
+        "10976": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ]
+       }
+      },
+      "attackerConstraints": {
+       "37b64b33-9d29-4333-a1d2-e229ff2855d4": {
+        "10976": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_azure_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_is_not_web_application_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "a3d8ea5a-3077-4607-9952-4e44a702d1fe": {
+        "10976": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_variant_is_not_root_user"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "2d699fbb-6195-406f-8649-843cb8ca2138": {
+        "10976": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_is_not_azure_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_aws_attack_and_simulator_is_aws_simulator"
+         },
+         {
+          "reason": "simulator_is_not_web_application_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "568e3190-73f4-40a4-8789-0ef35a04369c": {
+        "10976": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_is_not_azure_attacker"
+         },
+         {
+          "reason": "azure_attacker_cannot_be_azure_simulator"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "attack_is_not_azure_attack_and_simulator_is_azure_simulator"
+         },
+         {
+          "reason": "simulator_is_not_web_application_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "2377fecb-4e9c-4404-a72f-1229d94a5264": {
+        "10976": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_is_not_azure_attacker"
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "incompatible_package",
+          "expected": [
+           "isInfiltration = true"
+          ],
+          "got": {
+           "isInfiltration": false,
+           "isExfiltration": false,
+           "hasHostLevelSupport": true
+          }
+         },
+         {
+          "reason": "simulator_on_both_sides"
+         }
+        ]
+       },
+       "1301007d-7d6b-44af-bbd4-a6a13c371463": {
+        "10976": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ]
+       },
+       "3303d40c-50b9-4027-91dc-baa187fc15ee": {
+        "10976": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ],
+        "11034": [
+         {
+          "reason": "simulator_is_offline"
+         }
+        ]
+       }
+      }
+     }
+    }
+   ],
+   "constraintCatalog": {
+    "incompatible_package": {
+     "description": "Role is incompatible."
+    },
+    "simulator_variant_is_not_root_user": {
+     "description": "This simulator variant is not a root user."
+    },
+    "simulator_is_not_azure_attacker": {
+     "description": "Azure attacker simulator is required. Make sure to configure this simulator as attacker simulator."
+    },
+    "simulator_on_both_sides": {
+     "description": "The attacker and target resolved to the same simulator, which this move does not allow."
+    },
+    "simulator_is_not_web_application_attacker": {
+     "description": "Web application attacker simulator is required. Make sure to configure this simulator as attacker simulator."
+    },
+    "attack_is_not_aws_attack_and_simulator_is_aws_simulator": {
+     "description": "AWS cloud simulator is incompatible with the attack."
+    },
+    "azure_attacker_cannot_be_azure_simulator": {
+     "description": "Azure attacker cannot be an Azure simulator."
+    },
+    "attack_is_not_azure_attack_and_simulator_is_azure_simulator": {
+     "description": "Azure cloud simulator is incompatible. Choose a different simulator."
+    },
+    "simulator_is_offline": {
+     "description": "The simulator is offline and cannot run this move."
+    },
+    "move_doesnt_requires_proxy_ignoring_proxy_variant": {
+     "description": "This attack doesn't use a proxy, so the proxy variant was skipped."
+    },
+    "simulator_is_not_azure_simulator": {
+     "description": "Azure simulator role is missing. Make sure to choose a valid Azure target."
+    },
+    "incompatible_os": {
+     "description": "OS is incompatible."
+    },
+    "simulator_is_not_web_application_simulator": {
+     "description": "Web application simulator is required."
+    }
+   }
+  }
+ }
+}
