@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Signed off  |  Updated: 2026-09-23
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-24
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Signed off (2026-09-23, in sync with PRD Phase 8) — all 46 tests green with evidence, no waivers, `validating-test-plan` clean; supersedes the 2026-09-16 scoped sign-off |
+| Status | Draft (in sync with PRD Phase 9, 2026-09-24) — re-sign pending: Phase 9 added T-47 after the 2026-09-23 sign-off; all 47 tests green with evidence on two consoles, awaiting `validating-test-plan` against the 47-id plan |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
@@ -55,8 +55,8 @@ explicit justification. A file with neither is a validator violation — never s
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1 … T-8, T-10, T-12 … T-27, T-29, T-30, T-38 … T-43 | — |
-| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-24, T-28, T-39 | — |
+| `safebreach_mcp_studio/studio_functions.py` | T-1 … T-8, T-10, T-12 … T-27, T-29, T-30, T-38 … T-43, T-45, T-46 | — |
+| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-24, T-28, T-39, T-47 | — |
 | `safebreach_mcp_studio/tests/test_scenario_simulation_counts.py` | T-1 … T-16 | Test file — it *is* the coverage it would otherwise need |
 | `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-17 … T-27, T-38 … T-43 | Test file — it *is* the coverage it would otherwise need |
 | `CLAUDE.md` | — | Docs-only, no runtime surface. The catalog entry's existence is asserted indirectly by T-11 |
@@ -118,7 +118,7 @@ explicit justification. A file with neither is a validator violation — never s
 
 | Execution | unit | integration | system | e2e | Total |
 |-----------|------|-------------|--------|-----|-------|
-| Automatic | 38   | 0           | 0      | 6   | 44    |
+| Automatic | 39   | 0           | 0      | 6   | 45    |
 | Manual    | 0    | 0           | 0      | 2   | 2     |
 
 ## Environment Requirements (aggregated)
@@ -206,6 +206,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-43 | Under scoping the catalog still explains exactly what is shown | API-contract | Phase 6 | safebreach-mcp |
 | T-45 | Scoping answers what fails on this machine, not which global zeros touch it | regression | Phase 7 | safebreach-mcp |
 | T-46 | The verdict never calls an entity useless that runs in another step | regression | Phase 8 | safebreach-mcp |
+| T-47 | What an agent receives stays bounded however large the console's payload is | perf, regression | Phase 9 | safebreach-mcp |
 
 **E2E**
 
@@ -1176,6 +1177,32 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
+### T-47 — What an agent receives stays bounded however large the console's payload is
+
+- Description: Proves the blocked-entities answer is capped in steps, in entries and in the size of any single validator detail, with everything past a cap counted rather than dropped.
+- Status: Active
+- Passes after: Phase 9
+- Level: unit
+- Execution: Automatic
+- Aspect: perf, regression
+- Risk: The per-attack and per-code caps bound how many entities are listed, not how large a line is. Walking T-37 on
+  pentest01 (2026-09-23), a 24-step scenario rendered 1,294,873 characters, 1,076,267 of them in one line: a
+  `simulator_failed_schema_validation` group whose `schemaErrors` detail held 3,520 JSON-schema error objects. An
+  agent cannot act on a 1.3 MB tool result.
+- Risk source: T-37 walkthrough
+- Verify: Render a detail list of 3,520 items and a 50,000-character single value; a 24-step scenario; three steps of
+  40 blocked-simulator groups each (120 entries); the same at 24 steps, comparing the verdict and totals with the
+  projection; and a named attack blocked only in a step past the step cap.
+- Expected: A detail list shows its first 5 items then "and N more"; a single value is clipped with "(N more
+  characters)". At most 15 steps are rendered; the rest are one line stating how many were hidden and their per-step
+  totals. At most 100 entry lines are rendered across the answer; each step that loses entries says "and N more
+  entries not shown". Step and section headers, the verdict, every total and the catalog are never trimmed, and a named
+  attack's reasons are rendered even when its step is hidden.
+- Evidence required: the exact pytest command scoped to this id plus its pass line, and the measured size of the live
+  24-step answer before and after.
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
+- Environment needs: none
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
@@ -1190,7 +1217,8 @@ Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be g
 | Phase 6 | T-38 … T-44 | 40 tests |
 | Phase 7 | T-45 | 41 tests |
 | Phase 8 | T-46 | 42 tests |
-| Final | T-29, T-30, T-36, T-37 | all 46 |
+| Phase 9 | T-47 | 43 tests |
+| Final | T-29, T-30, T-36, T-37 | all 47 |
 
 ## Sign-off
 
@@ -1213,13 +1241,22 @@ surfaced: the Coverage Summary's unit count (37 → 38, missed when T-46 was add
 written repo-relative (this plan lives in a single-repo worktree, so the `safebreach-mcp/` prefix did not resolve).
 Every box below is satisfied; none is waived.
 
+**Second console (2026-09-24) — sign-off re-opened.** The whole real-console tier was re-run on pentest01 at
+`448c25e`, and T-37 found a defect apricot-jellyfish never showed: a 24-step scenario's blocked-entities answer was
+1,294,873 characters, one validator detail alone 1,076,267. Phase 9 caps the answer (15 steps, 100 entries, 5 items
+per detail list; T-47). Measured after the fix, the same answer is 88,715 characters with its longest line 1,368.
+Status is back to `Draft` until the validator is clean against the 47-id plan.
+
 - [x] Requirements traceability complete — every R# covered: R1 … R31 each map to an Active T-id (validator clean)
 - [x] Change Coverage complete — every changed file tested or justified
-- [x] Regression complete — T-36 executed live 2026-09-23: `run_scenario` / `quick_run` byte-identical to `main`.
-- [x] Progression evidence — T-37 executed live 2026-09-23: criteria met; its one defect fixed in Phase 8 (T-46).
-- [x] validating-test-plan: RESULT: clean — 2026-09-23, against the 46-id plan
-- [x] All tests green (cumulative through Final) — all 46 executed and green with per-id evidence, T-33 on both
-      sides of the cap (`test-results/phase-Final.md`).
+- [x] Regression complete — T-36 executed live on apricot-jellyfish (2026-09-23) and on pentest01 at `448c25e`
+      (2026-09-24): `run_scenario` / `quick_run` byte-identical to `main` on both.
+- [x] Progression evidence — T-37 executed live on both consoles; the defects it found are fixed in Phase 8 (T-46)
+      and Phase 9 (T-47).
+- [ ] validating-test-plan: RESULT: clean — to re-run against the 47-id plan
+- [x] All tests green (cumulative through Final) — all 47 executed and green with per-id evidence; T-33's over-cap
+      side observed on pentest01's real 21-simulator fleet as well as the mockulator run
+      (`test-results/phase-Final.md`).
 - [x] Accepted gaps listed and approved:
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
@@ -1239,6 +1276,7 @@ Every box below is satisfied; none is waived.
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
+| 2026-09-24 | Second console: real-console tier re-run on pentest01. T-37 found an unbounded blocked-entities answer (1.29 MB); Phase 9 caps it and T-47 pins the caps. Coverage Summary 39 unit / 45 Automatic / 47 total. Status `Signed off` → `Draft` pending re-validation. |
 | 2026-09-23 | **Signed off.** Real-console tier run on apricot-jellyfish; T-29 authored from a live recording; T-33 observed on both sides of the cap; T-46 added (Phase 8). T-15, T-35 and T-44 Expected corrected to the delivered behaviour. `validating-test-plan` → `RESULT: clean` after fixing the Coverage Summary's unit count and writing every `Automation lives in:` path repo-relative. Status `Draft` → `Signed off`. |
 | 2026-09-17 | Reconciled with PRD Phase 6 (`simulator_ids` scopes the blocked-attack list). Added R26 … R30 and T-38 … T-44 — six unit tests at Phase 6 plus one Phase 6 e2e, following the plan's per-slice e2e pattern. Extended R16 with T-43. Nothing reverted, so no tombstones and no existing T-id touched. Regenerated the index tables, Coverage Summary (42 Automatic / 2 Manual) and Tests by Phase. Status reset to Draft and the 2026-09-16 scoped sign-off marked superseded — a material change it does not cover. |
 | 2026-09-16 14:45 | Phase Final execution follow-up. Every existing test method prefixed with its plan id (selector: `pytest -k "T_<n>_"`). Authored the cases that had none — T-9, T-12, T-22, T-28 and the RBAC half of T-10 — plus T-30 in a new contract suite and T-31 … T-35 in a new e2e suite; their `planned:` markers are now real paths. T-29 stays unwritten (needs a live-console capture). Suite: 594 passed / 50 skipped. Status stays Draft — the test set changed materially. |

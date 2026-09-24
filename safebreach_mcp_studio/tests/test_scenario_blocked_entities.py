@@ -9,7 +9,12 @@ from safebreach_mcp_studio.studio_functions import (
     CONSTRAINT_NODES_CAP,
     sb_get_scenario_blocked_entities,
 )
-from safebreach_mcp_studio.studio_server import _format_scenario_blocked_entities
+from safebreach_mcp_studio.studio_server import (
+    DETAIL_ITEMS_CAP,
+    RENDERED_ENTRIES_CAP,
+    RENDERED_STEPS_CAP,
+    _format_scenario_blocked_entities,
+)
 
 
 def _step(count=8, moves=None, simulators=None, constraints=None, limit_reached=False):
@@ -273,6 +278,67 @@ class TestVerdictSaysWhereNothingIsContributed:
         answers = result['steps'][0]['asked_about_simulators']
         named_blocked = sum(1 for answer in answers.values() if answer['state'] == 'blocked')
         assert result['verdict']['blocked_everywhere_simulator_count'] == named_blocked == 1
+
+
+def _entries(text):
+    """The rendered entry lines: attack lines, group rows and tally rows."""
+    return [line for line in text.splitlines() if line.startswith('    - ') and 'more entr' not in line]
+
+
+class TestAnswerSizeIsBounded:
+    """What the agent receives stays readable however large the console's payload is."""
+
+    def test_T_47_a_huge_detail_list_shows_the_first_items_then_and_n_more(self):
+        """Measured live on pentest01: one schemaErrors detail of 3,520 objects rendered 1.08 MB."""
+        errors = [{'instancePath': '', 'schemaPath': f'#/properties/X/allOf/{i}', 'keyword': 'pattern'}
+                  for i in range(3520)]
+        step = _step(simulators={'sim-a': 7, 'sim-b': 0}, constraints=_target(
+            {'sim-b': {'1000': [{'reason': 'simulator_failed_schema_validation', 'schemaErrors': errors}]}}))
+        text = _format_scenario_blocked_entities(_report([step])[0])
+        assert f"and {3520 - DETAIL_ITEMS_CAP:,} more" in text
+        assert len(text) < 10_000
+
+    def test_T_47_a_long_single_value_detail_is_truncated(self):
+        step = _step(simulators={'sim-a': 7, 'sim-b': 0}, constraints=_target(
+            {'sim-b': {'1000': [{'reason': 'incompatible_os', 'value': 'x' * 50_000}]}}))
+        text = _format_scenario_blocked_entities(_report([step])[0])
+        assert 'more characters' in text
+        assert len(text) < 5_000
+
+    def test_T_47_steps_past_the_cap_are_summarised_not_dropped(self):
+        steps = [_step(simulators={'sim-a': 7, 'sim-b': 0},
+                       constraints=_target({'sim-b': {'1000': ['incompatible_os']}})) for _ in range(24)]
+        text = _format_scenario_blocked_entities(_report(steps)[0])
+        assert f"- **Step {RENDERED_STEPS_CAP - 1}**" in text
+        assert f"- **Step {RENDERED_STEPS_CAP}**" not in text
+        assert f"and {24 - RENDERED_STEPS_CAP} more step(s) not shown" in text
+        assert "9 simulator(s) contribute nothing" in text, "the hidden steps' totals are still stated"
+
+    def test_T_47_entries_past_the_cap_are_summarised_per_step(self):
+        steps = [_step(simulators={'sim-a': 7, **{f'sim-{i}': 0 for i in range(40)}},
+                       constraints=_target({f'sim-{i}': {'1000': [f'code_{i}']} for i in range(40)}))
+                 for _ in range(3)]
+        text = _format_scenario_blocked_entities(_report(steps)[0])
+        assert len(_entries(text)) == RENDERED_ENTRIES_CAP
+        assert f"and {120 - RENDERED_ENTRIES_CAP} more entries not shown" in text
+
+    def test_T_47_the_caps_never_move_the_verdict_or_a_total(self):
+        steps = [_step(simulators={'sim-a': 7, **{f'sim-{i}': 0 for i in range(40)}},
+                       constraints=_target({f'sim-{i}': {'1000': [f'code_{i}']} for i in range(40)}))
+                 for _ in range(24)]
+        result, _ = _report(steps)
+        text = _format_scenario_blocked_entities(result)
+        assert f"**Verdict:** {result['verdict']['summary']}" in text
+        assert result['verdict']['blocked_simulator_count'] == 40
+        assert all(step['blocked_simulators_total'] == 40 for step in result['steps'])
+
+    def test_T_47_a_named_attack_blocked_only_in_a_hidden_step_keeps_its_reasons(self):
+        """attack_ids is the route back to exact reasons, so it is never cut."""
+        steps = [_step() for _ in range(24)]
+        steps[20] = _step(moves={'1000': 7, '9999': 0},
+                          constraints=_target({'sim-b': {'9999': ['incompatible_os']}}))
+        text = _format_scenario_blocked_entities(_report(steps, attack_ids='9999')[0])
+        assert "#9999 (blocked) — `incompatible_os`" in text
 
 
 class TestAttackDispositions:

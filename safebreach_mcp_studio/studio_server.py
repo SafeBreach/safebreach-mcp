@@ -1958,13 +1958,36 @@ def _format_side(side: list) -> str:
     return "/".join(side) if side else "unspecified side"
 
 
+RENDERED_STEPS_CAP = 15
+RENDERED_ENTRIES_CAP = 100
+DETAIL_ITEMS_CAP = 5
+DETAIL_TEXT_CAP = 300
+
+
+def _clip(text: str) -> str:
+    if len(text) <= DETAIL_TEXT_CAP:
+        return text
+    return f"{text[:DETAIL_TEXT_CAP]}… ({len(text) - DETAIL_TEXT_CAP:,} more characters)"
+
+
 def _format_detail(detail: dict) -> str:
-    """What the validator attached beside the reason, where it attached anything."""
+    """What the validator attached beside the reason, where it attached anything.
+
+    Bounded: a validator can attach thousands of items to one leaf — a live
+    `schemaErrors` list of 3,520 objects rendered one 1 MB line — so a list shows
+    its first items then how many more, and any single value is clipped.
+    """
     if not detail:
         return ""
     parts = []
     for field, value in detail.items():
-        rendered = ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        if isinstance(value, list):
+            shown = [_clip(str(v)) for v in value[:DETAIL_ITEMS_CAP]]
+            if len(value) > DETAIL_ITEMS_CAP:
+                shown.append(f"and {len(value) - DETAIL_ITEMS_CAP:,} more")
+            rendered = ", ".join(shown)
+        else:
+            rendered = _clip(str(value))
         parts.append(f"{field}: {rendered}")
     return f" ({'; '.join(parts)})"
 
@@ -2116,8 +2139,57 @@ def _format_constraint_catalog(projected: dict) -> list:
     return lines
 
 
+def _within_entry_budget(lines: list, budget: int) -> tuple:
+    """Keep entry lines while the budget lasts; headers and named answers always stay.
+
+    Entries are the indented item lines — attack lines, group rows, tally rows.
+    Step and section headers carry the totals, and "Asked about" lines answer
+    what the caller named, so neither is ever dropped.
+    """
+    kept, skipped = [], 0
+    for line in lines:
+        if not line.startswith('    - '):
+            kept.append(line)
+        elif budget > 0:
+            kept.append(line)
+            budget -= 1
+        else:
+            skipped += 1
+    if skipped:
+        noun = 'entry' if skipped == 1 else 'entries'
+        kept.append(f"    - and {skipped:,} more {noun} not shown — this answer lists at most "
+                    f"{RENDERED_ENTRIES_CAP}; the totals above stay exact. Name attack_ids or "
+                    "simulator_ids for exact detail.")
+    return kept, budget
+
+
+def _render_hidden_steps(hidden: list) -> list:
+    """Steps past the step cap: their totals in one line, and any named attack's reasons."""
+    scored = [step for step in hidden if step['counts_computed']]
+    attacks = sum(step['blocked_attacks_total'] for step in scored)
+    simulators = sum(step['blocked_simulators_total'] for step in scored)
+    line = (f"- and {len(hidden)} more step(s) not shown (this answer lists at most "
+            f"{RENDERED_STEPS_CAP}): across them {attacks:,} attack(s) and {simulators:,} simulator(s) "
+            "contribute nothing, counted per step")
+    if len(scored) < len(hidden):
+        line += f"; {len(hidden) - len(scored)} of them were not scored"
+    lines = [line + ". The verdict above covers every step. Name attack_ids or simulator_ids, or "
+             "score fewer steps, for their detail."]
+    for step in hidden:
+        with_reasons = {attack_id: answer for attack_id, answer in (step.get('asked_about') or {}).items()
+                        if answer.get('blockers') is not None}
+        for named in _render_blocked_dispositions({'asked_about': with_reasons}):
+            lines.append(named.replace("Asked about:", f"Asked about (step {step['step_index']}):", 1))
+    return lines
+
+
 def _format_scenario_blocked_entities(projected: dict) -> str:
-    """Narrate the blocked-entities answer — verdict first, then its detail."""
+    """Narrate the blocked-entities answer — verdict first, then its detail.
+
+    Bounded to RENDERED_STEPS_CAP steps and RENDERED_ENTRIES_CAP entries; what is
+    past either cap is counted, never silently dropped, and the verdict, totals
+    and catalog are computed before any of it is trimmed.
+    """
     verdict = projected['verdict']
     parts = [
         "## Scenario Blocked Entities",
@@ -2134,7 +2206,8 @@ def _format_scenario_blocked_entities(projected: dict) -> str:
     parts.extend(_render_named_simulators(projected))
     parts.append("")
 
-    for step in projected['steps']:
+    budget = RENDERED_ENTRIES_CAP
+    for step in projected['steps'][:RENDERED_STEPS_CAP]:
         if not step['counts_computed']:
             why = ("SafeBreach hit its evaluation limit on this step"
                    if step['is_limit_reached']
@@ -2156,12 +2229,17 @@ def _format_scenario_blocked_entities(projected: dict) -> str:
             detail.append(f"    - {len(step['blocked_simulators_unexplained']):,} "
                           "simulator(s) contribute nothing with no constraint reported: "
                           + ", ".join(step['blocked_simulators_unexplained']))
+        detail, budget = _within_entry_budget(detail, budget)
         if detail:
             parts.append(f"- **Step {step['step_index']}**")
             parts.extend(detail)
         else:
             parts.append(f"- **Step {step['step_index']}** — everything offered "
                          "contributes at least one simulation.")
+
+    hidden = projected['steps'][RENDERED_STEPS_CAP:]
+    if hidden:
+        parts.extend(_render_hidden_steps(hidden))
 
     parts.extend(_format_constraint_catalog(projected))
     parts.append("")

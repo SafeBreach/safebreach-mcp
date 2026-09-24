@@ -588,6 +588,12 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   exact per-attack reason, and a named attack carries its blockers in both cap states. Also 3 simulator ids named
   per constraint code then a count; blocked simulators uncapped because they are grouped per code. No count map is
   ever capped, so the verdict and every total stay exact.
+  **Answer-size caps** (Phase 9, rendering only): those caps bound how many entities are listed, not how large a line
+  is — on pentest01 one `schemaErrors` detail of 3,520 objects rendered a 1,076,267-character line in a 1.29 MB answer.
+  The rendered answer now shows at most **15 steps** (the rest as one line with their per-step totals), at most
+  **100 entries** across the answer (each step that loses entries says "and N more entries not shown"), and a detail
+  list's first **5** items then "and N more", with any single value clipped at 300 characters. Headers, the verdict,
+  every total and the catalog are never trimmed, and a named attack's reasons render even when its step is hidden.
 
 ## Filtering and Search Capabilities
 

@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `get_scenario_blocked_entities` bounds what it sends an agent. Its caps limited how many entities were listed but
+  not how large a line was: on pentest01 a 24-step scenario returned 1,294,873 characters, 1,076,267 of them one
+  validator detail (`schemaErrors`, 3,520 objects). The answer now renders at most 15 steps and 100 entries, and a
+  detail list's first 5 items then "and N more"; everything past a cap is counted, never silently dropped. The same
+  answer is now 88,715 characters. The verdict and every total are unchanged.
 - `get_scenario_blocked_entities` no longer calls a machine useless that runs in another step. Its verdict counted any
   entity scored zero in any step and said those "contribute nothing in this scenario"; on a live console that read
   "20 simulator(s)" where 15 of them produce simulations elsewhere. The sentence now states both halves — "5

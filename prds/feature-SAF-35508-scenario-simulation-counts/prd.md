@@ -41,7 +41,7 @@ estimating it, which is a precondition for autonomous scenario construction.
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-09-23 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 8 phases complete — test plan **signed off** 2026-09-23 (46/46 green incl. the real-console tier, validator clean); code review (§12) pending |
+| **Current Phase** | All 9 phases complete — 47/47 tests green on two consoles (apricot-jellyfish, pentest01); test-plan re-sign pending the validator after Phase 9; code review (§12) pending |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -343,6 +343,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
 | Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
 | Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | `6bbdf1c` | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
+| Phase 9: Bound what the blocked-entities answer sends an agent | ✅ Complete | 2026-09-24 | — | Found by T-37 on pentest01 (1.29 MB answer); 15 steps / 100 entries / 5 detail items |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -603,6 +604,28 @@ nothing in at least one step but run in another") and stays one line when they a
 this scenario. 5 simulator(s) contribute nothing anywhere in this scenario; 15 more contribute nothing in at least one
 step but run in another."
 
+### Phase 9 — Bound what the blocked-entities answer sends an agent
+
+**Semantic change**: the attack cap (50 per step) and the per-code simulator cap (3 ids) bound how many entities are
+listed, not how large the answer is. Walking T-37 on pentest01, a 24-step scenario's answer was 1,294,873 characters:
+one `simulator_failed_schema_validation` group relayed a `schemaErrors` detail of 3,520 JSON-schema error objects as a
+single 1,076,267-character line. An agent cannot act on that.
+
+**Deliverables** (`studio_server.py`, rendering only — the projection, verdict and totals are untouched):
+- At most **15 steps** are rendered; the rest become one line stating how many were hidden and their per-step totals.
+- At most **100 entries** (attack lines, group rows, tally rows) across the answer; each step that loses entries says
+  "and N more entries not shown". Step and section headers, the verdict and the catalog are never trimmed.
+- A detail list shows its first **5** items then "and N more"; any single value is clipped at 300 characters.
+- A named attack's reasons are rendered even when its step is hidden — `attack_ids` stays the route back.
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_server.py` | `RENDERED_STEPS_CAP`, `RENDERED_ENTRIES_CAP`, `DETAIL_ITEMS_CAP`, `DETAIL_TEXT_CAP`; bounded `_format_detail`; `_within_entry_budget`, `_render_hidden_steps` |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-47 — six cases |
+
+**Verification**: T-47 (6 unit cases); unit suite 1,853 passed. Live on pentest01 the same 24-step answer is 88,715
+characters (−93%), longest line 1,368.
+
 ---
 
 ## 9. Risks and Assumptions
@@ -739,6 +762,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-24 | Phase 9 appended and completed — second-console run on pentest01; T-37 found the blocked-entities answer unbounded (1,294,873 chars, one 1,076,267-char detail line); rendering capped at 15 steps / 100 entries / 5 detail items, 88,715 chars after. Test-plan sign-off re-opened pending re-validation |
 | 2026-09-23 | Test plan signed off: all 46 tests green with evidence (real-console tier on apricot-jellyfish, T-29 from a live recording, T-33 on both sides of the cap), `validating-test-plan` clean, no waivers. PRD Status stays In Progress until code review (§12) |
 | 2026-09-23 | Phase 8 appended and completed — the verdict sentence split into "nothing anywhere" and "nothing in at least one step but runs in another", found by the T-37 live walkthrough. Filled Phase 7's SHA; §1.5 brought current (8 phases, real-env tier run) |
 | 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |
