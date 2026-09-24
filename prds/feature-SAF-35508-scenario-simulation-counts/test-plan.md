@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Signed off  |  Updated: 2026-09-24
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-24
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Signed off (2026-09-24, in sync with PRD Phase 9) — all 47 tests green with evidence on two consoles (apricot-jellyfish, pentest01), no waivers, `validating-test-plan` clean against the 47-id plan |
+| Status | Draft (in sync with PRD Phase 10, 2026-09-24) — reset from Signed off: Phase 10 removes the ad-hoc `scenario` input, re-scoping 11 tests, tombstoning T-2 and adding T-48; the 2026-09-24 two-console sign-off no longer covers the input contract |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
@@ -16,14 +16,14 @@ An uncovered requirement is a hard GAP — add a test or justify out-of-scope; n
 
 | Req | Requirement (from SAF-35508 ∪ PRD §7) | Covered by | Status |
 |-----|----------------------------------------|------------|--------|
-| R1 | Both tools accept an ad-hoc plan body with no saved scenario, and a saved numeric plan id passed through as `{id}` | T-3, T-31 | Covered |
-| R2 | Exactly one of `scenario`/`scenario_id`/`test_id`; blank counts as absent; none-or-two errors naming all three | T-1 | Covered |
-| R3 | A non-numeric `scenario_id` (OOB UUID) is refused, routing the caller to `get_scenario_details` | T-13, T-32 | Covered |
-| R4 | A step-less scenario surfaces a typed error, not an unhandled 400 | T-2 | Covered |
+| R1 | Both tools accept a saved numeric plan id passed through as `{id}`, and a `test_id` passed through as `{testId}`. **Re-scoped by Phase 10:** the ad-hoc plan body with no saved scenario is removed — an **owner-accepted deviation from JIRA AC 1** (2026-09-24) | T-3, T-31, T-32 | Covered (deviation) |
+| R2 | Exactly one of `scenario_id` / `test_id`; blank counts as absent; none-or-both errors naming the two | T-1 | Covered |
+| R3 | A non-numeric `scenario_id` (OOB UUID) is refused before any request, routing the caller to save it as a custom plan or pass a `test_id` | T-13, T-32 | Covered |
+| R4 | A saved plan with no steps surfaces a typed error, not an unhandled 400 (now the endpoint's `400 NOT_ALLOWED`, since the body-only local check is gone) | T-10 | Covered |
 | R5 | Counts tool surfaces per-step `simulationCount` and per-simulator attacker/target counts | T-6, T-14, T-31 | Covered |
 | R6 | Counts are runnable; the expected figure is documented as underivable | T-9 | Covered |
-| R7 | `isLimitReached` explicit; `null` never rendered as `0`; a short reply is reported as early termination | T-7 | Covered |
-| R8 | 20-simulator listing cap keyed on the role-map union; past it count + narrow-filter ask; `simulator_ids` answered either way | T-14, T-15, T-16, T-33 | Covered |
+| R7 | `isLimitReached` explicit; `null` never rendered as `0`. **Re-scoped by Phase 10:** a reply shorter than the plan is no longer reported (the step count is unknowable without a held body) — an **owner-accepted deviation from JIRA AC 5** (2026-09-24) | T-7 | Covered (deviation) |
+| R8 | 20-simulator listing cap keyed on the role-map union; past it the count plus two routes — edit the saved plan's step filter, or name `simulator_ids`; `simulator_ids` answered either way | T-14, T-15, T-16, T-33 | Covered |
 | R9 | Blocked tool reports `moves[id]==0` attacks and `simulators[id]==0` simulators with their constraints | T-18, T-23, T-34 | Covered |
 | R10 | Simulators absent from scoring are a distinct *excluded* state, never blocked | T-18, T-34 | Covered |
 | R11 | Ran outranks blocked at the per-attack disposition, independent of step order | T-20 | Covered |
@@ -47,6 +47,7 @@ An uncovered requirement is a hard GAP — add a test or justify out-of-scope; n
 | R29 | A named simulator that ran, or is absent from the scenario, is answered explicitly; silence never stands in for an answer | T-41 | Covered |
 | R30 | The 50-attack cap applies to the **scoped** list, and `simulator_ids` composes with `attack_ids` | T-42 | Covered |
 | R31 | Under a simulator scope the list is **per-simulator**: an attack that ran elsewhere but produced nothing on a named machine is listed, a scenario-wide zero citing no named machine is not, and the verdict and totals still count only scenario-wide zeros | T-45 | Covered |
+| R32 | Neither tool's schema, description or function layer offers an ad-hoc `scenario` input; a call carrying one is rejected before any request (PRD §7, Phase 10) | T-48, T-32 | Covered |
 
 ## Change Coverage
 
@@ -55,10 +56,13 @@ explicit justification. A file with neither is a validator violation — never s
 
 | File | Covered by | Justification (if no unit test) |
 |------|------------|---------------------------------|
-| `safebreach_mcp_studio/studio_functions.py` | T-1 … T-8, T-10, T-12 … T-27, T-29, T-30, T-38 … T-43, T-45, T-46 | — |
-| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-24, T-28, T-39, T-47 | — |
-| `safebreach_mcp_studio/tests/test_scenario_simulation_counts.py` | T-1 … T-16 | Test file — it *is* the coverage it would otherwise need |
-| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-17 … T-27, T-38 … T-43 | Test file — it *is* the coverage it would otherwise need |
+| `safebreach_mcp_studio/studio_functions.py` | T-1, T-3 … T-8, T-10, T-12 … T-27, T-29, T-30, T-38 … T-43, T-45, T-46, T-48 | — |
+| `safebreach_mcp_studio/studio_server.py` | T-9, T-11, T-14, T-15, T-24, T-28, T-39, T-47, T-48 | — |
+| `safebreach_mcp_studio/tests/test_scenario_simulation_counts.py` | T-1, T-3 … T-16 | Test file — it *is* the coverage it would otherwise need |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | T-17 … T-27, T-38 … T-43, T-45 … T-47 | Test file — it *is* the coverage it would otherwise need |
+| `safebreach_mcp_studio/tests/test_scenario_statistics_contract.py` | T-29, T-30, T-48 | Test file — it *is* the coverage it would otherwise need |
+| `safebreach_mcp_studio/tests/fixtures/plan_statistics_counts.json`, `plan_statistics_blocked.json` | T-29 | Recorded test data (re-captured with `{id}` requests in Phase 10), not code |
+| `safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py` | T-31 … T-35, T-44 | e2e test file — it *is* the coverage it would otherwise need |
 | `CLAUDE.md` | — | Docs-only, no runtime surface. The catalog entry's existence is asserted indirectly by T-11 |
 | `CHANGELOG.md` | — | Docs-only, no runtime surface |
 
@@ -168,28 +172,27 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 | Test | Description | Aspect | Passes after | Repo |
 |------|-------------|--------|--------------|------|
-| T-1 | The exactly-one-input rule is enforced before a request is spent | — | Phase 1 | safebreach-mcp |
-| T-2 | A step-less scenario is refused locally rather than by a remote 400 | — | Phase 1 | safebreach-mcp |
-| T-3 | Each input form builds the plan body the endpoint expects | API-contract | Phase 1 | safebreach-mcp |
+| T-1 | The exactly-one-input rule is enforced before a request is spent | — | Phase 10 | safebreach-mcp |
+| T-3 | Each input form builds the plan body the endpoint expects | API-contract | Phase 10 | safebreach-mcp |
 | T-4 | The counts tool's question is pinned by its fixed query parameters | API-contract | Phase 1 | safebreach-mcp |
 | T-5 | Boolean flags reach the endpoint as JSON, not as Python strings | API-contract | Phase 1 | safebreach-mcp |
 | T-6 | Per-step and total simulation counts are preserved exactly | — | Phase 1 | safebreach-mcp |
-| T-7 | An unmeasured count is never presented as a measured zero | — | Phase 1 | safebreach-mcp |
+| T-7 | An unmeasured count is never presented as a measured zero | — | Phase 10 | safebreach-mcp |
 | T-8 | The tool costs exactly one request and never touches the playbook | perf | Phase 1 | safebreach-mcp |
 | T-9 | The answer discloses that it is runnable, not expected | API-contract | Phase 1 | safebreach-mcp |
 | T-10 | An API or RBAC failure surfaces as a typed error carrying the cause | security | Phase 1 | safebreach-mcp |
 | T-11 | Both tools declare themselves read-only and stay outside the rate limiter | API-contract, security | Phase 4 | safebreach-mcp |
 | T-12 | Repeated calls re-measure rather than serving a stale number | regression | Phase 1 | safebreach-mcp |
-| T-13 | A scenario UUID is refused with the route to its own steps | API-contract | Phase 2 | safebreach-mcp |
+| T-13 | An OOB scenario UUID is refused with a route that exists | API-contract | Phase 10 | safebreach-mcp |
 | T-14 | One row per simulator carries both of its role numbers | — | Phase 3 | safebreach-mcp |
-| T-15 | Past the listing cap the breakdown is dropped whole, never sampled | perf | Phase 3 | safebreach-mcp |
+| T-15 | Past the listing cap the breakdown is dropped whole, never sampled | perf | Phase 10 | safebreach-mcp |
 | T-16 | Named simulators are answered in both roles regardless of the cap | — | Phase 3 | safebreach-mcp |
 | T-17 | The blocked tool asks for every constraint without moving its sibling | API-contract, regression | Phase 4 | safebreach-mcp |
 | T-18 | A switched-off simulator is reported as excluded, not as incompatible | — | Phase 4 | safebreach-mcp |
 | T-19 | The verdict follows whether counts were computed, not list emptiness | regression | Phase 4 | safebreach-mcp |
 | T-20 | An attack that ran anywhere is reported as having run | — | Phase 4 | safebreach-mcp |
 | T-21 | Constraint meanings come from the console or are absent, never invented | API-contract | Phase 4 | safebreach-mcp |
-| T-22 | Asking what is blocked changes nothing about the scenario | — | Phase 4 | safebreach-mcp |
+| T-22 | Asking what is blocked changes nothing about the scenario | — | Phase 10 | safebreach-mcp |
 | T-23 | Blocked simulators are grouped by reason with their own detail | — | Phase 4 | safebreach-mcp |
 | T-24 | At the attack cap every blocked attack is still accounted for | — | Phase 5 | safebreach-mcp |
 | T-25 | A tally row never speaks for attacks it does not represent | — | Phase 5 | safebreach-mcp |
@@ -207,25 +210,26 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 | T-45 | Scoping answers what fails on this machine, not which global zeros touch it | regression | Phase 7 | safebreach-mcp |
 | T-46 | The verdict never calls an entity useless that runs in another step | regression | Phase 8 | safebreach-mcp |
 | T-47 | What an agent receives stays bounded however large the console's payload is | perf, regression | Phase 9 | safebreach-mcp |
+| T-48 | Neither tool offers an ad-hoc scenario input | API-contract | Phase 10 | safebreach-mcp |
 
 **E2E**
 
 | Test | Description | Exec | Aspect | Passes after | Repo | Environment |
 |------|-------------|------|--------|--------------|------|-------------|
-| T-31 | The counts tool scores a real scenario against a real fleet | Automatic | — | Phase 1 | safebreach-mcp | Validate console environment |
-| T-32 | All three input forms work against a live console | Automatic | API-contract | Phase 2 | safebreach-mcp | Validate console environment |
+| T-31 | The counts tool scores a real scenario against a real fleet | Automatic | — | Phase 10 | safebreach-mcp | Validate console environment |
+| T-32 | Both input forms work against a live console | Automatic | API-contract | Phase 10 | safebreach-mcp | Validate console environment |
 | T-33 | Real role numbers and the cap behave as measured, not as assumed | Automatic | — | Phase 3 | safebreach-mcp | Validate console environment |
 | T-34 | The three-state model matches a live orchestrator | Automatic | — | Phase 4 | safebreach-mcp | Validate console environment |
-| T-35 | The cap tally holds on a fleet large enough to trigger it | Automatic | perf | Phase 5 | safebreach-mcp | Validate console environment |
+| T-35 | The cap tally holds on a fleet large enough to trigger it | Automatic | perf | Phase 10 | safebreach-mcp | Validate console environment |
 | T-44 | Simulator scoping holds against a real fleet, including a switched-off node | Automatic | — | Phase 6 | safebreach-mcp | Validate console environment |
 | T-36 | The neighbouring tools that share the fetch helper still behave | Manual | regression | Final | — | Validate console environment |
 | T-37 | An agent can actually assemble a scenario with these two answers | Manual | progression | Final | — | Validate console environment |
 
-### T-1 — Exactly one of the three inputs, with blank treated as absent
+### T-1 — Exactly one of the two inputs, with blank treated as absent
 
 - Description: Proves a caller cannot ask an ambiguous question, so every answer is traceable to one named input.
 - Status: Active
-- Passes after: Phase 1
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
 - Risk: If blank were treated as a choice, an empty form field would silently select an input the caller never named,
@@ -233,9 +237,9 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Risk source: reviewer input
 - Verify: Call each tool naming zero inputs; naming two; and naming one input whose value is empty or whitespace-only
   while a second is populated.
-- Expected: Zero inputs and two inputs both raise an error whose message names all three of `scenario`, `scenario_id`
-  and `test_id`. A blank value is treated as absent, so a blank plus one populated input is accepted as that one input,
-  and a blank alone is refused as naming nothing.
+- Expected: Zero inputs and both inputs each raise an error whose message names `scenario_id` and `test_id` — and
+  only those two, since the ad-hoc `scenario` input no longer exists (Phase 10). A blank value is treated as absent, so
+  a blank plus one populated input is accepted as that one input, and a blank alone is refused as naming nothing.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
@@ -243,7 +247,9 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 ### T-2 — A step-less scenario is refused before a request is spent
 
 - Description: Proves the tool recognises an unanswerable question itself instead of paying a round trip to be told.
-- Status: Active
+- Status: Removed — Phase 10 removes the ad-hoc `scenario` body, and this local check only ever applied to a body the
+  tool held. A saved plan's steps are resolved server-side, so a step-less plan is now refused by the endpoint
+  (`400 NOT_ALLOWED`) and surfaces as the typed statistics error — covered by T-10. The ID is kept, never reused.
 - Passes after: Phase 1
 - Level: unit
 - Execution: Automatic
@@ -258,20 +264,18 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 ### T-3 — Each input form builds the body the endpoint expects
 
-- Description: Proves an unsaved configuration and a saved plan are both scoreable, which is the capability the feature exists to add.
+- Description: Proves a saved plan and a past run are both scoreable, each resolved by the endpoint itself rather than on this side.
 - Status: Active
-- Passes after: Phase 1
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: If an ad-hoc body were not relayed verbatim, a configuration still being assembled could not be scored at all —
-  the one thing neither `run_scenario` nor `quick_run` offers.
+- Risk: If an id were resolved client-side — by listing plans or fetching steps — every call would cost more than one
+  request and could score a stale copy of the plan rather than what the console holds.
 - Risk source: reviewer input
-- Verify: Call with an ad-hoc `scenario` body; with a numeric `scenario_id`; and with a `test_id`. Inspect the POST body
-  sent in each case.
-- Expected: The ad-hoc body is relayed as `{"name": ..., "steps": [...]}` with the submitted steps unaltered; a numeric
-  id becomes `{"name": ..., "id": <int>}` with the id as an integer; a `test_id` becomes
-  `{"name": ..., "testId": "<planRunId>"}`. No form carries more than one of the three keys.
+- Verify: Call with a numeric `scenario_id` and with a `test_id`. Inspect the POST body sent in each case.
+- Expected: A numeric id becomes `{"name": ..., "id": <int>}` with the id as an integer; a `test_id` becomes
+  `{"name": ..., "testId": "<planRunId>"}`. Neither body carries `steps`, and neither carries both keys.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
@@ -333,17 +337,20 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 - Description: Proves the answer distinguishes "measured, produces nothing" from "never measured" — the difference between a fact and a silence.
 - Status: Active
-- Passes after: Phase 1
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
 - Risk: On the circuit-breaker path the endpoint null-fills counts and returns a short step list. Rendering those nulls
-  as zeros would tell a caller their scenario produces nothing when in truth it was never scored.
+  as zeros would tell a caller their scenario produces nothing when in truth it was never scored — and claiming the
+  reply is *shorter than the plan* without knowing the plan's length would be a guess presented as a fact.
 - Risk source: reviewer input
-- Verify: Score a response with `isLimitReached` set; one whose `steps` is shorter than the submitted plan; one with a
-  genuine measured `0`; and one whose count is the boolean `True`.
+- Verify: Score a response with `isLimitReached` set; one with a genuine measured `0`; one whose count is the boolean
+  `True`; and a short reply to a `scenario_id` and to a `test_id`.
 - Expected: `isLimitReached` is reported explicitly; an unmeasured count reads as not computed and never as `0`; a
-  measured `0` reads as a measured zero; a reply shorter than the submitted plan is reported as early termination, and
-  that claim is only made when the submitted step count is knowable. A boolean is not accepted as a count.
+  measured `0` reads as a measured zero; a boolean is not accepted as a count. No truncation claim is made for any
+  input form — the answer carries no `steps_submitted` / `steps_truncated` and no "stopped evaluating early" note, since
+  both forms are resolved server-side and this side never knows the plan's length (Phase 10; owner-accepted deviation
+  from JIRA AC 5).
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
@@ -443,21 +450,22 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
 
-### T-13 — A scenario UUID is refused with the route to its own steps
+### T-13 — An OOB scenario UUID is refused with a route that exists
 
 - Description: Proves the tool holds its one-request contract instead of quietly listing the console to resolve an id.
 - Status: Active
-- Passes after: Phase 2
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
 - Aspect: API-contract
 - Risk: Resolving a UUID would require fetching every scenario or plan, which is the only path that ever issued a second
   request — turning a fixed-cost call into one that scales with the console.
 - Risk source: reviewer input
-- Verify: Call with an OOB scenario UUID, with a non-numeric string, and with a digits-only string; assert across all
-  three input forms that no scenario-listing or plan-listing fetch occurs.
-- Expected: A digits-only value is accepted as a plan id. Any non-numeric value — UUID included — is refused with a
-  message naming `get_scenario_details` as the way to fetch the steps and pass them as `scenario`. No input form lists
+- Verify: Call with an OOB scenario UUID, with a non-numeric string, and with a digits-only string; assert across both
+  input forms that no scenario-listing or plan-listing fetch occurs.
+- Expected: A digits-only value is accepted as a plan id. Any non-numeric value — UUID included — is refused before any
+  request with a message giving a route that exists: save it as a custom plan and pass its numeric id, or pass the
+  `test_id` of a run. The message does not offer passing steps as `scenario`, which no longer exists. No input form lists
   the console.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
@@ -487,7 +495,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 - Description: Proves a large fleet yields a short honest answer rather than a long misleading one.
 - Status: Active
-- Passes after: Phase 3
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
 - Aspect: perf
@@ -499,10 +507,9 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   does on its own. Measure the rendered output size for a 500-simulator fleet.
 - Expected: Up to the cap — 20 simulators offered, inclusive — the full breakdown is present. Over it (21 or more) the
   breakdown key is absent rather than empty, the step's simulation count is untouched, and the answer names two routes
-  back: narrow the step's simulators filter and score again, or name `simulator_ids` (sourced from
-  `get_console_simulators`). Both are named because narrowing is open only to a caller holding the scenario body — the
-  `scenario_id` and `test_id` forms are resolved server-side (changed in `9e15ed0`). The 500-simulator rendering stays
-  under 1,000 characters.
+  back: edit the saved plan's step simulators filter and score it again, or name `simulator_ids` (sourced from
+  `get_console_simulators`) for specific machines — the latter needing no edit at all, so it is open to a `test_id`
+  caller too. Neither route mentions an ad-hoc body. The 500-simulator rendering stays under 1,000 characters.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_simulation_counts.py
 - Environment needs: none
@@ -629,18 +636,17 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 ### T-22 — Asking what is blocked changes nothing
 
-- Description: Proves the tool is a report, so a caller can ask freely while assembling without risking their configuration.
+- Description: Proves the tool is a report, so a caller can ask freely without risking their saved configuration.
 - Status: Active
-- Passes after: Phase 4
+- Passes after: Phase 10
 - Level: unit
 - Execution: Automatic
-- Risk: If reporting removed blocked entities or gated saving, the tool would make decisions that belong to whoever
-  holds the configuration.
+- Risk: If reporting removed blocked entities from the saved plan or gated saving, the tool would make decisions that
+  belong to whoever holds the configuration.
 - Risk source: reviewer input
-- Verify: Score an ad-hoc scenario body, then compare the caller's body against its pre-call state; assert only the
-  statistics endpoint is called.
-- Expected: The submitted scenario is byte-identical after the call, nothing is removed from it, no save or update
-  endpoint is contacted, and the tool issues no request other than the single statistics POST.
+- Verify: Score a saved plan by `scenario_id` and a run by `test_id`; record every request the tool issues.
+- Expected: The tool issues exactly one request — the statistics POST — and no plan update, delete, save or queue
+  endpoint is contacted, so the saved plan is left exactly as it was.
 - Evidence required: the exact pytest command scoped to this id plus its pass line.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
@@ -774,11 +780,13 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   or `constraintCatalog` on the orchestrator would pass all 88 tests while making every answer silently empty. The
   vocabulary is known to move — 97 codes today, ~102 before `e2c69b25f`.
 - Risk source: PRD §9
-- Verify: Capture one real `plan/statistics` response from a live console (constraints requested and not requested),
-  commit it as a recorded fixture, and drive both tools' shaping layers from it.
+- Verify: Capture one real `plan/statistics` response from a live console (constraints requested and not requested)
+  by scoring a saved plan by `scenario_id` — a temporary plan created for the capture and deleted after — commit it as a
+  recorded fixture, and drive both tools' shaping layers from it.
 - Expected: Both tools produce a non-empty, correctly-shaped answer from the recorded payload; the assertions reference
-  the payload's real field names, so a rename fails this test rather than emptying the answer. The recorded fixture
-  notes the console and date it came from.
+  the payload's real field names, so a rename fails this test rather than emptying the answer. The recorded request is
+  an `{id}` body, and the tool still sends exactly that request. The recorded fixture notes the console and date it came
+  from. (The 2026-09-23 recordings carry ad-hoc body requests and must be re-captured after Phase 10.)
 - Evidence required: the exact pytest command scoped to this id plus its pass line, and the recorded fixture's provenance note.
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_statistics_contract.py, driven by
   `safebreach_mcp_studio/tests/fixtures/plan_statistics_counts.json` and `plan_statistics_blocked.json` — recorded
@@ -808,16 +816,17 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 ### T-31 — The counts tool scores a real scenario against a real fleet
 
-- Description: Proves the feature's core promise end to end — an unsaved configuration is scored against the live estate without running anything.
+- Description: Proves the feature's core promise end to end — a saved plan is scored against the live estate without running anything.
 - Status: Active
-- Passes after: Phase 1
+- Passes after: Phase 10
 - Level: e2e
 - Execution: Automatic
 - Risk: Every existing result comes from canned payloads and from reading the orchestrator source; nothing has been
   compared against a live console. A shape mismatch, an auth-header gap or an account-id error would surface only here.
 - Risk source: reviewer input
-- Verify: Against a mockulator-backed Validate console, discover an existing scenario's steps and submit them as an
-  ad-hoc `scenario` body. Assert no test is queued as a side effect by checking the console's test list is unchanged.
+- Verify: Against a Validate console, take an existing scenario's steps, save them as a temporary custom plan through
+  the config plans API (`POST /api/config/v3/accounts/{id}/plans`), score it by `scenario_id`, and delete the plan
+  afterwards. Assert no test is queued as a side effect by checking the console's test list is unchanged.
 - Expected: A single POST returns within the configured timeout; the answer reports a per-step `simulationCount` and a
   total consistent with those steps; at least one step produces a positive count on a connected fleet; no test appears
   in the console's execution history as a result of the call.
@@ -826,22 +835,23 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
 
-### T-32 — All three input forms work against a live console
+### T-32 — Both input forms work against a live console
 
-- Description: Proves the saved-plan and test-run entry points resolve against real ids, which fixtures cannot demonstrate.
+- Description: Proves the saved-plan and test-run entry points — now the only two — resolve against real ids, which fixtures cannot demonstrate.
 - Status: Active
-- Passes after: Phase 2
+- Passes after: Phase 10
 - Level: e2e
 - Execution: Automatic
 - Aspect: API-contract
-- Risk: The numeric-id and `test_id` forms depend on the endpoint accepting `{id}` and `{testId}` bodies as the
-  orchestrator source suggests. If either were rejected in practice, two of the three documented entry points would be
-  unusable while every unit test still passed.
+- Risk: Both forms depend on the endpoint accepting `{id}` and `{testId}` bodies as the orchestrator source suggests.
+  With the ad-hoc body gone, if either were rejected in practice half the tools' entry points would be unusable while
+  every unit test still passed.
 - Risk source: reviewer input
-- Verify: On the same console, score the same underlying configuration three ways — as an ad-hoc body, by the saved
-  custom plan's numeric id, and by a completed test's planRunId. Then pass an OOB scenario UUID.
-- Expected: All three forms return a scored answer, each costing exactly one request. The UUID is refused locally with
-  the message routing to `get_scenario_details`, without contacting the console.
+- Verify: On the same console, score a saved custom plan by its numeric id and a completed test by its planRunId, from
+  both tools. Then pass an OOB scenario UUID, and a call carrying a `scenario` argument.
+- Expected: Both forms return a scored answer from both tools, each costing exactly one request. The UUID is refused
+  locally, without contacting the console, with the route to save it as a plan or pass a `test_id`; a `scenario`
+  argument is not accepted by either tool.
 - Evidence required: the exact pytest command, the console name, the plan id and planRunId used, and the run timestamp.
 - Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
 - Environment needs: Validate console environment
@@ -897,7 +907,7 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 
 - Description: Proves the summarise-don't-sample rule survives contact with a real constraint payload, which is the expensive path never yet measured live.
 - Status: Active
-- Passes after: Phase 5
+- Passes after: Phase 10
 - Level: e2e
 - Execution: Automatic
 - Aspect: perf
@@ -907,16 +917,16 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Risk source: PRD §9
 - Verify: Build a scenario and fleet that put more blocked attacks in a step than the cap allows, score it with
   constraints requested, and record the wall-clock duration and response size.
-- Expected: From both the unsaved `scenario` body and the saved plan's `scenario_id`, the per-attack list is absent and
-  a per-code tally replaces it. Each tally row counts between 1 and the step's blocked-attack total — the rows do NOT
+- Expected: From the saved plan's `scenario_id` — the only form since Phase 10 removed the unsaved body — the
+  per-attack list is absent and a per-code tally replaces it. Each tally row counts between 1 and the step's blocked-attack total — the rows do NOT
   sum to it, because with every constraint requested an attack cites every code recorded against it (measured live:
   78 blocked attacks, rows summing to 721). The catalog still covers every tallied code. Naming every capped attack
   returns each one as `blocked` with its exact blockers, which is what accounts for every blocked attack. The call
   completes within the configured timeout, and the observed payload size is recorded so the PRD's unmeasured risk
   becomes a measured one.
 - Fixture: built, not discovered — no shipped scenario exceeds the cap on an ordinary fleet. One step holds every
-  exfiltration attack, aimed at a simulator the counts tool measured at zero as a target; it is saved as a plan for
-  the `scenario_id` form and deleted on teardown.
+  exfiltration attack, aimed at a simulator the counts tool measured at zero as a target; it is saved as a plan, scored
+  by `scenario_id`, and deleted on teardown.
 - Evidence required: the exact pytest command, the console name, the blocked-attack count, the measured response size
   and duration, and the run timestamp.
 - Automation lives in: safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py
@@ -961,13 +971,15 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
   cap that fires too early, a hint that loops back on itself. The feature's value is that an agent can act on the
   answer, and only a walkthrough tests that.
 - Risk source: reviewer input
-- Verify: Follow the PRD §5 primary flow against a live console. Hold an unsaved scenario body; call
-  `get_scenario_simulation_counts`; identify a simulator measured at zero in both roles and one offered in a single
-  role; call `get_scenario_blocked_entities` on the same body to learn why the zero produces nothing; adjust the
-  scenario's filters accordingly; re-score and confirm the numbers moved.
+- Verify: Follow the PRD §5 primary flow against a live console. Save a scenario as a custom plan through the real
+  config plans API; call `get_scenario_simulation_counts` with its `scenario_id`; identify a simulator measured at zero
+  in both roles and one offered in a single role; call `get_scenario_blocked_entities` on the same id to learn why the
+  zero produces nothing; edit the saved plan's filters accordingly (`PUT /api/config/v3/accounts/{id}/plans/{planId}`);
+  re-score by the same id and confirm the numbers moved. Delete the plan afterwards.
 - Expected: The counts answer supports a concrete attacker/target selection without a follow-up call. The blocked answer
   explains the zero with a cited code and, where the console supplies a catalog, a description. The hints route between
-  the two tools rather than in a circle. The re-score reflects the adjusted filters. No test is queued at any point.
+  the two tools rather than in a circle, and never to an ad-hoc body. The re-score of the edited plan reflects the
+  adjusted filters. No test is queued at any point, and the temporary plan is gone at the end.
 - Evidence required: the full transcript of the call sequence, the console name, the simulator and attack ids reasoned
   about, the before and after counts, and an explicit judgement on whether the answers were sufficient to act on.
 - Manual because: the question is whether the rendered answers are coherent and actionable for an agent assembling a
@@ -1203,22 +1215,43 @@ Index by level (generated — Active tests only, sorted by Execution then T-id).
 - Automation lives in: safebreach_mcp_studio/tests/test_scenario_blocked_entities.py
 - Environment needs: none
 
+### T-48 — Neither tool offers an ad-hoc scenario input
+
+- Description: Proves the removed input is gone from everything the model receives, so it is never offered an option it cannot use.
+- Status: Active
+- Passes after: Phase 10
+- Level: unit
+- Execution: Automatic
+- Aspect: API-contract
+- Risk: A half-removal — gone from the function but still in a tool's JSON schema or description, or the reverse —
+  would advertise an input that errors or silently drops the caller's body, which is worse than never offering it.
+- Risk source: reviewer input
+- Verify: Read both registered tools' input schemas and descriptions from the server's tool manager; call both
+  functions and both registered tools with a `scenario` argument.
+- Expected: Neither tool's input schema has a `scenario` property and neither description offers an ad-hoc or unsaved
+  body; the only scenario inputs listed are `scenario_id` and `test_id`. A call carrying `scenario` is rejected before
+  any request is issued, by both the function layer and the registered tool.
+- Evidence required: the exact pytest command scoped to this id plus its pass line.
+- Automation lives in: safebreach_mcp_studio/tests/test_scenario_statistics_contract.py
+- Environment needs: none
+
 ## Tests by Phase (readiness view — generated)
 
 Cumulative: at the end of phase N, EVERY test with "Passes after" <= N must be green.
 
 | After phase | Newly green | Cumulative green |
 |-------------|-------------|------------------|
-| Phase 1 | T-1 … T-10, T-12, T-31 | 12 tests |
-| Phase 2 | T-13, T-32 | 14 tests |
-| Phase 3 | T-14, T-15, T-16, T-33 | 18 tests |
-| Phase 4 | T-11, T-17 … T-23, T-28, T-34 | 28 tests |
-| Phase 5 | T-24, T-25, T-26, T-27, T-35 | 33 tests |
-| Phase 6 | T-38 … T-44 | 40 tests |
-| Phase 7 | T-45 | 41 tests |
-| Phase 8 | T-46 | 42 tests |
-| Phase 9 | T-47 | 43 tests |
-| Final | T-29, T-30, T-36, T-37 | all 47 |
+| Phase 1 | T-4, T-5, T-6, T-8, T-9, T-10, T-12 | 7 tests |
+| Phase 2 | — | 7 tests |
+| Phase 3 | T-14, T-16, T-33 | 10 tests |
+| Phase 4 | T-11, T-17 … T-21, T-23, T-28, T-34 | 19 tests |
+| Phase 5 | T-24, T-25, T-26, T-27 | 23 tests |
+| Phase 6 | T-38 … T-44 | 30 tests |
+| Phase 7 | T-45 | 31 tests |
+| Phase 8 | T-46 | 32 tests |
+| Phase 9 | T-47 | 33 tests |
+| Phase 10 | T-1, T-3, T-7, T-13, T-15, T-22, T-31, T-32, T-35, T-48 | 43 tests |
+| Final | T-29, T-30, T-36, T-37 | all 47 Active (T-2 Removed) |
 
 ## Sign-off
 
@@ -1245,20 +1278,29 @@ Every box below is satisfied; none is waived.
 `448c25e`, and T-37 found a defect apricot-jellyfish never showed: a 24-step scenario's blocked-entities answer was
 1,294,873 characters, one validator detail alone 1,076,267. Phase 9 caps the answer (15 steps, 100 entries, 5 items
 per detail list; T-47). Measured after the fix, the same answer is 88,715 characters with its longest line 1,368.
-**Re-signed (2026-09-24):** `validating-test-plan` returned `RESULT: clean` against the 47-id plan; every box below is
+**Re-signed (2026-09-24):** `validating-test-plan` returned `RESULT: clean` against the 47-id plan; every box below was
 satisfied, none waived.
 
-- [x] Requirements traceability complete — every R# covered: R1 … R31 each map to an Active T-id (validator clean)
-- [x] Change Coverage complete — every changed file tested or justified
-- [x] Regression complete — T-36 executed live on apricot-jellyfish (2026-09-23) and on pentest01 at `448c25e`
-      (2026-09-24): `run_scenario` / `quick_run` byte-identical to `main` on both.
-- [x] Progression evidence — T-37 executed live on both consoles; the defects it found are fixed in Phase 8 (T-46)
-      and Phase 9 (T-47).
-- [x] validating-test-plan: RESULT: clean — 2026-09-24, against the 47-id plan
-- [x] All tests green (cumulative through Final) — all 47 executed and green with per-id evidence; T-33's over-cap
-      side observed on pentest01's real 21-simulator fleet as well as the mockulator run
-      (`test-results/phase-Final.md`).
+**Re-opened (2026-09-24) — PRD Phase 10.** The owner removed the ad-hoc `scenario` input from both tools (OOB scenarios
+unsupported; truncation claim dropped). Eleven tests are re-scoped to the saved-plan / test-run contract and re-phased to
+Phase 10, T-2 is tombstoned, T-48 is added, and R1 / R7 now deviate from JIRA AC 1 / AC 5 by owner decision. That
+change is material, so the boxes below are reset until Phase 10 is implemented and the affected tests are green again.
+The two-console evidence above stands as history for the pre-Phase-10 contract.
+
+- [ ] Requirements traceability complete — every R# covered: R1 … R32 each map to an Active T-id (re-validate)
+- [ ] Change Coverage complete — every changed file tested or justified (re-validate against Phase 10's Changes table)
+- [ ] Regression complete — T-36 to re-run after Phase 10 (the shared input layer changes)
+- [ ] Progression evidence — T-37 to re-run as the saved-plan walk (save → score → why → edit plan → re-score)
+- [ ] validating-test-plan: RESULT: clean — to re-run against the Phase 10 plan
+- [ ] All tests green (cumulative through Final) — the Phase 10 tests (T-1, T-3, T-7, T-13, T-15, T-22, T-31, T-32,
+      T-35, T-48) and the re-recorded T-29 are not yet run
 - [x] Accepted gaps listed and approved:
+  - **R1 deviates from JIRA AC 1** — "evaluates an ad-hoc plan body with no saved scenario" — by owner decision
+    (2026-09-24, Phase 10). Scoring a configuration now needs it saved as a custom plan, or run.
+  - **R7 deviates from JIRA AC 5** — "surfaces that the returned step list is shorter than the plan's" — by owner
+    decision (2026-09-24, Phase 10). The plan's length is unknowable without a held body; unscored steps still read
+    *not computed*, never zero.
+  - **OOB scenarios are not scoreable directly** — by owner decision; they must be saved as a custom plan first.
   - **No CI runs these tests.** The repo's only PR gate is the Security Scan workflow (secret scanning); nothing
     executes pytest. The e2e tier's normal butler-build evidence is therefore unavailable, and every tier's evidence is
     an executor-run command plus its output.
@@ -1277,6 +1319,7 @@ satisfied, none waived.
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
+| 2026-09-24 | Reconciled with PRD Phase 10 (remove the ad-hoc `scenario` input). Gate approved by the owner: OOB unsupported, removed outright, truncation claim dropped, R1 / R7 recorded as owner-accepted deviations from JIRA AC 1 / AC 5. T-2 → **Removed** (the local step-less check was body-only; now covered by T-10 through the endpoint's 400). Re-scoped and re-phased to Phase 10: T-1, T-3, T-7, T-13, T-15, T-22, T-31, T-32, T-35; re-scoped at Final: T-29 (re-record with `{id}` requests), T-37 (saved-plan walk). Added R32 and T-48 (no ad-hoc input offered anywhere). Change Coverage gains the contract suite, the fixtures and the e2e file. Status `Signed off` → `Draft`; evidence boxes reset. |
 | 2026-09-24 | Second console: real-console tier re-run on pentest01. T-37 found an unbounded blocked-entities answer (1.29 MB); Phase 9 caps it and T-47 pins the caps. Coverage Summary 39 unit / 45 Automatic / 47 total. Status `Signed off` → `Draft` pending re-validation, then `validating-test-plan` → `RESULT: clean` against the 47-id plan and Status → **`Signed off`**. |
 | 2026-09-23 | **Signed off.** Real-console tier run on apricot-jellyfish; T-29 authored from a live recording; T-33 observed on both sides of the cap; T-46 added (Phase 8). T-15, T-35 and T-44 Expected corrected to the delivered behaviour. `validating-test-plan` → `RESULT: clean` after fixing the Coverage Summary's unit count and writing every `Automation lives in:` path repo-relative. Status `Draft` → `Signed off`. |
 | 2026-09-17 | Reconciled with PRD Phase 6 (`simulator_ids` scopes the blocked-attack list). Added R26 … R30 and T-38 … T-44 — six unit tests at Phase 6 plus one Phase 6 e2e, following the plan's per-slice e2e pattern. Extended R16 with T-43. Nothing reverted, so no tombstones and no existing T-id touched. Regenerated the index tables, Coverage Summary (42 Automatic / 2 Manual) and Tests by Phase. Status reset to Draft and the 2026-09-16 scoped sign-off marked superseded — a material change it does not cover. |

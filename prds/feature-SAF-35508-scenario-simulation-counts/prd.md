@@ -21,8 +21,9 @@ the MCP directly.
 `check_rbac_response`, so a caller sees only what their role permits. No new role is introduced.
 
 **Key Benefits**
-1. A configuration can be scored **before it is saved** — the capability neither `run_scenario` nor `quick_run` offers,
-   and the one that actually unblocks assembling a scenario iteratively.
+1. ~~A configuration can be scored **before it is saved**~~ — **withdrawn by Phase 10** (owner decision, 2026-09-24):
+   the ad-hoc `scenario` input is removed from both tools. A configuration is scored once it is saved as a custom plan
+   (`scenario_id`) or after it has run (`test_id`); OOB scenarios are not supported directly.
 2. Impact data stops being reachable only through a tool declared as running a test.
 3. Two live defects in the existing helper are avoided: disconnected simulators counted as runnable, and a `TypeError`
    on limit-reached responses.
@@ -39,9 +40,9 @@ estimating it, which is a precondition for autonomous scenario construction.
 | Field | Value |
 |-------|-------|
 | **PRD Status** | In Progress |
-| **Last Updated** | 2026-09-23 |
+| **Last Updated** | 2026-09-24 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 9 phases complete — test plan **signed off** 2026-09-24 on two consoles (apricot-jellyfish, pentest01): 47/47 green, validator clean, no waivers; code review (§12) pending |
+| **Current Phase** | Phase 10 pending (remove the ad-hoc `scenario` input). Phases 1–9 complete; their test-plan sign-off (2026-09-24, two consoles) no longer covers the input contract and is reset until Phase 10 is implemented and re-verified; code review (§12) pending |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -65,7 +66,7 @@ They share their entire input layer, so the two cannot drift on input semantics.
 | Alternative | Pros | Cons |
 |---|---|---|
 | **One tool, `evaluate`-style flags** (the ticket's original `checkout_scenario`) | One registration; one call site | The two answers have opposite cost profiles. Constraints cost ~11.8 MB per step and are dead weight to a count. A single tool either always pays or needs a flag that changes the question — the thing the design set out to remove |
-| **Extend `_get_scenario_statistics` in place** | Smallest diff | Leaves impact data reachable only via a destructive-hinted tool, and keeps the saved-`scenario_id` requirement that blocks mid-assembly scoring |
+| **Extend `_get_scenario_statistics` in place** | Smallest diff | Leaves impact data reachable only via a destructive-hinted tool. (It also kept a saved-`scenario_id` requirement — since Phase 10 the chosen tools share that requirement, so it no longer separates the options.) |
 | **Vendor a constraint-meaning table in MCP** (ticket AC 7) | Immediate human-readable reasons | `ui-react` has carried an "interim" copy for years and it rotted in both directions. Superseded outright — the API now supplies `constraintCatalog` |
 
 **Decision Rationale**
@@ -83,13 +84,16 @@ the blocked tool pays for constraints because they are its entire answer. A sing
 diverge.
 
 **Key features**
-- Exactly-one-input rule across `scenario` / `scenario_id` / `test_id` (`_sole_scenario_input`). A blank or
-  whitespace-only value counts as **absent**, not as a choice; naming none or two raises an error naming all three.
-- `_statistics_plan_body` builds the POST body and returns the submitted step count when it is knowable. `scenario` →
-  `{name, steps}`; numeric `scenario_id` → `{name, id}`; `test_id` → `{name, testId}`.
+- Exactly-one-input rule across `scenario_id` / `test_id` (`_sole_scenario_input`). A blank or whitespace-only value
+  counts as **absent**, not as a choice; naming none or both raises an error naming the two. (Phases 1–9 also accepted
+  an ad-hoc `scenario` body; **Phase 10 removes it.**)
+- `_statistics_plan_body` builds the POST body: numeric `scenario_id` → `{name, id}`; `test_id` → `{name, testId}`.
+  Both are resolved server-side, so this side never knows a plan's step count.
 - `_plan_id` accepts **numeric plan ids only**. An OOB scenario UUID is refused, and the message routes the caller to
-  `get_scenario_details`. This is what keeps every input form at exactly one request.
-- `_require_steps` rejects a step-less scenario before a request is spent (the endpoint answers it `400 NOT_ALLOWED`).
+  saving it as a custom plan (then passing its numeric id) or passing the `test_id` of a run. This is what keeps every
+  input form at exactly one request.
+- A saved plan with no steps is refused by the endpoint (`400 NOT_ALLOWED`) and surfaces as the typed statistics error;
+  the local step-less check `_require_steps` applied only to bodies and goes with them (Phase 10).
 - `_fetch_scenario_statistics` issues the single POST, 120 s timeout, with two keyword flags (`get_constraints`,
   `get_all_constraints`) both defaulting **off**. Booleans are sent as their JSON spelling — `requests` would serialise
   a Python `True` as `"True"`, which the endpoint reads as a different question.
@@ -197,31 +201,34 @@ plus a root `constraintCatalog` when constraints were requested.
 
 **Primary scenario — an agent assembles a scenario and chooses simulators**
 
-**Entry point**: An agent holds a draft scenario body that has never been saved.
+**Entry point**: An agent holds a saved custom plan (its numeric id). *(Before Phase 10 the entry point was an unsaved
+body; that input is removed.)*
 
-1. Agent calls `get_scenario_simulation_counts` with the ad-hoc `scenario` body.
+1. Agent calls `get_scenario_simulation_counts` with the plan's `scenario_id`.
 2. Tool returns the total and, per step, every simulator with what it would produce **as attacker** and **as target**.
-3. Agent sees `sim-b — attacker: 0 - measured, target: 0 - measured` and drops it from its candidate set; it sees
+3. Agent sees `sim-b — attacker: 0 (measured), target: 0 (measured)` and drops it from its candidate set; it sees
    `win-1 — attacker: 3, target: not in this step` and keeps it as an attacker only.
-4. Agent wants to know *why* `sim-b` produces nothing and calls `get_scenario_blocked_entities` on the same body.
+4. Agent wants to know *why* `sim-b` produces nothing and calls `get_scenario_blocked_entities` on the same id.
 5. Tool returns a verdict, the blocked attacks with the codes cited against them, and the blocked simulators grouped by
    code — e.g. `incompatible_os (target) — 1 simulator(s): sim-b (required: WINDOWS; actual: LINUX)`.
-6. Agent adjusts the scenario's filters and re-scores. Neither tool caches, so the new numbers are real.
+6. Agent edits the saved plan's filters and re-scores it by id. Neither tool caches, so the new numbers are real.
 
 **Completion state**: The agent has an attacker/target selection justified by measured counts, and an explanation for
 every machine it excluded — without having queued a test.
 
 **Alternative scenarios**
 - **Large fleet**: a step offering more than 20 simulators returns its count without the per-simulator breakdown and
-  asks the caller to narrow the step's simulators filter. It deliberately does *not* say "name `simulator_ids`" —
-  choosing simulators is how a caller would learn which ids are worth naming, so that instruction closes the loop on
-  itself.
-- **Evaluation stopped early**: both tools report the reply as truncated/not-computed rather than as zeros. The blocked
-  tool's verdict reads `not_evaluated`, explicitly "not a clean result".
+  names two routes back: narrow the plan's step simulators filter and score it again, or name `simulator_ids`
+  (sourced from `get_console_simulators`) for specific machines.
+- **Evaluation stopped early**: every step the console did not score reads *not computed*, never zero. The blocked
+  tool's verdict reads `not_evaluated` or `partially_evaluated`, explicitly not a clean result. (Detecting a reply
+  *shorter* than the plan needed this side to hold the step list; with the body removed in Phase 10 that claim is
+  dropped.)
 - **Offline machine**: appears in neither tool's count output; the blocked tool reports it under *excluded from
   scoring* with `simulator_is_offline`.
-- **Error conditions**: naming zero or two inputs, a non-numeric `scenario_id`, a step-less scenario, or a filter that
-  names nothing are all refused **before** any request; the tool returns the message as text rather than raising.
+- **Error conditions**: naming zero or both inputs, a non-numeric `scenario_id` (including an OOB UUID), or a filter
+  that names nothing are refused **before** any request; a saved plan with no steps is refused by the endpoint. Either
+  way the tool returns the message as text rather than raising.
 
 ```mermaid
 sequenceDiagram
@@ -229,12 +236,12 @@ sequenceDiagram
     participant C as get_scenario_simulation_counts
     participant B as get_scenario_blocked_entities
     participant O as Core /plan/statistics
-    A->>C: ad-hoc scenario body
-    C->>O: POST (getConstraints=false)
+    A->>C: scenario_id (saved plan)
+    C->>O: POST {id} (getConstraints=false)
     O-->>C: counts + simulator maps
     C-->>A: total, per-simulator attacker/target rows
     Note over A: picks candidates, spots a zero
-    A->>B: same body
+    A->>B: same scenario_id
     B->>O: POST (getConstraints=true, getAllConstraints=true)
     O-->>B: counts + simulatorConstraints + constraintCatalog
     B-->>A: verdict, blocked attacks/simulators with codes
@@ -245,8 +252,8 @@ sequenceDiagram
 ## 6. Non-Functional Requirements
 
 **Code Reuse**
-Both tools share one input layer rather than two copies, so the exactly-one rule, blank-is-absent, the numeric-id
-refusal and the step-less rejection exist once. The blocked tool required a parallel shaping layer: the counts tool's
+Both tools share one input layer rather than two copies, so the exactly-one rule, blank-is-absent and the numeric-id
+refusal exist once (the body-only step-less rejection is removed with the body in Phase 10). The blocked tool required a parallel shaping layer: the counts tool's
 normalizer deliberately drops `moves`, and the pre-existing `_summarize_constraints` keys by move id only and
 deduplicates the reason **across simulators**, discarding the simulator id and the attacker/target side — which makes
 it unusable for the simulator half of the blocked answer.
@@ -329,6 +336,22 @@ One INFO log per call naming the console. No new metrics or dashboards.
 - [x] Purely additive; no migration, no feature flag, no rollback procedure needed.
 - [x] Backward compatible — shared helper defaults preserve the counts tool's existing request exactly.
 
+**Reversed by Phase 10 — reconcile at review.** The checked items above are left as delivered; two of them no longer
+describe the tools once Phase 10 lands:
+- "Both tools accept an **ad-hoc plan body** with no saved scenario" — the `scenario` input is removed; both tools
+  accept a saved plan's numeric `scenario_id` or a `test_id` only.
+- "a reply shorter than the **submitted plan** is reported as early termination" — only knowable when this side held
+  the step list; with the body gone the claim is dropped. Unscored steps still read *not computed*, never zero.
+
+Phase 10's own criteria (pending):
+- [ ] Neither tool's schema, description or function layer offers a `scenario` input; exactly one of `scenario_id` /
+      `test_id` is accepted.
+- [ ] An OOB scenario UUID is refused with a route that exists: save it as a custom plan and pass its numeric id, or
+      pass the `test_id` of a run.
+- [ ] `steps_submitted` / `steps_truncated` and the "stopped evaluating early" note are gone from both answers; every
+      input form still costs exactly one request.
+- [ ] The over-cap routing names editing the saved plan's step filter, and still names `simulator_ids`.
+
 ---
 
 ## 8. Implementation Phases
@@ -344,6 +367,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
 | Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | `6bbdf1c` | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
 | Phase 9: Bound what the blocked-entities answer sends an agent | ✅ Complete | 2026-09-24 | `e5edacb` | Found by T-37 on pentest01 (1.29 MB answer); 15 steps / 100 entries / 5 detail items |
+| Phase 10: Remove the ad-hoc `scenario` input | ⏳ Pending | — | — | Owner decision 2026-09-24; OOB unsupported; truncation claim dropped. Supersedes the body form in Phases 1–2 |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -626,6 +650,47 @@ single 1,076,267-character line. An agent cannot act on that.
 **Verification**: T-47 (6 unit cases); unit suite 1,853 passed. Live on pentest01 the same 24-step answer is 88,715
 characters (−93%), longest line 1,368.
 
+### Phase 10 — Remove the ad-hoc `scenario` input
+
+**Status**: ⏳ Pending — owner decision 2026-09-24.
+
+**Semantic change**: both tools stop accepting an unsaved scenario body. The inputs become exactly one of a saved
+custom plan's numeric `scenario_id` or a run's `test_id`, both resolved server-side. This **supersedes the body form
+delivered in Phases 1–2** (read-only; not rewritten) and withdraws Key Benefit #1 (score before saving). Decisions taken
+with the owner:
+- **OOB scenarios are unsupported.** `scenario_id` stays numeric-only; an OOB UUID is refused with a route that exists
+  — save it as a custom plan and pass its numeric id, or pass the `test_id` of a run. (Rejected: accepting OOB UUIDs by
+  fetching their steps, which would break the one-request rule.)
+- **Removed outright, not deprecated** — dropped from both schemas, descriptions and the function layer, so the model is
+  never offered an input it cannot use. (Rejected: a refused-but-present parameter; a private body path kept for tests.)
+- **Truncation detection is dropped.** `steps_submitted`, `steps_truncated` and the "stopped evaluating early" note
+  needed the step list this side no longer holds. (Rejected: a config request to count the plan's steps, which would
+  cost a second request.) Unscored steps still read *not computed*, never zero.
+
+**Deliverables**
+- `scenario` removed from both tool signatures and descriptions and from `sb_get_scenario_simulation_counts` /
+  `sb_get_scenario_blocked_entities`; `_sole_scenario_input` names two inputs; `_statistics_plan_body` builds `{id}` /
+  `{testId}` only; `_parse_scenario_argument` and `_require_steps` deleted (no other caller).
+- The OOB-UUID refusal in `_plan_id` and both tool descriptions route to saving as a plan / passing a `test_id`.
+- The over-cap routing names editing the saved plan's step filter, and keeps `simulator_ids`.
+- `_project_simulation_counts` drops `steps_submitted` / `steps_truncated`; the formatter drops the early-stop note.
+- Tests move to `scenario_id`; T-29 re-recorded against a temporary saved plan; the e2e suite scores temporary saved
+  plans it creates and deletes; the T-37 walk edits the saved plan and re-scores it by id.
+
+| File | Change |
+|---|---|
+| `safebreach_mcp_studio/studio_functions.py` | Input layer and projection as above |
+| `safebreach_mcp_studio/studio_server.py` | Tool signatures, descriptions, over-cap wording, early-stop note removed |
+| `safebreach_mcp_studio/tests/test_scenario_simulation_counts.py` | Body cases re-pointed to `scenario_id`; body-only cases removed |
+| `safebreach_mcp_studio/tests/test_scenario_blocked_entities.py` | Same |
+| `safebreach_mcp_studio/tests/test_scenario_statistics_contract.py` | T-29 against the re-recorded, id-form fixtures |
+| `safebreach_mcp_studio/tests/fixtures/plan_statistics_{counts,blocked}.json` | Re-recorded with `{id}` requests |
+| `safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py` | Fixtures score temporary saved plans |
+| `CLAUDE.md`, `CHANGELOG.md` | Items 25–26 and Unreleased restated |
+
+**Verification** (planned): the reconciled test plan's affected ids green — unit tier, the e2e file on a live console,
+and T-37's saved-plan walk — then the plan re-signed.
+
 ---
 
 ## 9. Risks and Assumptions
@@ -681,7 +746,8 @@ destructive-hinted tool, and could not score a configuration at all until it was
 Two read-only MCP tools over the Core plan-statistics engine. `get_scenario_simulation_counts` answers how many
 simulations a scenario produces and which simulators produce them, pairing each machine's attacker and target numbers
 so a role choice can be made from one row. `get_scenario_blocked_entities` answers what will not run and why, reporting
-blocked attacks and simulators with the constraints cited against them. Both accept an unsaved plan body.
+blocked attacks and simulators with the constraints cited against them. Both score a saved custom plan by
+`scenario_id` or a past run by `test_id`; the unsaved-body input the first eight phases shipped was removed in Phase 10.
 
 **Key Technical Decisions**
 1. **Two tools, not one flag.** The two answers have opposite cost profiles; fixed parameters per tool are what make
@@ -762,6 +828,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-24 | Appended Phase 10 (pending) — remove the ad-hoc `scenario` input from both tools. Owner decisions: OOB unsupported; removed outright; truncation claim dropped. Reversal sweep: §1 Key Benefit #1 struck; §2 alternative's con annotated; §3 Component A, §5 flow + diagram (also its stale "does not say name `simulator_ids`"), §6, §11 updated; §7 checked items left as delivered with an appended "reversed by Phase 10" note plus Phase 10's own unchecked criteria; §8 Phases 1–2 read-only, superseded by Phase 10. §1.5 status reset |
 | 2026-09-24 | Phase 9 appended and completed — second-console run on pentest01; T-37 found the blocked-entities answer unbounded (1,294,873 chars, one 1,076,267-char detail line); rendering capped at 15 steps / 100 entries / 5 detail items, 88,715 chars after. Test-plan sign-off re-opened, then re-signed after `validating-test-plan` returned clean against the 47-id plan |
 | 2026-09-23 | Test plan signed off: all 46 tests green with evidence (real-console tier on apricot-jellyfish, T-29 from a live recording, T-33 on both sides of the cap), `validating-test-plan` clean, no waivers. PRD Status stays In Progress until code review (§12) |
 | 2026-09-23 | Phase 8 appended and completed — the verdict sentence split into "nothing anywhere" and "nothing in at least one step but runs in another", found by the T-37 live walkthrough. Filled Phase 7's SHA; §1.5 brought current (8 phases, real-env tier run) |
