@@ -504,10 +504,10 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   raises a clear error before queuing. The response includes the resolved `draft` value.
 25. `get_scenario_simulation_counts` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
   Scores a scenario against the fleet **without running it** and changes nothing: how many simulations it
-  would produce, and which simulators produce them. Name exactly one of `scenario` (an ad-hoc body never
-  saved — the form to use while a configuration is still being assembled), `scenario_id` (a saved plan's
-  **numeric** id, passed through to Core as `{id}`; an OOB scenario's UUID is **refused** — fetch its steps
-  with `get_scenario_details` and pass them as `scenario`), or `test_id` (a planRunId). Optional
+  would produce, and which simulators produce them. Name exactly one of `scenario_id` (a saved plan's
+  **numeric** id, passed through to Core as `{id}`) or `test_id` (a planRunId, passed as `{testId}`). There is
+  **no ad-hoc body input** (removed in Phase 10), so OOB scenarios are unsupported: an OOB UUID is **refused**
+  locally with the route to save it as a custom plan and pass that id, or to pass the `test_id` of a run. Optional
   `simulator_ids` (comma-separated) answers each named simulator in **both** roles — the one way to get a
   per-simulator number once the breakdown is dropped. Naming ids narrows what is **listed**, never what is
   counted.
@@ -517,8 +517,8 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   derivable from this answer. Constraints are never requested — this answer renders none, and one ordinary
   step measured 38,531 conflicts / 11.8 MB. The `moves` map is discarded on arrival, so the tool makes **no
   playbook request at all**, and no input form resolves an id by listing the console, so every call costs
-  exactly **one** request. `null` is never reported as `0`: an uncomputed count reads "not computed", and a
-  reply shorter than the submitted plan is reported as early termination.
+  exactly **one** request. `null` is never reported as `0`: an uncomputed count reads "not computed". Both
+  inputs are resolved server-side, so the submitted step count is unknown and no early-termination claim is made.
   **Output shape, by whether the cap is passed.** Up to **20** simulators offered (the union of both role
   maps), the step returns its simulation count plus a **per-simulator breakdown**: every simulator the step
   offers with what it would produce *as attacker* and *as target*, strongest first. That pairing is what a
@@ -527,14 +527,13 @@ workflow, file_provider, deployment, secret_provider, vulnerability_management.
   hidden, since "produces nothing here" is the most actionable thing the answer can say about a machine.
   A machine's two numbers are its participation **per role**, not two batches to add up, and the step line
   says so wherever rows follow it. Over the cap (21 or more) the step returns **only** its simulation count and
-  names **both** routes back: narrow the step's simulators filter and score again (the better route, but
-  open only to a caller holding the scenario body — the `scenario_id` and `test_id` forms are resolved
-  server-side), or name `simulator_ids`, which is reachable from every input form. `get_console_simulators`
+  names **both** routes back: edit the saved plan's step simulators filter and score it again, or name
+  `simulator_ids`, which is reachable from both input forms. `get_console_simulators`
   is cited as where ids worth naming come from, so the instruction does not close the loop on itself.
   Named `simulator_ids` are answered either way.
 26. `get_scenario_blocked_entities` ✨ **NEW** - Read-only (`readOnlyHint=True`, **not** rate-limited).
   The sibling of item 25, answering the question it refuses: **what in this scenario will not run, and
-  why?** Same three inputs (`scenario` / numeric `scenario_id` / `test_id`, exactly one), plus optional
+  why?** Same two inputs (numeric `scenario_id` / `test_id`, exactly one), plus optional
   `attack_ids` answering each named attack `ran` (with its count), `blocked`, `not computed` or
   `not in this scenario`. **Ran outranks blocked** — an attack scored `0` in one step and 240 in another
   ran, and the answer never depends on step order. Naming ids narrows what is **listed**; the verdict

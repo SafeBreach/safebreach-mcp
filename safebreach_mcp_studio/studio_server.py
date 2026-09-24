@@ -1665,11 +1665,9 @@ Scores a scenario against the fleet as it stands WITHOUT running it, and changes
 It reports what runs and how much; it does not explain why a step produces nothing.
 
 Name exactly ONE of:
-- scenario: an ad-hoc scenario body never saved, as JSON text or a parsed object. Only
-  'steps' is required. This is the form to use while assembling a configuration.
-- scenario_id: a saved plan's NUMERIC id, which SafeBreach resolves itself. An OOB
-  scenario's UUID is not accepted here — fetch its steps with get_scenario_details
-  (Config server) and pass them as 'scenario'.
+- scenario_id: a saved custom plan's NUMERIC id, which SafeBreach resolves itself. An OOB
+  scenario cannot be scored directly: save it as a custom plan and pass that plan's id, or
+  pass the test_id of a run.
 - test_id: a planRunId (e.g. "1764165600525.2") — scores whatever scenario that run executed.
 
 Parameters:
@@ -1694,18 +1692,17 @@ measured at zero is listed rather than hidden, since "produces nothing here" is 
 actionable thing this answer can say about a machine.
 
 A step offering more than 20 simulators returns its simulation count WITHOUT the breakdown.
-Narrow the step's simulators filter - by OS, role, label or explicit ids - and score it
-again, or name simulator_ids to get those machines' numbers without narrowing anything.
-A count that was never measured is reported as not computed, never as a zero.
+Edit the saved plan's step simulators filter - by OS, role, label or explicit ids - and
+score it again, or name simulator_ids to get those machines' numbers without editing
+anything. A count that was never measured is reported as not computed, never as a zero.
 
 Examples:
 get_scenario_simulation_counts(console="demo", scenario_id="4821")
 get_scenario_simulation_counts(console="demo", test_id="1764165600525.2")
-get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simulator_ids="sim-a,sim-b")"""
+get_scenario_simulation_counts(console="demo", scenario_id="4821", simulator_ids="sim-a,sim-b")"""
         )
         def get_scenario_simulation_counts(
             console: str = "default",
-            scenario: str | dict = None,
             scenario_id: str = None,
             test_id: str = None,
             simulator_ids: str = None,
@@ -1714,7 +1711,7 @@ get_scenario_simulation_counts(console="demo", scenario='{"steps": [...]}', simu
             try:
                 return _format_scenario_simulation_counts(
                     sb_get_scenario_simulation_counts(
-                        console=console, scenario=scenario, scenario_id=scenario_id,
+                        console=console, scenario_id=scenario_id,
                         test_id=test_id, simulator_ids=simulator_ids,
                     )
                 )
@@ -1744,11 +1741,9 @@ deliberately not listed. For how many simulations the scenario produces, and whi
 produce them, call `get_scenario_simulation_counts`.
 
 Name exactly ONE of:
-- scenario: an ad-hoc scenario body never saved, as JSON text or a parsed object. Only
-  'steps' is required. This is the form to use while assembling a configuration.
-- scenario_id: a saved plan's NUMERIC id, which SafeBreach resolves itself. An OOB
-  scenario's UUID is not accepted here — fetch its steps with get_scenario_details
-  (Config server) and pass them as 'scenario'.
+- scenario_id: a saved custom plan's NUMERIC id, which SafeBreach resolves itself. An OOB
+  scenario cannot be scored directly: save it as a custom plan and pass that plan's id, or
+  pass the test_id of a run.
 - test_id: a planRunId (e.g. "1764165600525.2") — scores whatever scenario that run executed.
 
 Parameters:
@@ -1795,11 +1790,10 @@ not just the first. Call it when you need to know why something will not run, no
 Examples:
 get_scenario_blocked_entities(console="demo", scenario_id="4821")
 get_scenario_blocked_entities(console="demo", test_id="1764165600525.2")
-get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attack_ids="1000,10000")"""
+get_scenario_blocked_entities(console="demo", scenario_id="4821", attack_ids="1000,10000")"""
         )
         def get_scenario_blocked_entities(
             console: str = "default",
-            scenario: str | dict = None,
             scenario_id: str = None,
             test_id: str = None,
             attack_ids: str = None,
@@ -1809,7 +1803,7 @@ get_scenario_blocked_entities(console="demo", scenario='{"steps": [...]}', attac
             try:
                 return _format_scenario_blocked_entities(
                     sb_get_scenario_blocked_entities(
-                        console=console, scenario=scenario, scenario_id=scenario_id,
+                        console=console, scenario_id=scenario_id,
                         test_id=test_id, attack_ids=attack_ids,
                         simulator_ids=simulator_ids,
                     )
@@ -1866,19 +1860,18 @@ def _render_simulator_row(row: dict) -> str:
 def _render_step_simulators(step: dict) -> list:
     """What each simulator would produce — or, past the cap, how to get there.
 
-    Both routes back are named. Narrowing the filter is the better one, but it
-    is only open to a caller holding the scenario body: the `scenario_id` and
-    `test_id` forms are resolved server-side, so telling them alone to narrow a
-    filter they cannot reach would leave them nowhere. Naming ids is reachable
-    from every form, and `get_console_simulators` — not this listing — is where
-    a caller finds ids worth naming, so it does not close the loop on itself.
+    Both routes back are named. Editing the saved plan's filter narrows the step
+    for good; naming ids needs no edit, so it is also open to a `test_id` caller.
+    `get_console_simulators` — not this listing — is where a caller finds ids
+    worth naming, so the instruction does not close the loop on itself.
     """
     if step['listing_omitted']:
         return [f"  - Per-simulator breakdown omitted: this step offers "
                 f"{step['simulators_offered']:,} simulators, over the {SIMULATOR_LISTING_CAP} "
-                "this answer lists. Narrow the step's simulators filter — by OS, role, "
-                "label or explicit ids — and score it again to see what each one produces, "
-                "or name simulator_ids (from get_console_simulators) for specific machines."]
+                "this answer lists. Edit the saved plan's step simulators filter — by OS, "
+                "role, label or explicit ids — and score it again to see what each one "
+                "produces, or name simulator_ids (from get_console_simulators) for specific "
+                "machines."]
     return [_render_simulator_row(row) for row in step['simulator_rows']]
 
 
@@ -1901,16 +1894,8 @@ def _format_scenario_simulation_counts(projected: dict) -> str:
         "**Counts:** runnable - offline, disabled and unapproved simulators are excluded.",
         f"**Steps returned:** {projected['steps_returned']:,}",
         _format_total_simulations(projected),
+        "",
     ]
-
-    if projected['steps_truncated']:
-        parts.append("")
-        parts.append(
-            f"**Note:** SafeBreach returned {projected['steps_returned']:,} step(s) for a "
-            f"{projected['steps_submitted']:,}-step scenario - it stopped evaluating early, "
-            "and the steps it never reached are absent rather than empty."
-        )
-    parts.append("")
 
     for step in projected['steps']:
         if not step['counts_computed']:

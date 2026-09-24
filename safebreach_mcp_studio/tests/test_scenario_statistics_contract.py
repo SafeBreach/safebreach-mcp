@@ -39,7 +39,7 @@ def _drive(tool, *, post_side_effect=None, post_return=None):
             requests_mock.post.side_effect = post_side_effect
         else:
             requests_mock.post.return_value = post_return
-        return tool(console='demo', scenario={'steps': [{}]}), requests_mock.post
+        return tool(console='demo', scenario_id='4821'), requests_mock.post
 
 
 class TestTransportFailuresAreLoud:
@@ -125,12 +125,22 @@ def _replay(name, payload=None):
     response = real_requests.models.Response()
     response.status_code = fixture['provenance']['status']
     response._content = json.dumps(fixture['response'] if payload is None else payload).encode()
+    recorded_account = fixture['provenance']['request']['path'].split('/accounts/')[1].split('/')[0]
     with patch.object(studio_functions.requests, 'post', return_value=response) as post, \
             patch.object(studio_functions, 'get_api_base_url', return_value='https://console'), \
-            patch.object(studio_functions, 'get_api_account_id', return_value='3475543660'), \
+            patch.object(studio_functions, 'get_api_account_id', return_value=recorded_account), \
             patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}):
-        result = RECORDED[name](console='demo', scenario=copy.deepcopy(fixture['provenance']['request']['body']))
+        result = RECORDED[name](console='demo', **_recorded_input(fixture['provenance']['request']['body']))
     return result, post, fixture
+
+
+def _recorded_input(body):
+    """The tool input that produces the recorded request: a saved plan's id, or a run's id."""
+    if 'id' in body:
+        return {'scenario_id': str(body['id'])}
+    if 'testId' in body:
+        return {'test_id': body['testId']}
+    raise AssertionError(f"recorded request names neither a plan nor a run: {sorted(body)} — re-capture it")
 
 
 def _zeros(mapping):
@@ -234,3 +244,62 @@ class TestRecordedLivePayload:
         renamed, _, _ = _replay(name, payload)
         assert json.dumps(renamed, sort_keys=True, default=str) != json.dumps(original, sort_keys=True, default=str), (
             f"renaming {'.'.join(path)} left the answer unchanged — the tool does not actually depend on it")
+
+
+# ---------------------------------------------------------------------------
+# T-48 — neither tool offers an ad-hoc scenario input
+# ---------------------------------------------------------------------------
+
+REGISTERED = ('get_scenario_simulation_counts', 'get_scenario_blocked_entities')
+
+
+def _registered_tools():
+    from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
+    return SafeBreachStudioServer().mcp._tool_manager
+
+
+class TestNoAdHocInput:
+    """The removed input is gone from everything the model receives."""
+
+    @pytest.mark.parametrize('name', REGISTERED)
+    def test_T_48_the_schema_offers_only_the_saved_plan_and_the_test_run(self, name):
+        properties = _registered_tools()._tools[name].parameters['properties']
+        assert 'scenario' not in properties
+        assert {'scenario_id', 'test_id'} <= set(properties)
+
+    @pytest.mark.parametrize('name', REGISTERED)
+    def test_T_48_the_description_never_offers_an_unsaved_body(self, name):
+        description = _registered_tools()._tools[name].description.lower()
+        for phrase in ('ad-hoc', 'unsaved', 'never saved', '- scenario:'):
+            assert phrase not in description, f"{name} still offers {phrase!r}"
+
+    @pytest.mark.parametrize('tool', TOOLS)
+    def test_T_48_the_function_layer_rejects_a_scenario_argument(self, tool):
+        with patch.object(studio_functions, 'requests') as requests_mock:
+            with pytest.raises(TypeError):
+                tool(console='demo', scenario={'steps': [{}]})
+        requests_mock.post.assert_not_called()
+
+    @pytest.mark.parametrize('name', REGISTERED)
+    def test_T_48_the_registered_tool_rejects_a_scenario_argument(self, name):
+        """Auth and URL resolve here, so an accepted body would reach the POST — only rejection keeps it silent."""
+        import asyncio
+        manager = _registered_tools()
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {'data': {'steps': []}}
+        with patch.object(studio_functions, 'requests') as requests_mock, \
+                patch.object(studio_functions, 'get_api_base_url', return_value='https://console'), \
+                patch.object(studio_functions, 'get_api_account_id', return_value='1111'), \
+                patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
+                patch.object(studio_functions, 'check_rbac_response'):
+            requests_mock.post.return_value = response
+            try:
+                result = asyncio.run(manager.call_tool(
+                    name, {'console': 'demo', 'scenario': {'steps': [{}]}}, convert_result=True))
+                content = result[0] if isinstance(result, tuple) else result
+                answer = content[0].text
+            except Exception as rejected:  # validation refused the argument outright
+                answer = str(rejected)
+        requests_mock.post.assert_not_called()
+        assert 'error' in answer.lower(), f"{name} accepted a scenario argument: {answer[:200]}"

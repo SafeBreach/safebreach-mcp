@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose field names never matched the emitted shape.
 
 - `get_scenario_blocked_entities` (SAF-35508) — the sibling of `get_scenario_simulation_counts`,
-  answering what in a scenario will not run and why. Same three inputs plus an optional `attack_ids`
+  answering what in a scenario will not run and why. Same two inputs plus an optional `attack_ids`
   filter (`ran` outranks `blocked`, so a step-order-dependent answer is impossible). Reports every
   attack and simulator the console measured at exactly `0` with the constraints cited against it;
   an entity that merely runs on fewer simulators than offered is a reduction, not a block, and is not
@@ -55,17 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an auto-generated `{result: string}` output schema, and the MCP SDK then ships the whole answer twice — once as
   text and once as `structuredContent`. Measured on a ten-simulator step, the wire payload drops from 2,506 to
   1,471 characters with the rendered output unchanged.
-- `get_scenario_simulation_counts` names both routes back when a step offers more than 20 simulators. Narrowing the
-  step's simulators filter is still the better one, but it is open only to a caller holding the scenario body — the
-  `scenario_id` and `test_id` forms are resolved server-side — so the omission now also points at `simulator_ids`,
-  and at `get_console_simulators` as the place those ids come from.
+- `get_scenario_simulation_counts` names both routes back when a step offers more than 20 simulators: edit the saved
+  plan's step simulators filter and score it again, or name `simulator_ids`, with `get_console_simulators` as the
+  place those ids come from.
 - The per-simulator breakdown states that a machine's two numbers are its participation per role, not two batches to
   add up. Five simulators reading `attacker: 1, target: 1` under a total of `5` otherwise invites reading 10. The
   note rides on the step line only where rows follow it.
 - `get_scenario_simulation_counts` reports a measured zero as `0 (measured)` rather than `0 - measured`, which
   parsed as a range on first read.
-- Both tools accept `scenario` as a parsed object as well as JSON text. The prose offered both; the schema
-  advertised only a string. A malformed JSON string still reaches the worded error rather than a validation failure.
 - `get_scenario_simulation_counts` hint now says simulators are reported as ids and points at
   `get_console_simulators` to resolve them — ten bare UUIDs were otherwise a dead end.
 - `get_scenario_blocked_entities` no longer returns a partial attack list when a step blocks more than 50
@@ -80,21 +77,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it naming an attack past the cap would have returned a bare "blocked" with no reason.
 - `get_scenario_simulation_counts` (SAF-35508) — a read-only Studio tool that scores a scenario
   against the fleet without running it, answering how many simulations it would produce and which
-  simulators produce them. Takes exactly one of `scenario` (an ad-hoc body never saved, so a
-  configuration can be scored while it is still being assembled), `scenario_id` (a saved plan's numeric
-  id, passed through to Core as `{id}`) or `test_id` (a planRunId), plus an optional `simulator_ids`
-  filter that answers each named simulator in both roles. An OOB scenario's UUID is refused rather
-  than resolved, so no input form lists the console and every call costs exactly one request. Every
-  query
-  parameter to `POST /plan/statistics` is fixed internally: counts are *runnable*
-  (`includeDisabled=false`), and constraints are never requested, since this answer renders none and
-  one ordinary step measured 38,531 of them. A count the orchestrator never computed is reported as
-  not computed rather than as a zero, and a reply shorter than the submitted plan is reported as
-  early termination. Under 20 simulators offered, a step returns its simulation count plus a
-  per-simulator breakdown — each simulator with what it would produce *as attacker* and *as target*,
-  which is the pairing a choice of attackers and targets is made on; at or over the cap it returns
-  only the count and asks the caller to narrow the step's simulators filter. Named `simulator_ids`
-  are answered either way.
+  simulators produce them. Takes exactly one of `scenario_id` (a saved plan's numeric id, passed through
+  to Core as `{id}`) or `test_id` (a planRunId), plus an optional `simulator_ids` filter that answers
+  each named simulator in both roles. An OOB scenario's UUID is refused rather than resolved, so no
+  input form lists the console and every call costs exactly one request. Every query parameter to
+  `POST /plan/statistics` is fixed internally: counts are *runnable* (`includeDisabled=false`), and
+  constraints are never requested, since this answer renders none and one ordinary step measured
+  38,531 of them. A count the orchestrator never computed is reported as not computed rather than as a
+  zero. Up to 20 simulators offered, a step returns its simulation count plus a per-simulator
+  breakdown — each simulator with what it would produce *as attacker* and *as target*, which is the
+  pairing a choice of attackers and targets is made on; over the cap it returns only the count and
+  names the routes back. Named `simulator_ids` are answered either way.
+
+### Removed
+
+- Both scenario-statistics tools drop the ad-hoc `scenario` input (an unsaved `{steps}` body), so OOB scenarios are
+  unsupported. The inputs are now exactly one of `scenario_id` (a saved plan's numeric id) or `test_id`; an OOB UUID
+  is refused with the route to save it as a custom plan or pass a run's `test_id`. Early-termination detection goes
+  with it: it compared the reply against a submitted step count that only a held body could supply.
 
 ## 1.14.0 — 2026-09-07
 

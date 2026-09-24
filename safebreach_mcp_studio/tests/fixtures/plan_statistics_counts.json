@@ -1,12 +1,63 @@
 {
  "provenance": {
   "test": "T-29 (SAF-35508 test plan)",
-  "console": "apricot-jellyfish.dev.sbops.com",
-  "captured_at": "2026-09-23T15:14:56Z",
-  "captured_with": "get_scenario_simulation_counts at commit cf0037e, by wrapping requests.post around a real call",
+  "console": "pentest01.safebreach.com",
+  "captured_at": "2026-09-24T14:46:46Z",
+  "captured_with": "get_scenario_simulation_counts (PRD Phase 10: scenario_id / test_id only), by wrapping requests.post around a real call against a temporary saved plan created for the capture and deleted after",
+  "saved_plan": {
+   "type": "validate",
+   "draft": false,
+   "name": "SAF-35508 T-29 capture 1790261203",
+   "steps": [
+    {
+     "name": "one runs, one blocked",
+     "attackerFilter": {
+      "simulators": {
+       "operator": "is",
+       "values": [
+        "568e3190-73f4-40a4-8789-0ef35a04369c",
+        "a3d8ea5a-3077-4607-9952-4e44a702d1fe",
+        "2377fecb-4e9c-4404-a72f-1229d94a5264",
+        "2d699fbb-6195-406f-8649-843cb8ca2138",
+        "37b64b33-9d29-4333-a1d2-e229ff2855d4",
+        "1301007d-7d6b-44af-bbd4-a6a13c371463",
+        "3303d40c-50b9-4027-91dc-baa187fc15ee"
+       ],
+       "name": "simulators"
+      }
+     },
+     "targetFilter": {
+      "simulators": {
+       "operator": "is",
+       "values": [
+        "568e3190-73f4-40a4-8789-0ef35a04369c",
+        "a3d8ea5a-3077-4607-9952-4e44a702d1fe",
+        "2377fecb-4e9c-4404-a72f-1229d94a5264",
+        "2d699fbb-6195-406f-8649-843cb8ca2138",
+        "37b64b33-9d29-4333-a1d2-e229ff2855d4",
+        "1301007d-7d6b-44af-bbd4-a6a13c371463",
+        "3303d40c-50b9-4027-91dc-baa187fc15ee"
+       ],
+       "name": "simulators"
+      }
+     },
+     "systemFilter": {},
+     "attacksFilter": {
+      "playbook": {
+       "operator": "is",
+       "values": [
+        11034,
+        10976
+       ],
+       "name": "playbook"
+      }
+     }
+    }
+   ]
+  },
   "request": {
    "method": "POST",
-   "path": "/api/orch/v1/accounts/3475543660/plan/statistics",
+   "path": "/api/orch/v1/accounts/3471166703/plan/statistics",
    "params": {
     "limit": 500000,
     "includeDisabled": "false",
@@ -15,73 +66,8 @@
     "useCache": "true"
    },
    "body": {
-    "name": "SAF-35508 T-29 capture",
-    "steps": [
-     {
-      "name": "runs",
-      "attackerFilter": {
-       "connection": {
-        "operator": "is",
-        "values": [
-         true
-        ],
-        "name": "connection"
-       }
-      },
-      "targetFilter": {
-       "connection": {
-        "operator": "is",
-        "values": [
-         true
-        ],
-        "name": "connection"
-       }
-      },
-      "systemFilter": {},
-      "attacksFilter": {
-       "playbook": {
-        "operator": "is",
-        "values": [
-         10458,
-         10459
-        ],
-        "name": "playbook"
-       }
-      }
-     },
-     {
-      "name": "blocked on the AWS simulator",
-      "attackerFilter": {
-       "connection": {
-        "operator": "is",
-        "values": [
-         true
-        ],
-        "name": "connection"
-       }
-      },
-      "systemFilter": {},
-      "targetFilter": {
-       "simulators": {
-        "operator": "is",
-        "name": "simulators",
-        "values": [
-         "b320899a-5a1c-4ec5-bd6d-567ebc1baaef"
-        ]
-       }
-      },
-      "attacksFilter": {
-       "playbook": {
-        "operator": "is",
-        "values": [
-         98,
-         10000583
-        ],
-        "name": "playbook"
-       }
-      }
-     }
-    ]
+    "name": "",
+    "id": 247
    }
   },
   "status": 200,
@@ -91,130 +77,31 @@
   "data": {
    "steps": [
     {
-     "simulationCount": 336,
+     "simulationCount": 8,
      "moves": {
-      "10458": 252,
-      "10459": 84
+      "10976": 8,
+      "11034": 0
      },
      "targetSimulators": {
-      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
-      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 48,
-      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
-      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
-      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 48,
-      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
-      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
-      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
-      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
-      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
-      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 48,
-      "e47ce7ba-a689-4490-be4a-807a2730d307": 48,
-      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 48,
-      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
-      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 48,
-      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 48,
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
-      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
-      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
-      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 0,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 8,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
      },
      "attackerSimulators": {
-      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 42,
-      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 36,
-      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
-      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
-      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 36,
-      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
-      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
-      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
-      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
-      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
-      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 36,
-      "e47ce7ba-a689-4490-be4a-807a2730d307": 36,
-      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 36,
-      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
-      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 36,
-      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 36,
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
-      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
-      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 42,
-      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 8,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 0,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
      },
      "simulators": {
-      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 42,
-      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 84,
-      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
-      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
-      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 84,
-      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
-      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
-      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
-      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
-      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
-      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 84,
-      "e47ce7ba-a689-4490-be4a-807a2730d307": 84,
-      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 84,
-      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
-      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 84,
-      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 84,
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
-      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
-      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 42,
-      "a3049104-480f-4182-9e28-f860e3c496dc": 0
-     }
-    },
-    {
-     "simulationCount": 0,
-     "moves": {
-      "98": 0,
-      "10000583": 0
-     },
-     "targetSimulators": {
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0
-     },
-     "attackerSimulators": {
-      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
-      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 0,
-      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
-      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
-      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 0,
-      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
-      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
-      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
-      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
-      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
-      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 0,
-      "e47ce7ba-a689-4490-be4a-807a2730d307": 0,
-      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 0,
-      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
-      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 0,
-      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 0,
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
-      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
-      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
-      "a3049104-480f-4182-9e28-f860e3c496dc": 0
-     },
-     "simulators": {
-      "82fc6580-2cd8-4295-8f02-cfb97ca35cf2": 0,
-      "e687a3bb-52e0-46a7-883d-c5212fdaf186": 0,
-      "fe1d24ec-5300-4c6e-9fba-cad3b144e384": 0,
-      "8ec02958-0125-45b6-b6c6-8cd64923736f": 0,
-      "19674aa6-0e92-44c8-af94-b2d1cc695ce4": 0,
-      "6a50ecd0-53b1-457a-9a29-f07b611fc4da": 0,
-      "428bdc72-bed5-40cf-9780-5c85a2b07b5f": 0,
-      "40890d4e-d3e2-4ac1-834b-ce61c4da2294": 0,
-      "1edc7d68-9828-4a02-90ea-700f492e6790": 0,
-      "a592c57e-f944-4a66-aa45-6e12177167de": 0,
-      "cbf02d70-b80c-4e45-a87f-4f886835f62e": 0,
-      "e47ce7ba-a689-4490-be4a-807a2730d307": 0,
-      "6268bb3a-63ce-4146-9be9-73cb1a01fa9d": 0,
-      "3b988a7e-9538-4a35-b358-3b17613a4380": 0,
-      "e5595ca0-5724-4680-ada6-ca4f79dd4848": 0,
-      "d4ddedbd-ba27-4e54-bc08-3bcc17cf8b54": 0,
-      "b320899a-5a1c-4ec5-bd6d-567ebc1baaef": 0,
-      "fdbb6ae9-bcfb-4b12-a896-d9ce87f1a737": 0,
-      "8e7e9433-fc41-4ab6-b0e1-f54327e98201": 0,
-      "a3049104-480f-4182-9e28-f860e3c496dc": 0
+      "37b64b33-9d29-4333-a1d2-e229ff2855d4": 0,
+      "a3d8ea5a-3077-4607-9952-4e44a702d1fe": 8,
+      "2d699fbb-6195-406f-8649-843cb8ca2138": 0,
+      "568e3190-73f4-40a4-8789-0ef35a04369c": 8,
+      "2377fecb-4e9c-4404-a72f-1229d94a5264": 0
      }
     }
    ]

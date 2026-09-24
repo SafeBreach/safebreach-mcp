@@ -50,7 +50,8 @@ def _report(steps, catalog=None, **kwargs):
             patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
             patch.object(studio_functions, 'check_rbac_response'):
         requests_mock.post.return_value = response
-        kwargs.setdefault('scenario', {'steps': [{}]})
+        if 'test_id' not in kwargs:
+            kwargs.setdefault('scenario_id', '4821')
         result = sb_get_scenario_blocked_entities(console='demo', **kwargs)
     return result, requests_mock.post
 
@@ -58,11 +59,12 @@ def _report(steps, catalog=None, **kwargs):
 class TestInputsMatchTheSiblingTool:
     """The same plumbing, so the same rules — for free."""
 
-    def test_T_1_naming_none_names_all_three(self):
+    def test_T_1_naming_none_names_the_two_inputs(self):
         with pytest.raises(ValueError) as excinfo:
             sb_get_scenario_blocked_entities(console='demo')
         message = str(excinfo.value)
-        assert 'scenario' in message and 'scenario_id' in message and 'test_id' in message
+        assert 'scenario_id' in message and 'test_id' in message
+        assert 'scenario,' not in message and 'scenario or' not in message
 
     def test_T_1_naming_two_reports_both(self):
         with pytest.raises(ValueError) as excinfo:
@@ -71,33 +73,27 @@ class TestInputsMatchTheSiblingTool:
         assert 'scenario_id' in str(excinfo.value) and 'test_id' in str(excinfo.value)
 
     def test_T_1_blank_string_counts_as_absent(self):
-        _, post = _report([_step()], scenario=None, scenario_id='   ',
-                          test_id='1764165600525.2')
+        _, post = _report([_step()], scenario_id='   ', test_id='1764165600525.2')
         assert post.call_count == 1
 
     def test_T_13_a_non_numeric_scenario_id_is_refused_before_scoring(self):
         with patch.object(studio_functions, 'requests') as requests_mock:
-            with pytest.raises(ValueError, match='numeric id'):
+            with pytest.raises(ValueError, match='numeric id') as excinfo:
                 sb_get_scenario_blocked_entities(
                     console='demo', scenario_id='3b8eade5-9285-43b8-b3e7-6350420983a5')
         requests_mock.post.assert_not_called()
-
-    def test_T_2_step_less_scenario_never_reaches_the_api(self):
-        with patch.object(studio_functions, 'requests') as requests_mock:
-            with pytest.raises(ValueError, match='no steps'):
-                sb_get_scenario_blocked_entities(console='demo', scenario={'steps': []})
-        requests_mock.post.assert_not_called()
+        assert 'custom plan' in str(excinfo.value) and 'test_id' in str(excinfo.value)
 
     def test_T_3_body_shapes_match_the_sibling(self):
-        _, post = _report([_step()], scenario=None, scenario_id='4821')
+        _, post = _report([_step()], scenario_id='4821')
         assert post.call_args.kwargs['json'] == {'name': '', 'id': 4821}
-        _, post = _report([_step()], scenario=None, test_id='1764165600525.2')
+        _, post = _report([_step()], test_id='1764165600525.2')
         assert post.call_args.kwargs['json'] == {'name': '', 'testId': '1764165600525.2'}
 
     def test_T_27_an_all_blank_attack_filter_is_rejected(self):
         with pytest.raises(ValueError, match='named no attack'):
             sb_get_scenario_blocked_entities(
-                console='demo', scenario={'steps': [{}]}, attack_ids=' , , ')
+                console='demo', scenario_id='4821', attack_ids=' , , ')
 
 
 class TestQueryParameters:
@@ -125,7 +121,7 @@ class TestQueryParameters:
                 patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
                 patch.object(studio_functions, 'check_rbac_response'):
             requests_mock.post.return_value = response
-            sb_get_scenario_simulation_counts(console='demo', scenario={'steps': [{}]})
+            sb_get_scenario_simulation_counts(console='demo', scenario_id='4821')
         params = requests_mock.post.call_args.kwargs['params']
         assert params['getConstraints'] == 'false'
         assert params['getAllConstraints'] == 'false'
@@ -563,7 +559,7 @@ class TestApiErrors:
             requests_mock.post.return_value = response
             requests_mock.exceptions = real_requests.exceptions
             with pytest.raises(ValueError, match='Statistics API error'):
-                sb_get_scenario_blocked_entities(console='demo', scenario={'steps': [{}]})
+                sb_get_scenario_blocked_entities(console='demo', scenario_id='4821')
 
 
 class TestToolRegistration:
@@ -586,13 +582,6 @@ class TestToolRegistration:
 class TestReportingChangesNothing:
     """The tool is a report: it never edits the scenario and never blocks a save."""
 
-    def test_T_22_the_submitted_scenario_is_unchanged_after_scoring(self):
-        import copy
-        body = {'steps': [{'name': 'step one'}, {'name': 'step two'}]}
-        before = copy.deepcopy(body)
-        _report([_step(), _step()], scenario=body)
-        assert body == before
-
     def test_T_22_nothing_but_the_statistics_endpoint_is_contacted(self):
         _, post = _report([_step()])
         assert post.call_count == 1
@@ -610,7 +599,7 @@ class TestReportingChangesNothing:
                 patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
                 patch.object(studio_functions, 'check_rbac_response'):
             requests_mock.post.return_value = response
-            sb_get_scenario_blocked_entities(console='demo', scenario={'steps': [{}]})
+            sb_get_scenario_blocked_entities(console='demo', scenario_id='4821')
         assert requests_mock.put.call_count == 0
         assert requests_mock.patch.call_count == 0
         assert requests_mock.delete.call_count == 0
@@ -643,7 +632,7 @@ class TestRegisteredToolBoundary:
                              side_effect=real_requests.exceptions.HTTPError()):
             requests_mock.post.return_value = response
             requests_mock.exceptions = real_requests.exceptions
-            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+            answer = self._registered()(console='demo', scenario_id='4821')
         assert isinstance(answer, str)
         assert 'upstream exploded' in answer
 
@@ -660,7 +649,7 @@ class TestRegisteredToolBoundary:
                              side_effect=PermissionError('role may not read this account')):
             requests_mock.post.return_value = response
             requests_mock.exceptions = real_requests.exceptions
-            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+            answer = self._registered()(console='demo', scenario_id='4821')
         assert 'Permission Error' in answer
         assert 'role may not read this account' in answer
         assert 'clean' not in answer.lower()

@@ -33,7 +33,8 @@ def _score(steps, **kwargs):
             patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
             patch.object(studio_functions, 'check_rbac_response'):
         requests_mock.post.return_value = response
-        kwargs.setdefault('scenario', {'steps': [{}]})
+        if 'test_id' not in kwargs:
+            kwargs.setdefault('scenario_id', '4821')
         result = sb_get_scenario_simulation_counts(console='demo', **kwargs)
     return result, requests_mock.post
 
@@ -52,14 +53,15 @@ def _row_ids(result, step=0):
 class TestInputExclusivity:
     """Exactly one input names what to score."""
 
-    def test_T_1_naming_none_names_all_three(self):
+    def test_T_1_naming_none_names_the_two_inputs(self):
         with pytest.raises(ValueError) as excinfo:
             sb_get_scenario_simulation_counts(console='demo')
         message = str(excinfo.value)
-        assert 'scenario' in message and 'scenario_id' in message and 'test_id' in message
+        assert 'scenario_id' in message and 'test_id' in message
         assert 'none was given' in message
+        assert 'scenario,' not in message and 'scenario or' not in message
 
-    def test_T_1_naming_two_reports_both(self):
+    def test_T_1_naming_both_reports_both(self):
         with pytest.raises(ValueError) as excinfo:
             sb_get_scenario_simulation_counts(
                 console='demo', scenario_id='7', test_id='1764165600525.2')
@@ -68,38 +70,29 @@ class TestInputExclusivity:
 
     def test_T_1_blank_string_counts_as_absent(self):
         """A blank scenario_id alongside a real test_id is not a second input."""
-        result, post = _score([_step()], scenario=None, scenario_id='   ',
-                              test_id='1764165600525.2')
+        result, post = _score([_step()], scenario_id='   ', test_id='1764165600525.2')
         assert post.call_count == 1
         assert result['steps_returned'] == 1
 
-    def test_T_2_step_less_scenario_never_reaches_the_api(self):
-        with patch.object(studio_functions, 'requests') as requests_mock:
-            with pytest.raises(ValueError, match='no steps'):
-                sb_get_scenario_simulation_counts(console='demo', scenario={'steps': []})
-        requests_mock.post.assert_not_called()
-
-    def test_T_1_invalid_scenario_json_is_rejected(self):
-        with pytest.raises(ValueError, match='Invalid scenario JSON'):
-            sb_get_scenario_simulation_counts(console='demo', scenario='{not json')
+    def test_T_1_a_blank_alone_names_nothing(self):
+        with pytest.raises(ValueError, match='none was given'):
+            sb_get_scenario_simulation_counts(console='demo', scenario_id='  ')
 
 
 class TestPlanBody:
     """What gets posted for each input form."""
 
-    def test_T_3_adhoc_scenario_is_posted_as_given(self):
-        _, post = _score([_step()], scenario={'steps': [{'a': 1}]})
-        body = post.call_args.kwargs['json']
-        assert body['steps'] == [{'a': 1}]
-        assert body['name'] == ''
-
     def test_T_3_integer_scenario_id_passes_through_without_a_lookup(self):
         with patch.object(studio_functions, '_fetch_all_scenarios') as scenarios:
-            _, post = _score([_step()], scenario=None, scenario_id='42')
+            _, post = _score([_step()], scenario_id='42')
         scenarios.assert_not_called()
         assert post.call_args.kwargs['json'] == {'name': '', 'id': 42}
 
-    def test_T_13_a_non_numeric_scenario_id_is_refused_before_scoring(self):
+    def test_T_3_test_id_passes_through_as_test_id(self):
+        _, post = _score([_step()], test_id='1764165600525.2')
+        assert post.call_args.kwargs['json'] == {'name': '', 'testId': '1764165600525.2'}
+
+    def test_T_13_a_non_numeric_scenario_id_is_refused_with_a_route_that_exists(self):
         with patch.object(studio_functions, 'requests') as requests_mock:
             with pytest.raises(ValueError) as excinfo:
                 sb_get_scenario_simulation_counts(
@@ -107,24 +100,19 @@ class TestPlanBody:
         requests_mock.post.assert_not_called()
         message = str(excinfo.value)
         assert 'numeric id' in message
-        # The refusal names the way through, not just the way blocked.
-        assert 'get_scenario_details' in message and 'scenario' in message
+        # The refusal names a way through that exists: save it as a plan, or pass a test run.
+        assert 'custom plan' in message and 'test_id' in message
+        assert "as 'scenario'" not in message and 'get_scenario_details' not in message
 
     def test_T_13_no_input_form_lists_the_console(self):
         """Every form costs exactly one request; none resolves an id by listing."""
-        for kwargs in ({'scenario': {'steps': [{}]}},
-                       {'scenario': None, 'scenario_id': '4821'},
-                       {'scenario': None, 'test_id': '1764165600525.2'}):
+        for kwargs in ({'scenario_id': '4821'}, {'test_id': '1764165600525.2'}):
             with patch.object(studio_functions, '_fetch_all_scenarios') as scenarios, \
                     patch.object(studio_functions, '_fetch_all_plans') as plans:
                 _, post = _score([_step()], **kwargs)
             scenarios.assert_not_called()
             plans.assert_not_called()
             assert post.call_count == 1
-
-    def test_T_3_test_id_passes_through_as_test_id(self):
-        _, post = _score([_step()], scenario=None, test_id='1764165600525.2')
-        assert post.call_args.kwargs['json'] == {'name': '', 'testId': '1764165600525.2'}
 
 
 class TestQueryParameters:
@@ -191,18 +179,14 @@ class TestNullIsNotZero:
         assert rows['sim-b']['attacker']['state'] == 'measured_zero'
         assert rows['sim-c']['attacker'] == {'state': 'contributes', 'count': 3}
 
-    def test_T_7_truncated_reply_is_reported_against_the_submitted_steps(self):
-        result, _ = _score([_step()], scenario={'steps': [{}, {}, {}]})
-        assert result['steps_submitted'] == 3
-        assert result['steps_returned'] == 1
-        assert result['steps_truncated'] is True
-        assert 'stopped evaluating early' in _format_scenario_simulation_counts(result)
-
-    def test_T_7_no_truncation_claim_when_the_step_count_is_unknowable(self):
-        """A passthrough body is resolved server-side, so nothing here knows its length."""
-        result, _ = _score([_step()], scenario=None, test_id='1764165600525.2')
-        assert result['steps_submitted'] is None
-        assert result['steps_truncated'] is False
+    def test_T_7_no_input_form_makes_a_truncation_claim(self):
+        """Both forms are resolved server-side, so this side never knows the plan's length."""
+        for kwargs in ({'scenario_id': '4821'}, {'test_id': '1764165600525.2'}):
+            result, _ = _score([_step(), _step(count=None, limit_reached=True)], **kwargs)
+            assert 'steps_submitted' not in result and 'steps_truncated' not in result
+            text = _format_scenario_simulation_counts(result)
+            assert 'stopped evaluating early' not in text
+            assert 'not computed' in text, "the unscored step still reads not computed"
 
 
 class TestMovesAreDropped:
@@ -292,16 +276,16 @@ class TestListingCap:
         assert 'simulator_rows' not in step
 
     def test_T_15_the_omission_names_both_routes_back(self):
-        """Narrowing is the better route, but only a caller holding the body can take it.
+        """Editing the saved plan narrows it; naming simulator_ids needs no edit at all.
 
-        The scenario_id and test_id forms are resolved server-side, so naming the
-        filter alone would leave them nowhere. simulator_ids is reachable from
-        every form, and get_console_simulators is where those ids come from.
+        The second route is open to a test_id caller too, and get_console_simulators
+        is where those ids come from. Neither route may mention an ad-hoc body.
         """
         fleet = {f'sim-{i:03d}': 1 for i in range(500)}
         result, _ = _score([_step(attackers=fleet, targets=fleet)])
         text = _format_scenario_simulation_counts(result)
-        assert 'Narrow the step' in text and 'simulators filter' in text
+        assert 'saved plan' in text and 'simulators filter' in text
+        assert 'body' not in text
         assert 'name simulator_ids' in text
         assert 'get_console_simulators' in text
 
@@ -385,7 +369,7 @@ class TestNamedSimulators:
     def test_T_16_an_all_blank_filter_is_rejected(self):
         with pytest.raises(ValueError, match='named no simulator'):
             sb_get_scenario_simulation_counts(
-                console='demo', scenario={'steps': [{}]}, simulator_ids=' , , ')
+                console='demo', scenario_id='4821', simulator_ids=' , , ')
 
     def test_T_16_named_ids_are_answered_on_an_unscored_step(self):
         result, _ = _score([_step(count=None, limit_reached=True)],
@@ -413,7 +397,7 @@ class TestApiErrors:
             requests_mock.exceptions = real_requests.exceptions
             with pytest.raises(ValueError, match='Statistics API error'):
                 sb_get_scenario_simulation_counts(
-                    console='demo', scenario={'steps': [{}]})
+                    console='demo', scenario_id='4821')
 
     def test_T_7_an_empty_reply_reports_no_step_rather_than_zero(self):
         result, _ = _score([])
@@ -441,13 +425,6 @@ class TestToolRegistration:
         assert tools['get_scenario_simulation_counts'].output_schema is None
         assert tools['get_scenario_blocked_entities'].output_schema is None
 
-    def test_T_11_an_assembled_scenario_can_be_passed_as_an_object(self):
-        """The prose offers a parsed object, so the schema has to accept one."""
-        from safebreach_mcp_studio.studio_server import SafeBreachStudioServer
-        tools = SafeBreachStudioServer().mcp._tool_manager._tools
-        schema = tools['get_scenario_simulation_counts'].parameters['properties']['scenario']
-        assert {'type': 'string'} in schema['anyOf']
-        assert any(branch.get('type') == 'object' for branch in schema['anyOf'])
 
 
 class TestRunnableDisclosure:
@@ -487,9 +464,8 @@ class TestNoCachingMcpSide:
                 patch.object(studio_functions, 'get_auth_headers_for_console', return_value={}), \
                 patch.object(studio_functions, 'check_rbac_response'):
             requests_mock.post.side_effect = [first, second]
-            body = {'steps': [{}]}
-            a = sb_get_scenario_simulation_counts(console='demo', scenario=body)
-            b = sb_get_scenario_simulation_counts(console='demo', scenario=body)
+            a = sb_get_scenario_simulation_counts(console='demo', scenario_id='4821')
+            b = sb_get_scenario_simulation_counts(console='demo', scenario_id='4821')
         return a, b, requests_mock.post
 
     def test_T_12_a_repeated_call_issues_its_own_request(self):
@@ -532,7 +508,7 @@ class TestRegisteredToolBoundary:
                              side_effect=real_requests.exceptions.HTTPError()):
             requests_mock.post.return_value = response
             requests_mock.exceptions = real_requests.exceptions
-            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+            answer = self._registered()(console='demo', scenario_id='4821')
         assert isinstance(answer, str)
         assert 'Scenario Simulation Counts Error' in answer
         assert 'Statistics API error' in answer
@@ -551,7 +527,7 @@ class TestRegisteredToolBoundary:
                              side_effect=PermissionError('role may not read this account')):
             requests_mock.post.return_value = response
             requests_mock.exceptions = real_requests.exceptions
-            answer = self._registered()(console='demo', scenario='{"steps": [{}]}')
+            answer = self._registered()(console='demo', scenario_id='4821')
         assert 'Permission Error' in answer
         assert 'role may not read this account' in answer
         assert 'Scenario Simulation Counts' in answer

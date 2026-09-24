@@ -2523,63 +2523,24 @@ def _is_blank_input(value):
         return True
     if isinstance(value, str):
         return not value.strip()
-    if isinstance(value, dict):
-        return not value
     return False
 
 
-def _sole_scenario_input(scenario, scenario_id, test_id):
-    """The one input that names what to score, or an error naming all three."""
-    given = [name for name, value in (('scenario', scenario),
-                                      ('scenario_id', scenario_id),
-                                      ('test_id', test_id))
+def _sole_scenario_input(scenario_id, test_id):
+    """The one input that names what to score, or an error naming both."""
+    given = [name for name, value in (('scenario_id', scenario_id), ('test_id', test_id))
              if not _is_blank_input(value)]
     if len(given) == 1:
         return given[0]
     detail = "none was given" if not given else f"these were given: {', '.join(given)}"
-    raise ValueError(
-        "Name exactly one of scenario, scenario_id or test_id — "
-        f"{detail}."
-    )
+    raise ValueError(f"Name exactly one of scenario_id or test_id — {detail}.")
 
 
-def _parse_scenario_argument(scenario):
-    """An ad-hoc scenario, accepted either as JSON text or already parsed."""
-    if isinstance(scenario, dict):
-        return dict(scenario)
-    try:
-        parsed = json.loads(scenario)
-    except (json.JSONDecodeError, TypeError) as e:
-        raise ValueError(f"Invalid scenario JSON: {e}")
-    if not isinstance(parsed, dict):
-        raise ValueError(
-            "scenario must be a JSON object with a 'steps' list, "
-            f"not {type(parsed).__name__}"
-        )
-    return parsed
-
-
-def _statistics_plan_body(scenario, scenario_id, test_id):
-    """The body to score, and how many steps it holds when that is knowable.
-
-    The step count is returned alongside because the orchestrator truncates its
-    reply when it stops evaluating early, and a reply shorter than the plan is
-    only detectable against a step list this side holds. The two id forms are
-    resolved server-side, so nothing here knows their length.
-    """
-    named = _sole_scenario_input(scenario, scenario_id, test_id)
-
-    if named == 'test_id':
-        return {'name': '', 'testId': str(test_id).strip()}, None
-
-    if named == 'scenario_id':
-        return {'name': '', 'id': _plan_id(scenario_id)}, None
-
-    body = _parse_scenario_argument(scenario)
-    steps = body.get('steps')
-    _require_steps(steps, "The scenario given")
-    body.setdefault('name', '')
-    return body, len(steps)
+def _statistics_plan_body(scenario_id, test_id):
+    """The body to score. Both forms are resolved by the endpoint, never on this side."""
+    if _sole_scenario_input(scenario_id, test_id) == 'test_id':
+        return {'name': '', 'testId': str(test_id).strip()}
+    return {'name': '', 'id': _plan_id(scenario_id)}
 
 
 def _plan_id(scenario_id):
@@ -2587,26 +2548,17 @@ def _plan_id(scenario_id):
 
     An OOB scenario's UUID is refused rather than resolved here. The endpoint
     has no body field that accepts one, so honouring it would mean listing every
-    scenario on the console to recover steps the caller can fetch directly — a
-    second request this tool would otherwise never make.
+    scenario on the console to recover its steps — a second request this tool
+    would otherwise never make.
     """
     resolved = str(scenario_id).strip()
     if not resolved.isdigit():
         raise ValueError(
             f"scenario_id must be a saved plan's numeric id, not '{resolved}'. "
-            "For an OOB scenario, fetch its steps with get_scenario_details and "
-            "pass them as 'scenario'."
+            "An OOB scenario cannot be scored directly: save it as a custom plan "
+            "and pass that plan's numeric id, or pass the test_id of a run."
         )
     return int(resolved)
-
-
-def _require_steps(steps, subject):
-    """Refuse a step-less scenario here rather than spending a request on a 400."""
-    if not steps:
-        raise ValueError(
-            f"{subject} has no steps, so there is nothing to score. "
-            "A scenario needs at least one step."
-        )
 
 
 def _fetch_scenario_statistics(console, body, get_constraints=False,
@@ -2776,7 +2728,7 @@ def _simulator_disposition(step, role, simulator_id):
     return {'state': 'contributes', 'count': count}
 
 
-def _project_simulation_counts(steps, named_simulator_ids, steps_submitted):
+def _project_simulation_counts(steps, named_simulator_ids):
     """"How many simulations, and which simulators produce them?" — nothing else.
 
     Three data fields per step and three structural ones. The structural keys
@@ -2813,12 +2765,6 @@ def _project_simulation_counts(steps, named_simulator_ids, steps_submitted):
         'counts_mode': 'runnable',
         'steps': projected,
         'steps_returned': len(projected),
-        'steps_submitted': steps_submitted,
-        # A reply shorter than the plan means evaluation stopped early. Only
-        # knowable when this side held the step list; the passthrough forms are
-        # resolved server-side, so `steps_submitted` is None and no claim is made.
-        'steps_truncated': bool(steps_submitted is not None
-                                and len(projected) < steps_submitted),
         'total_simulations': sum(computed) if computed else None,
         'steps_scored': len(computed),
         'asked_about': list(named_simulator_ids),
@@ -2828,7 +2774,6 @@ def _project_simulation_counts(steps, named_simulator_ids, steps_submitted):
 
 def sb_get_scenario_simulation_counts(
     console: str = "default",
-    scenario=None,
     scenario_id: str = None,
     test_id: str = None,
     simulator_ids: str = None,
@@ -2843,7 +2788,6 @@ def sb_get_scenario_simulation_counts(
 
     Args:
         console: SafeBreach console identifier
-        scenario: An ad-hoc scenario body, as JSON text or a parsed dict
         scenario_id: A saved plan's numeric id, resolved by the endpoint itself
         test_id: A planRunId, scoring whatever scenario that run executed
         simulator_ids: Comma-separated simulators to answer for individually
@@ -2853,17 +2797,16 @@ def sb_get_scenario_simulation_counts(
 
     Raises:
         ValueError: If not exactly one input names what to score, if
-            scenario_id is not numeric, if the scenario has no steps, or if
-            the statistics API rejects the body.
+            scenario_id is not numeric, or if the statistics API rejects the
+            body (including a saved plan with no steps).
     """
     named_simulator_ids = _parse_id_list(
         simulator_ids, 'simulator_ids', 'simulator',
         "Leave it out to list the step's own simulators.")
-    body, steps_submitted = _statistics_plan_body(scenario, scenario_id, test_id)
-    payload = _fetch_scenario_statistics(console, body)
+    payload = _fetch_scenario_statistics(console, _statistics_plan_body(scenario_id, test_id))
     steps = [_shape_statistics_step(step)
              for step in _normalize_statistics_steps(payload)]
-    return _project_simulation_counts(steps, named_simulator_ids, steps_submitted)
+    return _project_simulation_counts(steps, named_simulator_ids)
 
 
 
@@ -3380,7 +3323,6 @@ def _project_blocked_entities(steps, catalog, named_attack_ids, named_simulator_
 
 def sb_get_scenario_blocked_entities(
     console: str = "default",
-    scenario=None,
     scenario_id: str = None,
     test_id: str = None,
     attack_ids: str = None,
@@ -3401,7 +3343,6 @@ def sb_get_scenario_blocked_entities(
 
     Args:
         console: SafeBreach console identifier
-        scenario: An ad-hoc scenario body, as JSON text or a parsed dict
         scenario_id: A saved plan's numeric id, resolved by the endpoint itself
         test_id: A planRunId, scoring whatever scenario that run executed
         attack_ids: Comma-separated attacks to answer for individually
@@ -3415,8 +3356,8 @@ def sb_get_scenario_blocked_entities(
 
     Raises:
         ValueError: If not exactly one input names what to score, if
-            scenario_id is not numeric, if the scenario has no steps, or if
-            the statistics API rejects the body.
+            scenario_id is not numeric, or if the statistics API rejects the
+            body (including a saved plan with no steps).
     """
     named_attack_ids = _parse_id_list(
         attack_ids, 'attack_ids', 'attack',
@@ -3424,9 +3365,8 @@ def sb_get_scenario_blocked_entities(
     named_simulator_ids = _parse_id_list(
         simulator_ids, 'simulator_ids', 'simulator',
         "Leave it out to report what is blocked anywhere in the scenario.")
-    body, _ = _statistics_plan_body(scenario, scenario_id, test_id)
-    payload = _fetch_scenario_statistics(console, body, get_constraints=True,
-                                     get_all_constraints=True)
+    payload = _fetch_scenario_statistics(console, _statistics_plan_body(scenario_id, test_id),
+                                         get_constraints=True, get_all_constraints=True)
     steps = [_shape_blocked_step(step)
              for step in _normalize_blocked_steps(payload)]
     return _project_blocked_entities(steps, payload.get('constraintCatalog'),
