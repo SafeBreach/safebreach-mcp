@@ -42,7 +42,7 @@ estimating it, which is a precondition for autonomous scenario construction.
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-09-24 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | Phase 10 pending (remove the ad-hoc `scenario` input). Phases 1–9 complete; their test-plan sign-off (2026-09-24, two consoles) no longer covers the input contract and is reset until Phase 10 is implemented and re-verified; code review (§12) pending |
+| **Current Phase** | All 10 phases complete. Phase 10 (ad-hoc `scenario` input removed) verified on pentest01: unit tier, the e2e file, T-36 and the T-37 saved-plan walk; code review (§12) pending |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -343,14 +343,14 @@ describe the tools once Phase 10 lands:
 - "a reply shorter than the **submitted plan** is reported as early termination" — only knowable when this side held
   the step list; with the body gone the claim is dropped. Unscored steps still read *not computed*, never zero.
 
-Phase 10's own criteria (pending):
-- [ ] Neither tool's schema, description or function layer offers a `scenario` input; exactly one of `scenario_id` /
+Phase 10's own criteria:
+- [x] Neither tool's schema, description or function layer offers a `scenario` input; exactly one of `scenario_id` /
       `test_id` is accepted.
-- [ ] An OOB scenario UUID is refused with a route that exists: save it as a custom plan and pass its numeric id, or
+- [x] An OOB scenario UUID is refused with a route that exists: save it as a custom plan and pass its numeric id, or
       pass the `test_id` of a run.
-- [ ] `steps_submitted` / `steps_truncated` and the "stopped evaluating early" note are gone from both answers; every
+- [x] `steps_submitted` / `steps_truncated` and the "stopped evaluating early" note are gone from both answers; every
       input form still costs exactly one request.
-- [ ] The over-cap routing names editing the saved plan's step filter, and still names `simulator_ids`.
+- [x] The over-cap routing names editing the saved plan's step filter, and still names `simulator_ids`.
 
 ---
 
@@ -367,7 +367,7 @@ Phase 10's own criteria (pending):
 | Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
 | Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | `6bbdf1c` | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
 | Phase 9: Bound what the blocked-entities answer sends an agent | ✅ Complete | 2026-09-24 | `e5edacb` | Found by T-37 on pentest01 (1.29 MB answer); 15 steps / 100 entries / 5 detail items |
-| Phase 10: Remove the ad-hoc `scenario` input | ⏳ Pending | — | — | Owner decision 2026-09-24; OOB unsupported; truncation claim dropped. Supersedes the body form in Phases 1–2 |
+| Phase 10: Remove the ad-hoc `scenario` input | ✅ Complete | 2026-09-24 | `9e06c1b` | Owner decision 2026-09-24; OOB unsupported; truncation claim dropped. Supersedes the body form in Phases 1–2 |
 
 ### Phase 1 — Counts tool over plan/statistics
 
@@ -652,7 +652,7 @@ characters (−93%), longest line 1,368.
 
 ### Phase 10 — Remove the ad-hoc `scenario` input
 
-**Status**: ⏳ Pending — owner decision 2026-09-24.
+**Status**: ✅ Complete — 2026-09-24, `9e06c1b` (owner decision 2026-09-24).
 
 **Semantic change**: both tools stop accepting an unsaved scenario body. The inputs become exactly one of a saved
 custom plan's numeric `scenario_id` or a run's `test_id`, both resolved server-side. This **supersedes the body form
@@ -688,8 +688,15 @@ with the owner:
 | `safebreach_mcp_studio/tests/test_e2e_scenario_statistics.py` | Fixtures score temporary saved plans |
 | `CLAUDE.md`, `CHANGELOG.md` | Items 25–26 and Unreleased restated |
 
-**Verification** (planned): the reconciled test plan's affected ids green — unit tier, the e2e file on a live console,
-and T-37's saved-plan walk — then the plan re-signed.
+**Verification** (pentest01, 2026-09-24): unit suites 1,725 passed; T-29 re-recorded against temporary plan 247 (7
+simulators offered, 2 of them disconnected, so the excluded state is in the recording); the e2e file 15 passed, 1
+skipped (every step of the saved OOB scenario offers 21 simulators, so the row case is honestly unobservable there
+and is covered by T-29); T-36 identical to `main` when run back to back; T-37 saved-plan walk completed (save, score,
+why, `PUT` edit, re-score, delete). The §8 Changes table above matches the commit's file set.
+
+Found on the way, console-side and outside this change: the config plans `PUT` rejects a body carrying `createdAt` /
+`updatedAt` with an empty 400, and one rejected `PUT` (sbcode 709, no `planId`) left the plan with no steps, which
+the next score reported verbatim ("Can not get statistics for plans with no steps").
 
 ---
 
@@ -828,6 +835,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
+| 2026-09-24 | Phase 10 implemented and marked complete (`9e06c1b`) — verified on pentest01 (unit tier, e2e file, T-36, T-37 saved-plan walk); T-29 fixtures re-recorded under the cap with the id form |
 | 2026-09-24 | Appended Phase 10 (pending) — remove the ad-hoc `scenario` input from both tools. Owner decisions: OOB unsupported; removed outright; truncation claim dropped. Reversal sweep: §1 Key Benefit #1 struck; §2 alternative's con annotated; §3 Component A, §5 flow + diagram (also its stale "does not say name `simulator_ids`"), §6, §11 updated; §7 checked items left as delivered with an appended "reversed by Phase 10" note plus Phase 10's own unchecked criteria; §8 Phases 1–2 read-only, superseded by Phase 10. §1.5 status reset |
 | 2026-09-24 | Phase 9 appended and completed — second-console run on pentest01; T-37 found the blocked-entities answer unbounded (1,294,873 chars, one 1,076,267-char detail line); rendering capped at 15 steps / 100 entries / 5 detail items, 88,715 chars after. Test-plan sign-off re-opened, then re-signed after `validating-test-plan` returned clean against the 47-id plan |
 | 2026-09-23 | Test plan signed off: all 46 tests green with evidence (real-console tier on apricot-jellyfish, T-29 from a live recording, T-33 on both sides of the cap), `validating-test-plan` clean, no waivers. PRD Status stays In Progress until code review (§12) |

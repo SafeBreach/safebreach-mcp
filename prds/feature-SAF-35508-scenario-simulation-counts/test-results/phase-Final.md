@@ -1,7 +1,8 @@
 # Test Results — Phase Final (SAF-35508)
 
 > Plan: ../test-plan.md | Runs: pass 3 2026-09-23T15:05Z on apricot-jellyfish.dev.sbops.com (account 3475543660);
-> pass 4 2026-09-24T11:46Z on pentest01.safebreach.com (account 3471166703) | Mode: run
+> pass 4 2026-09-24T11:46Z and pass 5 (Phase 10) 2026-09-24T14:46Z on pentest01.safebreach.com (account 3471166703)
+> | Mode: run
 
 ## Run history
 
@@ -9,6 +10,7 @@
 |---|---|
 | 1 (2026-09-16 14:05Z) | INCOMPLETE — 30 BLOCKED, 7 unwritten-planned, **0 green by id**. No test carried a `T-<n>:` title prefix. |
 | 2 (2026-09-16 14:50Z) | INCOMPLETE — 29 executed with per-id evidence, 7 BLOCKED (no console), 1 unwritten-planned. Recorded a scoped sign-off; see git history of this file at `5373c1a`. |
+| 5 (2026-09-24 14:46Z →, pentest01, Phase 10 at `9e06c1b`) | **COMPLETE — 47 of 47 active executed with evidence** after the ad-hoc `scenario` input was removed. T-2 tombstoned, T-48 added, T-29 re-recorded with the id form, the e2e file rewritten to score temporary saved plans, T-36 and T-37 re-walked. See "Phase 10 — pentest01 (pass 5)" below. |
 | 4 (2026-09-24 11:46Z → 12:42Z, pentest01) | **COMPLETE — 47 of 47 executed with evidence** on a second console at `448c25e` plus the Phase 9 fix. See "Second console — pentest01" below. T-37 found an unbounded blocked-entities answer; Phase 9 (T-47) fixed it. |
 | 3 (2026-09-23 15:05Z → 15:45Z) | **COMPLETE — 46 of 46 executed with evidence** (38 unit, 6 e2e automatic, 2 manual). Real-console tier run for the first time; T-29 authored from a live recording at 15:15Z; T-33 observed on both sides of the cap by growing the fleet to 22 with two mockulator simulators (15:32Z) and restoring it to 20 (15:41Z). |
 
@@ -68,43 +70,43 @@ container removed afterwards, leaving the console as found.
 
 | T-\<n\> | Level | Execution | Env | Runner | Outcome | Evidence / Reason |
 |------|-------|-----------|-----|--------|---------|-------------------|
-| T-1 | unit | Automatic | none | uv-pytest | executed | `-k "T_1_"` → 7 passed |
-| T-2 | unit | Automatic | none | uv-pytest | executed | 2 passed |
-| T-3 | unit | Automatic | none | uv-pytest | executed | 4 passed |
+| T-1 | unit | Automatic | none | uv-pytest | executed | 7 passed (Phase 10: two inputs, exactly one required) |
+| T-2 | unit | Automatic | none | — | removed | Tombstone (Phase 10): the step-less body it refused no longer exists |
+| T-3 | unit | Automatic | none | uv-pytest | executed | 3 passed (Phase 10: id and test_id forms) |
 | T-4 | unit | Automatic | none | uv-pytest | executed | 2 passed |
 | T-5 | unit | Automatic | none | uv-pytest | executed | 1 passed |
 | T-6 | unit | Automatic | none | uv-pytest | executed | 2 passed |
-| T-7 | unit | Automatic | none | uv-pytest | executed | 6 passed |
+| T-7 | unit | Automatic | none | uv-pytest | executed | 5 passed (Phase 10: no input form makes a truncation claim) |
 | T-8 | unit | Automatic | none | uv-pytest | executed | 5 passed |
 | T-9 | unit | Automatic | none | uv-pytest | executed | 3 passed |
 | T-10 | unit | Automatic | none | uv-pytest | executed | 2 passed |
-| T-11 | unit | Automatic | none | uv-pytest | executed | 5 passed (adds no-duplicate-payload and object-schema cases, `9e15ed0`) |
+| T-11 | unit | Automatic | none | uv-pytest | executed | 4 passed (Phase 10: the object-body case went with the input) |
 | T-12 | unit | Automatic | none | uv-pytest | executed | 3 passed |
-| T-13 | unit | Automatic | none | uv-pytest | executed | 3 passed |
+| T-13 | unit | Automatic | none | uv-pytest | executed | 3 passed (Phase 10: UUID refusal routes to a custom plan or test_id) |
 | T-14 | unit | Automatic | none | uv-pytest | executed | 7 passed (adds per-role note cases, `9e15ed0`) |
-| T-15 | unit | Automatic | none | uv-pytest | executed | 7 passed; plan Expected aligned to the two-route cap message this pass |
+| T-15 | unit | Automatic | none | uv-pytest | executed | 7 passed (Phase 10: over-cap route names editing the saved plan) |
 | T-16 | unit | Automatic | none | uv-pytest | executed | 7 passed |
 | T-17 | unit | Automatic | none | uv-pytest | executed | 2 passed |
 | T-18 | unit | Automatic | none | uv-pytest | executed | 4 passed |
 | T-19 | unit | Automatic | none | uv-pytest | executed | 6 passed |
 | T-20 | unit | Automatic | none | uv-pytest | executed | 2 passed |
 | T-21 | unit | Automatic | none | uv-pytest | executed | 4 passed |
-| T-22 | unit | Automatic | none | uv-pytest | executed | 3 passed |
+| T-22 | unit | Automatic | none | uv-pytest | executed | 2 passed (Phase 10: body-unchanged case went with the input) |
 | T-23 | unit | Automatic | none | uv-pytest | executed | 7 passed |
 | T-24 | unit | Automatic | none | uv-pytest | executed | 2 passed |
 | T-25 | unit | Automatic | none | uv-pytest | executed | 1 passed |
 | T-26 | unit | Automatic | none | uv-pytest | executed | 1 passed |
 | T-27 | unit | Automatic | none | uv-pytest | executed | 4 passed |
 | T-28 | unit | Automatic | none | uv-pytest | executed | 6 passed |
-| T-29 | unit | Automatic | none | uv-pytest | executed | `-k "T_29_"` → 16 passed (**authored this pass**, from responses recorded verbatim on apricot-jellyfish 2026-09-23T15:15Z; a simulated rename of `attackerSimulators`, `simulationCount`, `moves` or `simulatorConstraints` turns it red) |
+| T-29 | unit | Automatic | none | uv-pytest | executed | `-k "T_29_"` → 16 passed (**re-recorded pass 5** on pentest01 2026-09-24T14:46Z against temporary saved plan 247, request `{name, id}`; 7 simulators offered, 2 disconnected, so the excluded state is in the recording; plan deleted) |
 | T-30 | unit | Automatic | none | uv-pytest | executed | 13 passed |
-| T-31 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 2 passed live |
-| T-32 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live |
+| T-31 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 2 passed live on pentest01 (pass 5: an OOB scenario saved as temporary plan 248, scored by id; no test of it queued) |
+| T-32 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live on pentest01 (pass 5: plan 248 and test `1790253001214.394` from both tools; UUID refused locally; `scenario` rejected) |
 | T-33 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | **Both sides of the cap, live.** 22 simulators (fleet + 2 mockulator sims, 15:32Z): every step over the cap — breakdown dropped, count kept, both routes named, named ids answered in both roles; the per-row case skips by design. 20 simulators (mocks removed, 15:41Z): every step up to the cap — breakdown present, every row carries both roles, named ids answered. 3 passed in the second run |
 | T-34 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live (offline simulators present: 34 excluded) |
-| T-35 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 5 passed live, from both an unsaved body and a saved `scenario_id` (built fixture: 78 exfiltration attacks, one zero-target simulator; plan created and deleted). Payload 154,744 bytes / 7.0 s |
-| T-36 | e2e | Manual | Validate console | manual (executor) | executed | See Manual evidence — byte-identical to `main` |
-| T-37 | e2e | Manual | Validate console | manual (executor) | executed | See Manual evidence — criteria met; one defect found and fixed |
+| T-35 | e2e | Automatic | Validate console | uv-pytest (e2e) | executed | 3 passed live on pentest01 (pass 5, saved-plan form only: 57 exfiltration attacks, 170,464 bytes / 1.7 s; probe and fixture plans deleted) |
+| T-36 | e2e | Manual | Validate console | manual (executor) | executed | See pass 5 — identical to `main` (`6f60db8`) run back to back |
+| T-37 | e2e | Manual | Validate console | manual (executor) | executed | See pass 5 — saved-plan walk completed; criteria met |
 | T-38 | unit | Automatic | none | uv-pytest | executed | 3 passed |
 | T-39 | unit | Automatic | none | uv-pytest | executed | 3 passed |
 | T-40 | unit | Automatic | none | uv-pytest | executed | 6 passed |
@@ -115,8 +117,9 @@ container removed afterwards, leaving the console as found.
 | T-45 | unit | Automatic | none | uv-pytest | executed | 5 passed |
 | T-46 | unit | Automatic | none | uv-pytest | executed | 6 passed (authored this pass, Phase 8) |
 | T-47 | unit | Automatic | none | uv-pytest | executed | 6 passed (authored in pass 4, Phase 9); live 24-step answer 1,294,873 → 88,715 characters |
+| T-48 | unit | Automatic | none | uv-pytest | executed | 8 passed (authored pass 5, Phase 10): no `scenario` in either schema or description; function and registered tool reject it before any request |
 
-Ledgered rows: 46 · Selected: 46 ✓ (no test dropped)
+Ledgered rows: 48 (T-2 removed) · Selected: 47 ✓ (no active test dropped)
 
 ## Manual evidence
 
@@ -161,11 +164,30 @@ Console `pentest01.safebreach.com` (account 3471166703), reached over VPN, confi
 | T-37 | "Network TTP Coverage - Perimeter to Impact", 24 steps, 21 simulators offered. The counts answer is over the cap and names both routes; following `simulator_ids` gave per-machine numbers in both roles; aiming step 0 at the two strongest attackers and every target-producing machine predicted **432** and re-scored **432** (from 1,620; total 215,751 → 214,563, other steps unchanged); nothing queued. **Defect:** the blocked-entities answer was **1,294,873 characters**, one `simulator_failed_schema_validation` group's `schemaErrors` (3,520 objects) alone 1,076,267. Fixed in Phase 9 (T-47); re-measured on the same scenario: **88,715 characters**, longest line 1,368. **PASS after the fix** |
 | e2e file with the Phase 9 fix (12:37Z → 12:41Z) | 14 passed, 1 skipped, **3 failed — all HTTP 500 from pentest01's `/plan/statistics` with every constraint requested**. The fix changes rendering only and these three call the functions directly, so their request was byte-identical to the 11:54Z pass. Re-run at 12:42Z: **3 passed**. Recorded as a transient console error — but it is the constraint-heavy call, on a shared console |
 
+## Phase 10 — pentest01 (pass 5)
+
+Code at `9e06c1b`. Every real-console check below ran against the id form only; the apricot-jellyfish evidence above
+predates Phase 10 and covers the removed body form.
+
+| Check | Result |
+|---|---|
+| Unit tier | Feature files **176 passed** (T-2 removed; T-48 8 cases added). Repo, CLAUDE.md suites with `-m "not e2e"`: **1,725 passed**. Adding `tests/` and `safebreach_mcp_core/tests/` gives 4 failures in `tests/test_auth_concurrency.py` — pre-existing, reproduced by pairing it with the untouched `safebreach_mcp_utilities` suite (an auth context leaks between suites); this branch changes nothing under `tests/`, `safebreach_mcp_core/` or any conftest |
+| T-29 re-record | Temporary plan 247: one step, attacks 11034 + 10976, attacker and target filters naming 5 connected + 2 disconnected simulators. Reply `moves {10976: 8, 11034: 0}`, 5 offered (under the cap, so rows exist), 2 excluded in the constraints recording. Plan deleted (200). Responses verbatim; secret scan clean. `_replay` now takes the account from the recorded path instead of a hard-coded one |
+| e2e file | **15 passed, 1 skipped** in 292 s. An OOB scenario (24 steps) saved as temporary plan 248 for the module. The skip is T-33's per-row case: every step offers 21 simulators, one over the cap; the row case is covered by T-29's recording. No `SAF-35508` plan is left on the console |
+| T-36 | `run_scenario(evaluate=True)` on "Step 1 - Fortify your Network Perimeter" (5 steps, 9,472 predicted) and `quick_run(evaluate=True)` on 10976 + 11034 (8 predicted, zero-simulation warning), branch vs a clean `git archive` of `main` (`6f60db8`). The first pair differed only in fleet totals (19 vs 20) and one constraint's list position; `main` run against itself minutes apart differed by 240 lines, so the fleet moved. Run back to back: **0 differing lines**, order-insensitive equal. Nothing queued. **PASS** |
+| T-37 | Saved-plan walk, temporary plan 253 (5 connected simulators both roles). Counts: 8 simulations — `a3d8ea5a` attacker-only (8 / 0), `568e3190` target-only (0 / 8), three at zero in both roles. Blocked: 1 attack (#11034) and 3 simulators contribute nothing anywhere, each explained by cited codes with the console's catalog; scoping to `a3d8ea5a` listed both attacks on that machine with the not-a-subset hint. Edited the plan (`PUT /api/config/v3/.../plans/253`, 200) to target only `568e3190`; re-scored by the same id: total held at **8**, the four removed targets now read "not in this step" — the removed machines produced nothing, so the total is expected to hold. Plan deleted, no test queued. The answers were sufficient to act on without a follow-up call, and no hint routes to an ad-hoc body. **PASS** |
+
+Console-side findings, outside this change: the config plans `PUT` returns an empty 400 when the body carries
+`createdAt` / `updatedAt`, and one rejected `PUT` (sbcode 709, no `planId`) left plan 252 with no steps — the next score
+reported "Can not get statistics for plans with no steps" verbatim. An earlier walk attempt aimed at the first 8
+connected simulators by id (all cloud / web-application) scored 0 everywhere and was explained in full by the blocked
+answer; it is not the recorded run because it gave the edit nothing to act on.
+
 ## Cumulative readiness
 
-- Selected (Active, Passes after ≤ Final): T-1 … T-47 (47)
-- **Executed with evidence: 47** on two consoles — T-33 on both sides of the cap (apricot-jellyfish 22 and 20; pentest01
-  21 real simulators)
+- Selected (Active, Passes after ≤ Final): T-1, T-3 … T-48 (47; T-2 removed in Phase 10)
+- **Executed with evidence: 47** — at Phase 10 on pentest01 (unit, e2e, both manual walks); before Phase 10 also on
+  apricot-jellyfish, with T-33 on both sides of the cap (22 and 20)
 - Unwritten-planned: none
 - BLOCKED: none · Local-pending-ci: none · Delegated: none · Manual substitutions: none
 - **Phase verdict: COMPLETE** — every selected test executed and green with evidence
@@ -196,6 +218,7 @@ Console `pentest01.safebreach.com` (account 3471166703), reached over VPN, confi
 
 ## Verdict
 
-- **COMPLETE** — all 47 executed and green with evidence on two consoles: the whole unit tier including T-29's
-  recorded-payload contract and T-47's answer-size caps, the real-console tier on apricot-jellyfish and pentest01 with
-  T-33 on both sides of the cap, and both manual walkthroughs on both consoles. No waiver was needed for any test.
+- **COMPLETE** — all 47 active tests executed and green with evidence at Phase 10 (`9e06c1b`): the whole unit tier
+  including T-29 re-recorded with the id form and T-48's no-ad-hoc-input contract, the real-console tier on pentest01
+  against temporary saved plans, and both manual walkthroughs on pentest01. The Phase 10 real-console tier ran on one
+  console; apricot-jellyfish evidence predates it. No waiver was needed for any test.

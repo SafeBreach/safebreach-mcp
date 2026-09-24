@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-24
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Signed off  |  Updated: 2026-09-24
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (in sync with PRD Phase 10, 2026-09-24) — reset from Signed off: Phase 10 removes the ad-hoc `scenario` input, re-scoping 11 tests, tombstoning T-2 and adding T-48; the 2026-09-24 two-console sign-off no longer covers the input contract |
+| Status | Signed off 2026-09-24 at Phase 10 (`9e06c1b`) — all 47 active tests green with evidence (T-2 removed), `validating-test-plan` clean, no waivers; see test-results/signoff.md |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
