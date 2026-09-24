@@ -34,30 +34,37 @@ E2E_ATTACK_IDS = [11653, 11662, 7207, 11622]
 
 # Minimal simulator overrides — verified to produce non-zero, low simulation counts.
 # Discovered by probing the statistics API with single-simulator pairs per attack.
-# Total: ~103 sims (vs ~5,750 with all_connected).
+# Total: ~23 sims (vs ~5,750 with all_connected). Per-step: [1, 6, 4, 12].
+#
+# Re-pointed after the earlier fleet churned: rc-centos9 (38c27ff5-...) and the old
+# pz-crowdstrike (6a3d5b57-...) are no longer present/connected on pentest01, so every
+# override that named them produced 0 sims. Targets were re-selected from the currently
+# connected simulators (get_console_simulators status=connected) and re-verified against
+# the statistics API. external attacker (a3d8ea5a-...) and pz-noedr (55339ee8-...) are
+# unchanged; pz-crowdstrike is now ed36889a-....
 #
 # NOTE: attack 11663 (email → GMX target) was removed because the GMX target
 # simulator (dfb37a8f-...) is no longer present on the E2E console, so it produced
 # 0 sims; there is no email-target simulator currently available to repoint it to.
 #
-# 11653: host LINUX attack → rc-centos9 (attacker=target, 1 sim)
-# 11662: network HTTP transfer → rc-centos9 target + external attacker infil (54 sims)
-# 7207:  network Azure PS script → pz-crowdstrike target + external attacker (36 sims)
+# 11653: host LINUX attack → rc-a-ubu22-01 (attacker=target, 1 sim)
+# 11662: network HTTP transfer → rc-a-ubu22-01 target + external attacker (6 sims)
+# 7207:  network Azure PS script → visionOne TrendMicro target + external attacker (4 sims)
 # 11622: network HTTP transfer → pz-crowdstrike target + pz-noedr attacker (12 sims)
 E2E_SIMULATOR_OVERRIDES = {
     "11653": {
-        "target": ["38c27ff5-49bc-40aa-bf1e-8aac25d16154"],       # rc-centos9
+        "target": ["2377fecb-4e9c-4404-a72f-1229d94a5264"],       # rc-a-ubu22-01
     },
     "11662": {
-        "target": ["38c27ff5-49bc-40aa-bf1e-8aac25d16154"],       # rc-centos9
+        "target": ["2377fecb-4e9c-4404-a72f-1229d94a5264"],       # rc-a-ubu22-01
         "attacker": ["a3d8ea5a-3077-4607-9952-4e44a702d1fe"],     # external attacker (infil+exfil)
     },
     "7207": {
-        "target": ["6a3d5b57-4752-408c-9b29-1fb0233e49c0"],       # pz-crowdstrike
+        "target": ["5a85d389-0c8c-4dea-93e3-c9dbc05a8f29"],       # visionOne TrendMicro
         "attacker": ["a3d8ea5a-3077-4607-9952-4e44a702d1fe"],     # external attacker
     },
     "11622": {
-        "target": ["6a3d5b57-4752-408c-9b29-1fb0233e49c0"],       # pz-crowdstrike
+        "target": ["ed36889a-ebd7-434a-a34e-d1f39c282b41"],       # pz-crowdstrike
         "attacker": ["55339ee8-a916-4839-b30a-8de34bc208e5"],     # pz-noedr
     },
 }
