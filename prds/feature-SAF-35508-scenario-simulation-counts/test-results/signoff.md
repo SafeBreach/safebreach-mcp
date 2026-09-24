@@ -35,13 +35,23 @@ real-console tier; that tier has now run in full, so no waiver is needed or reco
     both roles on both sides.
 - **T-36** — `run_scenario` and `quick_run` at `evaluate=True` byte-identical to `main`; nothing queued.
 - **T-37** — the full score → why → adjust → re-score walk worked; the re-score moved exactly as predicted (336 → 84).
+- **The plan itself** — `validating-test-plan` returned `RESULT: clean` after two plan fixes it surfaced (the Coverage
+  Summary's unit count, 37 → 38; and every `Automation lives in:` path written repo-relative for this single-repo
+  worktree).
 
 Details and per-id accounting: `phase-Final.md`.
 
 ## What is NOT verified
 
-- No test. The validator gate is closed: `RESULT: clean` after two plan fixes it surfaced (the Coverage Summary's unit
-  count, 37 → 38; and every `Automation lives in:` path written repo-relative for this single-repo worktree).
+Every planned test ran and passed. The evidence still has limits:
+
+- **One console.** All live runs were on apricot-jellyfish (one fleet, one orchestrator build). Older consoles,
+  e.g. without `constraintCatalog`, are covered by unit tests only.
+- **T-33's over-cap side used mockulator simulators**, not real agents.
+- **T-36 / T-37 ran at `9e15ed0`.** No path they exercise changed since (checked by diff), but they were not re-run;
+  after the Phase 8 fix only the verdict sentence was re-checked live, not the full T-37 walk.
+- **No test crossed the MCP transport.** e2e calls the functions and the manual runs used the in-process tool
+  manager; no MCP client talked to a running server.
 
 ## Accepted gaps (carried forward from the 2026-09-16 owner approval)
 
