@@ -78,5 +78,5 @@ pinned by T-46).
 - Plan: `../test-plan.md` · Run accounting: `phase-Final.md`
 - Commits: `6108673` (e2e fixes after the first live run), `d9ffe6d` (T-35 live fixture), `6bbdf1c` (verdict fix,
   Phase 8), `00275c0` (T-29), `7c1532c` (T-33), `2ba1b22` (first sign-off), `448c25e` (Yossi's `quick_run` e2e fix,
-  the head run on pentest01), and the Phase 9 commit that follows it
+  the head run on pentest01), `e5edacb` (Phase 9)
 - Recorded fixtures: `safebreach_mcp_studio/tests/fixtures/plan_statistics_{counts,blocked}.json`

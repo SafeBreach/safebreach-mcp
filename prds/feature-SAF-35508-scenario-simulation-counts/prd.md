@@ -343,7 +343,7 @@ One INFO log per call naming the console. No new metrics or dashboards.
 | Phase 6: Scope the blocked list by simulator | ✅ Complete | 2026-09-17 | `20fb6cb` | Adds `simulator_ids`; unit tier green (615), real-env tier BLOCKED as in every prior phase |
 | Phase 7: Make the simulator scope a per-simulator answer | ✅ Complete | 2026-09-17 | `e497959` | Supersedes Phase 6's scoping rule after field data; unit tier green (620) |
 | Phase 8: The verdict never calls a working machine useless | ✅ Complete | 2026-09-23 | `6bbdf1c` | Found by the T-37 live walkthrough; adds `blocked_everywhere_*`, union unchanged |
-| Phase 9: Bound what the blocked-entities answer sends an agent | ✅ Complete | 2026-09-24 | — | Found by T-37 on pentest01 (1.29 MB answer); 15 steps / 100 entries / 5 detail items |
+| Phase 9: Bound what the blocked-entities answer sends an agent | ✅ Complete | 2026-09-24 | `e5edacb` | Found by T-37 on pentest01 (1.29 MB answer); 15 steps / 100 entries / 5 detail items |
 
 ### Phase 1 — Counts tool over plan/statistics
 
