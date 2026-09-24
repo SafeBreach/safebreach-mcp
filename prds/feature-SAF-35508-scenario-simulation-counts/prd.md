@@ -41,7 +41,7 @@ estimating it, which is a precondition for autonomous scenario construction.
 | **PRD Status** | In Progress |
 | **Last Updated** | 2026-09-23 |
 | **Owner** | Boris Berezovsky (implementation by Claude Code) |
-| **Current Phase** | All 9 phases complete — 47/47 tests green on two consoles (apricot-jellyfish, pentest01); test-plan re-sign pending the validator after Phase 9; code review (§12) pending |
+| **Current Phase** | All 9 phases complete — test plan **signed off** 2026-09-24 on two consoles (apricot-jellyfish, pentest01): 47/47 green, validator clean, no waivers; code review (§12) pending |
 
 This PRD is **retrospective**: it was written after implementation, from the delivered branch, and every code claim in
 it was verified against the repo before being recorded.
@@ -762,7 +762,7 @@ inspects them. Tests = the two suite files, since no `test-results/` exists.
 | Date | Change Description |
 |------|-------------------|
 | 2026-09-16 11:46 | PRD created — initial draft (retrospective; all 4 phases already delivered) |
-| 2026-09-24 | Phase 9 appended and completed — second-console run on pentest01; T-37 found the blocked-entities answer unbounded (1,294,873 chars, one 1,076,267-char detail line); rendering capped at 15 steps / 100 entries / 5 detail items, 88,715 chars after. Test-plan sign-off re-opened pending re-validation |
+| 2026-09-24 | Phase 9 appended and completed — second-console run on pentest01; T-37 found the blocked-entities answer unbounded (1,294,873 chars, one 1,076,267-char detail line); rendering capped at 15 steps / 100 entries / 5 detail items, 88,715 chars after. Test-plan sign-off re-opened, then re-signed after `validating-test-plan` returned clean against the 47-id plan |
 | 2026-09-23 | Test plan signed off: all 46 tests green with evidence (real-console tier on apricot-jellyfish, T-29 from a live recording, T-33 on both sides of the cap), `validating-test-plan` clean, no waivers. PRD Status stays In Progress until code review (§12) |
 | 2026-09-23 | Phase 8 appended and completed — the verdict sentence split into "nothing anywhere" and "nothing in at least one step but runs in another", found by the T-37 live walkthrough. Filled Phase 7's SHA; §1.5 brought current (8 phases, real-env tier run) |
 | 2026-09-16 12:52 | Phase 5 implemented and marked complete. Two defects found while building it: a named attack that RAN was being given blockers (scenario-wide state must gate them, not the per-step count), and the no-detail rule needed scoping to tally rows only — simulator rows legitimately carry detail, since there a row is one simulator |

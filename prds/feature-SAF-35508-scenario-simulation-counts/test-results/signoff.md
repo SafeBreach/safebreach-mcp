@@ -4,10 +4,10 @@
 
 ## Verdict
 
-**RE-SIGN PENDING — all 47 tests executed and green with evidence on two consoles, no waivers.** The 2026-09-23
-sign-off covered 46 tests on one console. Running the real-console tier again on pentest01 found a defect
-apricot-jellyfish never showed, fixed in Phase 9 with a new test (T-47). The plan is back to `Draft` until
-`validating-test-plan` is clean against the 47-id plan.
+**SIGNED OFF — 2026-09-24, on two consoles.** All 47 tests executed and green with evidence, no waivers, and
+`validating-test-plan` returned `RESULT: clean` against the 47-id plan. This supersedes the 2026-09-23 sign-off, which
+covered 46 tests on one console: running the real-console tier again on pentest01 found a defect apricot-jellyfish
+never showed, fixed in Phase 9 with a new test (T-47).
 
 | Tier | State |
 |---|---|

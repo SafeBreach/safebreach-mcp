@@ -1,12 +1,12 @@
 # Test Plan — Scenario Statistics MCP Tools (SAF-35508)
 
-> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Draft  |  Updated: 2026-09-24
+> PRD: ./prd.md  |  Branch: feature/SAF-35508-scenario-simulation-counts  |  Status: Signed off  |  Updated: 2026-09-24
 
 ## Status & Review
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (in sync with PRD Phase 9, 2026-09-24) — re-sign pending: Phase 9 added T-47 after the 2026-09-23 sign-off; all 47 tests green with evidence on two consoles, awaiting `validating-test-plan` against the 47-id plan |
+| Status | Signed off (2026-09-24, in sync with PRD Phase 9) — all 47 tests green with evidence on two consoles (apricot-jellyfish, pentest01), no waivers, `validating-test-plan` clean against the 47-id plan |
 | Offering / surface | Validate + repo-harness |
 
 ## Requirements Traceability
@@ -1245,7 +1245,8 @@ Every box below is satisfied; none is waived.
 `448c25e`, and T-37 found a defect apricot-jellyfish never showed: a 24-step scenario's blocked-entities answer was
 1,294,873 characters, one validator detail alone 1,076,267. Phase 9 caps the answer (15 steps, 100 entries, 5 items
 per detail list; T-47). Measured after the fix, the same answer is 88,715 characters with its longest line 1,368.
-Status is back to `Draft` until the validator is clean against the 47-id plan.
+**Re-signed (2026-09-24):** `validating-test-plan` returned `RESULT: clean` against the 47-id plan; every box below is
+satisfied, none waived.
 
 - [x] Requirements traceability complete — every R# covered: R1 … R31 each map to an Active T-id (validator clean)
 - [x] Change Coverage complete — every changed file tested or justified
@@ -1253,7 +1254,7 @@ Status is back to `Draft` until the validator is clean against the 47-id plan.
       (2026-09-24): `run_scenario` / `quick_run` byte-identical to `main` on both.
 - [x] Progression evidence — T-37 executed live on both consoles; the defects it found are fixed in Phase 8 (T-46)
       and Phase 9 (T-47).
-- [ ] validating-test-plan: RESULT: clean — to re-run against the 47-id plan
+- [x] validating-test-plan: RESULT: clean — 2026-09-24, against the 47-id plan
 - [x] All tests green (cumulative through Final) — all 47 executed and green with per-id evidence; T-33's over-cap
       side observed on pentest01's real 21-simulator fleet as well as the mockulator run
       (`test-results/phase-Final.md`).
@@ -1276,7 +1277,7 @@ Status is back to `Draft` until the validator is clean against the 47-id plan.
 | Date | Change |
 |------|--------|
 | 2026-09-16 13:40 | Test plan created from PRD 2026-09-16 12:52 (retrospective — all 5 phases already delivered) |
-| 2026-09-24 | Second console: real-console tier re-run on pentest01. T-37 found an unbounded blocked-entities answer (1.29 MB); Phase 9 caps it and T-47 pins the caps. Coverage Summary 39 unit / 45 Automatic / 47 total. Status `Signed off` → `Draft` pending re-validation. |
+| 2026-09-24 | Second console: real-console tier re-run on pentest01. T-37 found an unbounded blocked-entities answer (1.29 MB); Phase 9 caps it and T-47 pins the caps. Coverage Summary 39 unit / 45 Automatic / 47 total. Status `Signed off` → `Draft` pending re-validation, then `validating-test-plan` → `RESULT: clean` against the 47-id plan and Status → **`Signed off`**. |
 | 2026-09-23 | **Signed off.** Real-console tier run on apricot-jellyfish; T-29 authored from a live recording; T-33 observed on both sides of the cap; T-46 added (Phase 8). T-15, T-35 and T-44 Expected corrected to the delivered behaviour. `validating-test-plan` → `RESULT: clean` after fixing the Coverage Summary's unit count and writing every `Automation lives in:` path repo-relative. Status `Draft` → `Signed off`. |
 | 2026-09-17 | Reconciled with PRD Phase 6 (`simulator_ids` scopes the blocked-attack list). Added R26 … R30 and T-38 … T-44 — six unit tests at Phase 6 plus one Phase 6 e2e, following the plan's per-slice e2e pattern. Extended R16 with T-43. Nothing reverted, so no tombstones and no existing T-id touched. Regenerated the index tables, Coverage Summary (42 Automatic / 2 Manual) and Tests by Phase. Status reset to Draft and the 2026-09-16 scoped sign-off marked superseded — a material change it does not cover. |
 | 2026-09-16 14:45 | Phase Final execution follow-up. Every existing test method prefixed with its plan id (selector: `pytest -k "T_<n>_"`). Authored the cases that had none — T-9, T-12, T-22, T-28 and the RBAC half of T-10 — plus T-30 in a new contract suite and T-31 … T-35 in a new e2e suite; their `planned:` markers are now real paths. T-29 stays unwritten (needs a live-console capture). Suite: 594 passed / 50 skipped. Status stays Draft — the test set changed materially. |
