@@ -5,6 +5,97 @@ All notable changes to the safebreach-mcp project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `get_scenario_blocked_entities` gains a `simulator_ids` filter (SAF-35508 Phases 6-7) that makes the per-step
+  listing a **per-simulator** answer: every attack the console recorded a constraint against on a named machine,
+  independent of that attack's scenario-wide count. An attack that ran elsewhere but produced nothing *here* is
+  listed; a scenario-wide zero citing no named machine is not. The scoped list is deliberately **not a subset** of
+  the unscoped one, and carries its own hint saying so. Each listed attack shows only
+  the codes cited *on* them. The ratio is reported against the step's attacks; the verdict, every total and
+  both simulator-side sections stay scenario-wide. Each named simulator is answered `ran` / `blocked` /
+  `excluded` / `not computed` / `not in this scenario` so an empty scoped list is never read as a clean
+  scenario. Excluded (offline/disabled/unapproved) simulators are dropped from the match set — they carry
+  a constraint against every move, so scoping to one naively would report a switched-off machine as
+  incompatible with the entire step — and the list is withheld with a stated reason only when that empties
+  the scope. Composes with `attack_ids`. Also repairs five never-executed assertions in the e2e suite
+  whose field names never matched the emitted shape.
+
+- `get_scenario_blocked_entities` (SAF-35508) — the sibling of `get_scenario_simulation_counts`,
+  answering what in a scenario will not run and why. Same two inputs plus an optional `attack_ids`
+  filter (`ran` outranks `blocked`, so a step-order-dependent answer is impossible). Reports every
+  attack and simulator the console measured at exactly `0` with the constraints cited against it;
+  an entity that merely runs on fewer simulators than offered is a reduction, not a block, and is not
+  listed. Distinguishes **blocked** (scored `0`) from **excluded** (absent from scoring — offline,
+  disabled or unapproved), which the raw response conflates only if you read absence as zero. Asks for
+  `getConstraints=true, getAllConstraints=true`, so every applicable reason is recorded rather than the
+  first; the caps and per-code grouping are what keep that affordable. Constraint meanings are relayed
+  verbatim from the response's own `constraintCatalog` and none is authored here. The verdict
+  (blocked / clean / partially evaluated / not evaluated) is decided by whether counts were computed,
+  never by whether the lists are empty.
+- The counts tool's hint now routes to `get_scenario_blocked_entities` for why a step produces nothing;
+  previously it could only say that it did not answer that.
+
+### Changed
+
+- `get_scenario_blocked_entities` bounds what it sends an agent. Its caps limited how many entities were listed but
+  not how large a line was: on pentest01 a 24-step scenario returned 1,294,873 characters, 1,076,267 of them one
+  validator detail (`schemaErrors`, 3,520 objects). The answer now renders at most 15 steps and 100 entries, and a
+  detail list's first 5 items then "and N more"; everything past a cap is counted, never silently dropped. The same
+  answer is now 88,715 characters. The verdict and every total are unchanged.
+- `get_scenario_blocked_entities` no longer calls a machine useless that runs in another step. Its verdict counted any
+  entity scored zero in any step and said those "contribute nothing in this scenario"; on a live console that read
+  "20 simulator(s)" where 15 of them produce simulations elsewhere. The sentence now states both halves — "5
+  contribute nothing anywhere in this scenario; 15 more contribute nothing in at least one step but run in another" —
+  from new `blocked_everywhere_attack_count` / `blocked_everywhere_simulator_count` fields. The verdict state and the
+  existing counts are unchanged.
+- Both scenario-statistics tools now register with `structured_output=False`. A tool returning `str` otherwise gets
+  an auto-generated `{result: string}` output schema, and the MCP SDK then ships the whole answer twice — once as
+  text and once as `structuredContent`. Measured on a ten-simulator step, the wire payload drops from 2,506 to
+  1,471 characters with the rendered output unchanged.
+- `get_scenario_simulation_counts` names both routes back when a step offers more than 20 simulators: edit the saved
+  plan's step simulators filter and score it again, or name `simulator_ids`, with `get_console_simulators` as the
+  place those ids come from.
+- The per-simulator breakdown states that a machine's two numbers are its participation per role, not two batches to
+  add up. Five simulators reading `attacker: 1, target: 1` under a total of `5` otherwise invites reading 10. The
+  note rides on the step line only where rows follow it.
+- `get_scenario_simulation_counts` reports a measured zero as `0 (measured)` rather than `0 - measured`, which
+  parsed as a range on first read.
+- `get_scenario_simulation_counts` hint now says simulators are reported as ids and points at
+  `get_console_simulators` to resolve them — ten bare UUIDs were otherwise a dead end.
+- `get_scenario_blocked_entities` no longer returns a partial attack list when a step blocks more than 50
+  attacks. It now drops the per-attack detail whole and reports a tally of blocked attacks per constraint
+  code, so all of them are accounted for rather than the first fifty — measured on a 60-attack fixture the
+  answer went from 8,462 characters covering 50 attacks to 1,793 covering 60, and the dominant reason (one
+  offline machine implicated in every one) became a single line instead of being spread across fifty.
+  Tally rows carry no validator detail, since a row stands for many attacks and one leaf's `required`/`actual`
+  pair must not speak for all of them. Cited codes are now collected before capping so the catalog still
+  covers every code any blocked entity cites. A named `attack_id` carries its blockers, which replaces the
+  previous mechanism of pinning named ids ahead of the cap — there is no list left to pin into, and without
+  it naming an attack past the cap would have returned a bare "blocked" with no reason.
+- `get_scenario_simulation_counts` (SAF-35508) — a read-only Studio tool that scores a scenario
+  against the fleet without running it, answering how many simulations it would produce and which
+  simulators produce them. Takes exactly one of `scenario_id` (a saved plan's numeric id, passed through
+  to Core as `{id}`) or `test_id` (a planRunId), plus an optional `simulator_ids` filter that answers
+  each named simulator in both roles. An OOB scenario's UUID is refused rather than resolved, so no
+  input form lists the console and every call costs exactly one request. Every query parameter to
+  `POST /plan/statistics` is fixed internally: counts are *runnable* (`includeDisabled=false`), and
+  constraints are never requested, since this answer renders none and one ordinary step measured
+  38,531 of them. A count the orchestrator never computed is reported as not computed rather than as a
+  zero. Up to 20 simulators offered, a step returns its simulation count plus a per-simulator
+  breakdown — each simulator with what it would produce *as attacker* and *as target*, which is the
+  pairing a choice of attackers and targets is made on; over the cap it returns only the count and
+  names the routes back. Named `simulator_ids` are answered either way.
+
+### Removed
+
+- Both scenario-statistics tools drop the ad-hoc `scenario` input (an unsaved `{steps}` body), so OOB scenarios are
+  unsupported. The inputs are now exactly one of `scenario_id` (a saved plan's numeric id) or `test_id`; an OOB UUID
+  is refused with the route to save it as a custom plan or pass a run's `test_id`. Early-termination detection goes
+  with it: it compared the reply against a submitted step count that only a held body could supply.
+
 ## 1.14.0 — 2026-09-07
 
 ### Removed

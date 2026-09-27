@@ -6210,8 +6210,18 @@ class TestGetScenarioStatistics:
         call_args = mock_post.call_args
         url = call_args[0][0]
         assert "/api/orch/v1/accounts/1234567890/plan/statistics" in url
-        assert "limit=500000" in url
-        assert "includeDisabled=true" in url
+
+        # Routed through the shared fetcher, so the query lives in params rather
+        # than the URL. Pinned whole: this path scores the entire fleet
+        # (includeDisabled=true), which is what separates it from the read-only
+        # counts tools, and a silent flip would change predictions.
+        assert call_args[1]['params'] == {
+            'limit': 500000,
+            'includeDisabled': 'true',
+            'getConstraints': 'false',
+            'getAllConstraints': 'false',
+            'useCache': 'true',
+        }
 
         payload = call_args[1]['json']
         assert payload['name'] == ''
